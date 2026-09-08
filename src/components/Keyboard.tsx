@@ -45,9 +45,11 @@ export function Keyboard() {
   const [octave, setOctave] = useState(0);
   const [pressed, setPressed] = useState<Set<number>>(new Set());
   const [octaves, setOctaves] = useState(2);
-  const pointerNote = useRef<number | null>(null);
-  const pointerDown = useRef(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Every active pointer (finger/pen/mouse) owns one note, so three fingers can
+  // hold a triad. `holdCount` keeps a note alive while any pointer holds it.
+  const pointerNotes = useRef<Map<number, number>>(new Map());
+  const holdCount = useRef<Map<number, number>>(new Map());
   const touch = useInputMode() === 'touch';
   const velocityMode = useVelocityMode();
   const hapticsOn = useHaptics();
@@ -66,7 +68,10 @@ export function Keyboard() {
 
   const refresh = () => setPressed(new Set(noteBus.heldNotes()));
 
-  const press = (midi: number, velocity = 0.9) => {
+  const startNote = (midi: number, velocity = 0.9) => {
+    const count = holdCount.current.get(midi) ?? 0;
+    holdCount.current.set(midi, count + 1);
+    if (count > 0) return; // already sounding
     // iOS may suspend the AudioContext when the page is backgrounded; any key
     // press is a valid gesture to bring it back.
     void engine.resumeIfSuspended();
@@ -75,9 +80,31 @@ export function Keyboard() {
     noteBus.noteOn(midi, velocity);
     refresh();
   };
-  const release = (midi: number) => {
+  const endNote = (midi: number) => {
+    const count = holdCount.current.get(midi) ?? 0;
+    if (count === 0) return;
+    if (count > 1) {
+      holdCount.current.set(midi, count - 1);
+      return;
+    }
+    holdCount.current.delete(midi);
     noteBus.noteOff(midi);
     refresh();
+  };
+
+  const startPointer = (pointerId: number, midi: number, keyEl: HTMLElement | null, clientY: number) => {
+    pointerNotes.current.set(pointerId, midi);
+    startNote(midi, velocityAt(clientY, keyEl));
+  };
+  const endPointer = (pointerId: number) => {
+    const midi = pointerNotes.current.get(pointerId);
+    if (midi === undefined) return;
+    pointerNotes.current.delete(pointerId);
+    endNote(midi);
+  };
+  const allPointersOff = () => {
+    for (const midi of pointerNotes.current.values()) endNote(midi);
+    pointerNotes.current.clear();
   };
 
   /** Velocity from where the key was struck: lower on the key = louder. */
@@ -96,14 +123,16 @@ export function Keyboard() {
       const offset = KEY_MAP[e.key.toLowerCase()];
       if (offset === undefined) return;
       e.preventDefault();
-      press(baseMidi + offset);
+      startNote(baseMidi + offset);
     };
     const up = (e: KeyboardEvent) => {
       const offset = KEY_MAP[e.key.toLowerCase()];
       if (offset === undefined) return;
-      release(baseMidi + offset);
+      endNote(baseMidi + offset);
     };
     const blur = () => {
+      allPointersOff();
+      holdCount.current.clear();
       noteBus.allOff();
       refresh();
     };
@@ -163,17 +192,13 @@ export function Keyboard() {
         ref={containerRef}
         onPointerDown={(e) => {
           e.preventDefault();
-          pointerDown.current = true;
           // Trigger the note first: on iOS `setPointerCapture` can throw, and a
           // throw here would silently swallow the key press.
           const target =
             ((e.target as HTMLElement | null)?.closest('[data-midi]') as HTMLElement | null) ??
             keyAt(e.clientX, e.clientY);
           const midi = target ? Number(target.dataset.midi) : null;
-          if (midi !== null && !Number.isNaN(midi)) {
-            pointerNote.current = midi;
-            press(midi, velocityAt(e.clientY, target));
-          }
+          if (midi !== null && !Number.isNaN(midi)) startPointer(e.pointerId, midi, target, e.clientY);
           try {
             containerRef.current?.setPointerCapture(e.pointerId);
           } catch {
@@ -181,25 +206,19 @@ export function Keyboard() {
           }
         }}
         onPointerMove={(e) => {
-          if (!pointerDown.current) return;
+          // A mouse only plays while a button is held; touch/pen only report
+          // moves while in contact anyway.
+          if (e.pointerType === 'mouse' && e.buttons === 0) return;
           const target = keyAt(e.clientX, e.clientY);
           const midi = target ? Number(target.dataset.midi) : null;
-          if (midi !== null && midi !== pointerNote.current) {
-            if (pointerNote.current !== null) release(pointerNote.current);
-            pointerNote.current = midi;
-            press(midi, velocityAt(e.clientY, target));
-          }
+          const previous = pointerNotes.current.get(e.pointerId);
+          if (midi === previous) return;
+          if (previous !== undefined) endPointer(e.pointerId);
+          if (midi !== null && !Number.isNaN(midi)) startPointer(e.pointerId, midi, target, e.clientY);
         }}
-        onPointerUp={() => {
-          pointerDown.current = false;
-          if (pointerNote.current !== null) release(pointerNote.current);
-          pointerNote.current = null;
-        }}
-        onPointerCancel={() => {
-          pointerDown.current = false;
-          if (pointerNote.current !== null) release(pointerNote.current);
-          pointerNote.current = null;
-        }}
+        onPointerUp={(e) => endPointer(e.pointerId)}
+        onPointerCancel={(e) => endPointer(e.pointerId)}
+        onLostPointerCapture={(e) => endPointer(e.pointerId)}
       >
         {keys.map((k) => (
           <div
