@@ -147,6 +147,14 @@ const DICT: Record<string, [string, string]> = {
   'kbd.tip2': ['◈ <b>拖动旋钮</b> 上下调节 · <b>双击</b> 复位', '◈ <b>Drag a knob</b> to adjust · <b>double-tap</b> to reset'],
   'kbd.tip3': ['◈ <b>Shift+拖动</b> 微调 · 滚轮同样可用', '◈ <b>Shift+drag</b> to fine-tune · the wheel works too'],
   'kbd.tip4': ['◈ <b>拖动模块标题栏 ⠿</b> 调整顺序', '◈ <b>Drag a module header ⠿</b> to reorder'],
+  // touch-specific tips: no Shift, no wheel — long-press instead
+  'kbd.tipT1': ['◈ <b>点按/滑奏琴键</b> 触发包络与示波器', '◈ <b>Tap / glide the keys</b> to trigger the envelope and scope'],
+  'kbd.tipT2': ['◈ <b>拖动旋钮</b> 上下调节 · <b>双击</b> 复位', '◈ <b>Drag a knob</b> up/down · <b>double-tap</b> to reset'],
+  'kbd.tipT3': ['◈ <b>长按旋钮 0.3 秒</b> 再拖动可微调', '◈ <b>Hold a knob 0.3 s</b>, then drag to fine-tune'],
+  'kbd.tipT4': ['◈ <b>长按数值格拖动</b> 调包络 · 单击可输入', '◈ <b>Hold & drag a value</b> to shape the envelope · tap to type'],
+  'kbd.hintTouch': ['拖动旋钮调节 · 双击复位 · 长按后拖动可微调', 'Drag to adjust · double-tap to reset · hold, then drag to fine-tune'],
+  'kbd.hintMouse': ['拖动旋钮 · 滚轮 / Shift 微调 · 双击复位', 'Drag to adjust · wheel / Shift to fine-tune · double-tap to reset'],
+  'knob.fine': ['微调', 'fine'],
 
   // --- waveform names ------------------------------------------------------
   'wave.sine': ['正弦', 'Sine'],

@@ -10,6 +10,7 @@ import { midi } from '@/audio/midi';
 import { renderPatchToWav } from '@/audio/render';
 import { downloadBlob } from '@/state/share';
 import { localizeName, t } from '@/i18n';
+import { useInputMode } from '@/hooks/useInputMode';
 
 function MidiButton() {
   const [snap, setSnap] = useState(midi.snapshot());
@@ -355,10 +356,13 @@ export function DisplayRow() {
  */
 export function KeyboardDock() {
   const visible = useKeyboardVisible();
+  const mode = useInputMode();
+  const touch = mode === 'touch';
+  const tips = touch ? ['kbd.tipT1', 'kbd.tipT2', 'kbd.tipT3', 'kbd.tipT4'] : ['kbd.tip1', 'kbd.tip2', 'kbd.tip3', 'kbd.tip4'];
   return (
     <>
       <div
-        className={`kbd-dock${visible ? ' open' : ''}`}
+        className={`kbd-dock${visible ? ' open' : ''}${touch ? ' touch' : ''}`}
         role="region"
         aria-label={t('kbd.region')}
         aria-hidden={!visible}
@@ -367,11 +371,11 @@ export function KeyboardDock() {
           <Wheels />
           <Keyboard />
           <div className="kbd-tips">
-            <div dangerouslySetInnerHTML={{ __html: t('kbd.tip1') }} />
-            <div dangerouslySetInnerHTML={{ __html: t('kbd.tip2') }} />
-            <div dangerouslySetInnerHTML={{ __html: t('kbd.tip3') }} />
-            <div dangerouslySetInnerHTML={{ __html: t('kbd.tip4') }} />
+            {tips.map((key) => (
+              <div key={key} dangerouslySetInnerHTML={{ __html: t(key) }} />
+            ))}
           </div>
+          <div className="kbd-hint">{t(touch ? 'kbd.hintTouch' : 'kbd.hintMouse')}</div>
           <button
             type="button"
             className="dock-hide"
