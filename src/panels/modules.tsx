@@ -18,40 +18,11 @@ import {
   modSrcToInt,
   type Wave,
 } from '@/audio/params';
+import type { ModuleId } from '@/state/layout';
 import { Knob, Led, ParamLed, Segment, WaveSelect } from '@/components/controls';
 import { FilterCurve, LfoRateLabel, MiniWave } from '@/components/canvas';
 import { AdsrEditor } from '@/components/AdsrEditor';
-
-function Screws() {
-  return (
-    <>
-      <span className="screw tl" />
-      <span className="screw tr" />
-      <span className="screw bl" />
-      <span className="screw br" />
-    </>
-  );
-}
-
-function ModuleHead({
-  title,
-  sub,
-  ledId,
-}: {
-  title: string;
-  sub: string;
-  ledId?: number;
-}) {
-  return (
-    <div className="module-head">
-      <span className="bar" />
-      <span className="title">{title}</span>
-      <span className="sub">{sub}</span>
-      <span className="spacer" />
-      {ledId !== undefined ? <ParamLed id={ledId} label={`${title} 开关`} /> : null}
-    </div>
-  );
-}
+import { ModuleShell } from '@/components/Module';
 
 function ParamWaveSelect({ id, waves }: { id: number; waves: Wave[] }) {
   useSynth();
@@ -89,16 +60,14 @@ function ParamSegment({
 
 // --------------------------------------------------------------------- OSC
 
-export function OscModule({ which }: { which: 1 | 2 }) {
-  const color = which === 1 ? 'var(--osc1)' : 'var(--osc2)';
+function OscModule({ which }: { which: 1 | 2 }) {
+  const color = which === 1 ? '#4da3ff' : '#35d0c5';
   const pitch = SPEC_BY_ID[which === 1 ? Param.OSC1_PITCH : Param.OSC2_PITCH];
   const detune = SPEC_BY_ID[which === 1 ? Param.OSC1_DETUNE : Param.OSC2_DETUNE];
   const level = SPEC_BY_ID[which === 1 ? Param.OSC1_LEVEL : Param.OSC2_LEVEL];
   const pw = SPEC_BY_ID[which === 1 ? Param.OSC1_PW : Param.OSC2_PW];
   return (
-    <div className="module" style={{ ['--mc' as string]: color }}>
-      <Screws />
-      <ModuleHead title={`OSC ${which}`} sub={which === 1 ? '振荡器 A' : '振荡器 B'} ledId={which === 1 ? 1 : 7} />
+    <ModuleShell id={which === 1 ? 'osc1' : 'osc2'}>
       <ParamWaveSelect id={which === 1 ? Param.OSC1_WAVE : Param.OSC2_WAVE} waves={WAVES} />
       <div className="knob-row">
         <Knob spec={pitch} />
@@ -106,21 +75,19 @@ export function OscModule({ which }: { which: 1 | 2 }) {
         <Knob spec={level} />
         <Knob spec={pw} />
       </div>
-      <MiniWave which={which} color={which === 1 ? '#4da3ff' : '#35d0c5'} />
+      <MiniWave which={which} color={color} />
       <div className="mini-label">WAVE PREVIEW</div>
-    </div>
+    </ModuleShell>
   );
 }
 
 // ------------------------------------------------------------------ FILTER
 
-export function FilterModule() {
+function FilterModule() {
   useSynth();
   const type = intToFilter(store.getParam(Param.FILTER_TYPE));
   return (
-    <div className="module" style={{ ['--mc' as string]: 'var(--filter)' }}>
-      <Screws />
-      <ModuleHead title="FILTER" sub="滤波器" />
+    <ModuleShell id="filter">
       <ParamSegment
         id={Param.FILTER_TYPE}
         colorful
@@ -145,32 +112,26 @@ export function FilterModule() {
         </div>
       </div>
       <FilterCurve />
-      <div className="mini-label">
-        FREQ RESPONSE · {type === 'lp' ? '-24dB/OCT' : '-12dB/OCT'}
-      </div>
-    </div>
+      <div className="mini-label">FREQ RESPONSE · {type === 'lp' ? '-24dB/OCT' : '-12dB/OCT'}</div>
+    </ModuleShell>
   );
 }
 
 // --------------------------------------------------------------------- ENV
 
-export function EnvModule() {
+function EnvModule() {
   return (
-    <div className="module" style={{ ['--mc' as string]: 'var(--env)' }}>
-      <Screws />
-      <ModuleHead title="AMP ENV" sub="振幅包络" />
+    <ModuleShell id="env">
       <AdsrEditor />
-    </div>
+    </ModuleShell>
   );
 }
 
 // --------------------------------------------------------------------- LFO
 
-export function LfoModule() {
+function LfoModule() {
   return (
-    <div className="module" style={{ ['--mc' as string]: 'var(--lfo)' }}>
-      <Screws />
-      <ModuleHead title="LFO" sub="低频振荡" ledId={Param.LFO_ON} />
+    <ModuleShell id="lfo">
       <ParamWaveSelect id={Param.LFO_WAVE} waves={LFO_WAVES} />
       <div className="knob-row">
         <Knob spec={SPEC_BY_ID[Param.LFO_RATE]} />
@@ -187,18 +148,16 @@ export function LfoModule() {
         <span className="hint">SYNC</span>
         <LfoRateLabel />
       </div>
-    </div>
+    </ModuleShell>
   );
 }
 
 // ------------------------------------------------------------- MOD MATRIX
 
-export function ModMatrix() {
+function ModMatrix() {
   const { state } = useSynth();
   return (
-    <div className="module" style={{ ['--mc' as string]: 'var(--matrix)' }}>
-      <Screws />
-      <ModuleHead title="MOD MATRIX" sub="调制路由" />
+    <ModuleShell id="matrix">
       <div className="matrix-list">
         {state.routes.map((route, i) => (
           <div className="mrow" key={i}>
@@ -254,19 +213,17 @@ export function ModMatrix() {
       <button type="button" className="add-route" onClick={() => store.addRoute()}>
         ＋ 添加调制路由
       </button>
-    </div>
+    </ModuleShell>
   );
 }
 
 // ---------------------------------------------------------------------- FX
 
-export function FxModule() {
+function FxModule() {
   useSynth();
   const sync = intToDelaySync(store.getParam(Param.FX_DELAY_SYNC));
   return (
-    <div className="module fx" style={{ ['--mc' as string]: 'var(--fx)' }}>
-      <Screws />
-      <ModuleHead title="FX" sub="效果处理" />
+    <ModuleShell id="fx">
       <div className="fx-grid">
         <div className="fx-unit">
           <div className="fx-title">
@@ -302,6 +259,28 @@ export function FxModule() {
           </div>
         </div>
       </div>
-    </div>
+    </ModuleShell>
   );
+}
+
+/** Render the module identified by a layout id. */
+export function ModuleFor({ id }: { id: ModuleId }) {
+  switch (id) {
+    case 'osc1':
+      return <OscModule which={1} />;
+    case 'osc2':
+      return <OscModule which={2} />;
+    case 'filter':
+      return <FilterModule />;
+    case 'env':
+      return <EnvModule />;
+    case 'lfo':
+      return <LfoModule />;
+    case 'matrix':
+      return <ModMatrix />;
+    case 'fx':
+      return <FxModule />;
+    default:
+      return null;
+  }
 }

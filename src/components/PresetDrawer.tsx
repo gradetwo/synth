@@ -112,7 +112,19 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
           )}
         </div>
         <div className="d-foot">
-          共 <b>{all.length}</b> 个预设 · {userPresets.length} 个本地收藏 · 点击卡片即刻载入
+          <div>
+            共 <b>{all.length}</b> 个预设 · {userPresets.length} 个本地收藏 · 点击卡片即刻载入
+          </div>
+          <button
+            type="button"
+            className="d-reset"
+            onClick={() => {
+              store.resetLayout();
+              toast('已重置面板布局与键盘显示');
+            }}
+          >
+            重置面板布局
+          </button>
         </div>
       </aside>
     </>

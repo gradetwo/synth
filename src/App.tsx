@@ -3,8 +3,9 @@ import { engine } from '@/audio/engine';
 import { store } from '@/state/store';
 import { useSynth } from '@/hooks/useSynth';
 import { wireAnalysis } from '@/audio/analysis';
-import { TopBar, DisplayRow, KeyboardBar } from '@/panels/layout';
-import { FilterModule, EnvModule, FxModule, LfoModule, ModMatrix, OscModule } from '@/panels/modules';
+import { TopBar, DisplayRow, KeyboardDock } from '@/panels/layout';
+import { ModuleFor } from '@/panels/modules';
+import { ModulesGrid } from '@/components/Module';
 import { PresetDrawer } from '@/components/PresetDrawer';
 import { ToastHost } from '@/components/Toast';
 import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/register';
@@ -71,7 +72,7 @@ export default function App() {
   const [status, setStatus] = useState(engine.getState());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const { state } = useSynth();
+  const { state, layout } = useSynth();
 
   useEffect(() => {
     const off = engine.onStatus(() => {
@@ -125,7 +126,7 @@ export default function App() {
     <div className="app">
       <div className="notice">
         <span className="dot" />
-        WASM 音频核心 · <b>Rust + AudioWorklet</b> · 完整离线 PWA · GS-1 v1.0.3
+        WASM 音频核心 · <b>Rust + AudioWorklet</b> · 完整离线 PWA · GS-1 v1.0.4
       </div>
 
       <TopBar onBrowse={() => setDrawerOpen(true)} status={status} />
@@ -133,20 +134,14 @@ export default function App() {
       <DisplayRow />
 
       <main className="modules">
-        <section className="chain-row chain-a">
-          <OscModule which={1} />
-          <OscModule which={2} />
-          <FilterModule />
-          <EnvModule />
-        </section>
-        <section className="chain-row chain-b">
-          <LfoModule />
-          <ModMatrix />
-          <FxModule />
-        </section>
+        <ModulesGrid>
+          {layout.order.map((id) => (
+            <ModuleFor key={id} id={id} />
+          ))}
+        </ModulesGrid>
       </main>
 
-      <KeyboardBar />
+      <KeyboardDock />
 
       {status === 'suspended' ? (
         <button type="button" className="audio-hint" onClick={() => void engine.resumeIfSuspended()}>

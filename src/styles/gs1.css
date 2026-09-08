@@ -473,3 +473,124 @@ button{touch-action:manipulation}
   z-index:76;background:#1a1508;border:1px solid var(--accent-dim);color:var(--accent);
   border-radius:10px;padding:9px 16px;font:600 11.5px/1 var(--grot);cursor:pointer;
   box-shadow:0 8px 24px rgba(0,0,0,.5)}
+
+/* ==========================================================================
+   v1.0.4 — compact, collapsible, reorderable modules + floating keyboard dock
+   ========================================================================== */
+
+/* ---- responsive module grid (replaces the fixed chain rows) ---- */
+.modules{display:block;margin-top:12px}
+.modules-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:11px;
+  align-items:start;
+}
+.module{grid-column:span var(--span,1);min-width:0}
+.module.collapsed{padding-bottom:11px}
+.module.collapsed .module-head{margin-bottom:0}
+
+/* ---- module header chrome: drag grip + collapse ---- */
+.module-grip,.module-collapse{
+  width:26px;height:26px;flex:none;border-radius:7px;
+  border:1px solid var(--border);background:var(--bg-inset);
+  color:var(--txt-dim);display:grid;place-items:center;cursor:pointer;
+  touch-action:none;padding:0;transition:.15s;
+}
+.module-grip{cursor:grab}
+.module-grip:hover,.module-collapse:hover{color:var(--accent);border-color:var(--accent-dim)}
+.module-grip:active{cursor:grabbing}
+body.module-dragging{cursor:grabbing;user-select:none;-webkit-user-select:none}
+body.module-dragging .module-grip{cursor:grabbing}
+.modules-grid.is-dragging .module{opacity:.82;outline:1px dashed var(--border-hi)}
+
+/* ---- floating keyboard dock ---- */
+:root{--dock-h:170px}
+.kbd-dock{
+  position:fixed;left:0;right:0;bottom:0;z-index:45;
+  background:linear-gradient(180deg,#1c202a,#15181f);
+  border-top:1px solid var(--border);
+  box-shadow:0 -14px 34px rgba(0,0,0,.5);
+  padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+  transform:translateY(112%);
+  transition:transform .28s cubic-bezier(.22,.9,.3,1);
+  pointer-events:none;
+}
+.kbd-dock.open{transform:none;pointer-events:auto}
+.kbd-dock-inner{
+  max-width:1360px;margin:0 auto;
+  display:grid;grid-template-columns:auto 1fr auto auto;
+  gap:12px;align-items:center;
+}
+.kbd-dock .kbd-tips{min-width:168px}
+.dock-hide{
+  width:28px;height:28px;border-radius:8px;flex:none;
+  border:1px solid var(--border);background:var(--bg-inset);color:var(--txt-2);
+  display:grid;place-items:center;cursor:pointer;padding:0;
+}
+.dock-hide:hover{color:var(--accent);border-color:var(--accent-dim)}
+.dock-spacer{height:calc(var(--dock-h) + env(safe-area-inset-bottom))}
+.dock-show{
+  position:fixed;z-index:46;right:calc(12px + env(safe-area-inset-right));
+  bottom:calc(12px + env(safe-area-inset-bottom));
+  display:flex;align-items:center;gap:7px;
+  font:700 11px/1 var(--grot);letter-spacing:.06em;color:#1a1206;
+  background:linear-gradient(180deg,#ffc76a,#e69a24);
+  border:1px solid #a06b17;border-radius:12px;padding:11px 15px;cursor:pointer;
+  box-shadow:0 10px 26px rgba(0,0,0,.55),0 0 22px rgba(255,179,64,.22);
+}
+.dock-show:active{transform:translateY(1px)}
+
+/* ---- compact density ---- */
+.module{padding:10px 10px 11px}
+.module-head{gap:7px;margin-bottom:9px}
+.module-head .title{font-size:11px}
+.knob-row{gap:8px}
+.knob-dial{width:42px;height:42px}
+.knob.big .knob-dial{width:58px;height:58px}
+.knob{gap:4px}
+.knob-label{font-size:8px}
+.knob-value{font-size:9px}
+.mini-canvas{height:38px;margin-top:9px}
+.mini-label{margin-top:4px}
+.seg{margin-bottom:9px}
+.adsr-grid{gap:6px;margin-top:8px}
+.adsr-cell{padding:5px 6px}
+.fx-grid{gap:10px}
+.matrix-list{gap:7px}
+.mrow{padding:7px 9px}
+
+/* ---- tablet ---- */
+@media (max-width:1240px){
+  .modules-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+/* ---- phone / narrow ---- */
+@media (max-width:860px){
+  .modules-grid{grid-template-columns:1fr}
+  .module{grid-column:span 1}
+}
+@media (max-width:620px){
+  :root{--dock-h:158px}
+  .kbd-dock{padding:8px 8px calc(8px + env(safe-area-inset-bottom))}
+  .kbd-dock .wheels{display:none}
+  .kbd-dock .kbd-tips{display:none}
+  .kbd-dock-inner{grid-template-columns:1fr auto;gap:8px}
+  .keyboard{height:100px}
+  .keyboard-head{margin-bottom:5px}
+  .module{padding:9px 9px 10px}
+  .module-grip,.module-collapse{width:28px;height:28px}
+  .knob-dial{width:44px;height:44px}
+  .knob.big .knob-dial{width:62px;height:62px}
+  .mini-canvas{height:36px}
+  .dock-show{bottom:calc(10px + env(safe-area-inset-bottom))}
+}
+@media (max-width:900px) and (orientation:landscape){
+  :root{--dock-h:150px}
+  .keyboard{height:88px}
+  .mini-canvas{height:32px}
+}
+.d-foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.d-reset{font:600 10px/1 var(--grot);letter-spacing:.04em;color:var(--txt-2);
+  background:var(--bg-inset);border:1px solid var(--border);border-radius:8px;
+  padding:8px 11px;cursor:pointer;flex:none}
+.d-reset:hover{color:var(--accent);border-color:var(--accent-dim)}

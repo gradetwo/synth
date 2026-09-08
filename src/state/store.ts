@@ -21,6 +21,13 @@ import {
   WAVES,
 } from '@/audio/params';
 import {
+  defaultLayout,
+  moveModule,
+  normalizeLayout,
+  type LayoutState,
+  type ModuleId,
+} from './layout';
+import {
   FACTORY_PRESETS,
   presetParams,
   presetRoutes,
@@ -30,9 +37,11 @@ import {
 
 const STORAGE_KEY = 'gs1:state:v1';
 const USER_KEY = 'gs1:user-presets:v1';
+const LAYOUT_KEY = 'gs1:layout:v1';
 
 interface Snapshot {
   state: SynthState;
+  layout: LayoutState;
   currentPresetId: string;
   userPresets: Preset[];
   version: number;
@@ -57,6 +66,7 @@ function saveJson(key: string, value: unknown) {
 
 class SynthStore {
   private state: SynthState;
+  private layout: LayoutState;
   private userPresets: Preset[];
   private currentPresetId = FACTORY_PRESETS[0].id;
   private listeners = new Set<() => void>();
@@ -66,6 +76,7 @@ class SynthStore {
   constructor() {
     const persisted = loadJson<SynthState>(STORAGE_KEY);
     this.state = persisted && persisted.params ? { ...createDefaultState(), ...persisted } : createDefaultState();
+    this.layout = normalizeLayout(loadJson<LayoutState>(LAYOUT_KEY));
     this.userPresets = loadJson<Preset[]>(USER_KEY) ?? [];
     this.snapshot = this.buildSnapshot();
   }
@@ -73,6 +84,7 @@ class SynthStore {
   private buildSnapshot(): Snapshot {
     return {
       state: this.state,
+      layout: this.layout,
       currentPresetId: this.currentPresetId,
       userPresets: this.userPresets,
       version: this.version,
@@ -84,6 +96,7 @@ class SynthStore {
     this.snapshot = this.buildSnapshot();
     for (const fn of this.listeners) fn();
     saveJson(STORAGE_KEY, this.state);
+    saveJson(LAYOUT_KEY, this.layout);
   }
 
   subscribe = (fn: () => void): (() => void) => {
@@ -219,6 +232,56 @@ class SynthStore {
 
   resetToInit() {
     this.applyPresetById('init');
+  }
+
+  // ------------------------------------------------------------------ layout
+
+  toggleCollapsed(id: ModuleId) {
+    const collapsed = { ...this.layout.collapsed };
+    if (collapsed[id]) delete collapsed[id];
+    else collapsed[id] = true;
+    this.layout = { ...this.layout, collapsed };
+    this.commit();
+  }
+
+  setKeyboardVisible(visible: boolean) {
+    if (this.layout.keyboardVisible === visible) return;
+    this.layout = { ...this.layout, keyboardVisible: visible };
+    this.commit();
+  }
+
+  toggleKeyboard() {
+    this.setKeyboardVisible(!this.layout.keyboardVisible);
+  }
+
+  moveModuleTo(id: ModuleId, index: number) {
+    const order = moveModule(this.layout.order, id, index);
+    if (order === this.layout.order) return;
+    this.layout = { ...this.layout, order };
+    this.commit();
+  }
+
+  /** Place `id` immediately before `target` in the order. */
+  moveModuleBefore(id: ModuleId, target: ModuleId) {
+    if (id === target) return;
+    const rest = this.layout.order.filter((m) => m !== id);
+    const index = rest.indexOf(target);
+    if (index === -1) return;
+    this.moveModuleTo(id, index);
+  }
+
+  /** Place `id` immediately after `target` in the order. */
+  moveModuleAfter(id: ModuleId, target: ModuleId) {
+    if (id === target) return;
+    const rest = this.layout.order.filter((m) => m !== id);
+    const index = rest.indexOf(target);
+    if (index === -1) return;
+    this.moveModuleTo(id, index + 1);
+  }
+
+  resetLayout() {
+    this.layout = defaultLayout();
+    this.commit();
   }
 
   // --------------------------------------------------------------- power etc.

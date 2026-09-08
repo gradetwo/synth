@@ -69,6 +69,29 @@ describe('synth store', () => {
     store.setPower(true);
   });
 
+  it('collapses, reorders and toggles the keyboard', () => {
+    store.resetLayout();
+    expect(store.getSnapshot().layout.collapsed.osc1).toBeUndefined();
+    store.toggleCollapsed('osc1');
+    expect(store.getSnapshot().layout.collapsed.osc1).toBe(true);
+    store.toggleCollapsed('osc1');
+    expect(store.getSnapshot().layout.collapsed.osc1).toBeUndefined();
+
+    store.moveModuleBefore('fx', 'osc1');
+    expect(store.getSnapshot().layout.order[0]).toBe('fx');
+    store.moveModuleBefore('fx', 'matrix');
+    const order = store.getSnapshot().layout.order;
+    expect(order.indexOf('fx') + 1).toBe(order.indexOf('matrix'));
+
+    expect(store.getSnapshot().layout.keyboardVisible).toBe(true);
+    store.toggleKeyboard();
+    expect(store.getSnapshot().layout.keyboardVisible).toBe(false);
+    store.toggleKeyboard();
+
+    store.resetLayout();
+    expect(store.getSnapshot().layout.order[0]).toBe('osc1');
+  });
+
   it('adds and removes modulation routes', () => {
     const before = store.getSnapshot().state.routes.length;
     store.addRoute();

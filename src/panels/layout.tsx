@@ -24,7 +24,7 @@ function EngineBadge({ status }: { status: EngineStatus }) {
 }
 
 export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: EngineStatus }) {
-  const { currentPresetId, state } = useSynth();
+  const { currentPresetId, state, layout } = useSynth();
   const preset = store.allPresets().find((p) => p.id === currentPresetId);
   const power = state.power;
 
@@ -79,6 +79,19 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
       </div>
 
       <div className="top-actions">
+        <button
+          type="button"
+          className={`tbtn${layout.keyboardVisible ? ' on' : ''}`}
+          title={layout.keyboardVisible ? '隐藏键盘' : '显示键盘'}
+          aria-pressed={layout.keyboardVisible}
+          onClick={() => store.toggleKeyboard()}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <rect x="2" y="6" width="20" height="12" rx="2" />
+            <path d="M6 10h1M9 10h1M12 10h1M15 10h1M18 10h1M7 14h10" strokeLinecap="round" />
+          </svg>
+          键盘
+        </button>
         <button
           type="button"
           className="tbtn"
@@ -225,19 +238,61 @@ export function DisplayRow() {
   );
 }
 
-// -------------------------------------------------------------- keyboard bar
+// -------------------------------------------------------------- keyboard dock
 
-export function KeyboardBar() {
+/**
+ * Floating performance keyboard pinned to the bottom of the viewport.
+ * Hideable so it never blocks the module editor on small screens.
+ */
+export function KeyboardDock() {
+  const { layout } = useSynth();
+  const visible = layout.keyboardVisible;
   return (
-    <footer className="kbd-bar">
-      <Wheels />
-      <Keyboard />
-      <div className="kbd-tips">
-        <div>◈ <b>点击/滑奏琴键</b> 触发包络与示波器</div>
-        <div>◈ <b>拖动旋钮</b> 上下调节 · <b>双击</b> 复位</div>
-        <div>◈ <b>Shift+拖动</b> 微调 · 滚轮同样可用</div>
-        <div>◈ <b>拖动 ADSR 手柄</b> 编辑包络曲线</div>
+    <>
+      <div
+        className={`kbd-dock${visible ? ' open' : ''}`}
+        role="region"
+        aria-label="演奏键盘"
+        aria-hidden={!visible}
+      >
+        <div className="kbd-dock-inner">
+          <Wheels />
+          <Keyboard />
+          <div className="kbd-tips">
+            <div>◈ <b>点击/滑奏琴键</b> 触发包络与示波器</div>
+            <div>◈ <b>拖动旋钮</b> 上下调节 · <b>双击</b> 复位</div>
+            <div>◈ <b>Shift+拖动</b> 微调 · 滚轮同样可用</div>
+            <div>◈ <b>拖动模块标题栏 ⠿</b> 调整顺序</div>
+          </div>
+          <button
+            type="button"
+            className="dock-hide"
+            onClick={() => store.setKeyboardVisible(false)}
+            aria-label="隐藏键盘"
+            title="隐藏键盘"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M2 7.5 L6 3.5 L10 7.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
       </div>
-    </footer>
+      {visible ? <div className="dock-spacer" aria-hidden="true" /> : null}
+      {!visible ? (
+        <button
+          type="button"
+          className="dock-show"
+          onClick={() => store.setKeyboardVisible(true)}
+          aria-label="显示键盘"
+          title="显示键盘"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <rect x="2" y="6" width="20" height="12" rx="2" />
+            <path d="M6 10h1M9 10h1M12 10h1M15 10h1M18 10h1M7 14h10" strokeLinecap="round" />
+          </svg>
+          键盘
+        </button>
+      ) : null}
+    </>
   );
 }
