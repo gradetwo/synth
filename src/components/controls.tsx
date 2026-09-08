@@ -192,7 +192,10 @@ export function Led({ on, onToggle, label, color }: LedProps) {
       aria-pressed={on}
       aria-label={label}
       title={label}
-      onClick={() => onToggle(!on)}
+      onClick={() => {
+        haptic();
+        onToggle(!on);
+      }}
     />
   );
 }
@@ -230,7 +233,10 @@ export function Segment({ value, options, onChange, colorful, label }: SegmentPr
           className={`${o.value === value ? 'active' : ''}${colorful ? ' seg-on' : ''}`}
           title={o.title}
           aria-pressed={o.value === value}
-          onClick={() => onChange(o.value)}
+          onClick={() => {
+            haptic();
+            onChange(o.value);
+          }}
         >
           {o.label}
         </button>
@@ -268,7 +274,10 @@ export function WaveSelect({
           className={`wave-btn${i === value ? ' active' : ''}`}
           title={tr(`wave.${w}`)}
           aria-pressed={i === value}
-          onClick={() => onChange(i)}
+          onClick={() => {
+            haptic();
+            onChange(i);
+          }}
         >
           <svg
             width="26"

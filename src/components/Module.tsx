@@ -3,6 +3,7 @@ import { store } from '@/state/store';
 import { useCollapsed } from '@/hooks/useSynth';
 import { MODULE_META, type ModuleId } from '@/state/layout';
 import { t } from '@/i18n';
+import { haptic, HAPTIC } from '@/hooks/useInputMode';
 import { ParamLed } from './controls';
 
 /**
@@ -57,7 +58,10 @@ export function ModulesGrid({ children }: { children: ReactNode }) {
         }
       }
     };
-    const onEnd = () => setDragging(null);
+    const onEnd = () => {
+      haptic(HAPTIC.medium);
+      setDragging(null);
+    };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onEnd);
     window.addEventListener('pointercancel', onEnd);
@@ -124,6 +128,7 @@ export function ModuleShell({
           onPointerDown={(event) => {
             event.preventDefault();
             event.stopPropagation();
+            haptic(HAPTIC.light);
             startDrag(id);
           }}
         >
@@ -142,7 +147,10 @@ export function ModuleShell({
           aria-expanded={!collapsed}
           aria-label={collapsed ? `${meta.title} ${t('module.expand')}` : `${meta.title} ${t('module.collapse')}`}
           title={collapsed ? t('module.expand') : t('module.collapse')}
-          onClick={() => store.toggleCollapsed(id)}
+          onClick={() => {
+            haptic();
+            store.toggleCollapsed(id);
+          }}
         >
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
             <path

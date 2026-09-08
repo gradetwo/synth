@@ -10,7 +10,7 @@ import { midi } from '@/audio/midi';
 import { renderPatchToWav } from '@/audio/render';
 import { downloadBlob } from '@/state/share';
 import { localizeName, t } from '@/i18n';
-import { useInputMode } from '@/hooks/useInputMode';
+import { haptic, useInputMode } from '@/hooks/useInputMode';
 
 function MidiButton() {
   const [snap, setSnap] = useState(midi.snapshot());
@@ -88,7 +88,10 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
           title={t('top.power')}
           aria-label={t('top.power')}
           aria-pressed={power}
-          onClick={() => store.setPower(!power)}
+          onClick={() => {
+            haptic();
+            store.setPower(!power);
+          }}
         >
           <span className={`pled${power ? ' on' : ''}`} />
         </button>
@@ -96,7 +99,7 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
       </div>
 
       <div className="preset-ctrl">
-        <button type="button" className="nav-btn" title={t('top.prevPreset')} aria-label={t('top.prevPreset')} onClick={() => store.stepPreset(-1)}>
+        <button type="button" className="nav-btn" title={t('top.prevPreset')} aria-label={t('top.prevPreset')} onClick={() => { haptic(); store.stepPreset(-1); }}>
           ‹
         </button>
         <div
@@ -112,7 +115,7 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
           </div>
           <div className="preset-name">{localizeName(preset?.name ?? t('preset.initName'))}</div>
         </div>
-        <button type="button" className="nav-btn" title={t('top.nextPreset')} aria-label={t('top.nextPreset')} onClick={() => store.stepPreset(1)}>
+        <button type="button" className="nav-btn" title={t('top.nextPreset')} aria-label={t('top.nextPreset')} onClick={() => { haptic(); store.stepPreset(1); }}>
           ›
         </button>
       </div>
@@ -124,7 +127,10 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
             className={`ab-slot${activeSlot === 'a' ? ' on' : ''}${slotAFilled ? ' filled' : ''}`}
             title={t('top.slotA')}
             aria-pressed={activeSlot === 'a'}
-            onClick={() => store.selectSlot('a')}
+            onClick={() => {
+              haptic();
+              store.selectSlot('a');
+            }}
           >
             A
           </button>
@@ -133,18 +139,21 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
             className={`ab-slot${activeSlot === 'b' ? ' on' : ''}${slotBFilled ? ' filled' : ''}`}
             title={t('top.slotB')}
             aria-pressed={activeSlot === 'b'}
-            onClick={() => store.selectSlot('b')}
+            onClick={() => {
+              haptic();
+              store.selectSlot('b');
+            }}
           >
             B
           </button>
-          <button type="button" className="ab-copy" title={t('top.copySlot')} onClick={() => store.copySlot()}>
+          <button type="button" className="ab-copy" title={t('top.copySlot')} onClick={() => { haptic(); store.copySlot(); }}>
             ⇄
           </button>
         </div>
-        <button type="button" className="tbtn icon" disabled={!canUndo} title={`${t('top.undo')} (Ctrl+Z)`} aria-label={t('top.undo')} onClick={() => store.undo()}>
+        <button type="button" className="tbtn icon" disabled={!canUndo} title={`${t('top.undo')} (Ctrl+Z)`} aria-label={t('top.undo')} onClick={() => { haptic(); store.undo(); }}>
           ↶
         </button>
-        <button type="button" className="tbtn icon" disabled={!canRedo} title={`${t('top.redo')} (Ctrl+Shift+Z)`} aria-label={t('top.redo')} onClick={() => store.redo()}>
+        <button type="button" className="tbtn icon" disabled={!canRedo} title={`${t('top.redo')} (Ctrl+Shift+Z)`} aria-label={t('top.redo')} onClick={() => { haptic(); store.redo(); }}>
           ↷
         </button>
         <MidiButton />
@@ -153,7 +162,10 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
           className={`tbtn${keyboardVisible ? ' on' : ''}`}
           title={keyboardVisible ? t('top.keyboardHide') : t('top.keyboardShow')}
           aria-pressed={keyboardVisible}
-          onClick={() => store.toggleKeyboard()}
+          onClick={() => {
+            haptic();
+            store.toggleKeyboard();
+          }}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
             <rect x="2" y="6" width="20" height="12" rx="2" />
@@ -166,6 +178,7 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
           className="tbtn"
           title={t('top.randomTitle')}
           onClick={() => {
+            haptic();
             store.randomize();
             toast(t('top.randomToast'));
           }}
@@ -216,6 +229,7 @@ function NoteDisplay() {
       <span className="nd-val">{info.note === null ? '—' : noteName(info.note)}</span>
       <span className="nd-sub">
         {info.note === null ? '0.0 Hz' : `${noteToHz(info.note).toFixed(1)} Hz`}
+        {` · VEL ${Math.round(info.velocity * 127)}`}
         {info.voices > 1 ? ` · ${info.voices} VOICES` : ''}
       </span>
     </div>

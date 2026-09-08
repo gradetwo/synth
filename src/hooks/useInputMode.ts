@@ -55,9 +55,23 @@ if (typeof window !== 'undefined') {
   query?.addEventListener?.('change', () => setInputMode(detectInputMode()));
 }
 
-/** Short haptic tick on devices that support it (no-op on iOS). */
-export function haptic(ms = 6): void {
-  if (current !== 'touch') return;
+/** Short haptic tick on devices that support it (no-op on iOS, which has no
+ *  Vibration API in Safari). */
+let hapticsEnabled = true;
+
+export function setHapticsEnabled(on: boolean): void {
+  hapticsEnabled = on;
+}
+
+export function canVibrate(): boolean {
+  return typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+}
+
+/** Intensity presets, in milliseconds. */
+export const HAPTIC = { light: 6, medium: 12, heavy: 20 } as const;
+
+export function haptic(ms: number = HAPTIC.light): void {
+  if (!hapticsEnabled || current !== 'touch') return;
   try {
     navigator.vibrate?.(ms);
   } catch {

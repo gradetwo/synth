@@ -5,7 +5,8 @@ import { PRESET_CATEGORIES, type PresetCategory } from '@/state/presets';
 import { WaveIcon } from './controls';
 import { toast } from './Toast';
 import { LANG_LABELS, localizeName, t } from '@/i18n';
-import { useLang } from '@/hooks/useSynth';
+import { useLang, useHaptics } from '@/hooks/useSynth';
+import { canVibrate, haptic, HAPTIC } from '@/hooks/useInputMode';
 
 const SW_COLOR: Record<string, string> = {
   sine: '#4da3ff',
@@ -19,6 +20,8 @@ const SW_COLOR: Record<string, string> = {
 export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { userPresets, currentPresetId } = useSynth();
   const lang = useLang();
+  const hapticsOn = useHaptics();
+  const vibrate = canVibrate();
   const [category, setCategory] = useState<PresetCategory>('ALL');
   const [query, setQuery] = useState('');
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -64,7 +67,10 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
               key={c}
               type="button"
               className={`chip${c === category ? ' active' : ''}`}
-              onClick={() => setCategory(c)}
+              onClick={() => {
+                haptic();
+                setCategory(c);
+              }}
             >
               {c}
             </button>
@@ -83,6 +89,7 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
                 role="button"
                 tabIndex={0}
                 onClick={() => {
+                  haptic();
                   store.applyPreset(p);
                   toast(t('drawer.loaded', { name: localizeName(p.name) }));
                 }}
@@ -166,6 +173,20 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
             >
               {t('drawer.contrast')}
             </button>
+            {vibrate ? (
+              <button
+                type="button"
+                className="d-reset"
+                aria-pressed={hapticsOn}
+                onClick={() => {
+                  haptic(HAPTIC.medium);
+                  store.toggleHaptics();
+                  toast(store.getSnapshot().layout.haptics ? t('drawer.hapticsOn') : t('drawer.hapticsOff'));
+                }}
+              >
+                {t('drawer.haptics')} {hapticsOn ? '✓' : '✕'}
+              </button>
+            ) : null}
             <button
               type="button"
               className="d-reset"

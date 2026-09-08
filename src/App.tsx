@@ -9,6 +9,7 @@ import { ModulesGrid } from '@/components/Module';
 import { PresetDrawer } from '@/components/PresetDrawer';
 import { ToastHost } from '@/components/Toast';
 import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/register';
+import { setHapticsEnabled } from '@/hooks/useInputMode';
 import { readShareCode } from '@/state/share';
 import { APP_VERSION } from '@/version';
 import { t } from '@/i18n';
@@ -106,6 +107,10 @@ export default function App() {
   useEffect(() => {
     document.body.classList.toggle('contrast', theme === 'contrast');
   }, [theme]);
+
+  useEffect(() => {
+    setHapticsEnabled(layout.haptics);
+  }, [layout.haptics]);
 
   const start = async () => {
     setBusy(true);

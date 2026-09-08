@@ -3,8 +3,10 @@ import { noteBus, noteName } from '@/audio/noteBus';
 import { engine } from '@/audio/engine';
 import { store } from '@/state/store';
 import { Param } from '@/audio/params';
+import { velocityFromY } from '@/audio/velocity';
+import { useVelocityMode, useHaptics } from '@/hooks/useSynth';
 import { t } from '@/i18n';
-import { haptic } from '@/hooks/useInputMode';
+import { canVibrate, haptic, HAPTIC, useInputMode } from '@/hooks/useInputMode';
 
 const BLACK = new Set([1, 3, 6, 8, 10]);
 const KEY_MAP: Record<string, number> = {
@@ -46,6 +48,10 @@ export function Keyboard() {
   const pointerNote = useRef<number | null>(null);
   const pointerDown = useRef(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const touch = useInputMode() === 'touch';
+  const velocityMode = useVelocityMode();
+  const hapticsOn = useHaptics();
+  const vibrate = canVibrate();
 
   // One octave on phones, two on tablets/desktop.
   useEffect(() => {
@@ -64,13 +70,21 @@ export function Keyboard() {
     // iOS may suspend the AudioContext when the page is backgrounded; any key
     // press is a valid gesture to bring it back.
     void engine.resumeIfSuspended();
-    haptic(5);
+    // Haptic strength follows velocity, so touch dynamics are felt as well.
+    haptic(Math.round(HAPTIC.light + velocity * HAPTIC.light));
     noteBus.noteOn(midi, velocity);
     refresh();
   };
   const release = (midi: number) => {
     noteBus.noteOff(midi);
     refresh();
+  };
+
+  /** Velocity from where the key was struck: lower on the key = louder. */
+  const velocityAt = (clientY: number, keyEl: HTMLElement | null): number => {
+    if (!keyEl) return velocityFromY(0, 0, 0, velocityMode);
+    const rect = keyEl.getBoundingClientRect();
+    return velocityFromY(clientY, rect.top, rect.height, velocityMode);
   };
 
   // Computer keyboard (desktop convenience).
@@ -104,22 +118,45 @@ export function Keyboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseMidi]);
 
-  const noteAt = (clientX: number, clientY: number): number | null => {
+  const keyAt = (clientX: number, clientY: number): HTMLElement | null => {
     const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
-    const keyEl = el?.closest('[data-midi]') as HTMLElement | null;
-    return keyEl ? Number(keyEl.dataset.midi) : null;
+    return (el?.closest('[data-midi]') as HTMLElement | null) ?? null;
   };
 
   return (
     <div className="keyboard-wrap">
       <div className="keyboard-head">
-        <button type="button" className="oct-btn" onClick={() => setOctave((o) => Math.max(-2, o - 1))} aria-label={t('kbd.octDown')}>
+        <button type="button" className="oct-btn" onClick={() => { haptic(); setOctave((o) => Math.max(-2, o - 1)); }} aria-label={t('kbd.octDown')}>
           −
         </button>
         <span className="oct-label">OCT {octave >= 0 ? `+${octave}` : octave}</span>
-        <button type="button" className="oct-btn" onClick={() => setOctave((o) => Math.min(3, o + 1))} aria-label={t('kbd.octUp')}>
+        <button type="button" className="oct-btn" onClick={() => { haptic(); setOctave((o) => Math.min(3, o + 1)); }} aria-label={t('kbd.octUp')}>
           ＋
         </button>
+        {touch ? (
+          <>
+            <button
+              type="button"
+              className={`vel-btn${velocityMode === 'touch' ? ' on' : ''}`}
+              onClick={() => { haptic(); store.toggleVelocityMode(); }}
+              aria-pressed={velocityMode === 'touch'}
+              title={t('kbd.velocityHint')}
+            >
+              {t('kbd.velocity')}
+            </button>
+            {vibrate ? (
+              <button
+                type="button"
+                className={`vel-btn${hapticsOn ? ' on' : ''}`}
+                onClick={() => { haptic(HAPTIC.medium); store.toggleHaptics(); }}
+                aria-pressed={hapticsOn}
+                title={t('kbd.hapticsHint')}
+              >
+                {t('kbd.haptics')}
+              </button>
+            ) : null}
+          </>
+        ) : null}
       </div>
       <div
         className="keyboard"
@@ -129,11 +166,13 @@ export function Keyboard() {
           pointerDown.current = true;
           // Trigger the note first: on iOS `setPointerCapture` can throw, and a
           // throw here would silently swallow the key press.
-          const target = (e.target as HTMLElement | null)?.closest('[data-midi]') as HTMLElement | null;
-          const midi = target ? Number(target.dataset.midi) : noteAt(e.clientX, e.clientY);
+          const target =
+            ((e.target as HTMLElement | null)?.closest('[data-midi]') as HTMLElement | null) ??
+            keyAt(e.clientX, e.clientY);
+          const midi = target ? Number(target.dataset.midi) : null;
           if (midi !== null && !Number.isNaN(midi)) {
             pointerNote.current = midi;
-            press(midi);
+            press(midi, velocityAt(e.clientY, target));
           }
           try {
             containerRef.current?.setPointerCapture(e.pointerId);
@@ -143,11 +182,12 @@ export function Keyboard() {
         }}
         onPointerMove={(e) => {
           if (!pointerDown.current) return;
-          const midi = noteAt(e.clientX, e.clientY);
+          const target = keyAt(e.clientX, e.clientY);
+          const midi = target ? Number(target.dataset.midi) : null;
           if (midi !== null && midi !== pointerNote.current) {
             if (pointerNote.current !== null) release(pointerNote.current);
             pointerNote.current = midi;
-            press(midi);
+            press(midi, velocityAt(e.clientY, target));
           }
         }}
         onPointerUp={() => {

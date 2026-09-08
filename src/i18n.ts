@@ -126,6 +126,9 @@ const DICT: Record<string, [string, string]> = {
   'drawer.export': ['导出', 'Export'],
   'drawer.share': ['分享', 'Share'],
   'drawer.contrast': ['高对比', 'Contrast'],
+  'drawer.haptics': ['振动反馈', 'Haptics'],
+  'drawer.hapticsOn': ['已开启振动反馈', 'Haptic feedback on'],
+  'drawer.hapticsOff': ['已关闭振动反馈', 'Haptic feedback off'],
   'drawer.reset': ['重置布局', 'Reset layout'],
   'drawer.imported': ['已导入音色文件', 'Patch file imported'],
   'drawer.importFailed': ['文件格式无法识别', 'Unrecognised file format'],
@@ -155,6 +158,10 @@ const DICT: Record<string, [string, string]> = {
   'kbd.hintTouch': ['拖动旋钮调节 · 双击复位 · 长按后拖动可微调', 'Drag to adjust · double-tap to reset · hold, then drag to fine-tune'],
   'kbd.hintMouse': ['拖动旋钮 · 滚轮 / Shift 微调 · 双击复位', 'Drag to adjust · wheel / Shift to fine-tune · double-tap to reset'],
   'knob.fine': ['微调', 'fine'],
+  'kbd.velocity': ['力度', 'VEL'],
+  'kbd.velocityHint': ['按键力度：越靠近琴键下缘越响', 'Key velocity: the lower you strike, the louder'],
+  'kbd.haptics': ['振动', 'HAP'],
+  'kbd.hapticsHint': ['按键振动反馈（部分设备不支持）', 'Haptic feedback on key press (device dependent)'],
 
   // --- waveform names ------------------------------------------------------
   'wave.sine': ['正弦', 'Sine'],
