@@ -1,0 +1,208 @@
+/**
+ * GROOVE SYNTH GS-1 — AudioWorklet render thread.
+ *
+ * This file is served as a standalone asset (see `engine.ts`), so it must not
+ * import anything. It drives the Rust/WASM core through the block ABI:
+ *   1. AudioParam values are read once per render quantum (k-rate) and pushed
+ *      into the engine — the browser does the interpolation and thread sync.
+ *   2. Note/controller events arrive as transferable ArrayBuffers (zero copy).
+ *   3. The engine renders `frames` samples into its static buffers; we rebuild
+ *      Float32Array views every block so a `memory.grow` can never detach them.
+ */
+
+/* Keep in sync with `src/audio/params.ts` (id) and `src/params.rs`. */
+const PARAMS = [
+  ['masterVolume', 0, 0.75, 0, 1],
+  ['osc1On', 1, 1, 0, 1],
+  ['osc1Wave', 2, 2, 0, 5],
+  ['osc1Pitch', 3, 0, -48, 48],
+  ['osc1Detune', 4, 7, -100, 100],
+  ['osc1Level', 5, 0.65, 0, 1],
+  ['osc1Pw', 6, 0.5, 0.05, 0.95],
+  ['osc2On', 7, 1, 0, 1],
+  ['osc2Wave', 8, 2, 0, 5],
+  ['osc2Pitch', 9, 0, -48, 48],
+  ['osc2Detune', 10, -6, -100, 100],
+  ['osc2Level', 11, 0.55, 0, 1],
+  ['osc2Pw', 12, 0.5, 0.05, 0.95],
+  ['filterType', 13, 0, 0, 3],
+  ['filterCutoff', 14, 9000, 20, 20000],
+  ['filterRes', 15, 0.25, 0, 1],
+  ['filterDrive', 16, 0.15, 0, 1],
+  ['filterEnvAmt', 17, 0.5, 0, 1],
+  ['filterKbd', 18, 1, 0, 1],
+  ['envAttack', 19, 0.003, 0.0005, 8],
+  ['envDecay', 20, 0.16, 0.001, 12],
+  ['envSustain', 21, 0.55, 0, 1],
+  ['envRelease', 22, 0.28, 0.005, 16],
+  ['lfoOn', 23, 1, 0, 1],
+  ['lfoWave', 24, 0, 0, 3],
+  ['lfoRate', 25, 4.6, 0.02, 40],
+  ['lfoDepth', 26, 0.32, 0, 1],
+  ['lfoTarget', 27, 0, 0, 3],
+  ['lfoSync', 28, 0, 0, 1],
+  ['fxReverbOn', 29, 1, 0, 1],
+  ['fxReverbSize', 30, 0.45, 0, 1],
+  ['fxReverbMix', 31, 0.25, 0, 1],
+  ['fxDelayOn', 32, 0, 0, 1],
+  ['fxDelaySync', 33, 2, 0, 3],
+  ['fxDelayFb', 34, 0.35, 0, 0.95],
+  ['fxDelayMix', 35, 0.22, 0, 1],
+  ['glide', 36, 0, 0, 1],
+  ['tempo', 37, 120, 20, 300],
+  ['pitchBendRange', 38, 2, 0, 24],
+  ['osc1Pan', 39, 0, -1, 1],
+  ['osc2Pan', 40, 0, -1, 1],
+  ['masterTune', 41, 0, -24, 24],
+];
+
+const SPECTRUM_BINS = 36;
+const ANALYSIS_INTERVAL = 6; // blocks between analysis messages (~16 ms @ 48k/128)
+
+class SynthWorkletProcessor extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    return PARAMS.map(([name, , defaultValue, minValue, maxValue]) => ({
+      name,
+      defaultValue,
+      minValue,
+      maxValue,
+      automationRate: 'k-rate',
+    }));
+  }
+
+  constructor(options) {
+    super();
+    const opts = (options && options.processorOptions) || {};
+    this.ready = false;
+    this.muted = false;
+    this.blockCount = 0;
+    this.pendingSpectrum = new Float32Array(SPECTRUM_BINS);
+
+    try {
+      const instance = new WebAssembly.Instance(opts.wasmModule, {});
+      this.wasm = instance.exports;
+      this.memory = this.wasm.memory;
+      this.leftPtr = this.wasm.gs_left_ptr();
+      this.rightPtr = this.wasm.gs_right_ptr();
+      this.spectrumPtr = this.wasm.gs_spectrum_ptr();
+      this.bins = this.wasm.gs_spectrum_bins();
+      this.maxBlock = this.wasm.gs_max_block_size();
+      this.wasm.gs_init(opts.sampleRate || sampleRate, opts.maxPolyphony || 16);
+      if (opts.routes) {
+        opts.routes.forEach((r, i) => {
+          this.wasm.gs_set_mod_route(i, r.src, r.dst, r.amount, r.enabled ? 1 : 0);
+        });
+      }
+      this.ready = true;
+      this.port.postMessage({ type: 'ready', abi: this.wasm.gs_abi_version() });
+    } catch (err) {
+      this.port.postMessage({ type: 'error', message: String(err) });
+    }
+
+    this.port.onmessage = (event) => this.handleMessage(event.data);
+  }
+
+  handleMessage(data) {
+    if (!this.ready) return;
+
+    // Zero-copy MIDI-style event packet.
+    if (data instanceof ArrayBuffer) {
+      const bytes = new Uint8Array(data);
+      const status = bytes[0] & 0xf0;
+      const note = bytes[1];
+      if (status === 0x90 && bytes[2] > 0) {
+        this.wasm.gs_note_on(note, bytes[2] / 127);
+      } else if (status === 0x80 || status === 0x90) {
+        this.wasm.gs_note_off(note);
+      }
+      return;
+    }
+
+    switch (data.type) {
+      case 'noteOn':
+        this.wasm.gs_note_on(data.note, data.velocity);
+        break;
+      case 'noteOff':
+        this.wasm.gs_note_off(data.note);
+        break;
+      case 'allNotesOff':
+      case 'panic':
+        this.wasm.gs_all_notes_off();
+        break;
+      case 'pitchBend':
+        this.wasm.gs_pitch_bend(data.value);
+        break;
+      case 'modWheel':
+        this.wasm.gs_mod_wheel(data.value);
+        break;
+      case 'modRoute':
+        this.wasm.gs_set_mod_route(data.index, data.src, data.dst, data.amount, data.enabled ? 1 : 0);
+        break;
+      case 'setPolyphony':
+        this.wasm.gs_set_max_polyphony(data.value);
+        break;
+      case 'downgrade':
+        this.wasm.gs_trigger_smooth_downgrade();
+        break;
+      case 'mute':
+        this.muted = !!data.value;
+        if (this.muted) this.wasm.gs_all_notes_off();
+        break;
+      default:
+        break;
+    }
+  }
+
+  process(_inputs, outputs, parameters) {
+    const output = outputs[0];
+    if (!output || output.length === 0) return true;
+    const left = output[0];
+    const right = output[1] || output[0];
+    const frames = left.length;
+
+    if (!this.ready || this.muted) {
+      left.fill(0);
+      if (right !== left) right.fill(0);
+      return true;
+    }
+
+    // 1. Push the browser-interpolated AudioParam values into the engine.
+    for (let i = 0; i < PARAMS.length; i++) {
+      const name = PARAMS[i][0];
+      const values = parameters[name];
+      if (values !== undefined) this.wasm.gs_set_param(PARAMS[i][1], values[0]);
+    }
+
+    // 2. Render a dynamic block (128..1024 frames depending on the host).
+    const block = Math.min(frames, this.maxBlock);
+    this.wasm.gs_process(block);
+
+    // 3. Rebuild views every block; never cache them across `memory.grow`.
+    const leftView = new Float32Array(this.memory.buffer, this.leftPtr, block);
+    const rightView = new Float32Array(this.memory.buffer, this.rightPtr, block);
+    left.set(leftView);
+    if (right !== left) right.set(rightView);
+
+    // 4. Periodic analyser + meter message (small, structured-cloned copy).
+    this.blockCount++;
+    if (this.blockCount % ANALYSIS_INTERVAL === 0) {
+      const spec = new Float32Array(this.memory.buffer, this.spectrumPtr, this.bins);
+      this.pendingSpectrum.set(spec.subarray(0, SPECTRUM_BINS));
+      this.port.postMessage(
+        {
+          type: 'analysis',
+          spectrum: this.pendingSpectrum.slice(),
+          peakL: this.wasm.gs_peak_l(),
+          peakR: this.wasm.gs_peak_r(),
+          voices: this.wasm.gs_active_voices(),
+          violations: this.wasm.gs_alloc_violations(),
+        },
+        [],
+      );
+    }
+
+    return true;
+  }
+}
+
+registerProcessor('gs1-synth-processor', SynthWorkletProcessor);
