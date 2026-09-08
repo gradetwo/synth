@@ -7,6 +7,7 @@ import { TopBar, DisplayRow, KeyboardDock } from '@/panels/layout';
 import { ModuleFor } from '@/panels/modules';
 import { ModulesGrid } from '@/components/Module';
 import { PresetDrawer } from '@/components/PresetDrawer';
+import { Guide } from '@/components/Guide';
 import { ToastHost } from '@/components/Toast';
 import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/register';
 import { setHapticsEnabled } from '@/hooks/useInputMode';
@@ -74,6 +75,7 @@ function UpdateBanner() {
 
 export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [status, setStatus] = useState(engine.getState());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -196,7 +198,15 @@ export default function App() {
         </button>
       ) : null}
 
-      <PresetDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <PresetDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        onOpenGuide={() => {
+          setDrawerOpen(false);
+          setGuideOpen(true);
+        }}
+      />
+      <Guide open={guideOpen} onClose={() => setGuideOpen(false)} />
       <ToastHost />
       <UpdateBanner />
       {!running ? <StartOverlay onStart={start} error={error} busy={busy} /> : null}

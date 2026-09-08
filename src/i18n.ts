@@ -125,6 +125,7 @@ const DICT: Record<string, [string, string]> = {
   'drawer.import': ['导入', 'Import'],
   'drawer.export': ['导出', 'Export'],
   'drawer.share': ['分享', 'Share'],
+  'drawer.guide': ['使用指南', 'Guide'],
   'drawer.contrast': ['高对比', 'Contrast'],
   'drawer.haptics': ['振动反馈', 'Haptics'],
   'drawer.hapticsOn': ['已开启振动反馈', 'Haptic feedback on'],
@@ -140,6 +141,12 @@ const DICT: Record<string, [string, string]> = {
   'drawer.resetDone': ['已重置面板布局与键盘显示', 'Layout and keyboard display reset'],
   'drawer.footer': ['共 <b>{n}</b> 个预设 · {m} 个本地收藏', '<b>{n}</b> presets · {m} local'],
 
+  // --- guide ---------------------------------------------------------------
+  'guide.title': ['使用指南', 'Guide'],
+  'guide.sub': ['合成器基础 · 新手教学 · 使用帮助 · 从零捏音色', 'Synthesis · Getting started · Help · Sound design'],
+  'guide.toc': ['目录', 'Contents'],
+  'guide.footer': ['按 Esc 或点击空白处关闭 · 全部内容随应用离线可用', 'Press Esc or click outside to close · fully offline'],
+
   // --- keyboard ------------------------------------------------------------
   'kbd.region': ['演奏键盘', 'Performance keyboard'],
   'kbd.octDown': ['降低八度', 'Octave down'],
@@ -153,7 +160,7 @@ const DICT: Record<string, [string, string]> = {
   // touch-specific tips: no Shift, no wheel — long-press instead
   'kbd.tipT1': ['◈ <b>点按/滑奏琴键</b> 触发包络与示波器', '◈ <b>Tap / glide the keys</b> to trigger the envelope and scope'],
   'kbd.tipT2': ['◈ <b>拖动旋钮</b> 上下调节 · <b>双击</b> 复位', '◈ <b>Drag a knob</b> up/down · <b>double-tap</b> to reset'],
-  'kbd.tipT3': ['◈ <b>长按旋钮 0.3 秒</b> 再拖动可微调', '◈ <b>Hold a knob 0.3 s</b>, then drag to fine-tune'],
+  'kbd.tipT3': ['◈ <b>长按旋钮 0.6 秒</b> 再拖动可微调', '◈ <b>Hold a knob 0.6 s</b>, then drag to fine-tune'],
   'kbd.tipT4': ['◈ <b>长按数值格拖动</b> 调包络 · 单击可输入', '◈ <b>Hold & drag a value</b> to shape the envelope · tap to type'],
   'kbd.hintTouch': ['拖动旋钮调节 · 双击复位 · 长按后拖动可微调', 'Drag to adjust · double-tap to reset · hold, then drag to fine-tune'],
   'kbd.hintMouse': ['拖动旋钮 · 滚轮 / Shift 微调 · 双击复位', 'Drag to adjust · wheel / Shift to fine-tune · double-tap to reset'],

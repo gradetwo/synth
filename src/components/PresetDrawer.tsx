@@ -17,7 +17,15 @@ const SW_COLOR: Record<string, string> = {
   noise: '#f87171',
 };
 
-export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function PresetDrawer({
+  open,
+  onClose,
+  onOpenGuide,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onOpenGuide: () => void;
+}) {
   const { userPresets, currentPresetId } = useSynth();
   const lang = useLang();
   const hapticsOn = useHaptics();
@@ -154,6 +162,17 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
               }}
             >
               {t('drawer.share')}
+            </button>
+            <button
+              type="button"
+              className="d-reset"
+              onClick={() => {
+                haptic();
+                onOpenGuide();
+              }}
+              title={t('guide.sub')}
+            >
+              {t('drawer.guide')}
             </button>
             <button
               type="button"
