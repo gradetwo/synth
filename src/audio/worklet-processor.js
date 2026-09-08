@@ -54,6 +54,7 @@ const PARAMS = [
   ['osc1Pan', 39, 0, -1, 1],
   ['osc2Pan', 40, 0, -1, 1],
   ['masterTune', 41, 0, -24, 24],
+  ['voiceMode', 42, 0, 0, 2],
 ];
 
 const SPECTRUM_BINS = 36;

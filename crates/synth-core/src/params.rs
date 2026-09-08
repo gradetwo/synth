@@ -53,6 +53,7 @@ pub mod id {
     pub const OSC1_PAN: u32 = 39;
     pub const OSC2_PAN: u32 = 40;
     pub const MASTER_TUNE: u32 = 41;
+    pub const VOICE_MODE: u32 = 42;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -288,6 +289,8 @@ pub struct FxParams {
 pub struct Params {
     pub master_volume: f32,
     pub master_tune: f32,
+    /// 0 = poly, 1 = mono (retrigger), 2 = legato.
+    pub voice_mode: u32,
     pub pitch_bend_range: f32,
     pub tempo: f32,
     pub glide: f32,
@@ -304,6 +307,7 @@ impl Params {
         Self {
             master_volume: 0.75,
             master_tune: 0.0,
+            voice_mode: 0,
             pitch_bend_range: 2.0,
             tempo: 120.0,
             glide: 0.0,
@@ -365,6 +369,7 @@ impl Params {
         match param_id {
             p::MASTER_VOLUME => self.master_volume = clamp01(value),
             p::MASTER_TUNE => self.master_tune = value.clamp(-24.0, 24.0),
+            p::VOICE_MODE => self.voice_mode = (value as u32).min(2),
             p::PITCH_BEND_RANGE => self.pitch_bend_range = value.clamp(0.0, 24.0),
             p::TEMPO => self.tempo = value.clamp(20.0, 300.0),
             p::GLIDE => self.glide = clamp01(value),

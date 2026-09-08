@@ -622,3 +622,6 @@ body.module-dragging .module-grip{cursor:grabbing}
 .module-ghost.show{opacity:1}
 .poly-badge{font:600 8px/1 var(--mono);letter-spacing:.1em;color:var(--accent);
   border:1px solid var(--accent-dim);border-radius:3px;padding:3px 5px;margin-top:3px;background:#1a1508}
+.env-foot{display:flex;align-items:center;gap:10px;margin-top:10px}
+.env-foot .seg{flex:1;margin-bottom:0}
+.env-foot .knob{flex:none;width:64px}

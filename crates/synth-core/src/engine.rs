@@ -96,6 +96,9 @@ pub struct Engine {
     rng: Rng,
     pitch_bend: f32,
     mod_wheel: f32,
+    /// Held notes for mono/legato mode (slot 0 only).
+    mono_held: [u8; 16],
+    mono_len: usize,
     master_gain: f32,
     peak_l: f32,
     peak_r: f32,
@@ -129,6 +132,8 @@ impl Engine {
             rng: Rng::new(0x51f3_9b1d),
             pitch_bend: 0.0,
             mod_wheel: 0.0,
+            mono_held: [0; 16],
+            mono_len: 0,
             master_gain: 0.75,
             peak_l: 0.0,
             peak_r: 0.0,
@@ -161,6 +166,8 @@ impl Engine {
         self.vm.set_max_polyphony(max_polyphony);
         self.pitch_bend = 0.0;
         self.mod_wheel = 0.0;
+        self.mono_held = [0; 16];
+        self.mono_len = 0;
         self.master_gain = self.params.master_volume;
         self.peak_l = 0.0;
         self.peak_r = 0.0;
@@ -176,6 +183,14 @@ impl Engine {
             id::ENV_ATTACK | id::ENV_DECAY | id::ENV_SUSTAIN | id::ENV_RELEASE
         ) {
             self.env_dirty = true;
+        }
+        if param_id == id::VOICE_MODE {
+            // Switching polyphony model: release everything cleanly.
+            self.mono_len = 0;
+            for slot in 0..MAX_VOICES {
+                self.vm.voices[slot].gate = false;
+                self.vm.voices[slot].released = true;
+            }
         }
     }
 
@@ -203,6 +218,10 @@ impl Engine {
     }
 
     pub fn note_on(&mut self, note: u8, velocity: f32) {
+        if self.params.voice_mode != 0 {
+            self.mono_note_on(note, velocity);
+            return;
+        }
         let vel = velocity.clamp(0.0, 1.0);
         let freq = note_to_hz(note as f32 + self.params.master_tune);
         match self.vm.note_on(note, vel, freq) {
@@ -217,11 +236,75 @@ impl Engine {
     }
 
     pub fn note_off(&mut self, note: u8) {
+        if self.params.voice_mode != 0 {
+            self.mono_note_off(note);
+            return;
+        }
         self.vm.note_off(note);
     }
 
     pub fn all_notes_off(&mut self) {
+        self.mono_len = 0;
         self.vm.all_notes_off();
+    }
+
+    /// MONO/LEGATO note-on: always uses slot 0.
+    fn mono_note_on(&mut self, note: u8, velocity: f32) {
+        let was_held = self.mono_len;
+        if self.mono_len < self.mono_held.len() && !self.mono_held[..self.mono_len].contains(&note) {
+            self.mono_held[self.mono_len] = note;
+            self.mono_len += 1;
+        }
+        let freq = note_to_hz(note as f32 + self.params.master_tune);
+        // Legato only suppresses the envelope restart when a key is already held.
+        let legato = self.params.voice_mode == 2 && was_held > 0;
+        let slot = 0usize;
+        let was_active = self.vm.voices[slot].active;
+        {
+            let voice = &mut self.vm.voices[slot];
+            voice.active = true;
+            voice.note = note;
+            voice.velocity = velocity.clamp(0.0, 1.0);
+            voice.gate = true;
+            voice.released = false;
+            voice.stealing = false;
+            voice.age = 1;
+            voice.target_freq = freq;
+            if !was_active {
+                voice.current_freq = freq;
+            }
+        }
+        if !legato {
+            unsafe { gs_voice_reset(slot as i32) };
+            let p = self.params.env;
+            let env = &mut self.envs[slot];
+            env.reset();
+            env.set_params(p.attack, p.decay, p.sustain, p.release);
+            env.gate_on();
+        }
+    }
+
+    /// MONO/LEGATO note-off: glide back to the most recent still-held key.
+    fn mono_note_off(&mut self, note: u8) {
+        if let Some(pos) = self.mono_held[..self.mono_len].iter().position(|&n| n == note) {
+            for i in pos..self.mono_len.saturating_sub(1) {
+                self.mono_held[i] = self.mono_held[i + 1];
+            }
+            self.mono_len = self.mono_len.saturating_sub(1);
+        }
+        let slot = 0usize;
+        if self.mono_len == 0 {
+            if self.vm.voices[slot].active {
+                self.vm.voices[slot].gate = false;
+                self.vm.voices[slot].released = true;
+                self.envs[slot].gate_off();
+            }
+        } else {
+            let last = self.mono_held[self.mono_len - 1];
+            let freq = note_to_hz(last as f32 + self.params.master_tune);
+            self.vm.voices[slot].note = last;
+            self.vm.voices[slot].target_freq = freq;
+        }
     }
 
     fn retrigger(&mut self, slot: usize) {
@@ -753,6 +836,35 @@ mod tests {
         e.process(128);
         let forced = e.vm.force_release_excess(4);
         assert!(forced >= 4, "expected at least 4 voices released, got {forced}");
+    }
+
+    #[test]
+    fn mono_and_legato_use_one_voice() {
+        let _guard = ENGINE_LOCK.lock().unwrap();
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::VOICE_MODE, 1.0); // mono
+        e.set_param(id::GLIDE, 0.2);
+        e.note_on(60, 1.0);
+        e.process(128);
+        assert_eq!(e.active_voices(), 1);
+        e.note_on(67, 1.0);
+        e.process(128);
+        assert_eq!(e.active_voices(), 1, "mono must reuse slot 0");
+
+        e.set_param(id::VOICE_MODE, 2.0); // legato
+        e.note_on(64, 1.0);
+        e.process(128);
+        assert_eq!(e.active_voices(), 1);
+        e.note_off(64);
+        e.process(128);
+        assert_eq!(e.active_voices(), 1, "still holding the previous key");
+        e.note_off(67);
+        e.note_off(60);
+        for _ in 0..600 {
+            e.process(128);
+        }
+        assert_eq!(e.active_voices(), 0);
     }
 
     #[test]

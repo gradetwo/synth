@@ -50,6 +50,7 @@ export const Param = {
   OSC1_PAN: 39,
   OSC2_PAN: 40,
   MASTER_TUNE: 41,
+  VOICE_MODE: 42,
 } as const;
 
 export type ParamId = (typeof Param)[keyof typeof Param];
@@ -98,6 +99,7 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.OSC1_PAN]: 'osc1Pan',
   [Param.OSC2_PAN]: 'osc2Pan',
   [Param.MASTER_TUNE]: 'masterTune',
+  [Param.VOICE_MODE]: 'voiceMode',
 };
 
 export type Wave = 'sine' | 'triangle' | 'saw' | 'square' | 'pulse' | 'noise';
@@ -195,6 +197,7 @@ export function clamp01(v: number): number {
 export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.MASTER_VOLUME]: 0.75,
   [Param.MASTER_TUNE]: 0,
+  [Param.VOICE_MODE]: 0,
   [Param.PITCH_BEND_RANGE]: 2,
   [Param.TEMPO]: 120,
   [Param.GLIDE]: 0,
@@ -343,6 +346,7 @@ export const PARAM_SPECS: ParamSpec[] = [
   spec(Param.FX_REVERB_MIX, 'MIX', 0, 1, 0.25, fmt.pct),
   spec(Param.FX_DELAY_FB, 'FDBK', 0, 0.9, 0.35, fmt.pct),
   spec(Param.FX_DELAY_MIX, 'MIX', 0, 1, 0.22, fmt.pct),
+  spec(Param.GLIDE, 'GLIDE', 0, 1, 0, fmt.pct),
   spec(Param.MASTER_VOLUME, 'VOLUME', 0, 1, 0.75, fmt.pct),
 ];
 

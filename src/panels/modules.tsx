@@ -125,6 +125,18 @@ function EnvModule() {
   return (
     <ModuleShell id="env">
       <AdsrEditor />
+      <div className="env-foot">
+        <ParamSegment
+          id={Param.VOICE_MODE}
+          label="声部模式"
+          options={[
+            { label: 'POLY', value: 0, title: '复音' },
+            { label: 'MONO', value: 1, title: '单音 · 每次重新触发包络' },
+            { label: 'LEGATO', value: 2, title: '连奏 · 不重触发包络' },
+          ]}
+        />
+        <Knob spec={SPEC_BY_ID[Param.GLIDE]} />
+      </div>
     </ModuleShell>
   );
 }
