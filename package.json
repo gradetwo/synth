@@ -6,7 +6,7 @@
   "description": "GROOVE SYNTH GS-1 — industrial-grade WebAssembly polyphonic synthesizer with a Rust DSP core, AudioWorklet rendering and a fully offline PWA shell.",
   "license": "MIT",
   "scripts": {
-    "dev": "vite",
+    "dev": "npm run build:wasm && vite",
     "build:wasm": "node scripts/build-wasm.mjs",
     "build:sw": "node scripts/gen-sw.mjs",
     "icons": "node scripts/gen-icons.mjs",
@@ -16,7 +16,10 @@
     "test:rust": "cargo test --manifest-path crates/synth-core/Cargo.toml",
     "test:all": "npm run test:rust && npm run test",
     "typecheck": "tsc -b --force",
-    "package": "npm run build && node scripts/package.mjs"
+    "package": "npm run build && node scripts/package.mjs",
+    "test:wasm": "npm run build:wasm && node scripts/verify-wasm.mjs",
+    "verify:dist": "node scripts/verify-dist.mjs",
+    "verify": "npm run test:rust && npm run test && npm run build && npm run test:wasm && npm run verify:dist"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.1.1",
