@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { store } from '@/state/store';
-import { useKeyboardVisible, usePower, usePresetId } from '@/hooks/useSynth';
+import { useActiveSlot, useCanRedo, useCanUndo, useKeyboardVisible, usePower, usePresetId, useSlotFilled } from '@/hooks/useSynth';
 import { noteBus, noteName, noteToHz } from '@/audio/noteBus';
 import { LfoLed, LfoRateLabel, Scope, ScopeMeta, Spectrum, VuMeter } from '@/components/canvas';
 import { Keyboard, Wheels } from '@/components/Keyboard';
@@ -58,6 +58,11 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
   const currentPresetId = usePresetId();
   const power = usePower();
   const keyboardVisible = useKeyboardVisible();
+  const canUndo = useCanUndo();
+  const canRedo = useCanRedo();
+  const activeSlot = useActiveSlot();
+  const slotAFilled = useSlotFilled('a');
+  const slotBFilled = useSlotFilled('b');
   const preset = store.allPresets().find((p) => p.id === currentPresetId);
 
   return (
@@ -111,6 +116,35 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
       </div>
 
       <div className="top-actions">
+        <div className="ab-group" role="group" aria-label="A/B 音色对比">
+          <button
+            type="button"
+            className={`ab-slot${activeSlot === 'a' ? ' on' : ''}${slotAFilled ? ' filled' : ''}`}
+            title="音色槽 A（点击切换，首次点击保存当前音色）"
+            aria-pressed={activeSlot === 'a'}
+            onClick={() => store.selectSlot('a')}
+          >
+            A
+          </button>
+          <button
+            type="button"
+            className={`ab-slot${activeSlot === 'b' ? ' on' : ''}${slotBFilled ? ' filled' : ''}`}
+            title="音色槽 B（点击切换，首次点击保存当前音色）"
+            aria-pressed={activeSlot === 'b'}
+            onClick={() => store.selectSlot('b')}
+          >
+            B
+          </button>
+          <button type="button" className="ab-copy" title="把当前音色复制到另一个槽" onClick={() => store.copySlot()}>
+            ⇄
+          </button>
+        </div>
+        <button type="button" className="tbtn icon" disabled={!canUndo} title="撤销 (Ctrl+Z)" aria-label="撤销" onClick={() => store.undo()}>
+          ↶
+        </button>
+        <button type="button" className="tbtn icon" disabled={!canRedo} title="重做 (Ctrl+Shift+Z)" aria-label="重做" onClick={() => store.redo()}>
+          ↷
+        </button>
         <MidiButton />
         <button
           type="button"

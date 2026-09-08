@@ -436,6 +436,8 @@ impl Params {
     /// malformed message can never destabilise the DSP.
     pub fn set(&mut self, param_id: u32, value: f32) {
         use id as p;
+        // A non-finite value can never reach the DSP (f32::clamp propagates NaN).
+        let value = if value.is_finite() { value } else { 0.0 };
         match param_id {
             p::MASTER_VOLUME => self.master_volume = clamp01(value),
             p::MASTER_TUNE => self.master_tune = value.clamp(-24.0, 24.0),

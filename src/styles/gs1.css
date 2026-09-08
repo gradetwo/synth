@@ -643,3 +643,15 @@ body.module-dragging .module-grip{cursor:grabbing}
 .module-subhead .bar{width:3.5px;height:12px;border-radius:2px;background:var(--mc);box-shadow:0 0 8px var(--mc)}
 .module-subhead .title{font:700 10.5px/1 var(--grot);letter-spacing:.14em;color:var(--mc)}
 .module-subhead .spacer{flex:1}
+.ab-group{display:flex;align-items:center;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg-inset)}
+.ab-slot{width:30px;height:34px;border:none;background:transparent;color:var(--txt-dim);
+  font:700 11px/1 var(--mono);cursor:pointer;position:relative;transition:.15s}
+.ab-slot.filled::after{content:'';position:absolute;top:5px;right:5px;width:4px;height:4px;border-radius:50%;background:var(--txt-dim)}
+.ab-slot.on{background:#1a1508;color:var(--accent)}
+.ab-slot.on.filled::after{background:var(--accent)}
+.ab-slot:hover{color:var(--txt-1)}
+.ab-copy{width:30px;height:34px;border:none;border-left:1px solid var(--border);background:transparent;
+  color:var(--txt-dim);cursor:pointer;font-size:13px}
+.ab-copy:hover{color:var(--accent)}
+.tbtn.icon{padding:10px 11px;font-size:14px;line-height:1}
+.tbtn:disabled{opacity:.4;cursor:default}

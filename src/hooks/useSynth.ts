@@ -79,6 +79,38 @@ export function useUserPresets(): Preset[] {
   );
 }
 
+export function useCanUndo(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getSnapshot().canUndo,
+    () => store.getSnapshot().canUndo,
+  );
+}
+
+export function useCanRedo(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getSnapshot().canRedo,
+    () => store.getSnapshot().canRedo,
+  );
+}
+
+export function useActiveSlot(): 'a' | 'b' {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getSnapshot().activeSlot,
+    () => store.getSnapshot().activeSlot,
+  );
+}
+
+export function useSlotFilled(slot: 'a' | 'b'): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getSnapshot().slotFilled[slot],
+    () => store.getSnapshot().slotFilled[slot],
+  );
+}
+
 /** Modulation routes (stable reference unless routes change). */
 export function useRoutes(): ModRoute[] {
   return useSyncExternalStore(

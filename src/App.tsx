@@ -10,6 +10,7 @@ import { PresetDrawer } from '@/components/PresetDrawer';
 import { ToastHost } from '@/components/Toast';
 import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/register';
 import { readShareCode } from '@/state/share';
+import { APP_VERSION } from '@/version';
 import { toast } from '@/components/Toast';
 
 wireAnalysis();
@@ -24,7 +25,7 @@ function StartOverlay({
   busy: boolean;
 }) {
   const d = engine.diagnostics();
-  const diag = `SIMD ${d.simd ? '✓' : '✗'} · WASM ${d.wasm} · AudioContext ${d.contextState} · ${d.sampleRate} Hz`;
+  const diag = `GS-1 v${APP_VERSION} · SIMD ${d.simd ? '✓' : '✗'} · WASM ${d.wasm} · AudioContext ${d.contextState} · ${d.sampleRate} Hz`;
   return (
     <div className="start-overlay" role="dialog" aria-label="启动音频引擎">
       <div className="start-card">
@@ -115,6 +116,24 @@ export default function App() {
       setBusy(false);
     }
   };
+
+  // Undo / redo shortcuts.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) store.redo();
+        else store.undo();
+      } else if (key === 'y') {
+        event.preventDefault();
+        store.redo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Any gesture may (re)start or resume audio. iOS suspends the context when
   // the page is backgrounded or interrupted, so this cannot be a one-shot.

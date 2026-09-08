@@ -117,6 +117,8 @@ pub struct Engine {
     peak_l: f32,
     peak_r: f32,
     active_voices: u32,
+    /// Non-finite samples caught by the master-bus guard (should stay 0).
+    pub nan_events: u32,
     spectrum_counter: u32,
     env_dirty: bool,
     fx: FxSnapshot,
@@ -156,6 +158,7 @@ impl Engine {
             peak_l: 0.0,
             peak_r: 0.0,
             active_voices: 0,
+            nan_events: 0,
             spectrum_counter: 0,
             env_dirty: true,
             fx: FxSnapshot::new(),
@@ -195,6 +198,7 @@ impl Engine {
         self.master_gain = self.params.master_volume;
         self.peak_l = 0.0;
         self.peak_r = 0.0;
+        self.nan_events = 0;
         self.env_dirty = true;
         self.fx = FxSnapshot::new();
         self.initialised = true;
@@ -502,8 +506,20 @@ impl Engine {
         let step = (target - start) / frames as f32;
         for i in 0..frames {
             let g = start + step * (i as f32 + 1.0);
-            self.out_l[i] = soft_clip(self.fx_l[i]) * g;
-            self.out_r[i] = soft_clip(self.fx_r[i]) * g;
+            let l = soft_clip(self.fx_l[i]) * g;
+            let r = soft_clip(self.fx_r[i]) * g;
+            if l.is_finite() {
+                self.out_l[i] = l;
+            } else {
+                self.out_l[i] = 0.0;
+                self.nan_events += 1;
+            }
+            if r.is_finite() {
+                self.out_r[i] = r;
+            } else {
+                self.out_r[i] = 0.0;
+                self.nan_events += 1;
+            }
         }
         self.master_gain = target;
 
@@ -1000,6 +1016,43 @@ mod tests {
         e.process(128);
         let forced = e.vm.force_release_excess(4);
         assert!(forced >= 4, "expected at least 4 voices released, got {forced}");
+    }
+
+    #[test]
+    fn extreme_and_random_params_stay_finite() {
+        let _guard = ENGINE_LOCK.lock().unwrap();
+        let mut e = new_engine(8);
+        let mut rng = Rng::new(0x9e37_79b9);
+        for round in 0..160u32 {
+            for id in 0..=66u32 {
+                let value = match round % 4 {
+                    0 => rng.next_bipolar() * 1.0e6,
+                    1 => {
+                        if rng.next_bipolar() > 0.0 {
+                            f32::MAX
+                        } else {
+                            f32::MIN
+                        }
+                    }
+                    2 => f32::NAN,
+                    _ => rng.next_bipolar(),
+                };
+                e.set_param(id, value);
+            }
+            if round % 7 == 0 {
+                e.note_on((rng.next_u32() % 128) as u8, 1.0);
+            }
+            if round % 11 == 0 {
+                e.note_off((rng.next_u32() % 128) as u8);
+            }
+            for _ in 0..4 {
+                e.process(128);
+            }
+            for &x in e.left().iter().chain(e.right().iter()) {
+                assert!(x.is_finite(), "non-finite output at round {round}: {x}");
+            }
+        }
+        assert_eq!(e.nan_events, 0, "the output guard should never trigger");
     }
 
     #[test]

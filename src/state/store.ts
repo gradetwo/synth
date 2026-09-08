@@ -46,7 +46,19 @@ interface Snapshot {
   layout: LayoutState;
   currentPresetId: string;
   userPresets: Preset[];
+  canUndo: boolean;
+  canRedo: boolean;
+  activeSlot: 'a' | 'b';
+  slotFilled: { a: boolean; b: boolean };
   version: number;
+}
+
+function cloneState(state: SynthState): SynthState {
+  return {
+    params: { ...state.params },
+    routes: state.routes.map((r) => ({ ...r })),
+    power: state.power,
+  };
 }
 
 function loadJson<T>(key: string): T | null {
@@ -72,6 +84,12 @@ class SynthStore {
   private userPresets: Preset[];
   private currentPresetId = FACTORY_PRESETS[0].id;
   private transientPreset: Preset | null = null;
+  private history: SynthState[] = [];
+  private historyIndex = -1;
+  private historyTimer: number | undefined;
+  private slots: { a: SynthState | null; b: SynthState | null } = { a: null, b: null };
+  private slotFilled = { a: false, b: false };
+  private activeSlot: 'a' | 'b' = 'a';
   private listeners = new Set<() => void>();
   private version = 0;
   private snapshot: Snapshot;
@@ -85,11 +103,17 @@ class SynthStore {
   }
 
   private buildSnapshot(): Snapshot {
+    this.slotFilled.a = this.slots.a !== null;
+    this.slotFilled.b = this.slots.b !== null;
     return {
       state: this.state,
       layout: this.layout,
       currentPresetId: this.currentPresetId,
       userPresets: this.userPresets,
+      canUndo: this.historyIndex > 0,
+      canRedo: this.historyIndex >= 0 && this.historyIndex < this.history.length - 1,
+      activeSlot: this.activeSlot,
+      slotFilled: this.slotFilled,
       version: this.version,
     };
   }
@@ -119,6 +143,7 @@ class SynthStore {
     if (this.state.params[id] === value) return;
     this.state = { ...this.state, params: { ...this.state.params, [id]: value } };
     engine.setParam(id, value, opts.immediate);
+    this.scheduleHistory();
     this.commit();
   }
 
@@ -127,6 +152,7 @@ class SynthStore {
     this.state = { ...this.state, routes };
     const route = routes[index];
     if (route) engine.setRoute(index, route);
+    this.scheduleHistory();
     this.commit();
   }
 
@@ -166,6 +192,7 @@ class SynthStore {
     this.state = { params, routes, power: this.state.power };
     this.currentPresetId = preset.id;
     engine.applyState(this.state, opts.immediate ?? true);
+    this.recordHistory();
     this.commit();
   }
 
@@ -330,6 +357,71 @@ class SynthStore {
 
   resetToInit() {
     this.applyPresetById('init');
+  }
+
+  // ---------------------------------------------------------- undo / redo
+
+  private recordHistory() {
+    this.history = this.history.slice(0, this.historyIndex + 1);
+    this.history.push(cloneState(this.state));
+    if (this.history.length > 60) this.history.shift();
+    this.historyIndex = this.history.length - 1;
+  }
+
+  /** Coalesce a burst of knob movements into one history entry. */
+  private scheduleHistory() {
+    if (typeof window === 'undefined') {
+      this.recordHistory();
+      return;
+    }
+    window.clearTimeout(this.historyTimer);
+    this.historyTimer = window.setTimeout(() => this.recordHistory(), 700);
+  }
+
+  private restore(state: SynthState) {
+    this.state = cloneState(state);
+    engine.applyState(this.state, true);
+    this.commit();
+  }
+
+  undo(): boolean {
+    window.clearTimeout(this.historyTimer);
+    if (this.historyIndex <= 0) return false;
+    this.historyIndex -= 1;
+    this.restore(this.history[this.historyIndex]);
+    return true;
+  }
+
+  redo(): boolean {
+    window.clearTimeout(this.historyTimer);
+    if (this.historyIndex >= this.history.length - 1) return false;
+    this.historyIndex += 1;
+    this.restore(this.history[this.historyIndex]);
+    return true;
+  }
+
+  // --------------------------------------------------------------- A/B slots
+
+  /** Save the current patch into the active slot and switch to `slot`. */
+  selectSlot(slot: 'a' | 'b') {
+    if (slot === this.activeSlot) return;
+    this.slots[this.activeSlot] = cloneState(this.state);
+    const target = this.slots[slot];
+    this.activeSlot = slot;
+    if (target) {
+      this.restore(target);
+    } else {
+      this.slots[slot] = cloneState(this.state);
+      this.recordHistory();
+      this.commit();
+    }
+  }
+
+  /** Copy the current patch into the other slot without switching. */
+  copySlot() {
+    const other = this.activeSlot === 'a' ? 'b' : 'a';
+    this.slots[other] = cloneState(this.state);
+    this.commit();
   }
 
   // ------------------------------------------------------------------ layout

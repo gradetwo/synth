@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install clang (vendored C/C++ -> wasm)
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      - run: npm ci
+
+      - name: Rust DSP tests
+        run: npm run test:rust
+
+      - name: Front-end unit + worklet integration tests
+        run: npm test
+
+      - name: Production build (WASM + SW)
+        run: npm run build
+
+      - name: WASM quality gates (SIMD + scalar)
+        run: node scripts/verify-wasm.mjs && node scripts/verify-wasm.mjs src/generated/synth_core_scalar.wasm
+
+      - name: Dist integrity
+        run: npm run verify:dist
+
+      - name: DSP regression baseline
+        run: npm run test:dsp
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dist
+          path: dist
+          retention-days: 7

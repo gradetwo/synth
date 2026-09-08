@@ -92,6 +92,29 @@ describe('synth store', () => {
     expect(store.getSnapshot().layout.order[0]).toBe('osc1');
   });
 
+  it('undoes and redoes preset changes', () => {
+    store.applyPresetById('init');
+    store.applyPresetById('acid');
+    expect(store.getSnapshot().canUndo).toBe(true);
+    store.undo();
+    expect(store.getParam(Param.FILTER_CUTOFF)).toBe(18000);
+    expect(store.getSnapshot().canRedo).toBe(true);
+    store.redo();
+    expect(store.getParam(Param.FILTER_CUTOFF)).toBe(800);
+  });
+
+  it('stores and recalls A/B patches', () => {
+    store.applyPresetById('init');
+    store.selectSlot('b');
+    expect(store.getSnapshot().activeSlot).toBe('b');
+    store.setParam(Param.FILTER_CUTOFF, 4321);
+    store.selectSlot('a');
+    expect(store.getSnapshot().activeSlot).toBe('a');
+    expect(store.getParam(Param.FILTER_CUTOFF)).toBe(18000);
+    store.selectSlot('b');
+    expect(store.getParam(Param.FILTER_CUTOFF)).toBe(4321);
+  });
+
   it('adds and removes modulation routes', () => {
     const before = store.getSnapshot().state.routes.length;
     store.addRoute();
