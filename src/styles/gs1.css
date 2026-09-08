@@ -454,3 +454,16 @@ button{touch-action:manipulation}
 @media (prefers-reduced-motion:reduce){
   *{animation-duration:.001ms!important;transition-duration:.001ms!important}
 }
+
+/* Startup gate diagnostics. */
+.start-card{display:flex;flex-direction:column;align-items:center;gap:14px;max-width:min(420px,92vw)}
+.start-diag{font:500 10px/1.5 var(--mono);color:var(--txt-dim);text-align:center;letter-spacing:.02em}
+.start-error{background:#1a0f0f;border:1px solid #5f2f2f;border-radius:12px;padding:14px 16px;
+  max-width:100%;text-align:left}
+.start-error b{color:#ff6b6b;font:700 12px/1 var(--grot);letter-spacing:.06em}
+.start-error p{margin:8px 0;font:500 11.5px/1.5 var(--grot);color:var(--txt-1);word-break:break-word}
+.start-error small{display:block;font:500 9.5px/1.5 var(--mono);color:var(--txt-dim);word-break:break-all}
+.start-retry{margin-top:10px;font:700 11px/1 var(--grot);color:#1a1206;
+  background:linear-gradient(180deg,#ffc76a,#e69a24);border:none;border-radius:8px;
+  padding:9px 18px;cursor:pointer}
+.start-btn:disabled{opacity:.6;cursor:progress}

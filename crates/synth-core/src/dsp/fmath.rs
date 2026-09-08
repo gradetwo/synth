@@ -33,74 +33,170 @@ pub fn copysignf(x: f32, y: f32) -> f32 {
     f32::from_bits((x.to_bits() & 0x7fff_ffff) | (y.to_bits() & 0x8000_0000))
 }
 
+// The wasm SIMD intrinsics need the `simd128` target feature. When the scalar
+// fallback build is selected (older Safari), pure bit-manipulation / Newton
+// versions are used so we still never emit a libcall (which would recurse).
+
 #[inline]
 pub fn sqrtf(x: f32) -> f32 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_sqrt(
-            core::arch::wasm32::f32x4_splat(x),
-        ))
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        x.sqrt()
-    }
+    sqrt_impl(x)
 }
 
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 #[inline]
-pub fn floorf(x: f32) -> f32 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_floor(
-            core::arch::wasm32::f32x4_splat(x),
-        ))
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        x.floor()
-    }
+fn sqrt_impl(x: f32) -> f32 {
+    core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_sqrt(
+        core::arch::wasm32::f32x4_splat(x),
+    ))
 }
 
+#[cfg(all(target_arch = "wasm32", not(target_feature = "simd128")))]
 #[inline]
-pub fn ceilf(x: f32) -> f32 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_ceil(
-            core::arch::wasm32::f32x4_splat(x),
-        ))
+fn sqrt_impl(x: f32) -> f32 {
+    if x <= 0.0 {
+        return if x == 0.0 { 0.0 } else { f32::NAN };
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        x.ceil()
+    if !x.is_finite() {
+        return x;
     }
+    // Halve the exponent as a seed, then Newton-Raphson (quadratic).
+    let mut g = f32::from_bits((x.to_bits() >> 1) + 0x1fc0_0000);
+    for _ in 0..4 {
+        g = 0.5 * (g + x / g);
+    }
+    g
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+fn sqrt_impl(x: f32) -> f32 {
+    x.sqrt()
 }
 
 #[inline]
 pub fn truncf(x: f32) -> f32 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_trunc(
-            core::arch::wasm32::f32x4_splat(x),
-        ))
+    trunc_impl(x)
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline]
+fn trunc_impl(x: f32) -> f32 {
+    core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_trunc(
+        core::arch::wasm32::f32x4_splat(x),
+    ))
+}
+
+#[cfg(all(target_arch = "wasm32", not(target_feature = "simd128")))]
+#[inline]
+fn trunc_impl(x: f32) -> f32 {
+    if !x.is_finite() || x == 0.0 {
+        return x;
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        x.trunc()
+    let bits = x.to_bits();
+    let exp = ((bits >> 23) & 0xff) as i32 - 127;
+    if exp >= 23 {
+        return x;
     }
+    if exp < 0 {
+        return copysignf(0.0, x);
+    }
+    let mask = !((1u32 << (23 - exp)) - 1);
+    f32::from_bits(bits & mask)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+fn trunc_impl(x: f32) -> f32 {
+    x.trunc()
+}
+
+#[inline]
+pub fn floorf(x: f32) -> f32 {
+    floor_impl(x)
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline]
+fn floor_impl(x: f32) -> f32 {
+    core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_floor(
+        core::arch::wasm32::f32x4_splat(x),
+    ))
+}
+
+#[cfg(all(target_arch = "wasm32", not(target_feature = "simd128")))]
+#[inline]
+fn floor_impl(x: f32) -> f32 {
+    let t = trunc_impl(x);
+    if x < 0.0 && t != x {
+        t - 1.0
+    } else {
+        t
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+fn floor_impl(x: f32) -> f32 {
+    x.floor()
+}
+
+#[inline]
+pub fn ceilf(x: f32) -> f32 {
+    ceil_impl(x)
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline]
+fn ceil_impl(x: f32) -> f32 {
+    core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_ceil(
+        core::arch::wasm32::f32x4_splat(x),
+    ))
+}
+
+#[cfg(all(target_arch = "wasm32", not(target_feature = "simd128")))]
+#[inline]
+fn ceil_impl(x: f32) -> f32 {
+    let t = trunc_impl(x);
+    if x > 0.0 && t != x {
+        t + 1.0
+    } else {
+        t
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+fn ceil_impl(x: f32) -> f32 {
+    x.ceil()
 }
 
 #[inline]
 pub fn roundf(x: f32) -> f32 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_nearest(
-            core::arch::wasm32::f32x4_splat(x),
-        ))
+    round_impl(x)
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline]
+fn round_impl(x: f32) -> f32 {
+    core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_nearest(
+        core::arch::wasm32::f32x4_splat(x),
+    ))
+}
+
+#[cfg(all(target_arch = "wasm32", not(target_feature = "simd128")))]
+#[inline]
+fn round_impl(x: f32) -> f32 {
+    if x >= 0.0 {
+        floor_impl(x + 0.5)
+    } else {
+        ceil_impl(x - 0.5)
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        x.round()
-    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+fn round_impl(x: f32) -> f32 {
+    x.round()
 }
 
 /// Round to nearest integer, ties away from zero, as an `i32`.

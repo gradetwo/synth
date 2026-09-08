@@ -11,14 +11,38 @@ import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/reg
 
 wireAnalysis();
 
-function StartOverlay({ onStart }: { onStart: () => void }) {
+function StartOverlay({
+  onStart,
+  error,
+  busy,
+}: {
+  onStart: () => void;
+  error: string | null;
+  busy: boolean;
+}) {
+  const d = engine.diagnostics();
+  const diag = `SIMD ${d.simd ? '✓' : '✗'} · WASM ${d.wasm} · AudioContext ${d.contextState} · ${d.sampleRate} Hz`;
   return (
     <div className="start-overlay" role="dialog" aria-label="启动音频引擎">
-      <button type="button" className="start-btn" onClick={onStart}>
-        <span className="start-icon">▶</span>
-        <span>启动音频引擎</span>
-        <small>浏览器需要一次点击才能播放声音</small>
-      </button>
+      <div className="start-card">
+        <button type="button" className="start-btn" onClick={onStart} disabled={busy}>
+          <span className="start-icon">▶</span>
+          <span>{busy ? '正在启动…' : '启动音频引擎'}</span>
+          <small>浏览器需要一次点击才能播放声音</small>
+        </button>
+        {error ? (
+          <div className="start-error" role="alert">
+            <b>启动失败</b>
+            <p>{error}</p>
+            <small>{diag}</small>
+            <button type="button" className="start-retry" onClick={onStart} disabled={busy}>
+              重试
+            </button>
+          </div>
+        ) : (
+          <small className="start-diag">{diag}</small>
+        )}
+      </div>
     </div>
   );
 }
@@ -45,10 +69,15 @@ function UpdateBanner() {
 export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [status, setStatus] = useState(engine.getState());
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const { state } = useSynth();
 
   useEffect(() => {
-    const off = engine.onStatus(() => setStatus(engine.getState()));
+    const off = engine.onStatus(() => {
+      setStatus(engine.getState());
+      if (engine.error) setError(engine.error);
+    });
     void registerServiceWorker();
     return off;
   }, []);
@@ -59,20 +88,26 @@ export default function App() {
   }, [state.power]);
 
   const start = async () => {
+    setBusy(true);
+    setError(null);
     try {
-      await engine.init(16, store.getSnapshot().state.routes);
+      // Must run inside the gesture: creates + resumes the AudioContext before
+      // the first await (Safari requirement).
+      await engine.start(16, store.getSnapshot().state.routes);
       engine.applyState(store.getSnapshot().state, true);
       engine.setMuted(!store.getSnapshot().state.power);
-      await engine.resume();
-    } catch {
-      /* status listener surfaces the error */
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
     }
   };
 
   // Resume automatically on the first gesture once the context exists.
   useEffect(() => {
     const resume = () => {
-      if (engine.getState() === 'suspended' || engine.getState() === 'idle') void start();
+      const s = engine.getState();
+      if (s === 'idle' || s === 'suspended') void start();
     };
     window.addEventListener('pointerdown', resume, { once: true });
     window.addEventListener('keydown', resume, { once: true });
@@ -80,6 +115,7 @@ export default function App() {
       window.removeEventListener('pointerdown', resume);
       window.removeEventListener('keydown', resume);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const running = status === 'running' || status === 'suspended';
@@ -88,7 +124,7 @@ export default function App() {
     <div className="app">
       <div className="notice">
         <span className="dot" />
-        WASM 音频核心 · <b>Rust + AudioWorklet</b> · 完整离线 PWA · GS-1 v1.0.0
+        WASM 音频核心 · <b>Rust + AudioWorklet</b> · 完整离线 PWA · GS-1 v1.0.1
       </div>
 
       <TopBar onBrowse={() => setDrawerOpen(true)} status={status} />
@@ -114,7 +150,7 @@ export default function App() {
       <PresetDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <ToastHost />
       <UpdateBanner />
-      {!running ? <StartOverlay onStart={start} /> : null}
+      {!running ? <StartOverlay onStart={start} error={error} busy={busy} /> : null}
     </div>
   );
 }

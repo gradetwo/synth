@@ -15,7 +15,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const wasmPath = resolve(root, 'src/generated/synth_core.wasm');
+const wasmPath = resolve(root, process.argv[2] ?? 'src/generated/synth_core.wasm');
 if (!existsSync(wasmPath)) {
   console.error(`[verify] ${wasmPath} missing — run "npm run build:wasm" first`);
   process.exit(1);

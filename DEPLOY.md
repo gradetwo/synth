@@ -141,11 +141,12 @@ CMD ["nginx", "-g", "daemon off;"]
 | 浏览器 | 最低版本 |
 | :--- | :--- |
 | Chrome / Edge | 91+（AudioWorklet + WebAssembly SIMD） |
-| Safari / iOS Safari | 16.4+ |
+| Safari / iOS Safari | 14.1+（<16.4 自动加载标量 WASM 回退） |
 | Firefox | 89+ |
 
-WebAssembly SIMD 是硬性要求（构建时同时开启 Rust `+simd128` 与 clang
-`-msimd128`）。
+构建同时产出 **SIMD** 与 **标量** 两个 WASM 核心：启动时用
+`WebAssembly.validate` 探测 SIMD，不支持时自动回退，因此旧版 Safari 也能发声
+（仅性能略低）。
 
 ---
 

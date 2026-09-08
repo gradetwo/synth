@@ -45,6 +45,9 @@ fn main() {
     write_if_changed(&sp_inc.join("soundpipe.h"), &header);
 
     // ------------------------------------------------------------------ clang
+    // SIMD is opt-out so a scalar build can be produced for older Safari.
+    let simd = env::var("GS_SIMD").map(|v| v != "0").unwrap_or(true);
+
     let clang = env::var("CLANG").unwrap_or_else(|_| "clang".to_string());
     let mut common: Vec<String> = vec![
         "-O3".into(),
@@ -68,7 +71,9 @@ fn main() {
 
     if is_wasm {
         common.push("--target=wasm32-unknown-unknown".into());
-        common.push("-msimd128".into());
+        if simd {
+            common.push("-msimd128".into());
+        }
         common.push("-ffreestanding".into());
         common.push("-fno-builtin".into());
         common.push("-nostdinc".into());
@@ -101,7 +106,7 @@ fn main() {
     for (idx, src) in c_sources.iter().chain(cxx_sources.iter()).enumerate() {
         let stem = src.file_stem().unwrap().to_string_lossy().to_string();
         let obj = obj_dir.join(format!("{idx:02}-{stem}.o"));
-        compile(&clang, &common, src, &obj, is_wasm);
+        compile(&clang, &common, src, &obj, is_wasm, simd);
         objects.push(obj);
         println!("cargo:rerun-if-changed={}", src.display());
     }
@@ -130,6 +135,9 @@ fn main() {
     for entry in fs::read_dir(&shim_cxx).into_iter().flatten().flatten() {
         println!("cargo:rerun-if-changed={}", entry.path().display());
     }
+    println!("cargo:rerun-if-env-changed=GS_SIMD");
+    println!("cargo:rerun-if-env-changed=CLANG");
+    println!("cargo:rerun-if-env-changed=AR");
     println!("cargo:rerun-if-changed=build.rs");
 }
 
@@ -152,7 +160,7 @@ fn clang_resource_include(clang: &str) -> PathBuf {
     PathBuf::from(dir).join("include")
 }
 
-fn compile(clang: &str, common: &[String], src: &Path, obj: &Path, is_wasm: bool) {
+fn compile(clang: &str, common: &[String], src: &Path, obj: &Path, is_wasm: bool, simd: bool) {
     let mut cmd = Command::new(clang);
     cmd.args(common);
     if src.extension().and_then(|e| e.to_str()) == Some("c") {
@@ -160,7 +168,7 @@ fn compile(clang: &str, common: &[String], src: &Path, obj: &Path, is_wasm: bool
     } else {
         cmd.arg("-std=c++17");
     }
-    if is_wasm {
+    if is_wasm && simd {
         // Keep codegen aligned with the Rust side (+simd128).
         cmd.arg("-mrelaxed-simd");
     }

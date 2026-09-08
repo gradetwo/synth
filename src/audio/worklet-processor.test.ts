@@ -46,11 +46,19 @@ beforeAll(async () => {
 
 describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
   const instantiate = () => {
-    const module = new WebAssembly.Module(readFileSync(wasmPath));
-    const proc = new registered!.ctor({
-      processorOptions: { wasmModule: module, sampleRate: 48000, maxPolyphony: 16 },
+    const bytes = new Uint8Array(readFileSync(wasmPath)).buffer;
+    return new registered!.ctor({
+      processorOptions: { wasmBytes: bytes, sampleRate: 48000, maxPolyphony: 16 },
     });
-    return proc;
+  };
+
+  /** The worklet instantiates WASM asynchronously; wait for its ready message. */
+  const waitReady = async () => {
+    for (let i = 0; i < 100; i++) {
+      if (messages.some((m) => (m as { type?: string }).type === 'ready')) return;
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    throw new Error('worklet did not become ready');
   };
 
   const descriptors = () =>
@@ -66,9 +74,10 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it('reports ready and renders audio for a note-on packet', () => {
+  it('reports ready and renders audio for a note-on packet', async () => {
     messages.length = 0;
     const proc = instantiate();
+    await waitReady();
     expect(messages.some((m) => (m as { type?: string }).type === 'ready')).toBe(true);
 
     const params: Record<string, Float32Array> = {};
@@ -92,9 +101,10 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
     expect(left.some((v) => v !== 0)).toBe(true);
   });
 
-  it('emits periodic analysis frames', () => {
+  it('emits periodic analysis frames', async () => {
     messages.length = 0;
     const proc = instantiate();
+    await waitReady();
     const params: Record<string, Float32Array> = {};
     for (const d of descriptors()) params[d.name] = new Float32Array([d.defaultValue]);
     const left = new Float32Array(128);
@@ -107,8 +117,9 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
     expect(analysis!.spectrum.length).toBe(36);
   });
 
-  it('honours the mute message', () => {
+  it('honours the mute message', async () => {
     const proc = instantiate();
+    await waitReady();
     const params: Record<string, Float32Array> = {};
     for (const d of descriptors()) params[d.name] = new Float32Array([d.defaultValue]);
     proc.port.onmessage?.({ data: { type: 'mute', value: true } });

@@ -77,29 +77,39 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     this.muted = false;
     this.blockCount = 0;
     this.pendingSpectrum = new Float32Array(SPECTRUM_BINS);
+    this.port.onmessage = (event) => this.handleMessage(event.data);
 
-    try {
-      const instance = new WebAssembly.Instance(opts.wasmModule, {});
-      this.wasm = instance.exports;
-      this.memory = this.wasm.memory;
-      this.leftPtr = this.wasm.gs_left_ptr();
-      this.rightPtr = this.wasm.gs_right_ptr();
-      this.spectrumPtr = this.wasm.gs_spectrum_ptr();
-      this.bins = this.wasm.gs_spectrum_bins();
-      this.maxBlock = this.wasm.gs_max_block_size();
-      this.wasm.gs_init(opts.sampleRate || sampleRate, opts.maxPolyphony || 16);
-      if (opts.routes) {
-        opts.routes.forEach((r, i) => {
-          this.wasm.gs_set_mod_route(i, r.src, r.dst, r.amount, r.enabled ? 1 : 0);
-        });
-      }
-      this.ready = true;
-      this.port.postMessage({ type: 'ready', abi: this.wasm.gs_abi_version() });
-    } catch (err) {
-      this.port.postMessage({ type: 'error', message: String(err) });
+    const bytes = opts.wasmBytes;
+    if (!bytes) {
+      this.port.postMessage({ type: 'error', message: '缺少 WASM 数据' });
+      return;
     }
 
-    this.port.onmessage = (event) => this.handleMessage(event.data);
+    // Instantiate asynchronously from an ArrayBuffer. This is portable across
+    // Safari (which cannot reliably structured-clone a WebAssembly.Module) and
+    // keeps compilation off the render path: `process()` outputs silence until
+    // `ready` flips.
+    WebAssembly.instantiate(bytes, {})
+      .then(({ instance }) => {
+        this.wasm = instance.exports;
+        this.memory = this.wasm.memory;
+        this.leftPtr = this.wasm.gs_left_ptr();
+        this.rightPtr = this.wasm.gs_right_ptr();
+        this.spectrumPtr = this.wasm.gs_spectrum_ptr();
+        this.bins = this.wasm.gs_spectrum_bins();
+        this.maxBlock = this.wasm.gs_max_block_size();
+        this.wasm.gs_init(opts.sampleRate || sampleRate, opts.maxPolyphony || 16);
+        if (opts.routes) {
+          opts.routes.forEach((r, i) => {
+            this.wasm.gs_set_mod_route(i, r.src, r.dst, r.amount, r.enabled ? 1 : 0);
+          });
+        }
+        this.ready = true;
+        this.port.postMessage({ type: 'ready', abi: this.wasm.gs_abi_version() });
+      })
+      .catch((err) => {
+        this.port.postMessage({ type: 'error', message: 'WASM 实例化失败: ' + String(err) });
+      });
   }
 
   handleMessage(data) {

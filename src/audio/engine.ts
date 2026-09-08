@@ -3,12 +3,19 @@
  *
  * Graph:  SynthWorkletNode -> masterGain -> analyser -> destination
  *
- * The worklet owns the DSP; this class owns the browser side — compiling the
- * WASM module on the main thread (the AudioWorklet scope has no `fetch`), wiring
- * AudioParam automation, and shipping note events as transferable buffers.
+ * Browser compatibility notes:
+ *  - The `AudioContext` is created and resumed *synchronously inside the user
+ *    gesture*. Safari refuses to start a context that was only resumed after an
+ *    `await`.
+ *  - The WASM bytes are shipped to the worklet as a structured-cloneable
+ *    `ArrayBuffer` and instantiated inside the worklet. Passing a
+ *    `WebAssembly.Module` through `processorOptions` is not reliable on Safari.
+ *  - Two WASM builds are shipped; SIMD is feature-detected at runtime so older
+ *    Safari (pre-16.4) falls back to the scalar core.
  */
 
-import wasmUrl from '@/generated/synth_core.wasm?url';
+import simdWasmUrl from '@/generated/synth_core.wasm?url';
+import scalarWasmUrl from '@/generated/synth_core_scalar.wasm?url';
 import processorUrl from './worklet-processor.js?url';
 import {
   PARAM_NAMES,
@@ -31,7 +38,29 @@ type AnalysisListener = (frame: AnalysisFrame) => void;
 /** Parameters that are stepped, not ramped (enums / switches). */
 const DISCRETE = new Set<number>([1, 2, 7, 8, 13, 18, 23, 24, 27, 28, 29, 32, 33]);
 
+/** Minimal module that uses a v128 op — the canonical SIMD feature probe. */
+const SIMD_PROBE = new Uint8Array([
+  0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15,
+  253, 98, 11,
+]);
+
+export function detectSimd(): boolean {
+  try {
+    return WebAssembly.validate(SIMD_PROBE);
+  } catch {
+    return false;
+  }
+}
+
 export type EngineStatus = 'idle' | 'loading' | 'running' | 'suspended' | 'error';
+
+export interface EngineDiagnostics {
+  simd: boolean;
+  wasm: 'simd' | 'scalar' | 'none';
+  contextState: string;
+  sampleRate: number;
+  userAgent: string;
+}
 
 export class AudioEngine {
   ctx: AudioContext | null = null;
@@ -42,13 +71,12 @@ export class AudioEngine {
   status: EngineStatus = 'idle';
   error: string | null = null;
   sampleRate = 48000;
+  simdSupported = detectSimd();
 
-  private wasmModule: WebAssembly.Module | null = null;
+  private loadPromise: Promise<void> | null = null;
   private listeners = new Set<AnalysisListener>();
   private statusListeners = new Set<() => void>();
   private timeBuffer = new Float32Array(1024);
-  private initPromise: Promise<void> | null = null;
-  private lastParams: Record<number, number> = {};
 
   onAnalysis(fn: AnalysisListener): () => void {
     this.listeners.add(fn);
@@ -58,6 +86,16 @@ export class AudioEngine {
   onStatus(fn: () => void): () => void {
     this.statusListeners.add(fn);
     return () => this.statusListeners.delete(fn);
+  }
+
+  diagnostics(): EngineDiagnostics {
+    return {
+      simd: this.simdSupported,
+      wasm: this.node ? (this.simdSupported ? 'simd' : 'scalar') : 'none',
+      contextState: this.ctx?.state ?? 'none',
+      sampleRate: this.sampleRate,
+      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'n/a',
+    };
   }
 
   private emitStatus() {
@@ -70,23 +108,70 @@ export class AudioEngine {
     this.emitStatus();
   }
 
-  /** Load WASM + worklet and build the graph. Safe to call repeatedly. */
+  /**
+   * Create the AudioContext. Must be called from a user gesture; it does no
+   * awaiting so the gesture is still valid for `resume()`.
+   */
+  ensureContext(): AudioContext {
+    if (this.ctx) return this.ctx;
+    try {
+      this.ctx = new AudioContext({ latencyHint: 'interactive' });
+    } catch {
+      this.ctx = new AudioContext();
+    }
+    this.sampleRate = this.ctx.sampleRate;
+    this.ctx.onstatechange = () => {
+      const state = this.ctx?.state;
+      if (state === 'running') this.setStatus('running');
+      else if (state === 'suspended') this.setStatus('suspended');
+    };
+    return this.ctx;
+  }
+
+  /**
+   * Full startup. Call directly from a click/tap handler: the context is
+   * created and resumed before the first `await`.
+   */
+  async start(maxPolyphony = 16, routes?: ModRoute[]): Promise<void> {
+    const ctx = this.ensureContext();
+    const resume = ctx.state === 'running' ? Promise.resolve() : ctx.resume();
+    try {
+      await this.load(ctx, maxPolyphony, routes);
+      await resume;
+      if (ctx.state === 'running') this.setStatus('running');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.setStatus('error', message);
+      throw err;
+    }
+  }
+
+  /** Load WASM + worklet and build the graph (no resume). */
   async init(maxPolyphony = 16, routes?: ModRoute[]): Promise<void> {
-    if (this.status === 'running' || this.status === 'suspended') return;
-    if (this.initPromise) return this.initPromise;
+    await this.load(this.ensureContext(), maxPolyphony, routes);
+  }
 
-    this.initPromise = (async () => {
+  private load(ctx: AudioContext, maxPolyphony: number, routes?: ModRoute[]): Promise<void> {
+    if (this.node) return Promise.resolve();
+    if (this.loadPromise) return this.loadPromise;
+
+    this.loadPromise = (async () => {
       this.setStatus('loading');
+      const url = this.simdSupported ? simdWasmUrl : scalarWasmUrl;
       try {
-        const ctx = new AudioContext({ latencyHint: 'interactive' });
-        this.ctx = ctx;
-        this.sampleRate = ctx.sampleRate;
-
-        const response = await fetch(wasmUrl);
-        if (!response.ok) throw new Error(`wasm fetch failed: ${response.status}`);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 20000);
+        let response: Response;
+        try {
+          response = await fetch(url, { signal: controller.signal });
+        } finally {
+          clearTimeout(timer);
+        }
+        if (!response.ok) throw new Error(`WASM 下载失败 (HTTP ${response.status})`);
         const bytes = await response.arrayBuffer();
-        // Compile on the main thread; the Module is structured-cloneable.
-        this.wasmModule = await WebAssembly.compile(bytes);
+        if (!WebAssembly.validate(bytes)) {
+          throw new Error('WASM 模块校验失败（可能被服务器改写了内容）');
+        }
 
         await ctx.audioWorklet.addModule(processorUrl);
 
@@ -95,7 +180,7 @@ export class AudioEngine {
           numberOfOutputs: 1,
           outputChannelCount: [2],
           processorOptions: {
-            wasmModule: this.wasmModule,
+            wasmBytes: bytes,
             sampleRate: ctx.sampleRate,
             maxPolyphony,
             routes: routes?.map((r) => ({
@@ -138,24 +223,22 @@ export class AudioEngine {
         };
 
         this.setStatus(ctx.state === 'running' ? 'running' : 'suspended');
-        ctx.onstatechange = () => {
-          if (ctx.state === 'running') this.setStatus('running');
-          else if (ctx.state === 'suspended') this.setStatus('suspended');
-        };
       } catch (err) {
-        this.setStatus('error', err instanceof Error ? err.message : String(err));
+        this.loadPromise = null;
+        const message = err instanceof Error ? err.message : String(err);
+        this.setStatus('error', message);
         throw err;
       }
     })();
 
-    return this.initPromise;
+    return this.loadPromise;
   }
 
   /** Must be called from a user gesture on iOS/Safari. */
   async resume(): Promise<void> {
-    if (!this.ctx) await this.init();
-    if (this.ctx && this.ctx.state !== 'running') {
-      await this.ctx.resume();
+    const ctx = this.ctx ?? this.ensureContext();
+    if (ctx.state !== 'running') {
+      await ctx.resume();
       this.setStatus('running');
     }
   }
@@ -176,13 +259,12 @@ export class AudioEngine {
     this.node = null;
     this.analyser = null;
     this.masterGain = null;
-    this.initPromise = null;
+    this.loadPromise = null;
     this.setStatus('idle');
   }
 
   /** Apply a parameter through the matching AudioParam. */
   setParam(id: ParamId, value: number, immediate = false) {
-    this.lastParams[id] = value;
     if (!this.node || !this.ctx) return;
     const name = PARAM_NAMES[id];
     const param = this.node.parameters.get(name);
