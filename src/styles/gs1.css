@@ -637,3 +637,9 @@ body.module-dragging .module-grip{cursor:grabbing}
 .fx2-strip{min-width:0}
 .fx2-strip .knob-row{justify-content:flex-start}
 @media (max-width:620px){.fx2-grid{grid-template-columns:1fr}}
+.adsr-title{font:600 8.5px/1 var(--mono);letter-spacing:.16em;color:var(--txt-dim);margin-bottom:6px}
+.lfo2{margin-top:12px;padding-top:11px;border-top:1px dashed #232833}
+.module-subhead{display:flex;align-items:center;gap:7px;margin-bottom:9px}
+.module-subhead .bar{width:3.5px;height:12px;border-radius:2px;background:var(--mc);box-shadow:0 0 8px var(--mc)}
+.module-subhead .title{font:700 10.5px/1 var(--grot);letter-spacing:.14em;color:var(--mc)}
+.module-subhead .spacer{flex:1}

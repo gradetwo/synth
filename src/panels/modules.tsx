@@ -125,7 +125,11 @@ function FilterModule() {
 function EnvModule() {
   return (
     <ModuleShell id="env">
-      <AdsrEditor />
+      <AdsrEditor title="AMP ENV" />
+      <AdsrEditor
+        title="FILTER ENV"
+        ids={[Param.FILTER_ENV_ATTACK, Param.FILTER_ENV_DECAY, Param.FILTER_ENV_SUSTAIN, Param.FILTER_ENV_RELEASE]}
+      />
       <div className="env-foot">
         <ParamSegment
           id={Param.VOICE_MODE}
@@ -162,6 +166,25 @@ function LfoModule() {
         <ParamLed id={Param.LFO_SYNC} label="LFO 同步" />
         <span className="hint">SYNC</span>
         <LfoRateLabel />
+      </div>
+
+      <div className="lfo2">
+        <div className="module-subhead">
+          <span className="bar" />
+          <span className="title">LFO 2</span>
+          <span className="spacer" />
+          <ParamLed id={Param.LFO2_ON} label="LFO 2 开关" />
+        </div>
+        <ParamWaveSelect id={Param.LFO2_WAVE} waves={LFO_WAVES} />
+        <div className="knob-row">
+          <Knob spec={SPEC_BY_ID[Param.LFO2_RATE]} />
+          <Knob spec={SPEC_BY_ID[Param.LFO2_DEPTH]} />
+        </div>
+        <ParamSegment
+          id={Param.LFO2_TARGET}
+          label="LFO 2 目标"
+          options={LFO_TARGETS.map((t, i) => ({ label: t.toUpperCase(), value: i }))}
+        />
       </div>
     </ModuleShell>
   );

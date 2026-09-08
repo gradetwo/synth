@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { store } from '@/state/store';
 import { useParam } from '@/hooks/useSynth';
-import { Param, clamp, fmt } from '@/audio/params';
+import { Param, clamp, fmt, type ParamId } from '@/audio/params';
 
 const GATE = 190;
 
@@ -21,11 +21,15 @@ const fromTime = {
 
 type Handle = 'A' | 'D' | 'S' | 'R';
 
-export function AdsrEditor() {
-  const a = useParam(Param.ENV_ATTACK);
-  const d = useParam(Param.ENV_DECAY);
-  const s = useParam(Param.ENV_SUSTAIN);
-  const r = useParam(Param.ENV_RELEASE);
+export type AdsrIds = [number, number, number, number];
+
+const AMP_IDS: AdsrIds = [Param.ENV_ATTACK, Param.ENV_DECAY, Param.ENV_SUSTAIN, Param.ENV_RELEASE];
+
+export function AdsrEditor({ title = 'AMP ENV', ids = AMP_IDS }: { title?: string; ids?: AdsrIds }) {
+  const a = useParam(ids[0] as ParamId);
+  const d = useParam(ids[1] as ParamId);
+  const s = useParam(ids[2] as ParamId);
+  const r = useParam(ids[3] as ParamId);
 
   const ax = clamp(fromTime.a(a), 10, 82);
   const dx = clamp(fromTime.d(d), ax + 10, ax + 90);
@@ -50,14 +54,15 @@ export function AdsrEditor() {
     const rect = svg.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 300;
     const y = ((e.clientY - rect.top) / rect.height) * 110;
-    if (handle === 'A') store.setParam(Param.ENV_ATTACK, toTime.a(clamp(x, 10, 82)));
-    if (handle === 'D') store.setParam(Param.ENV_DECAY, toTime.d(clamp(x, ax + 10, ax + 90)));
-    if (handle === 'S') store.setParam(Param.ENV_SUSTAIN, clamp(toTime.s(clamp(y, 15, 86)), 0, 1));
-    if (handle === 'R') store.setParam(Param.ENV_RELEASE, toTime.r(clamp(x - GATE, 15, 95)));
+    if (handle === 'A') store.setParam(ids[0] as ParamId, toTime.a(clamp(x, 10, 82)));
+    if (handle === 'D') store.setParam(ids[1] as ParamId, toTime.d(clamp(x, ax + 10, ax + 90)));
+    if (handle === 'S') store.setParam(ids[2] as ParamId, clamp(toTime.s(clamp(y, 15, 86)), 0, 1));
+    if (handle === 'R') store.setParam(ids[3] as ParamId, toTime.r(clamp(x - GATE, 15, 95)));
   };
 
   return (
     <div className="adsr-wrap">
+      {title ? <div className="adsr-title">{title}</div> : null}
       <svg
         className="adsr-svg"
         ref={svgRef}

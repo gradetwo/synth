@@ -69,6 +69,15 @@ pub mod id {
     pub const FX_DRIVE_ON: u32 = 55;
     pub const FX_DRIVE_AMT: u32 = 56;
     pub const FX_DRIVE_MIX: u32 = 57;
+    pub const FILTER_ENV_ATTACK: u32 = 58;
+    pub const FILTER_ENV_DECAY: u32 = 59;
+    pub const FILTER_ENV_SUSTAIN: u32 = 60;
+    pub const FILTER_ENV_RELEASE: u32 = 61;
+    pub const LFO2_ON: u32 = 62;
+    pub const LFO2_WAVE: u32 = 63;
+    pub const LFO2_RATE: u32 = 64;
+    pub const LFO2_DEPTH: u32 = 65;
+    pub const LFO2_TARGET: u32 = 66;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -328,6 +337,8 @@ pub struct Params {
     pub filter: FilterParams,
     pub env: EnvParams,
     pub lfo: LfoParams,
+    pub lfo2: LfoParams,
+    pub filter_env: EnvParams,
     pub fx: FxParams,
     pub routes: [ModRoute; MOD_ROUTES],
 }
@@ -363,6 +374,20 @@ impl Params {
                 depth: 0.3,
                 target: LfoTarget::Cutoff,
                 sync: false,
+            },
+            lfo2: LfoParams {
+                on: false,
+                wave: LfoWave::Triangle,
+                rate: 0.5,
+                depth: 0.3,
+                target: LfoTarget::Cutoff,
+                sync: false,
+            },
+            filter_env: EnvParams {
+                attack: 0.01,
+                decay: 0.3,
+                sustain: 0.5,
+                release: 0.3,
             },
             fx: FxParams {
                 reverb_on: false,
@@ -470,6 +495,15 @@ impl Params {
             p::FX_DRIVE_ON => self.fx.drive_on = value > 0.5,
             p::FX_DRIVE_AMT => self.fx.drive_amt = clamp01(value),
             p::FX_DRIVE_MIX => self.fx.drive_mix = clamp01(value),
+            p::FILTER_ENV_ATTACK => self.filter_env.attack = value.clamp(0.0005, 8.0),
+            p::FILTER_ENV_DECAY => self.filter_env.decay = value.clamp(0.001, 12.0),
+            p::FILTER_ENV_SUSTAIN => self.filter_env.sustain = clamp01(value),
+            p::FILTER_ENV_RELEASE => self.filter_env.release = value.clamp(0.005, 16.0),
+            p::LFO2_ON => self.lfo2.on = value > 0.5,
+            p::LFO2_WAVE => self.lfo2.wave = LfoWave::from_u32(value as u32),
+            p::LFO2_RATE => self.lfo2.rate = value.clamp(0.02, 40.0),
+            p::LFO2_DEPTH => self.lfo2.depth = clamp01(value),
+            p::LFO2_TARGET => self.lfo2.target = LfoTarget::from_u32(value as u32),
             _ => {}
         }
     }

@@ -82,10 +82,13 @@ pub struct Engine {
     pub params: Params,
     pub vm: VoiceManager,
     pub lfo: Lfo,
+    pub lfo2: Lfo,
     pub spectrum: Spectrum,
 
-    /// One envelope per voice (see `dsp::adsr`).
+    /// One amplitude envelope per voice (see `dsp::adsr`).
     envs: [Adsr; MAX_VOICES],
+    /// Independent filter envelope per voice.
+    filter_envs: [Adsr; MAX_VOICES],
 
     // Scratch buffers — all statically sized, all reused per voice.
     osc_a: [f32; MAX_BLOCK_SIZE],
@@ -93,6 +96,8 @@ pub struct Engine {
     env_buf: [f32; MAX_BLOCK_SIZE],
     voice_buf: [f32; MAX_BLOCK_SIZE],
     lfo_buf: [f32; MAX_BLOCK_SIZE],
+    lfo2_buf: [f32; MAX_BLOCK_SIZE],
+    filter_env_buf: [f32; MAX_BLOCK_SIZE],
     mix_l: [f32; MAX_BLOCK_SIZE],
     mix_r: [f32; MAX_BLOCK_SIZE],
     fx_l: [f32; MAX_BLOCK_SIZE],
@@ -125,13 +130,17 @@ impl Engine {
             params: Params::new(),
             vm: VoiceManager::new(),
             lfo: Lfo::new(),
+            lfo2: Lfo::new(),
             spectrum: Spectrum::new(),
             envs: [Adsr::new(); MAX_VOICES],
+            filter_envs: [Adsr::new(); MAX_VOICES],
             osc_a: [0.0; MAX_BLOCK_SIZE],
             osc_b: [0.0; MAX_BLOCK_SIZE],
             env_buf: [0.0; MAX_BLOCK_SIZE],
             voice_buf: [0.0; MAX_BLOCK_SIZE],
             lfo_buf: [0.0; MAX_BLOCK_SIZE],
+            lfo2_buf: [0.0; MAX_BLOCK_SIZE],
+            filter_env_buf: [0.0; MAX_BLOCK_SIZE],
             mix_l: [0.0; MAX_BLOCK_SIZE],
             mix_r: [0.0; MAX_BLOCK_SIZE],
             fx_l: [0.0; MAX_BLOCK_SIZE],
@@ -168,7 +177,12 @@ impl Engine {
         self.spectrum.init();
         self.spectrum.reset();
         self.lfo.reset();
+        self.lfo2.reset();
         for env in self.envs.iter_mut() {
+            env.set_sample_rate(self.sample_rate);
+            env.reset();
+        }
+        for env in self.filter_envs.iter_mut() {
             env.set_sample_rate(self.sample_rate);
             env.reset();
         }
@@ -187,14 +201,25 @@ impl Engine {
     }
 
     pub fn set_param(&mut self, param_id: u32, value: f32) {
+        // The worklet pushes every AudioParam on every block, so side effects
+        // here must be edge-triggered rather than level-triggered.
+        let mode_changed =
+            param_id == id::VOICE_MODE && (value as u32).min(2) != self.params.voice_mode;
         self.params.set(param_id, value);
         if matches!(
             param_id,
-            id::ENV_ATTACK | id::ENV_DECAY | id::ENV_SUSTAIN | id::ENV_RELEASE
+            id::ENV_ATTACK
+                | id::ENV_DECAY
+                | id::ENV_SUSTAIN
+                | id::ENV_RELEASE
+                | id::FILTER_ENV_ATTACK
+                | id::FILTER_ENV_DECAY
+                | id::FILTER_ENV_SUSTAIN
+                | id::FILTER_ENV_RELEASE
         ) {
             self.env_dirty = true;
         }
-        if param_id == id::VOICE_MODE {
+        if mode_changed {
             // Switching polyphony model: release everything cleanly.
             self.mono_len = 0;
             for slot in 0..MAX_VOICES {
@@ -291,6 +316,11 @@ impl Engine {
             env.reset();
             env.set_params(p.attack, p.decay, p.sustain, p.release);
             env.gate_on();
+            let f = self.params.filter_env;
+            let fenv = &mut self.filter_envs[slot];
+            fenv.reset();
+            fenv.set_params(f.attack, f.decay, f.sustain, f.release);
+            fenv.gate_on();
         }
     }
 
@@ -308,6 +338,7 @@ impl Engine {
                 self.vm.voices[slot].gate = false;
                 self.vm.voices[slot].released = true;
                 self.envs[slot].gate_off();
+                self.filter_envs[slot].gate_off();
             }
         } else {
             let last = self.mono_held[self.mono_len - 1];
@@ -324,13 +355,20 @@ impl Engine {
         env.reset();
         env.set_params(p.attack, p.decay, p.sustain, p.release);
         env.gate_on();
+        let f = self.params.filter_env;
+        let fenv = &mut self.filter_envs[slot];
+        fenv.reset();
+        fenv.set_params(f.attack, f.decay, f.sustain, f.release);
+        fenv.gate_on();
     }
 
     fn apply_env_to_all(&mut self) {
         let p = self.params.env;
+        let f = self.params.filter_env;
         for slot in 0..MAX_VOICES {
             if self.vm.voices[slot].active && !self.vm.voices[slot].stealing {
                 self.envs[slot].set_params(p.attack, p.decay, p.sustain, p.release);
+                self.filter_envs[slot].set_params(f.attack, f.decay, f.sustain, f.release);
             }
         }
         self.env_dirty = false;
@@ -418,6 +456,23 @@ impl Engine {
         }
         let lfo_value = self.lfo.value;
 
+        // --- second LFO -----------------------------------------------------
+        let lfo2_on = self.params.lfo2.on;
+        let depth2 = if lfo2_on { self.params.lfo2.depth } else { 0.0 };
+        let lfo2_rate = if self.params.lfo2.sync {
+            self.params.tempo / 60.0
+        } else {
+            self.params.lfo2.rate
+        };
+        if lfo2_on {
+            self.lfo2
+                .render(self.params.lfo2.wave, lfo2_rate, self.sample_rate, &mut self.lfo2_buf[..frames]);
+        } else {
+            self.lfo2_buf[..frames].fill(0.0);
+            self.lfo2.value = 0.0;
+        }
+        let lfo2_value = self.lfo2.value;
+
         // --- clear mix bus --------------------------------------------------
         self.mix_l[..frames].fill(0.0);
         self.mix_r[..frames].fill(0.0);
@@ -426,7 +481,7 @@ impl Engine {
         let mut active = 0u32;
         for slot in 0..MAX_VOICES {
             if self.vm.voices[slot].active {
-                self.render_voice(slot, frames, depth, lfo_value);
+                self.render_voice(slot, frames, depth, lfo_value, depth2, lfo2_value);
                 active += 1;
             }
         }
@@ -476,6 +531,7 @@ impl Engine {
         let sr = self.sample_rate;
         let tune = self.params.master_tune;
         let params = self.params.env;
+        let fenv_params = self.params.filter_env;
         while let Some((slot, _note, _vel)) = self
             .vm
             .flush_pending(|note| note_to_hz(note as f32 + tune))
@@ -485,11 +541,23 @@ impl Engine {
             env.reset();
             env.set_params(params.attack, params.decay, params.sustain, params.release);
             env.gate_on();
+            let fenv = &mut self.filter_envs[slot];
+            fenv.reset();
+            fenv.set_params(fenv_params.attack, fenv_params.decay, fenv_params.sustain, fenv_params.release);
+            fenv.gate_on();
             let _ = sr;
         }
     }
 
-    fn render_voice(&mut self, slot: usize, frames: usize, depth: f32, lfo_value: f32) {
+    fn render_voice(
+        &mut self,
+        slot: usize,
+        frames: usize,
+        depth: f32,
+        lfo_value: f32,
+        depth2: f32,
+        lfo2_value: f32,
+    ) {
         let voice = self.vm.voices[slot];
         let sr = self.sample_rate;
         let params = self.params;
@@ -535,6 +603,13 @@ impl Engine {
             match params.lfo.target {
                 LfoTarget::Pitch => pitch_mod += lfo_value * depth * 2.0,
                 LfoTarget::Pwm => pw_mod += lfo_value * depth * 0.4,
+                _ => {}
+            }
+        }
+        if depth2 > 0.0 {
+            match params.lfo2.target {
+                LfoTarget::Pitch => pitch_mod += lfo2_value * depth2 * 2.0,
+                LfoTarget::Pwm => pw_mod += lfo2_value * depth2 * 0.4,
                 _ => {}
             }
         }
@@ -588,6 +663,15 @@ impl Engine {
         let env_last = self.env_buf[frames - 1];
         self.vm.voices[slot].env_value = env_last;
 
+        // Independent filter envelope (shares the voice gate).
+        {
+            let fenv = &mut self.filter_envs[slot];
+            for sample in self.filter_env_buf[..frames].iter_mut() {
+                *sample = fenv.process(gate);
+            }
+        }
+        let filter_env_last = self.filter_env_buf[frames - 1];
+
         let velocity = voice.velocity;
         for i in 0..frames {
             self.voice_buf[i] *= self.env_buf[i] * velocity;
@@ -595,10 +679,12 @@ impl Engine {
 
         // --- tremolo / volume modulation ------------------------------------
         let vol_depth = depth * matches!(params.lfo.target, LfoTarget::Volume) as u32 as f32;
-        if vol_depth > 0.0 || mod_volume != 0.0 {
+        let vol_depth2 = depth2 * matches!(params.lfo2.target, LfoTarget::Volume) as u32 as f32;
+        if vol_depth > 0.0 || vol_depth2 > 0.0 || mod_volume != 0.0 {
             for i in 0..frames {
                 let l = self.lfo_buf[i];
-                let mut g = 1.0 - vol_depth * (0.5 - 0.5 * l);
+                let l2 = self.lfo2_buf[i];
+                let mut g = 1.0 - vol_depth * (0.5 - 0.5 * l) - vol_depth2 * (0.5 - 0.5 * l2);
                 g += mod_volume * (0.5 + 0.5 * l);
                 self.voice_buf[i] *= g.clamp(0.0, 4.0);
             }
@@ -610,10 +696,13 @@ impl Engine {
             cutoff *= semitone_ratio(voice.note as f32 - 60.0);
         }
         if params.filter.env_amt > 0.0 {
-            cutoff *= exp2(env_last * params.filter.env_amt * 6.0);
+            cutoff *= exp2(filter_env_last * params.filter.env_amt * 6.0);
         }
         if depth > 0.0 && matches!(params.lfo.target, LfoTarget::Cutoff) {
             cutoff *= exp2(lfo_value * depth * 4.0);
+        }
+        if depth2 > 0.0 && matches!(params.lfo2.target, LfoTarget::Cutoff) {
+            cutoff *= exp2(lfo2_value * depth2 * 4.0);
         }
         cutoff *= exp2(mod_cutoff * 4.0);
         cutoff = cutoff.clamp(20.0, sr * 0.45);
@@ -663,6 +752,7 @@ impl Engine {
         if !voice.gate && !self.envs[slot].is_active() {
             self.vm.release_slot(slot);
             self.envs[slot].reset();
+            self.filter_envs[slot].reset();
         }
     }
 

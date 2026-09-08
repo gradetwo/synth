@@ -70,6 +70,15 @@ const PARAMS = [
   ['fxDriveOn', 55, 0, 0, 1],
   ['fxDriveAmt', 56, 0.4, 0, 1],
   ['fxDriveMix', 57, 0.6, 0, 1],
+  ['filterEnvAttack', 58, 0.01, 0.0005, 8],
+  ['filterEnvDecay', 59, 0.3, 0.001, 12],
+  ['filterEnvSustain', 60, 0.5, 0, 1],
+  ['filterEnvRelease', 61, 0.3, 0.005, 16],
+  ['lfo2On', 62, 0, 0, 1],
+  ['lfo2Wave', 63, 1, 0, 3],
+  ['lfo2Rate', 64, 0.5, 0.02, 40],
+  ['lfo2Depth', 65, 0.3, 0, 1],
+  ['lfo2Target', 66, 0, 0, 3],
 ];
 
 const SPECTRUM_BINS = 36;
