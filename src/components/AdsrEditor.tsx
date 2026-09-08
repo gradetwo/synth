@@ -84,7 +84,10 @@ export function AdsrEditor({ title = 'AMP ENV', ids = AMP_IDS }: { title?: strin
         <text x={GATE + 5} y="14" fill="#59607a" fontSize="7.5" fontFamily="IBM Plex Mono" letterSpacing="1">
           GATE
         </text>
-        <path d={path} fill="none" stroke="var(--env)" strokeWidth="2.2" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 0 5px var(--env))' }} />
+        {/* Halo is a wider translucent stroke: Safari renders SVG
+            `filter: drop-shadow()` inconsistently (WebKit #261442). */}
+        <path d={path} fill="none" stroke="var(--env)" strokeWidth="7" strokeLinejoin="round" opacity="0.16" />
+        <path d={path} fill="none" stroke="var(--env)" strokeWidth="2.2" strokeLinejoin="round" />
         <path d={`${path} L 8 95 Z`} fill="var(--env)" opacity="0.09" />
         {(['A', 'D', 'S', 'R'] as Handle[]).map((h) => (
           <g
