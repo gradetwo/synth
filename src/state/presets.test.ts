@@ -3,6 +3,14 @@ import { DEFAULT_PARAMS, Param } from '@/audio/params';
 import { FACTORY_PRESETS, presetParams, presetRoutes } from './presets';
 
 describe('preset library', () => {
+  it('ships a substantial library (40+ presets)', () => {
+    expect(FACTORY_PRESETS.length).toBeGreaterThanOrEqual(40);
+    for (const cat of ['LEAD', 'BASS', 'PAD', 'PLUCK', 'KEYS', 'FX', 'BASIC']) {
+      const count = FACTORY_PRESETS.filter((p) => p.cat === cat).length;
+      expect(count, cat).toBeGreaterThanOrEqual(3);
+    }
+  });
+
   it('has unique ids and non-empty metadata', () => {
     const ids = FACTORY_PRESETS.map((p) => p.id);
     expect(new Set(ids).size).toBe(ids.length);
