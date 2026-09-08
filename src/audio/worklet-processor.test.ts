@@ -8,6 +8,8 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { Param, PARAM_NAMES } from '@/audio/params';
+import { FACTORY_PRESETS, presetParams } from '@/state/presets';
 
 const wasmPath = 'src/generated/synth_core.wasm';
 const hasWasm = existsSync(wasmPath);
@@ -154,5 +156,60 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
     const right = new Float32Array(128).fill(1);
     proc.process([], [[left, right]], params);
     expect(Array.from(left).every((v) => v === 0)).toBe(true);
+  });
+
+  it('renders every factory preset without NaN or silence', async () => {
+    const bad: string[] = [];
+    const silent: string[] = [];
+    const sampleRate = 48000;
+    const block = 128;
+
+    for (const preset of FACTORY_PRESETS) {
+      const proc = instantiate();
+      // Wait on this instance's own ready flag. The shared `messages` queue is
+      // fine for the single-processor tests, but with 60+ instances it can
+      // report a previous instance's `ready`.
+      const state = proc as unknown as { ready: boolean };
+      for (let i = 0; i < 200 && !state.ready; i++) {
+        await new Promise((r) => setTimeout(r, 1));
+      }
+      expect(state.ready, preset.id).toBe(true);
+
+      const values = presetParams(preset);
+      const params: Record<string, Float32Array> = {};
+      for (const d of descriptors()) params[d.name] = new Float32Array([d.defaultValue]);
+      for (const [id, name] of Object.entries(PARAM_NAMES)) {
+        if (params[name]) params[name][0] = values[Number(id)];
+      }
+
+      const left = new Float32Array(block);
+      const right = new Float32Array(block);
+      // The host pushes AudioParams every block; do the same before the note
+      // so mode/envelope changes are in place (matches the live engine order).
+      proc.process([], [[left, right]], params);
+      proc.process([], [[left, right]], params);
+
+      proc.port.onmessage?.({ data: new Uint8Array([0x90, 60, 127]).buffer });
+
+      // Render far enough for slow pads and risers to actually open their
+      // envelope, but cap the work per preset.
+      const attack = values[Param.ENV_ATTACK];
+      const decay = values[Param.ENV_DECAY];
+      const holdSec = Math.min(attack + Math.max(decay, 0.05), 1.5) + 0.15;
+      const blocks = Math.min(Math.ceil((holdSec * sampleRate) / block), 800);
+
+      let peak = 0;
+      for (let i = 0; i < blocks; i++) {
+        proc.process([], [[left, right]], params);
+        for (const v of left) {
+          if (!Number.isFinite(v)) bad.push(preset.id);
+          peak = Math.max(peak, Math.abs(v));
+        }
+      }
+      if (peak < 0.003) silent.push(`${preset.id}(${peak.toFixed(4)})`);
+    }
+
+    expect([...new Set(bad)], `non-finite output: ${[...new Set(bad)].join(', ')}`).toEqual([]);
+    expect(silent, `silent presets: ${silent.join(', ')}`).toEqual([]);
   });
 });

@@ -3,11 +3,21 @@ import { DEFAULT_PARAMS, Param } from '@/audio/params';
 import { FACTORY_PRESETS, presetParams, presetRoutes } from './presets';
 
 describe('preset library', () => {
-  it('ships a substantial library (40+ presets)', () => {
-    expect(FACTORY_PRESETS.length).toBeGreaterThanOrEqual(40);
+  it('ships a substantial library (60+ presets)', () => {
+    expect(FACTORY_PRESETS.length).toBeGreaterThanOrEqual(60);
     for (const cat of ['LEAD', 'BASS', 'PAD', 'PLUCK', 'KEYS', 'FX', 'BASIC']) {
       const count = FACTORY_PRESETS.filter((p) => p.cat === cat).length;
-      expect(count, cat).toBeGreaterThanOrEqual(3);
+      expect(count, cat).toBeGreaterThanOrEqual(5);
+    }
+  });
+
+  it('uses English-only preset names with a unique id', () => {
+    for (const p of FACTORY_PRESETS) {
+      // Names are authored `English · 中文`; the UI trims the Chinese half.
+      const [en, cn] = p.name.split(' · ');
+      expect(en?.trim().length, p.id).toBeGreaterThan(0);
+      expect(cn?.trim().length, p.id).toBeGreaterThan(0);
+      expect(p.id, p.id).toMatch(/^[a-z][a-z0-9]*$/);
     }
   });
 
