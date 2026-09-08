@@ -379,7 +379,7 @@ export function KeyboardDock() {
             title="隐藏键盘"
           >
             <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-              <path d="M2 7.5 L6 3.5 L10 7.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M2 4.5 L6 8.5 L10 4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
         </div>
