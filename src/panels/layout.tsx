@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { store } from '@/state/store';
-import { useSynth } from '@/hooks/useSynth';
+import { useKeyboardVisible, usePower, usePresetId } from '@/hooks/useSynth';
 import { noteBus, noteName, noteToHz } from '@/audio/noteBus';
 import { LfoLed, LfoRateLabel, Scope, ScopeMeta, Spectrum, VuMeter } from '@/components/canvas';
 import { Keyboard, Wheels } from '@/components/Keyboard';
@@ -24,9 +24,10 @@ function EngineBadge({ status }: { status: EngineStatus }) {
 }
 
 export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: EngineStatus }) {
-  const { currentPresetId, state, layout } = useSynth();
+  const currentPresetId = usePresetId();
+  const power = usePower();
+  const keyboardVisible = useKeyboardVisible();
   const preset = store.allPresets().find((p) => p.id === currentPresetId);
-  const power = state.power;
 
   return (
     <header className="topbar">
@@ -81,9 +82,9 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
       <div className="top-actions">
         <button
           type="button"
-          className={`tbtn${layout.keyboardVisible ? ' on' : ''}`}
-          title={layout.keyboardVisible ? '隐藏键盘' : '显示键盘'}
-          aria-pressed={layout.keyboardVisible}
+          className={`tbtn${keyboardVisible ? ' on' : ''}`}
+          title={keyboardVisible ? '隐藏键盘' : '显示键盘'}
+          aria-pressed={keyboardVisible}
           onClick={() => store.toggleKeyboard()}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -245,8 +246,7 @@ export function DisplayRow() {
  * Hideable so it never blocks the module editor on small screens.
  */
 export function KeyboardDock() {
-  const { layout } = useSynth();
-  const visible = layout.keyboardVisible;
+  const visible = useKeyboardVisible();
   return (
     <>
       <div

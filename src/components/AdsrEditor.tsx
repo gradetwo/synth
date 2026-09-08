@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { store } from '@/state/store';
-import { useSynth } from '@/hooks/useSynth';
+import { useParam } from '@/hooks/useSynth';
 import { Param, clamp, fmt } from '@/audio/params';
 
 const GATE = 190;
@@ -22,11 +22,10 @@ const fromTime = {
 type Handle = 'A' | 'D' | 'S' | 'R';
 
 export function AdsrEditor() {
-  useSynth();
-  const a = store.getParam(Param.ENV_ATTACK);
-  const d = store.getParam(Param.ENV_DECAY);
-  const s = store.getParam(Param.ENV_SUSTAIN);
-  const r = store.getParam(Param.ENV_RELEASE);
+  const a = useParam(Param.ENV_ATTACK);
+  const d = useParam(Param.ENV_DECAY);
+  const s = useParam(Param.ENV_SUSTAIN);
+  const r = useParam(Param.ENV_RELEASE);
 
   const ax = clamp(fromTime.a(a), 10, 82);
   const dx = clamp(fromTime.d(d), ax + 10, ax + 90);

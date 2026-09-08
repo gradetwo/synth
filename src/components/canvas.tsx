@@ -1,13 +1,19 @@
 import { useEffect, useRef } from 'react';
 import { engine } from '@/audio/engine';
 import { analysis } from '@/audio/analysis';
+import { subscribeFrame } from '@/audio/animationBus';
 import { store } from '@/state/store';
-import { useSynth } from '@/hooks/useSynth';
-import { intToFilter, intToWave, intToLfoWave, type Wave } from '@/audio/params';
+import { useParam } from '@/hooks/useSynth';
+import { intToFilter, intToWave, intToLfoWave, type ParamId, type Wave } from '@/audio/params';
 
 const TAU = Math.PI * 2;
 
-/** Shared rAF + DPR canvas loop. `draw` runs every animation frame. */
+/**
+ * Shared canvas loop. Sizing is handled by a per-canvas ResizeObserver, but all
+ * drawing is multiplexed onto one `requestAnimationFrame` via `subscribeFrame`.
+ * Components that read live values do so inside `draw`, so they never re-render
+ * React just to animate.
+ */
 function useRafCanvas(draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const drawRef = useRef(draw);
@@ -16,7 +22,6 @@ function useRafCanvas(draw: (ctx: CanvasRenderingContext2D, w: number, h: number
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
-    let raf = 0;
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const rect = canvas.getBoundingClientRect();
@@ -29,17 +34,14 @@ function useRafCanvas(draw: (ctx: CanvasRenderingContext2D, w: number, h: number
     const ro = new ResizeObserver(resize);
     ro.observe(canvas);
     resize();
-    const loop = () => {
+    const unsubscribe = subscribeFrame(() => {
       const ctx = canvas.getContext('2d');
-      if (ctx && canvas.width > 0) {
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        drawRef.current(ctx, canvas.width / dpr, canvas.height / dpr);
-      }
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
+      if (!ctx || canvas.width === 0) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      drawRef.current(ctx, canvas.width / dpr, canvas.height / dpr);
+    });
     return () => {
-      cancelAnimationFrame(raf);
+      unsubscribe();
       ro.disconnect();
     };
   }, []);
@@ -113,10 +115,11 @@ export function Scope() {
 }
 
 export function ScopeMeta() {
-  useSynth();
-  const filter = intToFilter(store.getParam(13)).toUpperCase();
-  const osc2 = store.getParam(7) > 0.5 ? 'OSC×2' : 'OSC×1';
-  const cutoff = store.getParam(14);
+  const filterType = useParam(13 as ParamId);
+  const cutoff = useParam(14 as ParamId);
+  const osc2On = useParam(7 as ParamId);
+  const filter = intToFilter(filterType).toUpperCase();
+  const osc2 = osc2On > 0.5 ? 'OSC×2' : 'OSC×1';
   const text = `${filter} · ${cutoff >= 1000 ? `${(cutoff / 1000).toFixed(2)} kHz` : `${cutoff.toFixed(0)} Hz`} · ${osc2}`;
   return <span className="ph-meta">{text}</span>;
 }
@@ -168,12 +171,11 @@ export function MiniWave({
   color: string;
   lfo?: boolean;
 }) {
-  useSynth();
-  const on = store.getParam(lfo ? 23 : which === 1 ? 1 : 7) > 0.5;
-  const wave = lfo
-    ? intToLfoWave(store.getParam(24))
-    : intToWave(store.getParam(which === 1 ? 2 : 8));
   const ref = useRafCanvas((ctx, w, h) => {
+    const on = store.getParam((lfo ? 23 : which === 1 ? 1 : 7) as ParamId) > 0.5;
+    const wave = lfo
+      ? intToLfoWave(store.getParam(24 as ParamId))
+      : intToWave(store.getParam((which === 1 ? 2 : 8) as ParamId));
     ctx.clearRect(0, 0, w, h);
     ctx.strokeStyle = on ? color : '#333a48';
     ctx.lineWidth = 1.6;
@@ -195,11 +197,10 @@ export function MiniWave({
 }
 
 export function FilterCurve() {
-  useSynth();
-  const type = intToFilter(store.getParam(13));
-  const cutoff = store.getParam(14);
-  const res = store.getParam(15);
   const ref = useRafCanvas((ctx, w, h) => {
+    const type = intToFilter(store.getParam(13 as ParamId));
+    const cutoff = store.getParam(14 as ParamId);
+    const res = store.getParam(15 as ParamId);
     ctx.clearRect(0, 0, w, h);
     const fc = (Math.log(cutoff / 40) / Math.log(18000 / 40)) * w;
     const peak = res * (h * 0.38);
@@ -264,34 +265,24 @@ export function VuMeter() {
 }
 
 export function LfoLed() {
-  useSynth();
-  const on = store.getParam(23) > 0.5 && store.getParam(28) === 0;
-  const sync = store.getParam(28) > 0.5;
-  const rate = sync ? store.getParam(37) / 60 : store.getParam(25);
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    let raf = 0;
     const start = performance.now();
-    const loop = (now: number) => {
+    return subscribeFrame((now) => {
       const el = ref.current;
-      if (el) {
-        const phase = (((now - start) / 1000) * rate) % 1;
-        el.classList.toggle('on', on && Math.sin(phase * TAU) > 0);
-      }
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, [on, rate]);
+      if (!el) return;
+      const on = store.getParam(23 as ParamId) > 0.5;
+      const sync = store.getParam(28 as ParamId) > 0.5;
+      const rate = sync ? store.getParam(37 as ParamId) / 60 : store.getParam(25 as ParamId);
+      const phase = (((now - start) / 1000) * rate) % 1;
+      el.classList.toggle('on', on && Math.sin(phase * TAU) > 0);
+    });
+  }, []);
   return <div className="lfo-led" ref={ref} />;
 }
 
 export function LfoRateLabel() {
-  useSynth();
-  const sync = store.getParam(28) > 0.5;
-  return (
-    <span className="lm-rate">
-      {sync ? 'SYNC 1/4' : `${store.getParam(25).toFixed(2)} Hz`}
-    </span>
-  );
+  const sync = useParam(28 as ParamId) > 0.5;
+  const rate = useParam(25 as ParamId);
+  return <span className="lm-rate">{sync ? 'SYNC 1/4' : `${rate.toFixed(2)} Hz`}</span>;
 }

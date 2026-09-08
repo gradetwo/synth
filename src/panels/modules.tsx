@@ -1,5 +1,5 @@
 import { store } from '@/state/store';
-import { useSynth } from '@/hooks/useSynth';
+import { useParam, useRoutes } from '@/hooks/useSynth';
 import {
   DELAY_SYNCS,
   LFO_TARGETS,
@@ -16,6 +16,7 @@ import {
   intToModSrc,
   modDstToInt,
   modSrcToInt,
+  type ParamId,
   type Wave,
 } from '@/audio/params';
 import type { ModuleId } from '@/state/layout';
@@ -25,10 +26,10 @@ import { AdsrEditor } from '@/components/AdsrEditor';
 import { ModuleShell } from '@/components/Module';
 
 function ParamWaveSelect({ id, waves }: { id: number; waves: Wave[] }) {
-  useSynth();
+  const value = Math.round(useParam(id as ParamId));
   return (
     <WaveSelect
-      value={Math.round(store.getParam(id as never))}
+      value={value}
       waves={waves}
       onChange={(i) => store.setParam(id as never, i, { immediate: true })}
     />
@@ -46,10 +47,10 @@ function ParamSegment({
   colorful?: boolean;
   label?: string;
 }) {
-  useSynth();
+  const value = Math.round(useParam(id as ParamId));
   return (
     <Segment
-      value={Math.round(store.getParam(id as never))}
+      value={value}
       options={options}
       colorful={colorful}
       label={label}
@@ -84,8 +85,7 @@ function OscModule({ which }: { which: 1 | 2 }) {
 // ------------------------------------------------------------------ FILTER
 
 function FilterModule() {
-  useSynth();
-  const type = intToFilter(store.getParam(Param.FILTER_TYPE));
+  const type = intToFilter(useParam(Param.FILTER_TYPE));
   return (
     <ModuleShell id="filter">
       <ParamSegment
@@ -155,11 +155,11 @@ function LfoModule() {
 // ------------------------------------------------------------- MOD MATRIX
 
 function ModMatrix() {
-  const { state } = useSynth();
+  const routes = useRoutes();
   return (
     <ModuleShell id="matrix">
       <div className="matrix-list">
-        {state.routes.map((route, i) => (
+        {routes.map((route, i) => (
           <div className="mrow" key={i}>
             <select
               className="badge badge-sel"
@@ -220,8 +220,7 @@ function ModMatrix() {
 // ---------------------------------------------------------------------- FX
 
 function FxModule() {
-  useSynth();
-  const sync = intToDelaySync(store.getParam(Param.FX_DELAY_SYNC));
+  const sync = intToDelaySync(useParam(Param.FX_DELAY_SYNC));
   return (
     <ModuleShell id="fx">
       <div className="fx-grid">

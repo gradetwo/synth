@@ -1,7 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
 import { store } from '@/state/store';
-import { useSynth } from '@/hooks/useSynth';
+import { useParam } from '@/hooks/useSynth';
 import {
+  type ParamId,
   type ParamSpec,
   type Wave,
   WAVE_CN,
@@ -30,8 +31,7 @@ interface KnobProps {
 }
 
 export function Knob({ spec, big }: KnobProps) {
-  useSynth();
-  const value = store.getParam(spec.id);
+  const value = useParam(spec.id);
   const norm = (v: number): number => {
     const c = clamp(v, spec.min, spec.max);
     return spec.curve === 'log'
@@ -149,10 +149,10 @@ export function Led({ on, onToggle, label, color }: LedProps) {
 
 /** LED bound directly to a parameter id. */
 export function ParamLed({ id, label, color }: { id: number; label?: string; color?: string }) {
-  useSynth();
+  const on = useParam(id as ParamId) > 0.5;
   return (
     <Led
-      on={store.getParam(id as never) > 0.5}
+      on={on}
       onToggle={(v) => store.setParam(id as never, v ? 1 : 0, { immediate: true })}
       label={label}
       color={color}
@@ -259,7 +259,6 @@ export function WaveIcon({ wave, size = 16 }: { wave: Wave; size?: number }) {
 // ---------------------------------------------------------------- toggle cell
 
 export function ToggleCell({ id, label }: { id: number; label: string }) {
-  useSynth();
   return (
     <div className="toggle-cell">
       <span className="lbl">{label}</span>

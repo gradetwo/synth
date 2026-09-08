@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { store } from '@/state/store';
-import { useSynth } from '@/hooks/useSynth';
+import { useCollapsed } from '@/hooks/useSynth';
 import { MODULE_META, type ModuleId } from '@/state/layout';
 import { ParamLed } from './controls';
 
@@ -82,9 +82,8 @@ export function ModuleShell({
   children: ReactNode;
   className?: string;
 }) {
-  const { layout } = useSynth();
+  const collapsed = useCollapsed(id);
   const meta = MODULE_META[id];
-  const collapsed = Boolean(layout.collapsed[id]);
   const startDrag = useContext(DragContext);
 
   return (

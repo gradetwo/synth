@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { engine } from '@/audio/engine';
 import { store } from '@/state/store';
-import { useSynth } from '@/hooks/useSynth';
+import { useLayout, usePower } from '@/hooks/useSynth';
 import { wireAnalysis } from '@/audio/analysis';
 import { TopBar, DisplayRow, KeyboardDock } from '@/panels/layout';
 import { ModuleFor } from '@/panels/modules';
@@ -72,7 +72,8 @@ export default function App() {
   const [status, setStatus] = useState(engine.getState());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const { state, layout } = useSynth();
+  const layout = useLayout();
+  const power = usePower();
 
   useEffect(() => {
     const off = engine.onStatus(() => {
@@ -85,8 +86,8 @@ export default function App() {
 
   useEffect(() => {
     // Keep the graph muted when the power switch is off.
-    engine.setMuted(!state.power);
-  }, [state.power]);
+    engine.setMuted(!power);
+  }, [power]);
 
   const start = async () => {
     setBusy(true);
@@ -124,11 +125,6 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="notice">
-        <span className="dot" />
-        WASM 音频核心 · <b>Rust + AudioWorklet</b> · 完整离线 PWA · GS-1 v1.0.4
-      </div>
-
       <TopBar onBrowse={() => setDrawerOpen(true)} status={status} />
 
       <DisplayRow />
