@@ -150,7 +150,7 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 .wave-btn:hover{border-color:#3a4152}
 .wave-btn.active{border-color:var(--mc);
   box-shadow:inset 0 0 12px color-mix(in srgb,var(--mc) 14%,transparent)}
-.wave-btn.active svg{stroke:var(--mc);filter:drop-shadow(0 0 4px var(--mc))}
+.wave-btn.active svg{stroke:var(--mc)}
 
 .knob-row{display:flex;gap:10px;justify-content:space-around;flex-wrap:wrap}
 .knob{display:flex;flex-direction:column;align-items:center;gap:5px;
@@ -161,14 +161,19 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
   box-shadow:0 4px 8px rgba(0,0,0,.5),inset 0 1px 1px rgba(255,255,255,.12),inset 0 -2px 4px rgba(0,0,0,.5)}
 .knob.big .knob-dial{width:62px;height:62px}
 .knob-dial:active{cursor:grabbing}
-.knob .arc{position:absolute;inset:-7px;pointer-events:none;overflow:visible}
-.knob.big .arc{inset:-8px}
-.arc path{fill:none;stroke-linecap:round}
-.arc .arc-bg{stroke:#232834;stroke-width:7}
-.arc .arc-val{stroke:var(--mc);stroke-width:7;filter:drop-shadow(0 0 4px var(--mc))}
-.knob-rot{position:absolute;inset:0;transform:rotate(var(--rot,0deg));pointer-events:none}
-.knob-rot::before{content:'';position:absolute;left:calc(50% - 1.5px);top:9%;
-  width:3px;height:34%;background:var(--mc);border-radius:2px;box-shadow:0 0 6px var(--mc)}
+/* Arc + needle share one SVG so they stay concentric with the dial. The glow
+   is a wider translucent stroke, not drop-shadow() (Safari clips/offsets it). */
+.knob-ring{position:absolute;left:-7px;top:-7px;
+  width:calc(100% + 14px);height:calc(100% + 14px);pointer-events:none;overflow:visible}
+.knob.big .knob-ring{left:-8px;top:-8px;width:calc(100% + 16px);height:calc(100% + 16px)}
+.knob-ring path,.knob-ring line{fill:none;stroke-linecap:round}
+.arc-bg{stroke:#232834;stroke-width:7}
+.arc-halo{stroke:var(--mc);stroke-width:13;opacity:.22}
+.arc-val{stroke:var(--mc);stroke-width:7}
+.needle-halo{stroke:var(--mc);stroke-width:11;opacity:.25}
+.needle-core{stroke:var(--mc);stroke-width:3.5}
+.knob.fine .arc-val{stroke-width:9}
+.knob.fine .needle-core{stroke-width:4.5}
 .knob-label{font:600 8.5px/1 var(--grot);letter-spacing:.1em;color:var(--txt-2)}
 .knob-value{font:500 9.5px/1 var(--mono);color:#c9d1e3;font-variant-numeric:tabular-nums;white-space:nowrap}
 .knob.dragging .knob-value{color:var(--mc)}
@@ -640,7 +645,6 @@ body.module-dragging .module-grip{cursor:grabbing}
 .knob-tip-fine{color:var(--txt-2);font-weight:500;letter-spacing:.06em}
 /* Touch fine-tune mode: the value glows while the finger is held down. */
 .knob.fine .knob-value{color:var(--accent)}
-.knob.fine .knob-dial{box-shadow:0 0 0 2px var(--accent-dim) inset}
 .module-ghost{position:fixed;z-index:81;left:0;top:0;pointer-events:none;opacity:0;
   transform:translate(-50%,-50%);transition:opacity .12s;
   background:#12151c;border:1px solid var(--accent-dim);border-radius:10px;

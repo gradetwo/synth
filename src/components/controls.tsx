@@ -112,6 +112,11 @@ export function Knob({ spec, big }: KnobProps) {
   };
 
   const rot = -135 + t * 270;
+  // Arc/needle live in one SVG so they can never drift apart from the dial.
+  // The halo is a wider translucent stroke rather than `filter: drop-shadow()`,
+  // which Safari renders inconsistently (WebKit #261442).
+  const radius = big ? 43 : 42;
+  const valPath = arcPath(225, 225 + t * 270, radius);
   return (
     <div className={`knob${big ? ' big' : ''}${dragging ? ' dragging' : ''}${fine ? ' fine' : ''}`}>
       <div
@@ -142,11 +147,20 @@ export function Knob({ spec, big }: KnobProps) {
           }
         }}
       >
-        <svg className="arc" viewBox="0 0 100 100" aria-hidden="true">
-          <path className="arc-bg" d={arcPath(225, 495, 42)} />
-          <path className="arc-val" d={arcPath(225, 225 + t * 270, 42)} />
+        <svg
+          className="knob-ring"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="xMidYMid meet"
+          aria-hidden="true"
+        >
+          <path className="arc-bg" d={arcPath(225, 495, radius)} />
+          {valPath ? <path className="arc-halo" d={valPath} /> : null}
+          {valPath ? <path className="arc-val" d={valPath} /> : null}
+          <g transform={`rotate(${rot} 50 50)`}>
+            <line className="needle-halo" x1="50" y1="20" x2="50" y2="40" />
+            <line className="needle-core" x1="50" y1="20" x2="50" y2="40" />
+          </g>
         </svg>
-        <div className="knob-rot" style={{ ['--rot' as string]: `${rot}deg` }} />
       </div>
       <div className="knob-label">{spec.label}</div>
       <div className="knob-value">{spec.format(value)}</div>
