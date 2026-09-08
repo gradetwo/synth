@@ -5,7 +5,7 @@ import { noteBus, noteName, noteToHz } from '@/audio/noteBus';
 import { LfoLed, LfoRateLabel, Scope, ScopeMeta, Spectrum, VuMeter } from '@/components/canvas';
 import { Keyboard, Wheels } from '@/components/Keyboard';
 import { toast } from '@/components/Toast';
-import type { EngineStatus } from '@/audio/engine';
+import { engine, type EngineStatus } from '@/audio/engine';
 
 // ---------------------------------------------------------------- top bar
 
@@ -197,6 +197,17 @@ function DemoButton() {
   );
 }
 
+function PolyBadge() {
+  const [poly, setPoly] = useState(engine.polyphony);
+  useEffect(() => engine.onPolyphony(setPoly), []);
+  if (poly >= 16) return null;
+  return (
+    <span className="poly-badge" title="负载过高时自动降低的复音上限">
+      POLY {poly}
+    </span>
+  );
+}
+
 export function DisplayRow() {
   return (
     <section className="display-row">
@@ -232,6 +243,7 @@ export function DisplayRow() {
             <span className="lm-label">LFO</span>
             <LfoLed />
             <LfoRateLabel />
+            <PolyBadge />
           </div>
         </div>
       </div>

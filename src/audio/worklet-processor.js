@@ -77,6 +77,11 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     this.muted = false;
     this.blockCount = 0;
     this.pendingSpectrum = new Float32Array(SPECTRUM_BINS);
+    this.maxPoly = opts.maxPolyphony || 16;
+    this.currentPoly = this.maxPoly;
+    this.costAvg = 0;
+    this.lastDowngrade = 0;
+    this.lastUpgrade = 0;
     this.port.onmessage = (event) => this.handleMessage(event.data);
 
     const bytes = opts.wasmBytes;
@@ -163,6 +168,31 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     }
   }
 
+  monitorLoad(frames, cost, rate) {
+    if (this.blockCount < 60) return; // ignore JIT warm-up
+    const budget = (frames / rate) * 1000;
+    this.costAvg = this.costAvg ? this.costAvg * 0.95 + cost * 0.05 : cost;
+    const now = performance.now();
+    if (this.costAvg > budget * 0.45 && this.currentPoly > 4 && now - this.lastDowngrade > 1500) {
+      this.currentPoly = Math.max(4, this.currentPoly - 4);
+      this.wasm.gs_set_max_polyphony(this.currentPoly);
+      this.wasm.gs_force_release_excess();
+      this.lastDowngrade = now;
+      this.costAvg = 0;
+      this.port.postMessage({ type: 'polyphony', value: this.currentPoly, reason: 'overload' });
+    } else if (
+      this.costAvg < budget * 0.18 &&
+      this.currentPoly < this.maxPoly &&
+      now - this.lastUpgrade > 8000
+    ) {
+      this.currentPoly = Math.min(this.maxPoly, this.currentPoly + 4);
+      this.wasm.gs_set_max_polyphony(this.currentPoly);
+      this.lastUpgrade = now;
+      this.costAvg = 0;
+      this.port.postMessage({ type: 'polyphony', value: this.currentPoly, reason: 'recover' });
+    }
+  }
+
   process(_inputs, outputs, parameters) {
     const output = outputs[0];
     if (!output || output.length === 0) return true;
@@ -183,9 +213,14 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
       if (values !== undefined) this.wasm.gs_set_param(PARAMS[i][1], values[0]);
     }
 
-    // 2. Render a dynamic block (128..1024 frames depending on the host).
+    // 2. Render a dynamic block (128..1024 frames depending on the host),
+    //    measuring the cost against the render-quantum budget so we can shed
+    //    voices smoothly before the audio thread misses its deadline.
     const block = Math.min(frames, this.maxBlock);
+    const t0 = performance.now();
     this.wasm.gs_process(block);
+    const cost = performance.now() - t0;
+    this.monitorLoad(block, cost, sampleRate);
 
     // 3. Rebuild views every block; never cache them across `memory.grow`.
     const leftView = new Float32Array(this.memory.buffer, this.leftPtr, block);

@@ -59,6 +59,7 @@ export interface EngineDiagnostics {
   wasm: 'simd' | 'scalar' | 'none';
   contextState: string;
   sampleRate: number;
+  polyphony: number;
   userAgent: string;
 }
 
@@ -71,12 +72,15 @@ export class AudioEngine {
   status: EngineStatus = 'idle';
   error: string | null = null;
   sampleRate = 48000;
+  /** Current polyphony cap after automatic load shedding (starts at 16). */
+  polyphony = 16;
   simdSupported = detectSimd();
   wasmVariant: 'simd' | 'scalar' | 'none' = 'none';
 
   private loadPromise: Promise<void> | null = null;
   private listeners = new Set<AnalysisListener>();
   private statusListeners = new Set<() => void>();
+  private polyphonyListeners = new Set<(value: number) => void>();
   private timeBuffer = new Float32Array(1024);
 
   onAnalysis(fn: AnalysisListener): () => void {
@@ -95,6 +99,7 @@ export class AudioEngine {
       wasm: this.wasmVariant,
       contextState: this.ctx?.state ?? 'none',
       sampleRate: this.sampleRate,
+      polyphony: this.polyphony,
       userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'n/a',
     };
   }
@@ -246,6 +251,9 @@ export class AudioEngine {
               violations: data.violations as number,
             };
             for (const fn of this.listeners) fn(frame);
+          } else if (data.type === 'polyphony') {
+            this.polyphony = Number(data.value) || this.polyphony;
+            for (const fn of this.polyphonyListeners) fn(this.polyphony);
           } else if (data.type === 'error') {
             this.setStatus('error', String(data.message));
           }

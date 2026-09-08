@@ -90,6 +90,15 @@ pub extern "C" fn gs_trigger_smooth_downgrade() {
     engine().trigger_smooth_downgrade();
 }
 
+/// Force-release voices beyond the current polyphony cap (used by the worklet's
+/// performance monitor after it lowers the cap itself).
+#[no_mangle]
+pub extern "C" fn gs_force_release_excess() {
+    let e = engine();
+    let limit = e.vm.max_polyphony;
+    e.vm.force_release_excess(limit);
+}
+
 // --------------------------------------------------------------------- events
 
 #[no_mangle]
