@@ -8,9 +8,9 @@
 import type { ParamId } from '@/audio/params';
 import { Param } from '@/audio/params';
 
-export type ModuleId = 'osc1' | 'osc2' | 'filter' | 'env' | 'lfo' | 'matrix' | 'fx';
+export type ModuleId = 'osc1' | 'osc2' | 'filter' | 'env' | 'lfo' | 'matrix' | 'fx' | 'fx2';
 
-export const MODULE_IDS: ModuleId[] = ['osc1', 'osc2', 'filter', 'env', 'lfo', 'matrix', 'fx'];
+export const MODULE_IDS: ModuleId[] = ['osc1', 'osc2', 'filter', 'env', 'lfo', 'matrix', 'fx', 'fx2'];
 
 export interface ModuleMeta {
   title: string;
@@ -29,6 +29,7 @@ export const MODULE_META: Record<ModuleId, ModuleMeta> = {
   lfo: { title: 'LFO', sub: '低频振荡', color: 'var(--lfo)', ledId: Param.LFO_ON, span: 1 },
   matrix: { title: 'MOD MATRIX', sub: '调制路由', color: 'var(--matrix)', span: 1 },
   fx: { title: 'FX', sub: '效果处理', color: 'var(--fx)', span: 2 },
+  fx2: { title: 'FX 2', sub: '调制效果', color: 'var(--fx)', span: 2 },
 };
 
 export interface LayoutState {

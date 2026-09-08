@@ -65,6 +65,17 @@ void gs_voice_filter_block(int v, int type, const float *in, float *out, uint32_
 /* --- per-voice DC blocker -------------------------------------------------- */
 void gs_voice_dc_block(int v, const float *in, float *out, uint32_t frames);
 
+/* --- global modulation effects (DaisySP) ---------------------------------- */
+void gs_fx_init(float sample_rate);
+void gs_fx_chorus_set(float depth, float freq, float delay_ms, float feedback);
+void gs_fx_chorus_block(const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
+void gs_fx_flanger_set(float depth, float freq, float delay_ms, float feedback);
+void gs_fx_flanger_block(const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
+void gs_fx_phaser_set(float depth, float freq, float feedback, int poles);
+void gs_fx_phaser_block(const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
+void gs_fx_overdrive_set(float drive);
+void gs_fx_overdrive_block(const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
+
 /* Diagnostics: number of voices currently allocated in the static pool. */
 int gs_daisy_voice_slots(void);
 

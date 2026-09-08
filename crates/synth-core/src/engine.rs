@@ -27,6 +27,15 @@ extern "C" {
     fn gs_voice_filter_block(v: i32, kind: i32, input: *const f32, out: *mut f32, frames: u32);
     fn gs_voice_dc_block(v: i32, input: *const f32, out: *mut f32, frames: u32);
     fn gs_sp_init(sample_rate: f32);
+    fn gs_fx_init(sample_rate: f32);
+    fn gs_fx_chorus_set(depth: f32, freq: f32, delay_ms: f32, feedback: f32);
+    fn gs_fx_chorus_block(in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
+    fn gs_fx_flanger_set(depth: f32, freq: f32, delay_ms: f32, feedback: f32);
+    fn gs_fx_flanger_block(in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
+    fn gs_fx_phaser_set(depth: f32, freq: f32, feedback: f32, poles: i32);
+    fn gs_fx_phaser_block(in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
+    fn gs_fx_overdrive_set(drive: f32);
+    fn gs_fx_overdrive_block(in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
     #[cfg(test)]
     fn gs_sp_alloc_events() -> u32;
     fn gs_sp_set_reverb(feedback: f32, lpfreq: f32, mix: f32);
@@ -154,6 +163,7 @@ impl Engine {
         unsafe {
             gs_daisy_init(self.sample_rate);
             gs_sp_init(self.sample_rate);
+            gs_fx_init(self.sample_rate);
         }
         self.spectrum.init();
         self.spectrum.reset();
@@ -692,6 +702,70 @@ impl Engine {
                 self.fx_r.as_mut_ptr(),
                 frames as u32,
             );
+        }
+
+        // Modulation effects run after reverb/delay, each wet/dry blended.
+        if fx.chorus_on && fx.chorus_mix > 0.0 {
+            unsafe {
+                gs_fx_chorus_set(fx.chorus_depth, fx.chorus_rate, 20.0, 0.25);
+                gs_fx_chorus_block(
+                    self.fx_l.as_ptr(),
+                    self.fx_r.as_ptr(),
+                    self.osc_a.as_mut_ptr(),
+                    self.osc_b.as_mut_ptr(),
+                    frames as u32,
+                );
+            }
+            self.blend_wet(frames, fx.chorus_mix);
+        }
+        if fx.flanger_on && fx.flanger_mix > 0.0 {
+            unsafe {
+                gs_fx_flanger_set(0.5, fx.flanger_rate, 2.0, fx.flanger_fb);
+                gs_fx_flanger_block(
+                    self.fx_l.as_ptr(),
+                    self.fx_r.as_ptr(),
+                    self.osc_a.as_mut_ptr(),
+                    self.osc_b.as_mut_ptr(),
+                    frames as u32,
+                );
+            }
+            self.blend_wet(frames, fx.flanger_mix);
+        }
+        if fx.phaser_on && fx.phaser_mix > 0.0 {
+            unsafe {
+                gs_fx_phaser_set(0.8, fx.phaser_rate, fx.phaser_fb, 4);
+                gs_fx_phaser_block(
+                    self.fx_l.as_ptr(),
+                    self.fx_r.as_ptr(),
+                    self.osc_a.as_mut_ptr(),
+                    self.osc_b.as_mut_ptr(),
+                    frames as u32,
+                );
+            }
+            self.blend_wet(frames, fx.phaser_mix);
+        }
+        if fx.drive_on && fx.drive_mix > 0.0 {
+            unsafe {
+                gs_fx_overdrive_set(fx.drive_amt);
+                gs_fx_overdrive_block(
+                    self.fx_l.as_ptr(),
+                    self.fx_r.as_ptr(),
+                    self.osc_a.as_mut_ptr(),
+                    self.osc_b.as_mut_ptr(),
+                    frames as u32,
+                );
+            }
+            self.blend_wet(frames, fx.drive_mix);
+        }
+    }
+
+    /// `fx_l/fx_r = dry*(1-mix) + wet*mix`, where the wet signal is in
+    /// `osc_a/osc_b` (free scratch buffers after the voice loop).
+    fn blend_wet(&mut self, frames: usize, mix: f32) {
+        let dry = 1.0 - mix;
+        for i in 0..frames {
+            self.fx_l[i] = self.fx_l[i] * dry + self.osc_a[i] * mix;
+            self.fx_r[i] = self.fx_r[i] * dry + self.osc_b[i] * mix;
         }
     }
 }

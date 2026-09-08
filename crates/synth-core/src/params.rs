@@ -54,6 +54,21 @@ pub mod id {
     pub const OSC2_PAN: u32 = 40;
     pub const MASTER_TUNE: u32 = 41;
     pub const VOICE_MODE: u32 = 42;
+    pub const FX_CHORUS_ON: u32 = 43;
+    pub const FX_CHORUS_DEPTH: u32 = 44;
+    pub const FX_CHORUS_RATE: u32 = 45;
+    pub const FX_CHORUS_MIX: u32 = 46;
+    pub const FX_FLANGER_ON: u32 = 47;
+    pub const FX_FLANGER_RATE: u32 = 48;
+    pub const FX_FLANGER_FB: u32 = 49;
+    pub const FX_FLANGER_MIX: u32 = 50;
+    pub const FX_PHASER_ON: u32 = 51;
+    pub const FX_PHASER_RATE: u32 = 52;
+    pub const FX_PHASER_FB: u32 = 53;
+    pub const FX_PHASER_MIX: u32 = 54;
+    pub const FX_DRIVE_ON: u32 = 55;
+    pub const FX_DRIVE_AMT: u32 = 56;
+    pub const FX_DRIVE_MIX: u32 = 57;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -281,6 +296,21 @@ pub struct FxParams {
     pub delay_sync: u32,
     pub delay_fb: f32,
     pub delay_mix: f32,
+    pub chorus_on: bool,
+    pub chorus_depth: f32,
+    pub chorus_rate: f32,
+    pub chorus_mix: f32,
+    pub flanger_on: bool,
+    pub flanger_rate: f32,
+    pub flanger_fb: f32,
+    pub flanger_mix: f32,
+    pub phaser_on: bool,
+    pub phaser_rate: f32,
+    pub phaser_fb: f32,
+    pub phaser_mix: f32,
+    pub drive_on: bool,
+    pub drive_amt: f32,
+    pub drive_mix: f32,
 }
 
 /// Complete engine parameter snapshot. `Copy` keeps the render loop allocation
@@ -342,6 +372,21 @@ impl Params {
                 delay_sync: 2,
                 delay_fb: 0.3,
                 delay_mix: 0.1,
+                chorus_on: false,
+                chorus_depth: 0.5,
+                chorus_rate: 0.6,
+                chorus_mix: 0.4,
+                flanger_on: false,
+                flanger_rate: 0.3,
+                flanger_fb: 0.5,
+                flanger_mix: 0.4,
+                phaser_on: false,
+                phaser_rate: 0.4,
+                phaser_fb: 0.6,
+                phaser_mix: 0.5,
+                drive_on: false,
+                drive_amt: 0.4,
+                drive_mix: 0.6,
             },
             routes: [
                 ModRoute {
@@ -410,6 +455,21 @@ impl Params {
             p::FX_DELAY_SYNC => self.fx.delay_sync = (value as u32).min(3),
             p::FX_DELAY_FB => self.fx.delay_fb = value.clamp(0.0, 0.95),
             p::FX_DELAY_MIX => self.fx.delay_mix = clamp01(value),
+            p::FX_CHORUS_ON => self.fx.chorus_on = value > 0.5,
+            p::FX_CHORUS_DEPTH => self.fx.chorus_depth = clamp01(value),
+            p::FX_CHORUS_RATE => self.fx.chorus_rate = value.clamp(0.02, 10.0),
+            p::FX_CHORUS_MIX => self.fx.chorus_mix = clamp01(value),
+            p::FX_FLANGER_ON => self.fx.flanger_on = value > 0.5,
+            p::FX_FLANGER_RATE => self.fx.flanger_rate = value.clamp(0.02, 10.0),
+            p::FX_FLANGER_FB => self.fx.flanger_fb = value.clamp(0.0, 0.95),
+            p::FX_FLANGER_MIX => self.fx.flanger_mix = clamp01(value),
+            p::FX_PHASER_ON => self.fx.phaser_on = value > 0.5,
+            p::FX_PHASER_RATE => self.fx.phaser_rate = value.clamp(0.02, 10.0),
+            p::FX_PHASER_FB => self.fx.phaser_fb = value.clamp(0.0, 0.95),
+            p::FX_PHASER_MIX => self.fx.phaser_mix = clamp01(value),
+            p::FX_DRIVE_ON => self.fx.drive_on = value > 0.5,
+            p::FX_DRIVE_AMT => self.fx.drive_amt = clamp01(value),
+            p::FX_DRIVE_MIX => self.fx.drive_mix = clamp01(value),
             _ => {}
         }
     }

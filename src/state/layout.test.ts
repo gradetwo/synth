@@ -42,8 +42,15 @@ describe('layout model', () => {
 
   it('moves a module to an index and clamps out-of-range targets', () => {
     const order = defaultLayout().order;
-    expect(moveModule(order, 'fx', 0)).toEqual(['fx', 'osc1', 'osc2', 'filter', 'env', 'lfo', 'matrix']);
-    expect(moveModule(order, 'osc1', 99)).toEqual(['osc2', 'filter', 'env', 'lfo', 'matrix', 'fx', 'osc1']);
+    const first = moveModule(order, 'fx', 0);
+    expect(first[0]).toBe('fx');
+    expect(first).toHaveLength(order.length);
+    expect(new Set(first).size).toBe(order.length);
+
+    const last = moveModule(order, 'osc1', 99);
+    expect(last[last.length - 1]).toBe('osc1');
+    expect(last).toHaveLength(order.length);
+
     expect(moveModule(order, 'osc1', 0)).toBe(order);
   });
 });

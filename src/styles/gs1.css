@@ -630,3 +630,10 @@ body.module-dragging .module-grip{cursor:grabbing}
 .d-foot-actions{display:flex;gap:6px;flex-wrap:wrap}
 .d-foot-actions .d-reset{flex:1;min-width:64px}
 .d-foot-count{font:500 9.5px/1 var(--mono);color:var(--txt-dim);text-align:center}
+.monitor-actions{position:absolute;top:7px;right:10px;display:flex;gap:6px;z-index:2}
+.monitor-actions .demo-btn{position:static;top:auto;right:auto}
+.demo-btn:disabled{opacity:.6;cursor:progress}
+.fx2-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.fx2-strip{min-width:0}
+.fx2-strip .knob-row{justify-content:flex-start}
+@media (max-width:620px){.fx2-grid{grid-template-columns:1fr}}

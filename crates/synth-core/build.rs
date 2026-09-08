@@ -97,6 +97,10 @@ fn main() {
         daisysp_src.join("Filters/ladder.cpp"),
         daisysp_src.join("Filters/svf.cpp"),
         daisysp_src.join("Utility/dcblock.cpp"),
+        daisysp_src.join("Effects/chorus.cpp"),
+        daisysp_src.join("Effects/flanger.cpp"),
+        daisysp_src.join("Effects/phaser.cpp"),
+        daisysp_src.join("Effects/overdrive.cpp"),
     ];
 
     let obj_dir = out_dir.join("obj");

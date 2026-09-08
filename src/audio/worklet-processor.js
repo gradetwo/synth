@@ -55,6 +55,21 @@ const PARAMS = [
   ['osc2Pan', 40, 0, -1, 1],
   ['masterTune', 41, 0, -24, 24],
   ['voiceMode', 42, 0, 0, 2],
+  ['fxChorusOn', 43, 0, 0, 1],
+  ['fxChorusDepth', 44, 0.5, 0, 1],
+  ['fxChorusRate', 45, 0.6, 0.02, 10],
+  ['fxChorusMix', 46, 0.4, 0, 1],
+  ['fxFlangerOn', 47, 0, 0, 1],
+  ['fxFlangerRate', 48, 0.3, 0.02, 10],
+  ['fxFlangerFb', 49, 0.5, 0, 0.95],
+  ['fxFlangerMix', 50, 0.4, 0, 1],
+  ['fxPhaserOn', 51, 0, 0, 1],
+  ['fxPhaserRate', 52, 0.4, 0.02, 10],
+  ['fxPhaserFb', 53, 0.6, 0, 0.95],
+  ['fxPhaserMix', 54, 0.5, 0, 1],
+  ['fxDriveOn', 55, 0, 0, 1],
+  ['fxDriveAmt', 56, 0.4, 0, 1],
+  ['fxDriveMix', 57, 0.6, 0, 1],
 ];
 
 const SPECTRUM_BINS = 36;

@@ -36,7 +36,7 @@ export interface AnalysisFrame {
 type AnalysisListener = (frame: AnalysisFrame) => void;
 
 /** Parameters that are stepped, not ramped (enums / switches). */
-const DISCRETE = new Set<number>([1, 2, 7, 8, 13, 18, 23, 24, 27, 28, 29, 32, 33, 42]);
+const DISCRETE = new Set<number>([1, 2, 7, 8, 13, 18, 23, 24, 27, 28, 29, 32, 33, 42, 43, 47, 51, 55]);
 
 /** Minimal module that uses a v128 op — the canonical SIMD feature probe. */
 const SIMD_PROBE = new Uint8Array([

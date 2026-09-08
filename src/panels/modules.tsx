@@ -17,6 +17,7 @@ import {
   modDstToInt,
   modSrcToInt,
   type ParamId,
+  type ParamSpec,
   type Wave,
 } from '@/audio/params';
 import type { ModuleId } from '@/state/layout';
@@ -276,6 +277,53 @@ function FxModule() {
   );
 }
 
+// --------------------------------------------------------------------- FX 2
+
+function FxStrip({ title, ledId, specs }: { title: string; ledId: number; specs: ParamSpec[] }) {
+  return (
+    <div className="fx2-strip">
+      <div className="fx-title">
+        <ParamLed id={ledId} label={`${title} 开关`} />
+        {title}
+      </div>
+      <div className="knob-row">
+        {specs.map((spec) => (
+          <Knob key={spec.id} spec={spec} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Fx2Module() {
+  return (
+    <ModuleShell id="fx2">
+      <div className="fx2-grid">
+        <FxStrip
+          title="CHORUS"
+          ledId={Param.FX_CHORUS_ON}
+          specs={[SPEC_BY_ID[Param.FX_CHORUS_DEPTH], SPEC_BY_ID[Param.FX_CHORUS_RATE], SPEC_BY_ID[Param.FX_CHORUS_MIX]]}
+        />
+        <FxStrip
+          title="FLANGER"
+          ledId={Param.FX_FLANGER_ON}
+          specs={[SPEC_BY_ID[Param.FX_FLANGER_RATE], SPEC_BY_ID[Param.FX_FLANGER_FB], SPEC_BY_ID[Param.FX_FLANGER_MIX]]}
+        />
+        <FxStrip
+          title="PHASER"
+          ledId={Param.FX_PHASER_ON}
+          specs={[SPEC_BY_ID[Param.FX_PHASER_RATE], SPEC_BY_ID[Param.FX_PHASER_FB], SPEC_BY_ID[Param.FX_PHASER_MIX]]}
+        />
+        <FxStrip
+          title="DRIVE"
+          ledId={Param.FX_DRIVE_ON}
+          specs={[SPEC_BY_ID[Param.FX_DRIVE_AMT], SPEC_BY_ID[Param.FX_DRIVE_MIX]]}
+        />
+      </div>
+    </ModuleShell>
+  );
+}
+
 /** Render the module identified by a layout id. */
 export function ModuleFor({ id }: { id: ModuleId }) {
   switch (id) {
@@ -293,6 +341,8 @@ export function ModuleFor({ id }: { id: ModuleId }) {
       return <ModMatrix />;
     case 'fx':
       return <FxModule />;
+    case 'fx2':
+      return <Fx2Module />;
     default:
       return null;
   }

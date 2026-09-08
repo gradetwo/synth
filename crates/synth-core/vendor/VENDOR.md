@@ -16,7 +16,12 @@ keeps its original copyright header and license.
   | `Source/Synthesis/oscillator.{h,cpp}` | band-limited oscillators (polyBLEP) |
   | `Source/Filters/ladder.{h,cpp}` | Huovilainen Moog ladder filter |
   | `Source/Filters/svf.{h,cpp}` | double-sampled state variable filter |
+  | `Source/Effects/chorus.{h,cpp}` | 2-voice chorus |
+  | `Source/Effects/flanger.{h,cpp}` | flanger |
+  | `Source/Effects/phaser.{h,cpp}` | multi-pole phaser |
+  | `Source/Effects/overdrive.{h,cpp}` | soft-clip overdrive |
   | `Source/Utility/dcblock.{h,cpp}` | DC blocker |
+  | `Source/Utility/delayline.h` | fixed-buffer delay line (used by the effects) |
   | `Source/Utility/dsp.h` | shared helpers/macros |
 
   Not vendored: everything else in DaisySP. The full `daisysp.h` umbrella header

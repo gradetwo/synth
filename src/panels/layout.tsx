@@ -7,6 +7,8 @@ import { Keyboard, Wheels } from '@/components/Keyboard';
 import { toast } from '@/components/Toast';
 import { engine, type EngineStatus } from '@/audio/engine';
 import { midi } from '@/audio/midi';
+import { renderPatchToWav } from '@/audio/render';
+import { downloadBlob } from '@/state/share';
 
 function MidiButton() {
   const [snap, setSnap] = useState(midi.snapshot());
@@ -238,6 +240,32 @@ function PolyBadge() {
   );
 }
 
+function WavButton() {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      className="demo-btn"
+      disabled={busy}
+      title="离线渲染当前音色为 WAV"
+      onClick={async () => {
+        setBusy(true);
+        try {
+          const blob = await renderPatchToWav(store.getSnapshot().state);
+          downloadBlob('gs1-patch.wav', blob);
+          toast('已导出 WAV');
+        } catch (err) {
+          toast(`导出失败：${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? '⏳ 渲染中' : '⤓ WAV'}
+    </button>
+  );
+}
+
 export function DisplayRow() {
   return (
     <section className="display-row">
@@ -265,7 +293,10 @@ export function DisplayRow() {
         <div className="panel-head">
           <span className="ph-title">MONITOR · 监视</span>
         </div>
-        <DemoButton />
+        <div className="monitor-actions">
+          <DemoButton />
+          <WavButton />
+        </div>
         <div className="monitor-body">
           <NoteDisplay />
           <VuMeter />

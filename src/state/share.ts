@@ -103,8 +103,7 @@ export function readShareCode(href?: string): string | null {
   return code && code.startsWith(PREFIX) ? code : null;
 }
 
-export function downloadText(filename: string, text: string, type = 'application/json') {
-  const blob = new Blob([text], { type });
+export function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -113,4 +112,8 @@ export function downloadText(filename: string, text: string, type = 'application
   anchor.click();
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export function downloadText(filename: string, text: string, type = 'application/json') {
+  downloadBlob(filename, new Blob([text], { type }));
 }
