@@ -626,3 +626,7 @@ body.module-dragging .module-grip{cursor:grabbing}
 .env-foot .seg{flex:1;margin-bottom:0}
 .env-foot .knob{flex:none;width:64px}
 .tbtn.on{color:var(--accent);border-color:var(--accent-dim);background:#1a1508}
+.d-foot{flex-direction:column;align-items:stretch;gap:9px}
+.d-foot-actions{display:flex;gap:6px;flex-wrap:wrap}
+.d-foot-actions .d-reset{flex:1;min-width:64px}
+.d-foot-count{font:500 9.5px/1 var(--mono);color:var(--txt-dim);text-align:center}

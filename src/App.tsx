@@ -9,6 +9,8 @@ import { ModulesGrid } from '@/components/Module';
 import { PresetDrawer } from '@/components/PresetDrawer';
 import { ToastHost } from '@/components/Toast';
 import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/register';
+import { readShareCode } from '@/state/share';
+import { toast } from '@/components/Toast';
 
 wireAnalysis();
 
@@ -74,6 +76,15 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const layout = useLayout();
   const power = usePower();
+
+  useEffect(() => {
+    // Apply a shared patch from the URL hash on first load.
+    const code = readShareCode();
+    if (code && store.importPatchCode(code)) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+      toast('已载入分享音色');
+    }
+  }, []);
 
   useEffect(() => {
     const off = engine.onStatus(() => {

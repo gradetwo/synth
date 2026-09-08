@@ -93,6 +93,11 @@ export class AudioEngine {
     return () => this.statusListeners.delete(fn);
   }
 
+  onPolyphony(fn: (value: number) => void): () => void {
+    this.polyphonyListeners.add(fn);
+    return () => this.polyphonyListeners.delete(fn);
+  }
+
   diagnostics(): EngineDiagnostics {
     return {
       simd: this.simdSupported,

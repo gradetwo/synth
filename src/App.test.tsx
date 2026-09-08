@@ -19,7 +19,7 @@ describe('App shell', () => {
       'SPECTRUM',
       'MONITOR',
       '演奏键盘',
-      '重置面板布局',
+      '重置布局',
       '启动音频引擎',
     ]) {
       expect(html, marker).toContain(marker);

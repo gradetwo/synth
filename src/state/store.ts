@@ -10,6 +10,7 @@ import { engine } from '@/audio/engine';
 import {
   createDefaultState,
   DEFAULT_PARAMS,
+  DEFAULT_ROUTES,
   clamp,
   intToFilter,
   intToWave,
@@ -34,6 +35,7 @@ import {
   type Preset,
   type PresetCategory,
 } from './presets';
+import { decodePatch, downloadText, encodePatch, shareUrl } from './share';
 
 const STORAGE_KEY = 'gs1:state:v1';
 const USER_KEY = 'gs1:user-presets:v1';
@@ -69,6 +71,7 @@ class SynthStore {
   private layout: LayoutState;
   private userPresets: Preset[];
   private currentPresetId = FACTORY_PRESETS[0].id;
+  private transientPreset: Preset | null = null;
   private listeners = new Set<() => void>();
   private version = 0;
   private snapshot: Snapshot;
@@ -150,10 +153,14 @@ class SynthStore {
   }
 
   currentPreset(): Preset | undefined {
-    return this.allPresets().find((p) => p.id === this.currentPresetId);
+    return (
+      this.allPresets().find((p) => p.id === this.currentPresetId) ??
+      (this.transientPreset?.id === this.currentPresetId ? this.transientPreset : undefined)
+    );
   }
 
   applyPreset(preset: Preset, opts: { immediate?: boolean } = {}) {
+    if (preset.id !== this.transientPreset?.id) this.transientPreset = null;
     const params = presetParams(preset);
     const routes = presetRoutes(preset);
     this.state = { params, routes, power: this.state.power };
@@ -165,6 +172,97 @@ class SynthStore {
   applyPresetById(id: string) {
     const preset = this.allPresets().find((p) => p.id === id);
     if (preset) this.applyPreset(preset);
+  }
+
+  // ----------------------------------------------------------- share / files
+
+  /** Compact, URL-safe code for the current patch. */
+  shareCode(): string {
+    return encodePatch(this.state);
+  }
+
+  /** Full shareable URL (updates the hash). */
+  shareLink(): string {
+    return shareUrl(this.shareCode());
+  }
+
+  /** Apply a `#p=...` share code. Returns false if it is malformed. */
+  importPatchCode(code: string): boolean {
+    const payload = decodePatch(code);
+    if (!payload) return false;
+    const preset: Preset = {
+      id: `shared-${Date.now()}`,
+      name: 'Shared Patch · 分享音色',
+      tag: 'SHARED',
+      cat: 'USER',
+      wave: intToWave(payload.params[2] ?? 0),
+      params: payload.params,
+      routes: payload.routes.length ? payload.routes : DEFAULT_ROUTES.map((r) => ({ ...r })),
+    };
+    this.transientPreset = preset;
+    this.applyPreset(preset);
+    return true;
+  }
+
+  /** Download the current patch as a `.gs1.json` file. */
+  exportCurrentPreset() {
+    const preset = this.currentPreset();
+    const name = (preset?.name ?? 'GS1 Patch').split(' · ')[0].replace(/[^\w\u4e00-\u9fa5-]+/g, '_');
+    const payload = {
+      format: 'gs1-preset',
+      version: 1,
+      name: preset?.name ?? 'GS1 Patch',
+      params: this.state.params,
+      routes: this.state.routes,
+    };
+    downloadText(`${name || 'gs1-patch'}.gs1.json`, JSON.stringify(payload, null, 2));
+  }
+
+  /** Load a `.gs1.json` file exported by `exportCurrentPreset`. */
+  importPresetFile(text: string): boolean {
+    let parsed: {
+      format?: string;
+      name?: unknown;
+      params?: Record<string, unknown>;
+      routes?: { src?: unknown; dst?: unknown; amount?: unknown; enabled?: unknown }[];
+    };
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return false;
+    }
+    if (parsed?.format !== 'gs1-preset' || !parsed.params || typeof parsed.params !== 'object') {
+      return false;
+    }
+    const params: Record<number, number> = { ...DEFAULT_PARAMS };
+    for (const [key, value] of Object.entries(parsed.params)) {
+      const id = Number(key);
+      if (Number.isFinite(id) && typeof value === 'number' && Number.isFinite(value)) {
+        params[id] = value;
+      }
+    }
+    const routes: ModRoute[] = Array.isArray(parsed.routes)
+      ? parsed.routes
+          .filter((r) => r && typeof r.src === 'string' && typeof r.dst === 'string')
+          .map((r) => ({
+            src: r.src as ModRoute['src'],
+            dst: r.dst as ModRoute['dst'],
+            amount: clamp(Number(r.amount) || 0, -1, 1),
+            enabled: Boolean(r.enabled),
+          }))
+      : DEFAULT_ROUTES.map((r) => ({ ...r }));
+    const preset: Preset = {
+      id: `file-${Date.now()}`,
+      name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name : 'Imported Patch · 导入音色',
+      tag: 'IMPORTED',
+      cat: 'USER',
+      wave: intToWave(params[2] ?? 0),
+      params,
+      routes: routes.length ? routes : DEFAULT_ROUTES.map((r) => ({ ...r })),
+    };
+    this.transientPreset = preset;
+    this.applyPreset(preset);
+    return true;
   }
 
   stepPreset(dir: 1 | -1) {

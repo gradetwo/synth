@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { store } from '@/state/store';
 import { useSynth } from '@/hooks/useSynth';
 import { PRESET_CATEGORIES, type PresetCategory } from '@/state/presets';
@@ -18,6 +18,7 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
   const { userPresets, currentPresetId } = useSynth();
   const [category, setCategory] = useState<PresetCategory>('ALL');
   const [query, setQuery] = useState('');
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   const all = useMemo(() => store.allPresets(), [userPresets]);
   const items = useMemo(() => {
@@ -112,19 +113,63 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
           )}
         </div>
         <div className="d-foot">
-          <div>
-            共 <b>{all.length}</b> 个预设 · {userPresets.length} 个本地收藏 · 点击卡片即刻载入
+          <div className="d-foot-actions">
+            <button type="button" className="d-reset" onClick={() => fileRef.current?.click()}>
+              导入
+            </button>
+            <button
+              type="button"
+              className="d-reset"
+              onClick={() => {
+                store.exportCurrentPreset();
+                toast('已导出当前音色 · <b>.gs1.json</b>');
+              }}
+            >
+              导出
+            </button>
+            <button
+              type="button"
+              className="d-reset"
+              onClick={async () => {
+                const url = store.shareLink();
+                try {
+                  await navigator.clipboard.writeText(url);
+                  toast('分享链接已复制到剪贴板');
+                } catch {
+                  toast('分享链接已写入地址栏');
+                }
+                history.replaceState(null, '', url);
+              }}
+            >
+              分享
+            </button>
+            <button
+              type="button"
+              className="d-reset"
+              onClick={() => {
+                store.resetLayout();
+                toast('已重置面板布局与键盘显示');
+              }}
+            >
+              重置布局
+            </button>
           </div>
-          <button
-            type="button"
-            className="d-reset"
-            onClick={() => {
-              store.resetLayout();
-              toast('已重置面板布局与键盘显示');
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            onChange={async (event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (!file) return;
+              const text = await file.text();
+              toast(store.importPresetFile(text) ? '已导入音色文件' : '文件格式无法识别');
             }}
-          >
-            重置面板布局
-          </button>
+          />
+          <div className="d-foot-count">
+            共 <b>{all.length}</b> 个预设 · {userPresets.length} 个本地收藏
+          </div>
         </div>
       </aside>
     </>

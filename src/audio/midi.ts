@@ -132,6 +132,7 @@ class MidiManager {
   }
 
   private handle(event: MIDIMessageEvent) {
+    if (!event.data) return;
     const action = decodeMidi(event.data);
     if (!action) return;
     switch (action.type) {
