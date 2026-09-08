@@ -36,7 +36,7 @@ pub fn copysignf(x: f32, y: f32) -> f32 {
 #[inline]
 pub fn sqrtf(x: f32) -> f32 {
     #[cfg(target_arch = "wasm32")]
-    unsafe {
+    {
         core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_sqrt(
             core::arch::wasm32::f32x4_splat(x),
         ))
@@ -50,7 +50,7 @@ pub fn sqrtf(x: f32) -> f32 {
 #[inline]
 pub fn floorf(x: f32) -> f32 {
     #[cfg(target_arch = "wasm32")]
-    unsafe {
+    {
         core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_floor(
             core::arch::wasm32::f32x4_splat(x),
         ))
@@ -64,7 +64,7 @@ pub fn floorf(x: f32) -> f32 {
 #[inline]
 pub fn ceilf(x: f32) -> f32 {
     #[cfg(target_arch = "wasm32")]
-    unsafe {
+    {
         core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_ceil(
             core::arch::wasm32::f32x4_splat(x),
         ))
@@ -78,7 +78,7 @@ pub fn ceilf(x: f32) -> f32 {
 #[inline]
 pub fn truncf(x: f32) -> f32 {
     #[cfg(target_arch = "wasm32")]
-    unsafe {
+    {
         core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_trunc(
             core::arch::wasm32::f32x4_splat(x),
         ))
@@ -92,7 +92,7 @@ pub fn truncf(x: f32) -> f32 {
 #[inline]
 pub fn roundf(x: f32) -> f32 {
     #[cfg(target_arch = "wasm32")]
-    unsafe {
+    {
         core::arch::wasm32::f32x4_extract_lane::<0>(core::arch::wasm32::f32x4_nearest(
             core::arch::wasm32::f32x4_splat(x),
         ))

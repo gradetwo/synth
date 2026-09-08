@@ -12,8 +12,7 @@ use crate::dsp::simd;
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_clip, Rng};
 use crate::fft::Spectrum;
 use crate::params::{
-    id, FilterType, LfoTarget, ModDst, ModSrc, OscParams, Params, Wave, MAX_BLOCK_SIZE, MAX_VOICES,
-    SPECTRUM_BINS,
+    id, LfoTarget, ModDst, ModSrc, OscParams, Params, MAX_BLOCK_SIZE, MAX_VOICES,
 };
 use crate::voice::{NoteOnResult, VoiceManager};
 
@@ -28,6 +27,7 @@ extern "C" {
     fn gs_voice_filter_block(v: i32, kind: i32, input: *const f32, out: *mut f32, frames: u32);
     fn gs_voice_dc_block(v: i32, input: *const f32, out: *mut f32, frames: u32);
     fn gs_sp_init(sample_rate: f32);
+    #[cfg(test)]
     fn gs_sp_alloc_events() -> u32;
     fn gs_sp_set_reverb(feedback: f32, lpfreq: f32, mix: f32);
     fn gs_sp_set_delay(time_s: f32, feedback: f32, mix: f32);
@@ -686,7 +686,7 @@ mod tests {
     fn note_on_produces_audio_and_note_off_decays() {
         let _guard = ENGINE_LOCK.lock().unwrap();
         let mut e = new_engine(16);
-        e.set_param(id::OSC1_WAVE, Wave::Saw as u32 as f32);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
         e.set_param(id::OSC1_LEVEL, 0.8);
         e.set_param(id::FILTER_CUTOFF, 12000.0);
         e.set_param(id::ENV_ATTACK, 0.001);
@@ -746,7 +746,7 @@ mod tests {
     fn spectrum_bins_update_while_playing() {
         let _guard = ENGINE_LOCK.lock().unwrap();
         let mut e = new_engine(16);
-        e.set_param(id::OSC1_WAVE, Wave::Saw as u32 as f32);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
         e.set_param(id::FILTER_CUTOFF, 16000.0);
         e.note_on(69, 1.0);
         for _ in 0..40 {

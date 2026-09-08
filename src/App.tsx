@@ -62,6 +62,7 @@ export default function App() {
     try {
       await engine.init(16, store.getSnapshot().state.routes);
       engine.applyState(store.getSnapshot().state, true);
+      engine.setMuted(!store.getSnapshot().state.power);
       await engine.resume();
     } catch {
       /* status listener surfaces the error */
