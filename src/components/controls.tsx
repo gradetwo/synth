@@ -48,11 +48,13 @@ export function Knob({ spec, big }: KnobProps) {
   const t = norm(value);
   const drag = useRef<{ y: number; t: number } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
 
   const onPointerDown = (e: React.PointerEvent) => {
     e.preventDefault();
     drag.current = { y: e.clientY, t };
     setDragging(true);
+    setTip({ x: e.clientX, y: e.clientY });
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -61,13 +63,16 @@ export function Knob({ spec, big }: KnobProps) {
   };
   const onPointerMove = (e: React.PointerEvent) => {
     if (!drag.current) return;
-    const scale = e.shiftKey ? 900 : 190;
+    // Fingers are far less precise than a mouse: slow the travel right down.
+    const scale = e.pointerType === 'touch' ? 420 : e.shiftKey ? 900 : 190;
     const next = clamp(drag.current.t + (drag.current.y - e.clientY) / scale, 0, 1);
     store.setParam(spec.id, real(next));
+    setTip({ x: e.clientX, y: e.clientY });
   };
   const endDrag = () => {
     drag.current = null;
     setDragging(false);
+    setTip(null);
   };
   const onWheel = useCallback(
     (e: React.WheelEvent) => {
@@ -120,6 +125,11 @@ export function Knob({ spec, big }: KnobProps) {
       </div>
       <div className="knob-label">{spec.label}</div>
       <div className="knob-value">{spec.format(value)}</div>
+      {tip ? (
+        <div className="knob-tip" style={{ left: tip.x, top: tip.y }}>
+          {spec.label} {spec.format(value)}
+        </div>
+      ) : null}
     </div>
   );
 }

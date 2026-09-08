@@ -15,6 +15,7 @@ const DragContext = createContext<(id: ModuleId) => void>(() => undefined);
 
 export function ModulesGrid({ children }: { children: ReactNode }) {
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const ghostRef = useRef<HTMLDivElement | null>(null);
   const [dragging, setDragging] = useState<ModuleId | null>(null);
 
   useEffect(() => {
@@ -22,6 +23,14 @@ export function ModulesGrid({ children }: { children: ReactNode }) {
     const onMove = (event: PointerEvent) => {
       const grid = gridRef.current;
       if (!grid) return;
+      // Follow the pointer with a lightweight ghost (no React re-render).
+      if (ghostRef.current) {
+        ghostRef.current.style.left = `${event.clientX}px`;
+        ghostRef.current.style.top = `${event.clientY}px`;
+      }
+      // Auto-scroll when dragging near the viewport edges.
+      if (event.clientY < 90) window.scrollBy(0, -14);
+      else if (event.clientY > window.innerHeight - 90) window.scrollBy(0, 14);
       const modules = Array.from(grid.querySelectorAll<HTMLElement>('[data-module-id]'));
       const columns = getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length;
       const pad = 14;
@@ -67,6 +76,9 @@ export function ModulesGrid({ children }: { children: ReactNode }) {
     <DragContext.Provider value={setDragging}>
       <div className={`modules-grid${dragging ? ' is-dragging' : ''}`} ref={gridRef}>
         {children}
+      </div>
+      <div className={`module-ghost${dragging ? ' show' : ''}`} ref={ghostRef} aria-hidden="true">
+        {dragging ? MODULE_META[dragging].title : ''}
       </div>
     </DragContext.Provider>
   );

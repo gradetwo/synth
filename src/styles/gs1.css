@@ -594,3 +594,29 @@ body.module-dragging .module-grip{cursor:grabbing}
   background:var(--bg-inset);border:1px solid var(--border);border-radius:8px;
   padding:8px 11px;cursor:pointer;flex:none}
 .d-reset:hover{color:var(--accent);border-color:var(--accent-dim)}
+
+/* ---- P0.2: comfortable touch targets (coarse pointers only) ---- */
+@media (pointer: coarse){
+  .led{position:relative}
+  .led::before{content:'';position:absolute;inset:-13px;border-radius:12px}
+  .seg button{min-height:40px}
+  .nav-btn{width:40px}
+  .d-close,.oct-btn,.dock-hide,.route-del,.pcard-del,.module-grip,.module-collapse{min-width:40px;min-height:40px}
+  .chip{min-height:36px;padding:8px 12px}
+  .mod-range{height:8px}
+  .mod-range::-webkit-slider-thumb{width:20px;height:20px}
+  .mod-range::-moz-range-thumb{width:20px;height:20px}
+  .knob-dial::after{content:'';position:absolute;inset:-10px;border-radius:50%}
+}
+
+/* ---- P0.3: knob value bubble + drag ghost ---- */
+.knob-tip{position:fixed;z-index:82;pointer-events:none;transform:translate(-50%,-145%);
+  background:#0a0c10;border:1px solid var(--accent-dim);border-radius:7px;
+  padding:7px 11px;font:600 12px/1 var(--mono);color:var(--accent);white-space:nowrap;
+  box-shadow:0 6px 18px rgba(0,0,0,.6);font-variant-numeric:tabular-nums}
+.module-ghost{position:fixed;z-index:81;left:0;top:0;pointer-events:none;opacity:0;
+  transform:translate(-50%,-50%);transition:opacity .12s;
+  background:#12151c;border:1px solid var(--accent-dim);border-radius:10px;
+  padding:9px 14px;font:700 12px/1 var(--grot);letter-spacing:.08em;color:var(--accent);
+  box-shadow:0 10px 26px rgba(0,0,0,.6)}
+.module-ghost.show{opacity:1}

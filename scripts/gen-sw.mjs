@@ -31,6 +31,11 @@ const files = walk(dist)
   .map((f) => ({ abs: f, rel: relative(dist, f).split('\\').join('/') }))
   .filter((f) => f.rel !== 'sw.js');
 
+// The scalar WASM core is only needed on browsers without SIMD, so it is fetched
+// (and then cached by the fetch handler) on demand instead of being precached.
+const DEFERRED = /synth_core_scalar-.*\.wasm$/;
+const precacheFiles = files.filter((f) => !DEFERRED.test(f.rel));
+
 const hash = createHash('sha256');
 for (const file of files.sort((a, b) => a.rel.localeCompare(b.rel))) {
   hash.update(file.rel);
@@ -38,8 +43,8 @@ for (const file of files.sort((a, b) => a.rel.localeCompare(b.rel))) {
 }
 const version = hash.digest('hex').slice(0, 12);
 
-const precache = files.map((f) => `./${f.rel}`);
-const totalKb = files.reduce((sum, f) => sum + statSync(f.abs).size, 0) / 1024;
+const precache = precacheFiles.map((f) => `./${f.rel}`);
+const totalKb = precacheFiles.reduce((sum, f) => sum + statSync(f.abs).size, 0) / 1024;
 
 const sw = `/* GROOVE SYNTH GS-1 service worker — generated, do not edit. */
 const CACHE = 'gs1-${version}';
