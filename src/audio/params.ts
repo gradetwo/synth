@@ -284,6 +284,12 @@ export const fmt = {
   sync(v: number): string {
     return DELAY_SYNCS[clamp(Math.round(v), 0, 3)] ?? '1/8';
   },
+  pan(v: number): string {
+    const n = Math.round(Math.abs(v) * 100);
+    if (v < -0.005) return `L${n}`;
+    if (v > 0.005) return `R${n}`;
+    return 'C';
+  },
 };
 
 export interface ParamSpec {
@@ -317,10 +323,12 @@ export const PARAM_SPECS: ParamSpec[] = [
   spec(Param.OSC1_DETUNE, 'DETUNE', -50, 50, 0, fmt.ct),
   spec(Param.OSC1_LEVEL, 'LEVEL', 0, 1, 0.65, fmt.pct),
   spec(Param.OSC1_PW, 'PW', 0.05, 0.95, 0.5, fmt.pct),
+  spec(Param.OSC1_PAN, 'PAN', -1, 1, 0, fmt.pan),
   spec(Param.OSC2_PITCH, 'PITCH', -24, 24, 0, fmt.st),
   spec(Param.OSC2_DETUNE, 'DETUNE', -50, 50, 0, fmt.ct),
   spec(Param.OSC2_LEVEL, 'LEVEL', 0, 1, 0.55, fmt.pct),
   spec(Param.OSC2_PW, 'PW', 0.05, 0.95, 0.5, fmt.pct),
+  spec(Param.OSC2_PAN, 'PAN', -1, 1, 0, fmt.pan),
   spec(Param.FILTER_CUTOFF, 'CUTOFF', 40, 18000, 9000, fmt.hz, { curve: 'log' }),
   spec(Param.FILTER_RES, 'RES', 0, 1, 0.25, fmt.pct),
   spec(Param.FILTER_DRIVE, 'DRIVE', 0, 1, 0.15, fmt.pct),

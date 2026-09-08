@@ -67,6 +67,7 @@ function OscModule({ which }: { which: 1 | 2 }) {
   const detune = SPEC_BY_ID[which === 1 ? Param.OSC1_DETUNE : Param.OSC2_DETUNE];
   const level = SPEC_BY_ID[which === 1 ? Param.OSC1_LEVEL : Param.OSC2_LEVEL];
   const pw = SPEC_BY_ID[which === 1 ? Param.OSC1_PW : Param.OSC2_PW];
+  const pan = SPEC_BY_ID[which === 1 ? Param.OSC1_PAN : Param.OSC2_PAN];
   return (
     <ModuleShell id={which === 1 ? 'osc1' : 'osc2'}>
       <ParamWaveSelect id={which === 1 ? Param.OSC1_WAVE : Param.OSC2_WAVE} waves={WAVES} />
@@ -75,6 +76,7 @@ function OscModule({ which }: { which: 1 | 2 }) {
         <Knob spec={detune} />
         <Knob spec={level} />
         <Knob spec={pw} />
+        <Knob spec={pan} />
       </div>
       <MiniWave which={which} color={color} />
       <div className="mini-label">WAVE PREVIEW</div>

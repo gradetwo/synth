@@ -549,9 +549,22 @@ impl Engine {
             );
         }
 
-        // --- accumulate into the mix bus ------------------------------------
-        simd::accumulate(&self.voice_buf[..frames], &mut self.mix_l[..frames], VOICE_GAIN);
-        simd::accumulate(&self.voice_buf[..frames], &mut self.mix_r[..frames], VOICE_GAIN);
+        // --- pan + accumulate into the stereo mix bus -----------------------
+        // The per-voice filter is mono, so the two oscillator PAN controls are
+        // combined into a level-weighted voice position and applied with an
+        // equal-power law after the filter.
+        let levels = osc_level[0] + osc_level[1];
+        let pan = if levels > 1e-4 {
+            ((osc_level[0] * params.osc[0].pan + osc_level[1] * params.osc[1].pan) / levels)
+                .clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        let angle = (pan + 1.0) * core::f32::consts::FRAC_PI_4;
+        let pan_l = angle.cos();
+        let pan_r = angle.sin();
+        simd::accumulate(&self.voice_buf[..frames], &mut self.mix_l[..frames], VOICE_GAIN * pan_l);
+        simd::accumulate(&self.voice_buf[..frames], &mut self.mix_r[..frames], VOICE_GAIN * pan_r);
 
         // --- retire finished voices -----------------------------------------
         if !voice.gate && !self.envs[slot].is_active() {
@@ -740,6 +753,31 @@ mod tests {
         e.process(128);
         let forced = e.vm.force_release_excess(4);
         assert!(forced >= 4, "expected at least 4 voices released, got {forced}");
+    }
+
+    #[test]
+    fn pan_moves_energy_between_channels() {
+        let _guard = ENGINE_LOCK.lock().unwrap();
+        let mut e = new_engine(1);
+        e.set_param(id::OSC1_WAVE, 2.0);
+        e.set_param(id::OSC1_LEVEL, 1.0);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC1_PAN, -1.0);
+        e.note_on(60, 1.0);
+        for _ in 0..40 {
+            e.process(128);
+        }
+        let left = simd::peak(&e.left()[..128]);
+        let right = simd::peak(&e.right()[..128]);
+        assert!(left > right * 5.0, "expected hard-left pan, L={left} R={right}");
+
+        e.set_param(id::OSC1_PAN, 1.0);
+        for _ in 0..40 {
+            e.process(128);
+        }
+        let left = simd::peak(&e.left()[..128]);
+        let right = simd::peak(&e.right()[..128]);
+        assert!(right > left * 5.0, "expected hard-right pan, L={left} R={right}");
     }
 
     #[test]
