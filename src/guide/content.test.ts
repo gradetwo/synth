@@ -20,8 +20,16 @@ function pairsOf(block: Block): Bi[] {
 }
 
 describe('guide content', () => {
-  it('ships the four sections with unique ids', () => {
-    expect(GUIDE_SECTIONS.map((s) => s.id)).toEqual(['basics', 'start', 'help', 'build']);
+  it('ships the seven sections with unique ids', () => {
+    expect(GUIDE_SECTIONS.map((s) => s.id)).toEqual([
+      'basics',
+      'history',
+      'types',
+      'modules',
+      'start',
+      'help',
+      'build',
+    ]);
     expect(new Set(GUIDE_SECTIONS.map((s) => s.id)).size).toBe(GUIDE_SECTIONS.length);
   });
 
@@ -45,23 +53,41 @@ describe('guide content', () => {
     }
   });
 
-  it('covers synthesis, help and a from-scratch walkthrough', () => {
-    const basics = GUIDE_SECTIONS.find((s) => s.id === 'basics')!;
-    const help = GUIDE_SECTIONS.find((s) => s.id === 'help')!;
-    const build = GUIDE_SECTIONS.find((s) => s.id === 'build')!;
-    const textOf = (blocks: Block[]) =>
-      blocks
-        .flatMap(pairsOf)
+  it('covers theory, history, taxonomy, module internals, help and a walkthrough', () => {
+    const byId = (id: string) => GUIDE_SECTIONS.find((s) => s.id === id)!;
+    const textOf = (id: string) =>
+      byId(id)
+        .blocks.flatMap(pairsOf)
         .map((p) => p[1])
         .join(' ');
 
-    expect(textOf(basics.blocks)).toMatch(/oscillator/i);
-    expect(textOf(basics.blocks)).toMatch(/filter/i);
-    expect(textOf(basics.blocks)).toMatch(/envelope/i);
-    expect(textOf(help.blocks)).toMatch(/shortcut/i);
-    // The walkthrough must include concrete starting recipes.
-    expect(textOf(build.blocks)).toMatch(/Pluck Bass/);
-    expect(textOf(build.blocks)).toMatch(/Warm Pad/);
-    expect(textOf(build.blocks)).toMatch(/Screaming Lead/);
+    // Theory: harmonics, sampling/aliasing and subtractive synthesis.
+    const basics = textOf('basics');
+    expect(basics).toMatch(/Fourier/);
+    expect(basics).toMatch(/Nyquist|aliasing/i);
+    expect(basics).toMatch(/subtractive/i);
+
+    // History and taxonomy.
+    const history = textOf('history');
+    expect(history).toMatch(/Moog/);
+    expect(history).toMatch(/DX7/);
+    expect(history).toMatch(/MIDI/);
+    const types = textOf('types');
+    expect(types).toMatch(/Subtractive/);
+    expect(types).toMatch(/Wavetable/);
+    expect(types).toMatch(/Physical modelling/i);
+
+    // Module internals describe the real implementation.
+    const modules = textOf('modules');
+    expect(modules).toMatch(/polyBLEP/);
+    expect(modules).toMatch(/Huovilainen|ladder/i);
+    expect(modules).toMatch(/reverbsc/);
+    expect(modules).toMatch(/AudioWorklet/);
+
+    // Help and the walkthrough.
+    expect(textOf('help')).toMatch(/shortcut/i);
+    expect(textOf('build')).toMatch(/Pluck Bass/);
+    expect(textOf('build')).toMatch(/Warm Pad/);
+    expect(textOf('build')).toMatch(/Screaming Lead/);
   });
 });

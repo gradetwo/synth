@@ -9,11 +9,13 @@ describe('Guide', () => {
     const html = renderToString(<Guide open onClose={() => undefined} />);
     expect(html).toContain('使用指南');
     expect(html).toContain('合成器基础');
-    expect(html).toContain('振荡器');
-    expect(html).toContain('滤波器');
-    expect(html).toContain('从零捏一个音色');
+    expect(html).toContain('合成器简史');
+    expect(html).toContain('合成器分类');
+    expect(html).toContain('模块原理详解');
+    expect(html).toContain('傅里叶');
     expect(html).toContain('新手教学');
     expect(html).toContain('使用帮助');
+    expect(html).toContain('从零捏一个音色');
   });
 
   it('renders the manual in English', () => {
@@ -21,7 +23,10 @@ describe('Guide', () => {
     try {
       const html = renderToString(<Guide open onClose={() => undefined} />);
       expect(html).toContain('Synthesis basics');
-      expect(html).toContain('Oscillators');
+      expect(html).toContain('A short history');
+      expect(html).toContain('Synthesizer taxonomy');
+      expect(html).toContain('How the modules work');
+      expect(html).toContain('Fourier');
       expect(html).toContain('Build a sound from scratch');
       expect(html).toContain('Getting started');
       expect(html).toContain('Usage help');
