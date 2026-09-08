@@ -46,3 +46,32 @@ test('touch device gets touch gestures, not mouse hints', async ({ page }) => {
   await dial.dispatchEvent('pointerup', opts);
   await expect(page.locator('.knob.fine')).toHaveCount(0);
 });
+
+test('knob arc and needle stay concentric with the dial', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).tap();
+  await expect(page.locator('.knob-ring').first()).toBeVisible();
+
+  const report = await page.evaluate(() => {
+    const rows: { off: number; filter: string }[] = [];
+    document.querySelectorAll('.knob').forEach((knob) => {
+      const dial = knob.querySelector('.knob-dial');
+      const ring = knob.querySelector('.knob-ring');
+      if (!dial || !ring) return;
+      const d = dial.getBoundingClientRect();
+      const r = ring.getBoundingClientRect();
+      const dx = r.x + r.width / 2 - (d.x + d.width / 2);
+      const dy = r.y + r.height / 2 - (d.y + d.height / 2);
+      // No SVG filter glow: Safari offsets/clips drop-shadow (WebKit #261442).
+      const filtered = [ring, ...ring.querySelectorAll('*')].some(
+        (el) => getComputedStyle(el).filter !== 'none',
+      );
+      rows.push({ off: Math.hypot(dx, dy), filter: filtered ? 'yes' : 'no' });
+    });
+    return rows;
+  });
+
+  expect(report.length).toBeGreaterThan(10);
+  expect(report.filter((r) => r.off > 0.01)).toEqual([]);
+  expect(report.filter((r) => r.filter === 'yes')).toEqual([]);
+});
