@@ -1,0 +1,37 @@
+{
+  "name": "groove-synth-gs1",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "GROOVE SYNTH GS-1 — industrial-grade WebAssembly polyphonic synthesizer with a Rust DSP core, AudioWorklet rendering and a fully offline PWA shell.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "build:sw": "node scripts/gen-sw.mjs",
+    "icons": "node scripts/gen-icons.mjs",
+    "build": "npm run build:wasm && tsc -b && vite build && npm run build:sw",
+    "preview": "vite preview --port 4173",
+    "test": "vitest run",
+    "test:rust": "cargo test --manifest-path crates/synth-core/Cargo.toml",
+    "test:all": "npm run test:rust && npm run test",
+    "typecheck": "tsc -b --force",
+    "package": "npm run build && node scripts/package.mjs"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.1.1",
+    "@fontsource/space-grotesk": "^5.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}

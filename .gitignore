@@ -1,0 +1,31 @@
+# dependencies
+node_modules/
+.npm-cache/
+.pnpm-store/
+
+# build output
+dist/
+release/*.zip
+release/*.tar.gz
+release/SHA256SUMS
+*.tsbuildinfo
+
+# rust
+crates/synth-core/target/
+**/*.rs.bk
+
+# generated wasm (produced by `npm run build:wasm`)
+src/generated/*.wasm
+crates/synth-core/c_bridge/soundpipe.h
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.log
+
+# scratch
+.feas/
+.tmp/
