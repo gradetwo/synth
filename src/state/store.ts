@@ -460,6 +460,24 @@ class SynthStore {
     this.commit();
   }
 
+  toggleVelocityMode() {
+    this.layout = {
+      ...this.layout,
+      velocityMode: this.layout.velocityMode === 'touch' ? 'fixed' : 'touch',
+    };
+    this.commit();
+  }
+
+  setHaptics(on: boolean) {
+    if (this.layout.haptics === on) return;
+    this.layout = { ...this.layout, haptics: on };
+    this.commit();
+  }
+
+  toggleHaptics() {
+    this.setHaptics(!this.layout.haptics);
+  }
+
   moveModuleTo(id: ModuleId, index: number) {
     const order = moveModule(this.layout.order, id, index);
     if (order === this.layout.order) return;

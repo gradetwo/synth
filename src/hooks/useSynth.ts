@@ -71,6 +71,22 @@ export function useKeyboardVisible(): boolean {
   );
 }
 
+export function useVelocityMode(): 'fixed' | 'touch' {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getSnapshot().layout.velocityMode,
+    () => store.getSnapshot().layout.velocityMode,
+  );
+}
+
+export function useHaptics(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getSnapshot().layout.haptics,
+    () => store.getSnapshot().layout.haptics,
+  );
+}
+
 export function usePower(): boolean {
   return useSyncExternalStore(
     subscribe,

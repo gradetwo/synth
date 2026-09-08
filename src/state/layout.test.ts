@@ -41,6 +41,18 @@ describe('layout model', () => {
     expect(normalizeLayout({ theme: 'nope' }).theme).toBe('dark');
   });
 
+  it('validates velocity mode and haptics', () => {
+    const base = defaultLayout();
+    expect(base.velocityMode).toBe('fixed');
+    expect(base.haptics).toBe(true);
+
+    expect(normalizeLayout({ velocityMode: 'touch' }).velocityMode).toBe('touch');
+    expect(normalizeLayout({ velocityMode: 'nope' }).velocityMode).toBe('fixed');
+    expect(normalizeLayout({ haptics: false }).haptics).toBe(false);
+    expect(normalizeLayout({ haptics: true }).haptics).toBe(true);
+    expect(normalizeLayout({}).haptics).toBe(true);
+  });
+
   it('falls back to defaults for garbage input', () => {
     expect(normalizeLayout(null).order).toEqual(MODULE_IDS);
     expect(normalizeLayout('nope').order).toEqual(MODULE_IDS);

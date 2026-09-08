@@ -35,12 +35,21 @@ export const MODULE_META: Record<ModuleId, ModuleMeta> = {
 
 export type Theme = 'dark' | 'contrast';
 
+/**
+ * How a touch on a key maps to note velocity.
+ * - `fixed`  → every tap is 0.9 (predictable, like a step sequencer).
+ * - `touch`  → vertical position on the key: lower = louder (0.35..1).
+ */
+export type VelocityMode = 'fixed' | 'touch';
+
 export interface LayoutState {
   order: ModuleId[];
   collapsed: Partial<Record<ModuleId, boolean>>;
   keyboardVisible: boolean;
   theme: Theme;
   lang: Lang;
+  velocityMode: VelocityMode;
+  haptics: boolean;
 }
 
 export function defaultLayout(): LayoutState {
@@ -50,6 +59,8 @@ export function defaultLayout(): LayoutState {
     keyboardVisible: true,
     theme: 'dark',
     lang: 'zh',
+    velocityMode: 'fixed',
+    haptics: true,
   };
 }
 
@@ -83,6 +94,8 @@ export function normalizeLayout(raw: unknown): LayoutState {
     keyboardVisible: input.keyboardVisible !== false,
     theme: input.theme === 'contrast' ? 'contrast' : 'dark',
     lang: input.lang === 'en' ? 'en' : 'zh',
+    velocityMode: input.velocityMode === 'touch' ? 'touch' : 'fixed',
+    haptics: input.haptics !== false,
   };
 }
 
