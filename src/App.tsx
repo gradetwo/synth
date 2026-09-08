@@ -148,7 +148,6 @@ export default function App() {
     return () => {
       for (const event of events) window.removeEventListener(event, onGesture);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const running = status === 'running' || status === 'suspended';

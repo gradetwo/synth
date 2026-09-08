@@ -20,6 +20,8 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
   const [query, setQuery] = useState('');
   const fileRef = useRef<HTMLInputElement | null>(null);
 
+  // `userPresets` is the change signal; `allPresets()` reads the store directly.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const all = useMemo(() => store.allPresets(), [userPresets]);
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();

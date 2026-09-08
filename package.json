@@ -20,7 +20,8 @@
     "test:wasm": "npm run build:wasm && node scripts/verify-wasm.mjs && node scripts/verify-wasm.mjs src/generated/synth_core_scalar.wasm",
     "verify:dist": "node scripts/verify-dist.mjs",
     "verify": "npm run test:rust && npm run test && npm run build && npm run test:wasm && npm run verify:dist",
-    "test:dsp": "node scripts/dsp-baseline.mjs"
+    "test:dsp": "node scripts/dsp-baseline.mjs",
+    "lint": "eslint src --max-warnings=999"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.1.1",
@@ -29,12 +30,17 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^10.10.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.12.0",
     "jsdom": "^25.0.1",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.70.0",
     "vite": "^6.0.7",
     "vitest": "^2.1.8"
   }

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { store } from '@/state/store';
 import { useParam } from '@/hooks/useSynth';
 import {
@@ -74,14 +74,11 @@ export function Knob({ spec, big }: KnobProps) {
     setDragging(false);
     setTip(null);
   };
-  const onWheel = useCallback(
-    (e: React.WheelEvent) => {
-      e.preventDefault();
-      const next = clamp(t - e.deltaY * 0.0008, 0, 1);
-      store.setParam(spec.id, real(next));
-    },
-    [t],
-  );
+  const onWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const next = clamp(t - e.deltaY * 0.0008, 0, 1);
+    store.setParam(spec.id, real(next));
+  };
   const reset = () => {
     store.setParam(spec.id, spec.def);
   };

@@ -17,7 +17,10 @@ const TAU = Math.PI * 2;
 function useRafCanvas(draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const drawRef = useRef(draw);
-  drawRef.current = draw;
+
+  useEffect(() => {
+    drawRef.current = draw;
+  });
 
   useEffect(() => {
     const canvas = ref.current;
