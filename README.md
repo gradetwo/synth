@@ -165,7 +165,7 @@ public/                   manifest 与图标
 
 ---
 
-## 7. 功能一览（v1.0.5）
+## 7. 功能一览（v1.0.6）
 
 - **合成**：双振荡器（6 波形 + 声像）、Moog 阶梯 / SVF 滤波、独立滤波器包络、
   双 LFO、4 路调制矩阵、POLY/MONO/LEGATO + GLIDE。

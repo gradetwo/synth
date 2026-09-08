@@ -117,6 +117,33 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
     expect(analysis!.spectrum.length).toBe(36);
   });
 
+  it('never calls performance.now() unguarded (Safari worklet scope)', () => {
+    const source = readFileSync('src/audio/worklet-processor.js', 'utf8');
+    // Only the `nowMs` fallback helper may mention it.
+    expect([...source.matchAll(/performance\.now\(/g)]).toHaveLength(1);
+  });
+
+  it('monitors load with no performance global', async () => {
+    messages.length = 0;
+    const proc = instantiate();
+    await waitReady();
+    const params: Record<string, Float32Array> = {};
+    for (const d of descriptors()) params[d.name] = new Float32Array([d.defaultValue]);
+
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'performance');
+    try {
+      Object.defineProperty(globalThis, 'performance', { value: undefined, configurable: true });
+      const left = new Float32Array(128);
+      const right = new Float32Array(128);
+      // > 60 blocks reaches the load-monitor branch that used to throw.
+      expect(() => {
+        for (let i = 0; i < 80; i++) proc.process([], [[left, right]], params);
+      }).not.toThrow();
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'performance', descriptor);
+    }
+  });
+
   it('honours the mute message', async () => {
     const proc = instantiate();
     await waitReady();

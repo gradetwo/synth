@@ -84,6 +84,17 @@ const PARAMS = [
 const SPECTRUM_BINS = 36;
 const ANALYSIS_INTERVAL = 6; // blocks between analysis messages (~16 ms @ 48k/128)
 
+/**
+ * AudioWorkletGlobalScope is only guaranteed `currentFrame`, `currentTime`,
+ * `sampleRate` and `registerProcessor` — `performance` is *not* part of the
+ * spec (Safari does not expose it). Fall back to `Date.now()` so the load
+ * monitor never throws on the audio thread.
+ */
+const nowMs = () =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+
 class SynthWorkletProcessor extends AudioWorkletProcessor {
   static get parameterDescriptors() {
     return PARAMS.map(([name, , defaultValue, minValue, maxValue]) => ({
@@ -197,7 +208,7 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     if (this.blockCount < 60) return; // ignore JIT warm-up
     const budget = (frames / rate) * 1000;
     this.costAvg = this.costAvg ? this.costAvg * 0.95 + cost * 0.05 : cost;
-    const now = performance.now();
+    const now = nowMs();
     if (this.costAvg > budget * 0.45 && this.currentPoly > 4 && now - this.lastDowngrade > 1500) {
       this.currentPoly = Math.max(4, this.currentPoly - 4);
       this.wasm.gs_set_max_polyphony(this.currentPoly);
@@ -242,9 +253,9 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     //    measuring the cost against the render-quantum budget so we can shed
     //    voices smoothly before the audio thread misses its deadline.
     const block = Math.min(frames, this.maxBlock);
-    const t0 = performance.now();
+    const t0 = nowMs();
     this.wasm.gs_process(block);
-    const cost = performance.now() - t0;
+    const cost = nowMs() - t0;
     this.monitorLoad(block, cost, sampleRate);
 
     // 3. Rebuild views every block; never cache them across `memory.grow`.
