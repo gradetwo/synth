@@ -1,0 +1,32 @@
+// Minimal std::array for the freestanding wasm32 C++ build. Covers the subset
+// used by DaisySP's LadderFilter (indexed access + size/data).
+#pragma once
+#include <cstddef>
+
+namespace std {
+
+template <typename T, size_t N>
+class array {
+public:
+    T elems_[N > 0 ? N : 1];
+
+    constexpr T &operator[](size_t i) { return elems_[i]; }
+    constexpr const T &operator[](size_t i) const { return elems_[i]; }
+    constexpr T *data() { return elems_; }
+    constexpr const T *data() const { return elems_; }
+    constexpr size_t size() const { return N; }
+    constexpr bool empty() const { return N == 0; }
+    void fill(const T &value) {
+        for (size_t i = 0; i < N; ++i) elems_[i] = value;
+    }
+    constexpr T &front() { return elems_[0]; }
+    constexpr const T &front() const { return elems_[0]; }
+    constexpr T &back() { return elems_[N - 1]; }
+    constexpr const T &back() const { return elems_[N - 1]; }
+    constexpr T *begin() { return elems_; }
+    constexpr const T *begin() const { return elems_; }
+    constexpr T *end() { return elems_ + N; }
+    constexpr const T *end() const { return elems_ + N; }
+};
+
+} // namespace std

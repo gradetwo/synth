@@ -1,0 +1,3 @@
+// Minimal <cstdint> shim for the freestanding wasm32 C++ build.
+#pragma once
+#include <stdint.h>

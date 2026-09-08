@@ -1,0 +1,19 @@
+[package]
+name = "synth-core"
+version = "1.0.0"
+edition = "2021"
+description = "GROOVE SYNTH GS-1 real-time DSP core (Rust + vendored DaisySP/Soundpipe, block ABI, zero-allocation)"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

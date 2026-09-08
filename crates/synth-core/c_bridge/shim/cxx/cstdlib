@@ -1,0 +1,12 @@
+// Minimal <cstdlib> shim for the freestanding wasm32 C++ build.
+#pragma once
+#include <stdlib.h>
+namespace std {
+using ::malloc;
+using ::calloc;
+using ::realloc;
+using ::free;
+using ::abort;
+using ::rand;
+using ::srand;
+}

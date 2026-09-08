@@ -1,0 +1,38 @@
+// Minimal <limits> shim for the freestanding wasm32 C++ build.
+#pragma once
+#include <cstdint>
+
+namespace std {
+
+template <typename T>
+class numeric_limits {
+public:
+    static constexpr bool is_specialized = false;
+    static constexpr T lowest() { return T(); }
+    static constexpr T min() { return T(); }
+    static constexpr T max() { return T(); }
+    static constexpr T infinity() { return T(); }
+    static constexpr T epsilon() { return T(); }
+};
+
+template <>
+class numeric_limits<float> {
+public:
+    static constexpr bool is_specialized = true;
+    static constexpr float lowest() { return -3.402823466e+38f; }
+    static constexpr float min() { return 1.175494351e-38f; }
+    static constexpr float max() { return 3.402823466e+38f; }
+    static constexpr float infinity() { return __builtin_inff(); }
+    static constexpr float epsilon() { return 1.192092896e-07f; }
+};
+
+template <>
+class numeric_limits<int> {
+public:
+    static constexpr bool is_specialized = true;
+    static constexpr int lowest() { return -2147483647 - 1; }
+    static constexpr int min() { return -2147483647 - 1; }
+    static constexpr int max() { return 2147483647; }
+};
+
+} // namespace std

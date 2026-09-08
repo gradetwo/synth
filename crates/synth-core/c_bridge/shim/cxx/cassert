@@ -1,0 +1,8 @@
+// Minimal <cassert> shim. Assertions compile out in the release audio build.
+#pragma once
+#ifdef NDEBUG
+#define assert(expr) ((void)0)
+#else
+extern "C" void __gs_assert_fail(const char *expr, const char *file, int line);
+#define assert(expr) ((expr) ? (void)0 : __gs_assert_fail(#expr, __FILE__, __LINE__))
+#endif

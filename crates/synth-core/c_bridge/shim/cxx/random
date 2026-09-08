@@ -1,0 +1,4 @@
+// Minimal <random> shim. DaisySP only needs RAND_MAX/rand(), which come from
+// <cstdlib>; the heavy <random> machinery is never used by the vendored subset.
+#pragma once
+#include <cstdlib>
