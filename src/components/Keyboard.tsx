@@ -4,6 +4,7 @@ import { engine } from '@/audio/engine';
 import { store } from '@/state/store';
 import { Param } from '@/audio/params';
 import { t } from '@/i18n';
+import { haptic } from '@/hooks/useInputMode';
 
 const BLACK = new Set([1, 3, 6, 8, 10]);
 const KEY_MAP: Record<string, number> = {
@@ -63,6 +64,7 @@ export function Keyboard() {
     // iOS may suspend the AudioContext when the page is backgrounded; any key
     // press is a valid gesture to bring it back.
     void engine.resumeIfSuspended();
+    haptic(5);
     noteBus.noteOn(midi, velocity);
     refresh();
   };

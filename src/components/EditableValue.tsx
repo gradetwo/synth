@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { clamp } from '@/audio/params';
 import { t } from '@/i18n';
+import { haptic } from '@/hooks/useInputMode';
 
 export type EditUnit = 'ms' | 'pct' | 'num';
 
@@ -79,6 +80,7 @@ export function EditableValue({
   const beginDrag = () => {
     if (!press.current) return;
     press.current.dragging = true;
+    haptic(8);
     inputRef.current?.blur();
     setEditing(null);
   };

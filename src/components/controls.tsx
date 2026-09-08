@@ -1,10 +1,14 @@
 import { useRef, useState } from 'react';
 import { store } from '@/state/store';
 import { useParam } from '@/hooks/useSynth';
-import { t } from '@/i18n';
+import { haptic } from '@/hooks/useInputMode';
+import { t as tr } from '@/i18n';
 import { type ParamId, type ParamSpec, type Wave, clamp } from '@/audio/params';
 
 // ---------------------------------------------------------------- knob
+
+/** Hold a finger still this long to enter touch fine-tune mode. */
+const FINE_HOLD_MS = 300;
 
 function polar(cx: number, cy: number, r: number, deg: number): [number, number] {
   const rad = ((deg - 90) * Math.PI) / 180;
@@ -42,14 +46,32 @@ export function Knob({ spec, big }: KnobProps) {
 
   const t = norm(value);
   const drag = useRef<{ y: number; t: number } | null>(null);
+  const hold = useRef<number | null>(null);
+  const [fine, setFine] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
 
+  const clearHold = () => {
+    if (hold.current !== null) {
+      window.clearTimeout(hold.current);
+      hold.current = null;
+    }
+  };
   const onPointerDown = (e: React.PointerEvent) => {
     e.preventDefault();
     drag.current = { y: e.clientY, t };
     setDragging(true);
     setTip({ x: e.clientX, y: e.clientY });
+    // Touch has no Shift key: holding the finger still for a moment drops into
+    // a fine mode, mirroring Shift+drag on the desktop.
+    if (e.pointerType === 'touch') {
+      clearHold();
+      hold.current = window.setTimeout(() => {
+        hold.current = null;
+        setFine(true);
+        haptic(8);
+      }, FINE_HOLD_MS);
+    }
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -59,14 +81,24 @@ export function Knob({ spec, big }: KnobProps) {
   const onPointerMove = (e: React.PointerEvent) => {
     if (!drag.current) return;
     // Fingers are far less precise than a mouse: slow the travel right down.
-    const scale = e.pointerType === 'touch' ? 420 : e.shiftKey ? 900 : 190;
+    // Shift (desktop) or long-press (touch) makes the travel even finer.
+    const scale =
+      e.pointerType === 'touch'
+        ? fine
+          ? 1500
+          : 420
+        : e.shiftKey
+          ? 900
+          : 190;
     const next = clamp(drag.current.t + (drag.current.y - e.clientY) / scale, 0, 1);
     store.setParam(spec.id, real(next));
     setTip({ x: e.clientX, y: e.clientY });
   };
   const endDrag = () => {
+    clearHold();
     drag.current = null;
     setDragging(false);
+    setFine(false);
     setTip(null);
   };
   const onWheel = (e: React.WheelEvent) => {
@@ -75,12 +107,13 @@ export function Knob({ spec, big }: KnobProps) {
     store.setParam(spec.id, real(next));
   };
   const reset = () => {
+    haptic(12);
     store.setParam(spec.id, spec.def);
   };
 
   const rot = -135 + t * 270;
   return (
-    <div className={`knob${big ? ' big' : ''}${dragging ? ' dragging' : ''}`}>
+    <div className={`knob${big ? ' big' : ''}${dragging ? ' dragging' : ''}${fine ? ' fine' : ''}`}>
       <div
         className="knob-dial"
         role="slider"
@@ -120,6 +153,7 @@ export function Knob({ spec, big }: KnobProps) {
       {tip ? (
         <div className="knob-tip" style={{ left: tip.x, top: tip.y }}>
           {spec.label} {spec.format(value)}
+          {fine ? <b className="knob-tip-fine"> {tr('knob.fine')}</b> : null}
         </div>
       ) : null}
     </div>
@@ -218,7 +252,7 @@ export function WaveSelect({
           key={w}
           type="button"
           className={`wave-btn${i === value ? ' active' : ''}`}
-          title={t(`wave.${w}`)}
+          title={tr(`wave.${w}`)}
           aria-pressed={i === value}
           onClick={() => onChange(i)}
         >
