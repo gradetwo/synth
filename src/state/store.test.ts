@@ -1,0 +1,79 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { Param } from '@/audio/params';
+import { store } from './store';
+
+describe('synth store', () => {
+  beforeEach(() => {
+    store.applyPresetById('init');
+    for (const p of store.allPresets().filter((x) => x.user)) store.deletePreset(p.id);
+  });
+
+  it('applies factory presets and reports the current preset', () => {
+    store.applyPresetById('pluck');
+    expect(store.currentPreset()?.id).toBe('pluck');
+    expect(store.getParam(Param.FILTER_CUTOFF)).toBe(5200);
+    expect(store.getParam(Param.ENV_SUSTAIN)).toBe(0);
+  });
+
+  it('updates single parameters', () => {
+    store.setParam(Param.FILTER_CUTOFF, 1234);
+    expect(store.getParam(Param.FILTER_CUTOFF)).toBe(1234);
+  });
+
+  it('steps through the preset list in both directions', () => {
+    const first = store.currentPreset()?.id;
+    store.stepPreset(1);
+    const second = store.currentPreset()?.id;
+    expect(second).not.toBe(first);
+    store.stepPreset(-1);
+    expect(store.currentPreset()?.id).toBe(first);
+  });
+
+  it('keeps randomized patches inside the DSP ranges', () => {
+    store.randomize();
+    expect(store.getParam(Param.FILTER_CUTOFF)).toBeGreaterThanOrEqual(20);
+    expect(store.getParam(Param.FILTER_CUTOFF)).toBeLessThanOrEqual(20000);
+    expect(store.getParam(Param.OSC1_LEVEL)).toBeGreaterThanOrEqual(0);
+    expect(store.getParam(Param.OSC1_LEVEL)).toBeLessThanOrEqual(1);
+    expect(store.getParam(Param.ENV_ATTACK)).toBeGreaterThanOrEqual(0.0005);
+    expect(store.getParam(Param.ENV_ATTACK)).toBeLessThanOrEqual(8);
+  });
+
+  it('saves and deletes user presets', () => {
+    store.setParam(Param.FILTER_CUTOFF, 777);
+    const saved = store.savePreset('TEST PATCH');
+    expect(saved.user).toBe(true);
+    expect(store.allPresets().some((p) => p.id === saved.id)).toBe(true);
+    expect(store.currentPreset()?.id).toBe(saved.id);
+
+    store.applyPresetById('init');
+    store.applyPresetById(saved.id);
+    expect(store.getParam(Param.FILTER_CUTOFF)).toBe(777);
+
+    store.deletePreset(saved.id);
+    expect(store.allPresets().some((p) => p.id === saved.id)).toBe(false);
+  });
+
+  it('persists state to localStorage', () => {
+    store.setParam(Param.FILTER_RES, 0.42);
+    const raw = localStorage.getItem('gs1:state:v1');
+    expect(raw).toBeTruthy();
+    expect(JSON.parse(raw as string).params[Param.FILTER_RES]).toBe(0.42);
+  });
+
+  it('toggles power without losing the patch', () => {
+    store.setParam(Param.FILTER_CUTOFF, 4321);
+    store.setPower(false);
+    expect(store.getSnapshot().state.power).toBe(false);
+    expect(store.getParam(Param.FILTER_CUTOFF)).toBe(4321);
+    store.setPower(true);
+  });
+
+  it('adds and removes modulation routes', () => {
+    const before = store.getSnapshot().state.routes.length;
+    store.addRoute();
+    expect(store.getSnapshot().state.routes.length).toBe(before + 1);
+    store.removeRoute(0);
+    expect(store.getSnapshot().state.routes.length).toBe(before);
+  });
+});
