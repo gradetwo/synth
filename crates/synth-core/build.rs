@@ -106,7 +106,7 @@ fn main() {
     for (idx, src) in c_sources.iter().chain(cxx_sources.iter()).enumerate() {
         let stem = src.file_stem().unwrap().to_string_lossy().to_string();
         let obj = obj_dir.join(format!("{idx:02}-{stem}.o"));
-        compile(&clang, &common, src, &obj, is_wasm, simd);
+        compile(&clang, &common, src, &obj);
         objects.push(obj);
         println!("cargo:rerun-if-changed={}", src.display());
     }
@@ -160,7 +160,7 @@ fn clang_resource_include(clang: &str) -> PathBuf {
     PathBuf::from(dir).join("include")
 }
 
-fn compile(clang: &str, common: &[String], src: &Path, obj: &Path, is_wasm: bool, simd: bool) {
+fn compile(clang: &str, common: &[String], src: &Path, obj: &Path) {
     let mut cmd = Command::new(clang);
     cmd.args(common);
     if src.extension().and_then(|e| e.to_str()) == Some("c") {
@@ -168,10 +168,10 @@ fn compile(clang: &str, common: &[String], src: &Path, obj: &Path, is_wasm: bool
     } else {
         cmd.arg("-std=c++17");
     }
-    if is_wasm && simd {
-        // Keep codegen aligned with the Rust side (+simd128).
-        cmd.arg("-mrelaxed-simd");
-    }
+    // NOTE: deliberately no `-mrelaxed-simd`. Safari 16.4+ supports baseline
+    // SIMD but not the relaxed-SIMD proposal, and clang can emit relaxed
+    // instructions (e.g. f32x4.relaxed_madd) that fail WebAssembly.validate
+    // there. Baseline `-msimd128` matches the Rust side (+simd128).
     cmd.arg("-c").arg(src).arg("-o").arg(obj);
     run(&mut cmd, &format!("compiling {}", src.display()));
 }

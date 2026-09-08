@@ -124,7 +124,7 @@ export default function App() {
     <div className="app">
       <div className="notice">
         <span className="dot" />
-        WASM 音频核心 · <b>Rust + AudioWorklet</b> · 完整离线 PWA · GS-1 v1.0.1
+        WASM 音频核心 · <b>Rust + AudioWorklet</b> · 完整离线 PWA · GS-1 v1.0.2
       </div>
 
       <TopBar onBrowse={() => setDrawerOpen(true)} status={status} />

@@ -72,6 +72,7 @@ export class AudioEngine {
   error: string | null = null;
   sampleRate = 48000;
   simdSupported = detectSimd();
+  wasmVariant: 'simd' | 'scalar' | 'none' = 'none';
 
   private loadPromise: Promise<void> | null = null;
   private listeners = new Set<AnalysisListener>();
@@ -91,7 +92,7 @@ export class AudioEngine {
   diagnostics(): EngineDiagnostics {
     return {
       simd: this.simdSupported,
-      wasm: this.node ? (this.simdSupported ? 'simd' : 'scalar') : 'none',
+      wasm: this.wasmVariant,
       contextState: this.ctx?.state ?? 'none',
       sampleRate: this.sampleRate,
       userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'n/a',
@@ -157,21 +158,35 @@ export class AudioEngine {
 
     this.loadPromise = (async () => {
       this.setStatus('loading');
-      const url = this.simdSupported ? simdWasmUrl : scalarWasmUrl;
       try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 20000);
-        let response: Response;
-        try {
-          response = await fetch(url, { signal: controller.signal });
-        } finally {
-          clearTimeout(timer);
-        }
-        if (!response.ok) throw new Error(`WASM 下载失败 (HTTP ${response.status})`);
-        const bytes = await response.arrayBuffer();
+        const fetchBytes = async (simd: boolean) => {
+          const wasmUrl = simd ? simdWasmUrl : scalarWasmUrl;
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 20000);
+          try {
+            const response = await fetch(wasmUrl, { signal: controller.signal });
+            if (!response.ok) throw new Error(`WASM 下载失败 (HTTP ${response.status})`);
+            return await response.arrayBuffer();
+          } finally {
+            clearTimeout(timer);
+          }
+        };
+
+        // Prefer the SIMD core, but never trust feature detection alone:
+        // a browser can advertise SIMD while rejecting another instruction
+        // the build uses. Validate the actual bytes and fall back if needed.
+        let variant: 'simd' | 'scalar' = this.simdSupported ? 'simd' : 'scalar';
+        let bytes = await fetchBytes(variant === 'simd');
         if (!WebAssembly.validate(bytes)) {
-          throw new Error('WASM 模块校验失败（可能被服务器改写了内容）');
+          if (variant === 'simd') {
+            variant = 'scalar';
+            bytes = await fetchBytes(false);
+          }
+          if (!WebAssembly.validate(bytes)) {
+            throw new Error('WASM 模块校验失败（SIMD 与标量核心均不可用）');
+          }
         }
+        this.wasmVariant = variant;
 
         await ctx.audioWorklet.addModule(processorUrl);
 
