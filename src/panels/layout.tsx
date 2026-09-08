@@ -9,18 +9,19 @@ import { engine, type EngineStatus } from '@/audio/engine';
 import { midi } from '@/audio/midi';
 import { renderPatchToWav } from '@/audio/render';
 import { downloadBlob } from '@/state/share';
+import { t } from '@/i18n';
 
 function MidiButton() {
   const [snap, setSnap] = useState(midi.snapshot());
   useEffect(() => midi.subscribe(() => setSnap(midi.snapshot())), []);
   const label = snap.enabled ? `MIDI ${snap.devices.length}` : 'MIDI';
   const title = !snap.supported
-    ? '此浏览器不支持 Web MIDI'
+    ? t('top.midiUnsupported')
     : snap.error
-      ? `MIDI 错误：${snap.error}`
+      ? t('top.midiError', { msg: snap.error })
       : snap.enabled
-        ? snap.devices.map((d) => d.name).join(', ') || '已启用 · 未检测到设备'
-        : '连接 MIDI 键盘 / 控制器';
+        ? snap.devices.map((d) => d.name).join(', ') || t('top.midiEnabled')
+        : t('top.midiConnect');
   return (
     <button
       type="button"
@@ -83,8 +84,8 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
         <button
           type="button"
           className="power-btn"
-          title="电源开关"
-          aria-label="电源开关"
+          title={t('top.power')}
+          aria-label={t('top.power')}
           aria-pressed={power}
           onClick={() => store.setPower(!power)}
         >
@@ -94,33 +95,33 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
       </div>
 
       <div className="preset-ctrl">
-        <button type="button" className="nav-btn" title="上一个预设" aria-label="上一个预设" onClick={() => store.stepPreset(-1)}>
+        <button type="button" className="nav-btn" title={t('top.prevPreset')} aria-label={t('top.prevPreset')} onClick={() => store.stepPreset(-1)}>
           ‹
         </button>
         <div
           className="preset-display"
           role="button"
           tabIndex={0}
-          title="点击打开预设库"
+          title={t('top.openPresets')}
           onClick={onBrowse}
           onKeyDown={(e) => (e.key === 'Enter' ? onBrowse() : undefined)}
         >
           <div>
             <span className="preset-tag">{preset?.tag ?? 'INIT'}</span>
           </div>
-          <div className="preset-name">{preset?.name ?? 'INIT · 初始正弦'}</div>
+          <div className="preset-name">{preset?.name ?? t('preset.initName')}</div>
         </div>
-        <button type="button" className="nav-btn" title="下一个预设" aria-label="下一个预设" onClick={() => store.stepPreset(1)}>
+        <button type="button" className="nav-btn" title={t('top.nextPreset')} aria-label={t('top.nextPreset')} onClick={() => store.stepPreset(1)}>
           ›
         </button>
       </div>
 
       <div className="top-actions">
-        <div className="ab-group" role="group" aria-label="A/B 音色对比">
+        <div className="ab-group" role="group" aria-label={t('top.abGroup')}>
           <button
             type="button"
             className={`ab-slot${activeSlot === 'a' ? ' on' : ''}${slotAFilled ? ' filled' : ''}`}
-            title="音色槽 A（点击切换，首次点击保存当前音色）"
+            title={t('top.slotA')}
             aria-pressed={activeSlot === 'a'}
             onClick={() => store.selectSlot('a')}
           >
@@ -129,27 +130,27 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
           <button
             type="button"
             className={`ab-slot${activeSlot === 'b' ? ' on' : ''}${slotBFilled ? ' filled' : ''}`}
-            title="音色槽 B（点击切换，首次点击保存当前音色）"
+            title={t('top.slotB')}
             aria-pressed={activeSlot === 'b'}
             onClick={() => store.selectSlot('b')}
           >
             B
           </button>
-          <button type="button" className="ab-copy" title="把当前音色复制到另一个槽" onClick={() => store.copySlot()}>
+          <button type="button" className="ab-copy" title={t('top.copySlot')} onClick={() => store.copySlot()}>
             ⇄
           </button>
         </div>
-        <button type="button" className="tbtn icon" disabled={!canUndo} title="撤销 (Ctrl+Z)" aria-label="撤销" onClick={() => store.undo()}>
+        <button type="button" className="tbtn icon" disabled={!canUndo} title={`${t('top.undo')} (Ctrl+Z)`} aria-label={t('top.undo')} onClick={() => store.undo()}>
           ↶
         </button>
-        <button type="button" className="tbtn icon" disabled={!canRedo} title="重做 (Ctrl+Shift+Z)" aria-label="重做" onClick={() => store.redo()}>
+        <button type="button" className="tbtn icon" disabled={!canRedo} title={`${t('top.redo')} (Ctrl+Shift+Z)`} aria-label={t('top.redo')} onClick={() => store.redo()}>
           ↷
         </button>
         <MidiButton />
         <button
           type="button"
           className={`tbtn${keyboardVisible ? ' on' : ''}`}
-          title={keyboardVisible ? '隐藏键盘' : '显示键盘'}
+          title={keyboardVisible ? t('top.keyboardHide') : t('top.keyboardShow')}
           aria-pressed={keyboardVisible}
           onClick={() => store.toggleKeyboard()}
         >
@@ -157,15 +158,15 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
             <rect x="2" y="6" width="20" height="12" rx="2" />
             <path d="M6 10h1M9 10h1M12 10h1M15 10h1M18 10h1M7 14h10" strokeLinecap="round" />
           </svg>
-          键盘
+          {t('top.keyboard')}
         </button>
         <button
           type="button"
           className="tbtn"
-          title="随机生成新音色"
+          title={t('top.randomTitle')}
           onClick={() => {
             store.randomize();
-            toast('已随机生成新音色 · <b>RANDOM</b>');
+            toast(t('top.randomToast'));
           }}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
@@ -176,27 +177,27 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
             <circle cx="8.5" cy="15.5" r="1.4" fill="currentColor" stroke="none" />
             <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
           </svg>
-          随机
+          {t('top.random')}
         </button>
         <button
           type="button"
           className="tbtn"
           onClick={() => {
             const p = store.savePreset();
-            toast(`已保存到预设库 · <b>${p.name.split(' · ')[0]}</b>`);
+            toast(t('top.savedToast', { name: p.name.split(' · ')[0] }));
           }}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
             <path d="M17 21v-8H7v8M7 3v5h8" />
           </svg>
-          保存
+          {t('top.save')}
         </button>
         <button type="button" className="tbtn primary" onClick={onBrowse}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
             <path d="M4 6h16M4 12h16M4 18h10" />
           </svg>
-          预设库
+          {t('top.browse')}
         </button>
       </div>
     </header>
@@ -258,7 +259,7 @@ function DemoButton() {
         timer.current = window.setInterval(tick, 300);
       }}
     >
-      {running ? '■ STOP' : '▶ DEMO 琶音'}
+      {running ? t('monitor.stop') : t('monitor.demo')}
     </button>
   );
 }
@@ -268,7 +269,7 @@ function PolyBadge() {
   useEffect(() => engine.onPolyphony(setPoly), []);
   if (poly >= 16) return null;
   return (
-    <span className="poly-badge" title="负载过高时自动降低的复音上限">
+    <span className="poly-badge" title={t('monitor.polyTitle')}>
       POLY {poly}
     </span>
   );
@@ -281,21 +282,21 @@ function WavButton() {
       type="button"
       className="demo-btn"
       disabled={busy}
-      title="离线渲染当前音色为 WAV"
+      title={t('monitor.wavTitle')}
       onClick={async () => {
         setBusy(true);
         try {
           const blob = await renderPatchToWav(store.getSnapshot().state);
           downloadBlob('gs1-patch.wav', blob);
-          toast('已导出 WAV');
+          toast(t('monitor.wavDone'));
         } catch (err) {
-          toast(`导出失败：${err instanceof Error ? err.message : String(err)}`);
+          toast(t('monitor.wavFailed', { msg: err instanceof Error ? err.message : String(err) }));
         } finally {
           setBusy(false);
         }
       }}
     >
-      {busy ? '⏳ 渲染中' : '⤓ WAV'}
+      {busy ? t('monitor.rendering') : t('monitor.wav')}
     </button>
   );
 }
@@ -305,7 +306,7 @@ export function DisplayRow() {
     <section className="display-row">
       <div className="panel scope-panel">
         <div className="panel-head">
-          <span className="ph-title">SCOPE · 时域波形</span>
+          <span className="ph-title">{t('panel.scope')}</span>
           <ScopeMeta />
         </div>
         <div className="scope-body">
@@ -315,7 +316,7 @@ export function DisplayRow() {
 
       <div className="panel spectrum-panel">
         <div className="panel-head">
-          <span className="ph-title">SPECTRUM · 频谱</span>
+          <span className="ph-title">{t('panel.spectrum')}</span>
           <span className="ph-meta">36 BINS · PEAK HOLD</span>
         </div>
         <div className="spec-body">
@@ -325,7 +326,7 @@ export function DisplayRow() {
 
       <div className="panel monitor-panel">
         <div className="panel-head">
-          <span className="ph-title">MONITOR · 监视</span>
+          <span className="ph-title">{t('panel.monitor')}</span>
         </div>
         <div className="monitor-actions">
           <DemoButton />
@@ -359,24 +360,24 @@ export function KeyboardDock() {
       <div
         className={`kbd-dock${visible ? ' open' : ''}`}
         role="region"
-        aria-label="演奏键盘"
+        aria-label={t('kbd.region')}
         aria-hidden={!visible}
       >
         <div className="kbd-dock-inner">
           <Wheels />
           <Keyboard />
           <div className="kbd-tips">
-            <div>◈ <b>点击/滑奏琴键</b> 触发包络与示波器</div>
-            <div>◈ <b>拖动旋钮</b> 上下调节 · <b>双击</b> 复位</div>
-            <div>◈ <b>Shift+拖动</b> 微调 · 滚轮同样可用</div>
-            <div>◈ <b>拖动模块标题栏 ⠿</b> 调整顺序</div>
+            <div dangerouslySetInnerHTML={{ __html: t('kbd.tip1') }} />
+            <div dangerouslySetInnerHTML={{ __html: t('kbd.tip2') }} />
+            <div dangerouslySetInnerHTML={{ __html: t('kbd.tip3') }} />
+            <div dangerouslySetInnerHTML={{ __html: t('kbd.tip4') }} />
           </div>
           <button
             type="button"
             className="dock-hide"
             onClick={() => store.setKeyboardVisible(false)}
-            aria-label="隐藏键盘"
-            title="隐藏键盘"
+            aria-label={t('top.keyboardHide')}
+            title={t('top.keyboardHide')}
           >
             <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
               <path d="M2 4.5 L6 8.5 L10 4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -390,14 +391,14 @@ export function KeyboardDock() {
           type="button"
           className="dock-show"
           onClick={() => store.setKeyboardVisible(true)}
-          aria-label="显示键盘"
-          title="显示键盘"
+          aria-label={t('top.keyboardShow')}
+          title={t('top.keyboardShow')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
             <rect x="2" y="6" width="20" height="12" rx="2" />
             <path d="M6 10h1M9 10h1M12 10h1M15 10h1M18 10h1M7 14h10" strokeLinecap="round" />
           </svg>
-          键盘
+          {t('top.keyboard')}
         </button>
       ) : null}
     </>

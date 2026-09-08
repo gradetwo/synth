@@ -1,6 +1,7 @@
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import App from './App';
+import { store } from '@/state/store';
 
 describe('App shell', () => {
   it('renders every panel without crashing', () => {
@@ -23,6 +24,17 @@ describe('App shell', () => {
       '启动音频引擎',
     ]) {
       expect(html, marker).toContain(marker);
+    }
+  });
+
+  it('renders English after switching language', () => {
+    store.toggleLang();
+    try {
+      const html = renderToString(<App />);
+      expect(html).toContain('Start Audio Engine');
+      expect(html).toContain('Presets');
+    } finally {
+      store.toggleLang();
     }
   });
 });

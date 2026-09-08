@@ -5,6 +5,7 @@ import { subscribeFrame } from '@/audio/animationBus';
 import { store } from '@/state/store';
 import { useParam } from '@/hooks/useSynth';
 import { intToFilter, intToWave, intToLfoWave, type ParamId, type Wave } from '@/audio/params';
+import { t } from '@/i18n';
 
 const TAU = Math.PI * 2;
 
@@ -114,7 +115,7 @@ export function Scope() {
     ctx.stroke();
     ctx.shadowBlur = 0;
   });
-  return <canvas ref={ref} aria-label="时域波形示波器" />;
+  return <canvas ref={ref} aria-label={t('canvas.scopeAria')} />;
 }
 
 export function ScopeMeta() {
@@ -160,7 +161,7 @@ export function Spectrum() {
       }
     }
   });
-  return <canvas ref={ref} aria-label="频谱分析" />;
+  return <canvas ref={ref} aria-label={t('canvas.spectrumAria')} />;
 }
 
 // ---------------------------------------------------------------- mini waves
@@ -260,7 +261,7 @@ export function VuMeter() {
   return (
     <div className="vu">
       <div className="vu-track" style={{ padding: 4 }}>
-        <canvas ref={ref} style={{ width: '100%', height: '100%' }} aria-label="输出电平" />
+        <canvas ref={ref} style={{ width: '100%', height: '100%' }} aria-label={t('canvas.vuAria')} />
       </div>
       <span className="vu-cap">VU</span>
     </div>

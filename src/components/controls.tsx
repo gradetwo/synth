@@ -1,13 +1,8 @@
 import { useRef, useState } from 'react';
 import { store } from '@/state/store';
 import { useParam } from '@/hooks/useSynth';
-import {
-  type ParamId,
-  type ParamSpec,
-  type Wave,
-  WAVE_CN,
-  clamp,
-} from '@/audio/params';
+import { t } from '@/i18n';
+import { type ParamId, type ParamSpec, type Wave, clamp } from '@/audio/params';
 
 // ---------------------------------------------------------------- knob
 
@@ -223,7 +218,7 @@ export function WaveSelect({
           key={w}
           type="button"
           className={`wave-btn${i === value ? ' active' : ''}`}
-          title={WAVE_CN[w]}
+          title={t(`wave.${w}`)}
           aria-pressed={i === value}
           onClick={() => onChange(i)}
         >

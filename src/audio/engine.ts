@@ -17,6 +17,7 @@
 import simdWasmUrl from '@/generated/synth_core.wasm?url';
 import scalarWasmUrl from '@/generated/synth_core_scalar.wasm?url';
 import processorUrl from './worklet-processor.js?url';
+import { t } from '@/i18n';
 import {
   PARAM_NAMES,
   type ModRoute,
@@ -189,7 +190,7 @@ export class AudioEngine {
           const timer = setTimeout(() => controller.abort(), 20000);
           try {
             const response = await fetch(wasmUrl, { signal: controller.signal });
-            if (!response.ok) throw new Error(`WASM 下载失败 (HTTP ${response.status})`);
+            if (!response.ok) throw new Error(t('err.wasmFetch', { status: response.status }));
             return await response.arrayBuffer();
           } finally {
             clearTimeout(timer);
@@ -207,7 +208,7 @@ export class AudioEngine {
             bytes = await fetchBytes(false);
           }
           if (!WebAssembly.validate(bytes)) {
-            throw new Error('WASM 模块校验失败（SIMD 与标量核心均不可用）');
+            throw new Error(t('err.wasmValidate'));
           }
         }
         this.wasmVariant = variant;

@@ -115,6 +115,15 @@ describe('synth store', () => {
     expect(store.getParam(Param.FILTER_CUTOFF)).toBe(4321);
   });
 
+  it('toggles the language and persists it', () => {
+    const before = store.getSnapshot().layout.lang;
+    store.toggleLang();
+    const after = store.getSnapshot().layout.lang;
+    expect(after).not.toBe(before);
+    expect(JSON.parse(localStorage.getItem('gs1:layout:v1') as string).lang).toBe(after);
+    store.toggleLang();
+  });
+
   it('adds and removes modulation routes', () => {
     const before = store.getSnapshot().state.routes.length;
     store.addRoute();

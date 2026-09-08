@@ -3,6 +3,7 @@ import { noteBus, noteName } from '@/audio/noteBus';
 import { engine } from '@/audio/engine';
 import { store } from '@/state/store';
 import { Param } from '@/audio/params';
+import { t } from '@/i18n';
 
 const BLACK = new Set([1, 3, 6, 8, 10]);
 const KEY_MAP: Record<string, number> = {
@@ -110,11 +111,11 @@ export function Keyboard() {
   return (
     <div className="keyboard-wrap">
       <div className="keyboard-head">
-        <button type="button" className="oct-btn" onClick={() => setOctave((o) => Math.max(-2, o - 1))} aria-label="降低八度">
+        <button type="button" className="oct-btn" onClick={() => setOctave((o) => Math.max(-2, o - 1))} aria-label={t('kbd.octDown')}>
           −
         </button>
         <span className="oct-label">OCT {octave >= 0 ? `+${octave}` : octave}</span>
-        <button type="button" className="oct-btn" onClick={() => setOctave((o) => Math.min(3, o + 1))} aria-label="升高八度">
+        <button type="button" className="oct-btn" onClick={() => setOctave((o) => Math.min(3, o + 1))} aria-label={t('kbd.octUp')}>
           ＋
         </button>
       </div>
@@ -211,7 +212,7 @@ export function Wheels() {
           className="wheel"
           ref={pitchRef}
           role="slider"
-          aria-label="弯音轮"
+          aria-label={t('kbd.pitch')}
           aria-valuemin={-1}
           aria-valuemax={1}
           aria-valuenow={0}
@@ -242,7 +243,7 @@ export function Wheels() {
           className="wheel"
           ref={modRef}
           role="slider"
-          aria-label="调制轮"
+          aria-label={t('kbd.mod')}
           aria-valuemin={0}
           aria-valuemax={1}
           aria-valuenow={mod}

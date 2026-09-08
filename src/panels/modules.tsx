@@ -25,6 +25,7 @@ import { Knob, Led, ParamLed, Segment, WaveSelect } from '@/components/controls'
 import { FilterCurve, LfoRateLabel, MiniWave } from '@/components/canvas';
 import { AdsrEditor } from '@/components/AdsrEditor';
 import { ModuleShell } from '@/components/Module';
+import { t } from '@/i18n';
 
 function ParamWaveSelect({ id, waves }: { id: number; waves: Wave[] }) {
   const value = Math.round(useParam(id as ParamId));
@@ -94,12 +95,12 @@ function FilterModule() {
       <ParamSegment
         id={Param.FILTER_TYPE}
         colorful
-        label="滤波器类型"
+        label={t('module.filterType')}
         options={[
-          { label: 'LP', value: filterToInt('lp'), title: '低通 · Moog 阶梯' },
-          { label: 'HP', value: filterToInt('hp'), title: '高通' },
-          { label: 'BP', value: filterToInt('bp'), title: '带通' },
-          { label: 'NT', value: filterToInt('nt'), title: '陷波' },
+          { label: 'LP', value: filterToInt('lp'), title: t('filter.lp') },
+          { label: 'HP', value: filterToInt('hp'), title: t('filter.hp') },
+          { label: 'BP', value: filterToInt('bp'), title: t('filter.bp') },
+          { label: 'NT', value: filterToInt('nt'), title: t('filter.nt') },
         ]}
       />
       <div className="filter-grid">
@@ -110,7 +111,7 @@ function FilterModule() {
           <Knob spec={SPEC_BY_ID[Param.FILTER_ENV_AMT]} />
           <div className="toggle-cell">
             <span className="lbl">KBD</span>
-            <ParamLed id={Param.FILTER_KBD} label="键盘跟踪" />
+            <ParamLed id={Param.FILTER_KBD} label={t('module.kbdTrack')} />
           </div>
         </div>
       </div>
@@ -133,11 +134,11 @@ function EnvModule() {
       <div className="env-foot">
         <ParamSegment
           id={Param.VOICE_MODE}
-          label="声部模式"
+          label={t('module.voiceMode')}
           options={[
-            { label: 'POLY', value: 0, title: '复音' },
-            { label: 'MONO', value: 1, title: '单音 · 每次重新触发包络' },
-            { label: 'LEGATO', value: 2, title: '连奏 · 不重触发包络' },
+            { label: 'POLY', value: 0, title: t('module.modePoly') },
+            { label: 'MONO', value: 1, title: t('module.modeMono') },
+            { label: 'LEGATO', value: 2, title: t('module.modeLegato') },
           ]}
         />
         <Knob spec={SPEC_BY_ID[Param.GLIDE]} />
@@ -158,12 +159,12 @@ function LfoModule() {
       </div>
       <ParamSegment
         id={Param.LFO_TARGET}
-        label="LFO 目标"
+        label={t('module.lfoTarget')}
         options={LFO_TARGETS.map((t, i) => ({ label: t.toUpperCase(), value: i }))}
       />
       <div className="lfo-foot">
         <MiniWave which={1} color="#fb923c" lfo />
-        <ParamLed id={Param.LFO_SYNC} label="LFO 同步" />
+        <ParamLed id={Param.LFO_SYNC} label={t('module.lfoSync')} />
         <span className="hint">SYNC</span>
         <LfoRateLabel />
       </div>
@@ -173,7 +174,7 @@ function LfoModule() {
           <span className="bar" />
           <span className="title">LFO 2</span>
           <span className="spacer" />
-          <ParamLed id={Param.LFO2_ON} label="LFO 2 开关" />
+          <ParamLed id={Param.LFO2_ON} label={t('module.lfo2On')} />
         </div>
         <ParamWaveSelect id={Param.LFO2_WAVE} waves={LFO_WAVES} />
         <div className="knob-row">
@@ -182,7 +183,7 @@ function LfoModule() {
         </div>
         <ParamSegment
           id={Param.LFO2_TARGET}
-          label="LFO 2 目标"
+          label={t('module.lfo2Target')}
           options={LFO_TARGETS.map((t, i) => ({ label: t.toUpperCase(), value: i }))}
         />
       </div>
@@ -204,7 +205,7 @@ function ModMatrix() {
               style={{ color: 'var(--lfo)' }}
               value={modSrcToInt(route.src)}
               onChange={(e) => store.setRoute(i, { src: intToModSrc(Number(e.target.value)) })}
-              aria-label="调制源"
+              aria-label={t('module.matrixSrc')}
             >
               {MOD_SOURCES.map((s, si) => (
                 <option key={s} value={si}>
@@ -217,7 +218,7 @@ function ModMatrix() {
               className="badge badge-sel"
               value={modDstToInt(route.dst)}
               onChange={(e) => store.setRoute(i, { dst: intToModDst(Number(e.target.value)) })}
-              aria-label="调制目标"
+              aria-label={t('module.matrixDst')}
             >
               {MOD_DESTS.map((d, di) => (
                 <option key={d} value={di}>
@@ -234,22 +235,22 @@ function ModMatrix() {
               value={route.amount}
               style={{ ['--p' as string]: `${route.amount * 100}%` }}
               onChange={(e) => store.setRoute(i, { amount: Number(e.target.value) })}
-              aria-label="调制量"
+              aria-label={t('module.matrixAmt')}
             />
             <Led
               on={route.enabled}
               onToggle={(v) => store.setRoute(i, { enabled: v })}
-              label="启用路由"
+              label={t('module.matrixEnable')}
               color="var(--matrix)"
             />
-            <button type="button" className="route-del" title="删除路由" onClick={() => store.removeRoute(i)}>
+            <button type="button" className="route-del" title={t('module.matrixDelete')} onClick={() => store.removeRoute(i)}>
               ✕
             </button>
           </div>
         ))}
       </div>
       <button type="button" className="add-route" onClick={() => store.addRoute()}>
-        ＋ 添加调制路由
+        {t('module.addRoute')}
       </button>
     </ModuleShell>
   );
@@ -264,7 +265,7 @@ function FxModule() {
       <div className="fx-grid">
         <div className="fx-unit">
           <div className="fx-title">
-            <ParamLed id={Param.FX_REVERB_ON} label="混响开关" />
+            <ParamLed id={Param.FX_REVERB_ON} label={t('module.reverbOn')} />
             REVERB
           </div>
           <div className="knob-row">
@@ -275,7 +276,7 @@ function FxModule() {
         <div className="fx-sep" />
         <div className="fx-unit">
           <div className="fx-title">
-            <ParamLed id={Param.FX_DELAY_ON} label="延迟开关" />
+            <ParamLed id={Param.FX_DELAY_ON} label={t('module.delayOn')} />
             DELAY
           </div>
           <div className="seg dly-sync">
@@ -306,7 +307,7 @@ function FxStrip({ title, ledId, specs }: { title: string; ledId: number; specs:
   return (
     <div className="fx2-strip">
       <div className="fx-title">
-        <ParamLed id={ledId} label={`${title} 开关`} />
+        <ParamLed id={ledId} label={t('module.ledAria', { title })} />
         {title}
       </div>
       <div className="knob-row">

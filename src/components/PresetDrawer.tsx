@@ -4,6 +4,8 @@ import { useSynth } from '@/hooks/useSynth';
 import { PRESET_CATEGORIES, type PresetCategory } from '@/state/presets';
 import { WaveIcon } from './controls';
 import { toast } from './Toast';
+import { LANG_LABELS, t } from '@/i18n';
+import { useLang } from '@/hooks/useSynth';
 
 const SW_COLOR: Record<string, string> = {
   sine: '#4da3ff',
@@ -16,6 +18,7 @@ const SW_COLOR: Record<string, string> = {
 
 export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { userPresets, currentPresetId } = useSynth();
+  const lang = useLang();
   const [category, setCategory] = useState<PresetCategory>('ALL');
   const [query, setQuery] = useState('');
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -35,10 +38,10 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
   return (
     <>
       <div className={`drawer-mask${open ? ' show' : ''}`} onClick={onClose} />
-      <aside className={`drawer${open ? ' open' : ''}`} aria-hidden={!open} aria-label="预设库">
+      <aside className={`drawer${open ? ' open' : ''}`} aria-hidden={!open} aria-label={t('drawer.title')}>
         <div className="drawer-head">
-          <span className="d-title">PRESET LIBRARY · 预设库</span>
-          <button type="button" className="d-close" onClick={onClose} aria-label="关闭">
+          <span className="d-title">{t('drawer.title')}</span>
+          <button type="button" className="d-close" onClick={onClose} aria-label={t('drawer.close')}>
             ✕
           </button>
         </div>
@@ -50,9 +53,9 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索音色 / 风格 / 分类…"
+            placeholder={t('drawer.search')}
             autoComplete="off"
-            aria-label="搜索预设"
+            aria-label={t('drawer.search')}
           />
         </div>
         <div className="d-cats">
@@ -81,7 +84,7 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
                 tabIndex={0}
                 onClick={() => {
                   store.applyPreset(p);
-                  toast(`已载入预设 <b>${p.name.split(' · ')[0]}</b>`);
+                  toast(t('drawer.loaded', { name: p.name.split(' · ')[0] }));
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') store.applyPreset(p);
@@ -100,11 +103,11 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
                   <button
                     type="button"
                     className="pcard-del"
-                    title="删除预设"
+                    title={t('drawer.delete')}
                     onClick={(e) => {
                       e.stopPropagation();
                       store.deletePreset(p.id);
-                      toast('已删除用户预设');
+                      toast(t('drawer.deleted'));
                     }}
                   >
                     ✕
@@ -117,17 +120,17 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
         <div className="d-foot">
           <div className="d-foot-actions">
             <button type="button" className="d-reset" onClick={() => fileRef.current?.click()}>
-              导入
+              {t('drawer.import')}
             </button>
             <button
               type="button"
               className="d-reset"
               onClick={() => {
                 store.exportCurrentPreset();
-                toast('已导出当前音色 · <b>.gs1.json</b>');
+                toast(t('drawer.exported'));
               }}
             >
-              导出
+              {t('drawer.export')}
             </button>
             <button
               type="button"
@@ -136,34 +139,42 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
                 const url = store.shareLink();
                 try {
                   await navigator.clipboard.writeText(url);
-                  toast('分享链接已复制到剪贴板');
+                  toast(t('drawer.shared'));
                 } catch {
-                  toast('分享链接已写入地址栏');
+                  toast(t('drawer.shareFailed'));
                 }
                 history.replaceState(null, '', url);
               }}
             >
-              分享
+              {t('drawer.share')}
+            </button>
+            <button
+              type="button"
+              className="d-reset"
+              onClick={() => store.toggleLang()}
+              title={lang === 'zh' ? 'Switch to English' : '切换为中文'}
+            >
+              {lang === 'zh' ? LANG_LABELS.en : LANG_LABELS.zh}
             </button>
             <button
               type="button"
               className="d-reset"
               onClick={() => {
                 store.toggleTheme();
-                toast(store.getSnapshot().layout.theme === 'contrast' ? '已切换高对比配色' : '已切换默认配色');
+                toast(store.getSnapshot().layout.theme === 'contrast' ? t('drawer.contrastOn') : t('drawer.contrastOff'));
               }}
             >
-              高对比
+              {t('drawer.contrast')}
             </button>
             <button
               type="button"
               className="d-reset"
               onClick={() => {
                 store.resetLayout();
-                toast('已重置面板布局与键盘显示');
+                toast(t('drawer.resetDone'));
               }}
             >
-              重置布局
+              {t('drawer.reset')}
             </button>
           </div>
           <input
@@ -176,11 +187,11 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
               event.target.value = '';
               if (!file) return;
               const text = await file.text();
-              toast(store.importPresetFile(text) ? '已导入音色文件' : '文件格式无法识别');
+              toast(store.importPresetFile(text) ? t('drawer.imported') : t('drawer.importFailed'));
             }}
           />
           <div className="d-foot-count">
-            共 <b>{all.length}</b> 个预设 · {userPresets.length} 个本地收藏
+            <span dangerouslySetInnerHTML={{ __html: t('drawer.footer', { n: all.length, m: userPresets.length }) }} />
           </div>
         </div>
       </aside>

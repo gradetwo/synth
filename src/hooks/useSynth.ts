@@ -47,6 +47,14 @@ export function useCollapsed(id: ModuleId): boolean {
   );
 }
 
+export function useLang(): 'zh' | 'en' {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getSnapshot().layout.lang,
+    () => store.getSnapshot().layout.lang,
+  );
+}
+
 export function useTheme(): 'dark' | 'contrast' {
   return useSyncExternalStore(
     subscribe,

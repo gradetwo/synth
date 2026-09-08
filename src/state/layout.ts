@@ -6,6 +6,7 @@
  */
 
 import type { ParamId } from '@/audio/params';
+import type { Lang } from '@/i18n';
 import { Param } from '@/audio/params';
 
 export type ModuleId = 'osc1' | 'osc2' | 'filter' | 'env' | 'lfo' | 'matrix' | 'fx' | 'fx2';
@@ -22,14 +23,14 @@ export interface ModuleMeta {
 }
 
 export const MODULE_META: Record<ModuleId, ModuleMeta> = {
-  osc1: { title: 'OSC 1', sub: '振荡器 A', color: 'var(--osc1)', ledId: Param.OSC1_ON, span: 1 },
-  osc2: { title: 'OSC 2', sub: '振荡器 B', color: 'var(--osc2)', ledId: Param.OSC2_ON, span: 1 },
-  filter: { title: 'FILTER', sub: '滤波器', color: 'var(--filter)', span: 1 },
-  env: { title: 'AMP ENV', sub: '振幅包络', color: 'var(--env)', span: 1 },
-  lfo: { title: 'LFO', sub: '低频振荡', color: 'var(--lfo)', ledId: Param.LFO_ON, span: 1 },
-  matrix: { title: 'MOD MATRIX', sub: '调制路由', color: 'var(--matrix)', span: 1 },
-  fx: { title: 'FX', sub: '效果处理', color: 'var(--fx)', span: 2 },
-  fx2: { title: 'FX 2', sub: '调制效果', color: 'var(--fx)', span: 2 },
+  osc1: { title: 'OSC 1', sub: 'module.osc1.sub', color: 'var(--osc1)', ledId: Param.OSC1_ON, span: 1 },
+  osc2: { title: 'OSC 2', sub: 'module.osc2.sub', color: 'var(--osc2)', ledId: Param.OSC2_ON, span: 1 },
+  filter: { title: 'FILTER', sub: 'module.filter.sub', color: 'var(--filter)', span: 1 },
+  env: { title: 'AMP ENV', sub: 'module.env.sub', color: 'var(--env)', span: 1 },
+  lfo: { title: 'LFO', sub: 'module.lfo.sub', color: 'var(--lfo)', ledId: Param.LFO_ON, span: 1 },
+  matrix: { title: 'MOD MATRIX', sub: 'module.matrix.sub', color: 'var(--matrix)', span: 1 },
+  fx: { title: 'FX', sub: 'module.fx.sub', color: 'var(--fx)', span: 2 },
+  fx2: { title: 'FX 2', sub: 'module.fx2.sub', color: 'var(--fx)', span: 2 },
 };
 
 export type Theme = 'dark' | 'contrast';
@@ -39,6 +40,7 @@ export interface LayoutState {
   collapsed: Partial<Record<ModuleId, boolean>>;
   keyboardVisible: boolean;
   theme: Theme;
+  lang: Lang;
 }
 
 export function defaultLayout(): LayoutState {
@@ -47,6 +49,7 @@ export function defaultLayout(): LayoutState {
     collapsed: {},
     keyboardVisible: true,
     theme: 'dark',
+    lang: 'zh',
   };
 }
 
@@ -79,6 +82,7 @@ export function normalizeLayout(raw: unknown): LayoutState {
     collapsed,
     keyboardVisible: input.keyboardVisible !== false,
     theme: input.theme === 'contrast' ? 'contrast' : 'dark',
+    lang: input.lang === 'en' ? 'en' : 'zh',
   };
 }
 

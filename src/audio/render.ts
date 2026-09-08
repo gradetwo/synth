@@ -10,6 +10,7 @@ import simdWasmUrl from '@/generated/synth_core.wasm?url';
 import scalarWasmUrl from '@/generated/synth_core_scalar.wasm?url';
 import processorUrl from './worklet-processor.js?url';
 import { detectSimd } from './engine';
+import { t } from '@/i18n';
 import { PARAM_NAMES, type SynthState } from './params';
 
 export interface RenderOptions {
@@ -36,7 +37,7 @@ const DEFAULT_PHRASE: [number, number, number][] = [
 
 async function fetchBytes(simd: boolean): Promise<ArrayBuffer> {
   const response = await fetch(simd ? simdWasmUrl : scalarWasmUrl);
-  if (!response.ok) throw new Error(`WASM 下载失败 (HTTP ${response.status})`);
+  if (!response.ok) throw new Error(t('err.wasmFetch', { status: response.status }));
   return response.arrayBuffer();
 }
 

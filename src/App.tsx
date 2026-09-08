@@ -11,6 +11,7 @@ import { ToastHost } from '@/components/Toast';
 import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/register';
 import { readShareCode } from '@/state/share';
 import { APP_VERSION } from '@/version';
+import { t } from '@/i18n';
 import { toast } from '@/components/Toast';
 
 wireAnalysis();
@@ -27,20 +28,20 @@ function StartOverlay({
   const d = engine.diagnostics();
   const diag = `GS-1 v${APP_VERSION} · SIMD ${d.simd ? '✓' : '✗'} · WASM ${d.wasm} · AudioContext ${d.contextState} · ${d.sampleRate} Hz`;
   return (
-    <div className="start-overlay" role="dialog" aria-label="启动音频引擎">
+    <div className="start-overlay" role="dialog" aria-label={t('app.start')}>
       <div className="start-card">
         <button type="button" className="start-btn" onClick={onStart} disabled={busy}>
           <span className="start-icon">▶</span>
-          <span>{busy ? '正在启动…' : '启动音频引擎'}</span>
-          <small>浏览器需要一次点击才能播放声音</small>
+          <span>{busy ? t('app.starting') : t('app.start')}</span>
+          <small>{t('app.startHint')}</small>
         </button>
         {error ? (
           <div className="start-error" role="alert">
-            <b>启动失败</b>
+            <b>{t('app.startFailed')}</b>
             <p>{error}</p>
             <small>{diag}</small>
             <button type="button" className="start-retry" onClick={onStart} disabled={busy}>
-              重试
+              {t('app.retry')}
             </button>
           </div>
         ) : (
@@ -59,11 +60,11 @@ function UpdateBanner() {
   if (!available) return null;
   return (
     <div className="update-banner" role="status">
-      <span>🚀 新版本已就绪</span>
+      <span>🚀 {t('app.updateReady')}</span>
       <button type="button" onClick={() => applyUpdate()}>
-        立即更新
+        {t('app.updateNow')}
       </button>
-      <button type="button" className="ghost" onClick={() => setAvailable(false)} aria-label="稍后">
+      <button type="button" className="ghost" onClick={() => setAvailable(false)} aria-label={t('app.later')}>
         ✕
       </button>
     </div>
@@ -84,7 +85,7 @@ export default function App() {
     const code = readShareCode();
     if (code && store.importPatchCode(code)) {
       history.replaceState(null, '', window.location.pathname + window.location.search);
-      toast('已载入分享音色');
+      toast(t('app.sharedLoaded'));
     }
   }, []);
 
@@ -186,7 +187,7 @@ export default function App() {
 
       {status === 'suspended' ? (
         <button type="button" className="audio-hint" onClick={() => void engine.resumeIfSuspended()}>
-          ⏸ 音频已暂停 · 点按此处恢复
+          {t('app.suspended')}
         </button>
       ) : null}
 

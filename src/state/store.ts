@@ -36,6 +36,7 @@ import {
   type PresetCategory,
 } from './presets';
 import { decodePatch, downloadText, encodePatch, shareUrl } from './share';
+import { setLang } from '@/i18n';
 
 const STORAGE_KEY = 'gs1:state:v1';
 const USER_KEY = 'gs1:user-presets:v1';
@@ -98,6 +99,7 @@ class SynthStore {
     const persisted = loadJson<SynthState>(STORAGE_KEY);
     this.state = persisted && persisted.params ? { ...createDefaultState(), ...persisted } : createDefaultState();
     this.layout = normalizeLayout(loadJson<LayoutState>(LAYOUT_KEY));
+    setLang(this.layout.lang);
     this.userPresets = loadJson<Preset[]>(USER_KEY) ?? [];
     this.snapshot = this.buildSnapshot();
   }
@@ -444,6 +446,12 @@ class SynthStore {
     this.setKeyboardVisible(!this.layout.keyboardVisible);
   }
 
+  toggleLang() {
+    this.layout = { ...this.layout, lang: this.layout.lang === 'zh' ? 'en' : 'zh' };
+    setLang(this.layout.lang);
+    this.commit();
+  }
+
   toggleTheme() {
     this.layout = {
       ...this.layout,
@@ -479,6 +487,7 @@ class SynthStore {
 
   resetLayout() {
     this.layout = defaultLayout();
+    setLang(this.layout.lang);
     this.commit();
   }
 

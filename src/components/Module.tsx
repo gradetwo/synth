@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { store } from '@/state/store';
 import { useCollapsed } from '@/hooks/useSynth';
 import { MODULE_META, type ModuleId } from '@/state/layout';
+import { t } from '@/i18n';
 import { ParamLed } from './controls';
 
 /**
@@ -112,14 +113,14 @@ export function ModuleShell({
       <div className="module-head">
         <span className="bar" />
         <span className="title">{meta.title}</span>
-        <span className="sub">{meta.sub}</span>
+        <span className="sub">{t(meta.sub)}</span>
         <span className="spacer" />
-        {meta.ledId !== undefined ? <ParamLed id={meta.ledId} label={`${meta.title} 开关`} /> : null}
+        {meta.ledId !== undefined ? <ParamLed id={meta.ledId} label={t('module.ledAria', { title: meta.title })} /> : null}
         <button
           type="button"
           className="module-grip"
-          title="拖动排序"
-          aria-label={`拖动 ${meta.title} 排序`}
+          title={t('module.drag')}
+          aria-label={t('module.dragAria', { title: meta.title })}
           onPointerDown={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -139,8 +140,8 @@ export function ModuleShell({
           type="button"
           className="module-collapse"
           aria-expanded={!collapsed}
-          aria-label={collapsed ? `${meta.title} 展开` : `${meta.title} 收起`}
-          title={collapsed ? '展开' : '收起'}
+          aria-label={collapsed ? `${meta.title} ${t('module.expand')}` : `${meta.title} ${t('module.collapse')}`}
+          title={collapsed ? t('module.expand') : t('module.collapse')}
           onClick={() => store.toggleCollapsed(id)}
         >
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">

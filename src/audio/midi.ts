@@ -9,6 +9,7 @@ import { store } from '@/state/store';
 import { Param } from './params';
 import { engine } from './engine';
 import { noteBus } from './noteBus';
+import { t } from '@/i18n';
 
 export type MidiAction =
   | { type: 'noteOn'; note: number; velocity: number }
@@ -84,7 +85,7 @@ class MidiManager {
 
   async enable(): Promise<void> {
     if (!this.state.supported) {
-      this.state = { ...this.state, error: '此浏览器不支持 Web MIDI' };
+      this.state = { ...this.state, error: t('err.midiUnsupported') };
       this.emit();
       return;
     }
@@ -124,7 +125,7 @@ class MidiManager {
       ...this.state,
       devices: this.inputs.map((i) => ({
         id: i.id,
-        name: i.name ?? '未命名设备',
+        name: i.name ?? t('err.midiDevice'),
         manufacturer: i.manufacturer ?? '',
       })),
     };
