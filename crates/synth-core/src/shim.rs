@@ -1,13 +1,14 @@
 //! Freestanding libc shims for the vendored C/C++ sources (wasm32 only).
 //!
 //! The wasm build is compiled with `-nostdinc` against `c_bridge/shim/*`, so the
-//! libraries only ever see the handful of symbols declared here. Math is routed
-//! to `std` (which embeds a libm on wasm32-unknown-unknown); allocation is
-//! routed to the fixed arena in [`crate::alloc_arena`].
+//! libraries only ever see the symbols declared here. Math comes from
+//! [`crate::dsp::fmath`] (never from a libcall, which would recurse) and
+//! allocation from the fixed arena in [`crate::alloc_arena`].
 
 #![cfg(target_arch = "wasm32")]
 
 use crate::alloc_arena;
+use crate::dsp::fmath;
 
 // ---------------------------------------------------------------- allocation
 
@@ -77,119 +78,70 @@ pub extern "C" fn srand(seed: u32) {
 
 // ---------------------------------------------------------------------- math
 
-macro_rules! f32_unary {
-    ($name:ident, $method:ident) => {
-        #[no_mangle]
-        pub extern "C" fn $name(x: f32) -> f32 {
-            x.$method()
-        }
+macro_rules! export_f32 {
+    ($($name:ident),* $(,)?) => {
+        $(
+            #[no_mangle]
+            pub extern "C" fn $name(x: f32) -> f32 {
+                fmath::$name(x)
+            }
+        )*
     };
 }
 
-macro_rules! f64_unary {
-    ($name:ident, $method:ident) => {
-        #[no_mangle]
-        pub extern "C" fn $name(x: f64) -> f64 {
-            x.$method()
-        }
+macro_rules! export_f64 {
+    ($($name:ident),* $(,)?) => {
+        $(
+            #[no_mangle]
+            pub extern "C" fn $name(x: f64) -> f64 {
+                fmath::$name(x)
+            }
+        )*
     };
 }
 
-f32_unary!(sinf, sin);
-f32_unary!(cosf, cos);
-f32_unary!(tanf, tan);
-f32_unary!(asinf, asin);
-f32_unary!(acosf, acos);
-f32_unary!(atanf, atan);
-f32_unary!(sqrtf, sqrt);
-f32_unary!(fabsf, abs);
-f32_unary!(expf, exp);
-f32_unary!(logf, ln);
-f32_unary!(log10f, log10);
-f32_unary!(log2f, log2);
-f32_unary!(floorf, floor);
-f32_unary!(ceilf, ceil);
-f32_unary!(roundf, round);
-f32_unary!(truncf, trunc);
-f32_unary!(tanhf, tanh);
-f32_unary!(sinhf, sinh);
-f32_unary!(coshf, cosh);
-
-f64_unary!(sin, sin);
-f64_unary!(cos, cos);
-f64_unary!(tan, tan);
-f64_unary!(sqrt, sqrt);
-f64_unary!(fabs, abs);
-f64_unary!(exp, exp);
-f64_unary!(log, ln);
-f64_unary!(log10, log10);
-f64_unary!(floor, floor);
-f64_unary!(ceil, ceil);
-f64_unary!(round, round);
-
-#[no_mangle]
-pub extern "C" fn atan2f(y: f32, x: f32) -> f32 {
-    y.atan2(x)
-}
-
-#[no_mangle]
-pub extern "C" fn atan2(y: f64, x: f64) -> f64 {
-    y.atan2(x)
-}
+export_f32!(
+    sinf, cosf, tanf, sqrtf, fabsf, expf, logf, log10f, log2f, floorf, ceilf, roundf, truncf,
+    tanhf,
+);
+export_f64!(sin, cos, tan, sqrt, fabs, exp, log, log10, floor, ceil, round);
 
 #[no_mangle]
 pub extern "C" fn powf(x: f32, y: f32) -> f32 {
-    x.powf(y)
+    fmath::powf(x, y)
 }
 
 #[no_mangle]
 pub extern "C" fn pow(x: f64, y: f64) -> f64 {
-    x.powf(y)
+    fmath::pow(x, y)
 }
 
 #[no_mangle]
 pub extern "C" fn fmodf(x: f32, y: f32) -> f32 {
-    x % y
+    fmath::fmodf(x, y)
 }
 
 #[no_mangle]
 pub extern "C" fn fmod(x: f64, y: f64) -> f64 {
-    x % y
+    fmath::fmod(x, y)
 }
 
 #[no_mangle]
 pub extern "C" fn fminf(a: f32, b: f32) -> f32 {
-    a.min(b)
+    fmath::fminf(a, b)
 }
 
 #[no_mangle]
 pub extern "C" fn fmaxf(a: f32, b: f32) -> f32 {
-    a.max(b)
+    fmath::fmaxf(a, b)
 }
 
 #[no_mangle]
 pub extern "C" fn frexpf(x: f32, exp: *mut i32) -> f32 {
-    // Decompose via the IEEE-754 exponent without pulling in a libm symbol.
-    if x == 0.0 || !x.is_finite() {
-        if !exp.is_null() {
-            unsafe { *exp = 0 };
-        }
-        return x;
-    }
-    let bits = x.to_bits();
-    let mut e = ((bits >> 23) & 0xff) as i32 - 126;
-    let mut m = f32::from_bits((bits & 0x807f_ffff) | (126 << 23));
-    if m.abs() >= 1.0 {
-        m *= 0.5;
-        e += 1;
-    }
-    if !exp.is_null() {
-        unsafe { *exp = e };
-    }
-    m
+    fmath::frexpf(x, exp)
 }
 
 #[no_mangle]
 pub extern "C" fn ldexpf(x: f32, exp: i32) -> f32 {
-    x * (2.0f32).powi(exp)
+    fmath::ldexpf(x, exp)
 }

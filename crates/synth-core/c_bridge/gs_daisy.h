@@ -29,14 +29,13 @@ enum {
     GS_WAVE_POLYBLEP_SQUARE = 7,
 };
 
-/* Ladder filter modes — mirror daisysp::LadderFilter::FilterMode */
+/* Filter ids used by the engine. LP uses the Moog ladder (DaisySP LadderFilter,
+ * LP24); the rest use the double-sampled SVF. */
 enum {
-    GS_LADDER_LP24 = 0,
-    GS_LADDER_LP12 = 1,
-    GS_LADDER_BP24 = 2,
-    GS_LADDER_BP12 = 3,
-    GS_LADDER_HP24 = 4,
-    GS_LADDER_HP12 = 5,
+    GS_FILTER_LP = 0,
+    GS_FILTER_HP = 1,
+    GS_FILTER_BP = 2,
+    GS_FILTER_NOTCH = 3,
 };
 
 /* SVF outputs */
@@ -51,17 +50,13 @@ enum {
 /* Initialise every voice slot for a given sample rate. */
 void gs_daisy_init(float sample_rate);
 
+/* Clear the DSP state of one voice slot (called when a slot is reallocated). */
+void gs_voice_reset(int v);
+
 /* --- per-voice oscillators ------------------------------------------------- */
 void gs_voice_osc_set(int v, int which, uint32_t wave, float freq, float amp, float pw);
 void gs_voice_osc_reset(int v, int which, float phase);
 void gs_voice_osc_block(int v, int which, float *out, uint32_t frames);
-
-/* --- per-voice amplitude envelope ----------------------------------------- */
-void gs_voice_env_set(int v, float attack_s, float decay_s, float sustain, float release_s);
-void gs_voice_env_retrigger(int v, int hard);
-void gs_voice_env_block(int v, int gate, float *out, uint32_t frames);
-int  gs_voice_env_segment(int v);
-int  gs_voice_env_running(int v);
 
 /* --- per-voice filter ------------------------------------------------------ */
 void gs_voice_filter_set(int v, int type, float freq, float res, float drive);

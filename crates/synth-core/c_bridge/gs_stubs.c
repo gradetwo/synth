@@ -9,6 +9,10 @@
 #include <stdarg.h>
 #include <stddef.h>
 
+/* These symbols exist to satisfy the freestanding wasm link. On the host the
+ * real libc/libstdc++ provides them, and defining them here would clash. */
+#ifdef __wasm__
+
 typedef struct gs_shim_FILE FILE;
 
 FILE *stdout = 0;
@@ -75,4 +79,6 @@ void __cxa_pure_virtual(void)
     for (;;) {
     }
 }
+
+#endif /* __wasm__ */
 

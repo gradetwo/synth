@@ -1,5 +1,7 @@
-/* Minimal freestanding <math.h>. Implementations live in Rust (src/shim.rs) so
- * that we never pull in a libc while keeping IEEE-accurate results. */
+/* Minimal freestanding <math.h>. Implementations live in Rust
+ * (src/dsp/fmath.rs) so that we never pull in a libc — and never recurse into a
+ * libcall. Only the functions the vendored DSP actually references are
+ * declared. */
 #ifndef GS_SHIM_MATH_H
 #define GS_SHIM_MATH_H
 
@@ -9,17 +11,12 @@ extern "C" {
 
 #define M_PI 3.14159265358979323846
 #define M_E 2.71828182845904523536
-#define HUGE_VALF (1.0f / 0.0f)
 #define INFINITY (1.0f / 0.0f)
 #define NAN (0.0f / 0.0f)
 
 float sinf(float x);
 float cosf(float x);
 float tanf(float x);
-float asinf(float x);
-float acosf(float x);
-float atanf(float x);
-float atan2f(float y, float x);
 float sqrtf(float x);
 float fabsf(float x);
 float expf(float x);
@@ -35,8 +32,6 @@ float fmodf(float x, float y);
 float frexpf(float x, int *exp);
 float ldexpf(float x, int exp);
 float tanhf(float x);
-float sinhf(float x);
-float coshf(float x);
 float fminf(float a, float b);
 float fmaxf(float a, float b);
 
@@ -53,7 +48,6 @@ double floor(double x);
 double ceil(double x);
 double round(double x);
 double fmod(double x, double y);
-double atan2(double y, double x);
 
 #ifdef __cplusplus
 }

@@ -32,6 +32,9 @@ void gs_sp_process_block(const float *in_l,
 /* Diagnostics */
 float gs_sp_max_delay(void);
 
+/* Number of buffer allocations performed so far (init only, never per block). */
+uint32_t gs_sp_alloc_events(void);
+
 #ifdef __cplusplus
 }
 #endif

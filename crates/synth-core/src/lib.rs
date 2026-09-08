@@ -3,33 +3,25 @@
 //! Layout:
 //!   * [`alloc_arena`] — fixed arena allocator shared by Rust and vendored C
 //!   * [`shim`]        — freestanding libc surface for the vendored C/C++
-//!   * [`engine`]      — voice manager, modulation and the block render loop
+//!   * [`params`]      — parameter model mirrored by the TypeScript UI
+//!   * [`voice`]       — polyphony, smooth stealing, elastic downgrade
+//!   * [`engine`]      — the block render loop
+//!   * [`fft`]         — spectrum analysis for the on-screen analyser
 //!   * [`abi`]         — the `extern "C"` surface consumed by the AudioWorklet
 //!
 //! The C/C++ DSP (vendored DaisySP + Soundpipe) is compiled by `build.rs` and
 //! reached through the block-level ABI declared in `c_bridge/gs_*.h`.
 
+pub mod abi;
 pub mod alloc_arena;
+pub mod dsp;
 pub mod engine;
+pub mod fft;
+pub mod params;
+pub mod voice;
 
 mod shim;
 
 #[cfg(target_arch = "wasm32")]
 #[global_allocator]
 static GLOBAL_ALLOC: alloc_arena::ArenaAlloc = alloc_arena::ArenaAlloc;
-
-extern "C" {
-    fn gs_daisy_init(sample_rate: f32);
-    fn gs_sp_init(sample_rate: f32);
-}
-
-/// Smoke test hook used by the wasm build to guarantee the vendored objects are
-/// linked in. Returns the sample rate it was handed.
-#[no_mangle]
-pub extern "C" fn gs_link_selftest(sample_rate: f32) -> f32 {
-    unsafe {
-        gs_daisy_init(sample_rate);
-        gs_sp_init(sample_rate);
-    }
-    sample_rate
-}

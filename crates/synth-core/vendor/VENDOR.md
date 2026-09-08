@@ -16,12 +16,16 @@ keeps its original copyright header and license.
   | `Source/Synthesis/oscillator.{h,cpp}` | band-limited oscillators (polyBLEP) |
   | `Source/Filters/ladder.{h,cpp}` | Huovilainen Moog ladder filter |
   | `Source/Filters/svf.{h,cpp}` | double-sampled state variable filter |
-  | `Source/Control/adsr.{h,cpp}` | amplitude envelope |
   | `Source/Utility/dcblock.{h,cpp}` | DC blocker |
   | `Source/Utility/dsp.h` | shared helpers/macros |
 
   Not vendored: everything else in DaisySP. The full `daisysp.h` umbrella header
   is intentionally avoided so the module stays small.
+
+  DaisySP's `Adsr` is deliberately **not** used: the engine needs one envelope
+  instance per voice with an independently overridable release for smooth voice
+  stealing, which the shared-parameter wrapper cannot express. The envelope is
+  implemented natively in `src/dsp/adsr.rs` instead (see `DEPLOY.md`).
 
 ## Soundpipe
 

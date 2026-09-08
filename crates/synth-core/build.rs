@@ -91,7 +91,6 @@ fn main() {
         daisysp_src.join("Synthesis/oscillator.cpp"),
         daisysp_src.join("Filters/ladder.cpp"),
         daisysp_src.join("Filters/svf.cpp"),
-        daisysp_src.join("Control/adsr.cpp"),
         daisysp_src.join("Utility/dcblock.cpp"),
     ];
 
