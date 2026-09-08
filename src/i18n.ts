@@ -112,6 +112,7 @@ const DICT: Record<string, [string, string]> = {
   'module.matrixEnable': ['启用路由', 'Enable route'],
   'module.matrixDelete': ['删除路由', 'Delete route'],
   'module.kbdTrack': ['键盘跟踪', 'Keyboard tracking'],
+  'env.valueHint': ['长按或拖动上下调节 · 点击输入数值', 'Hold/drag vertically to adjust · tap to type a value'],
 
   // --- preset drawer -------------------------------------------------------
   'drawer.title': ['PRESET LIBRARY · 预设库', 'PRESET LIBRARY'],
@@ -184,6 +185,18 @@ export function t(key: string, vars?: Record<string, string | number>): string {
     }
   }
   return text;
+}
+
+/**
+ * Preset/author names are authored as `English · 中文`. English UI shows only
+ * the English part; Chinese keeps the full bilingual label.
+ */
+export function localizeName(name: string): string {
+  if (current === 'en') {
+    const separator = name.indexOf(' · ');
+    return separator > 0 ? name.slice(0, separator).trim() : name;
+  }
+  return name;
 }
 
 /** True when the key exists (used by the coverage test). */

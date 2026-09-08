@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { getLang, hasKey, setLang, t } from './i18n';
+import { getLang, hasKey, localizeName, setLang, t } from './i18n';
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -29,6 +29,15 @@ describe('i18n', () => {
     expect(t('app.start')).toBe('Start Audio Engine');
     expect(t('top.midiError', { msg: 'x' })).toBe('MIDI error: x');
     expect(getLang()).toBe('en');
+    setLang('zh');
+  });
+
+  it('shows only the English part of a bilingual name in EN', () => {
+    setLang('zh');
+    expect(localizeName('Crystal Pluck · 晶体拨弦')).toBe('Crystal Pluck · 晶体拨弦');
+    setLang('en');
+    expect(localizeName('Crystal Pluck · 晶体拨弦')).toBe('Crystal Pluck');
+    expect(localizeName('No separator')).toBe('No separator');
     setLang('zh');
   });
 

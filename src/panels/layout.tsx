@@ -9,7 +9,7 @@ import { engine, type EngineStatus } from '@/audio/engine';
 import { midi } from '@/audio/midi';
 import { renderPatchToWav } from '@/audio/render';
 import { downloadBlob } from '@/state/share';
-import { t } from '@/i18n';
+import { localizeName, t } from '@/i18n';
 
 function MidiButton() {
   const [snap, setSnap] = useState(midi.snapshot());
@@ -109,7 +109,7 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
           <div>
             <span className="preset-tag">{preset?.tag ?? 'INIT'}</span>
           </div>
-          <div className="preset-name">{preset?.name ?? t('preset.initName')}</div>
+          <div className="preset-name">{localizeName(preset?.name ?? t('preset.initName'))}</div>
         </div>
         <button type="button" className="nav-btn" title={t('top.nextPreset')} aria-label={t('top.nextPreset')} onClick={() => store.stepPreset(1)}>
           ›
@@ -184,7 +184,7 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
           className="tbtn"
           onClick={() => {
             const p = store.savePreset();
-            toast(t('top.savedToast', { name: p.name.split(' · ')[0] }));
+            toast(t('top.savedToast', { name: localizeName(p.name) }));
           }}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

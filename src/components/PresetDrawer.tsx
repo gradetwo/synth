@@ -4,7 +4,7 @@ import { useSynth } from '@/hooks/useSynth';
 import { PRESET_CATEGORIES, type PresetCategory } from '@/state/presets';
 import { WaveIcon } from './controls';
 import { toast } from './Toast';
-import { LANG_LABELS, t } from '@/i18n';
+import { LANG_LABELS, localizeName, t } from '@/i18n';
 import { useLang } from '@/hooks/useSynth';
 
 const SW_COLOR: Record<string, string> = {
@@ -84,7 +84,7 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
                 tabIndex={0}
                 onClick={() => {
                   store.applyPreset(p);
-                  toast(t('drawer.loaded', { name: p.name.split(' · ')[0] }));
+                  toast(t('drawer.loaded', { name: localizeName(p.name) }));
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') store.applyPreset(p);
@@ -94,7 +94,7 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
                   <WaveIcon wave={p.wave} />
                 </div>
                 <div className="pcard-body">
-                  <div className="pcard-name">{p.name}</div>
+                  <div className="pcard-name">{localizeName(p.name)}</div>
                   <div className="pcard-meta">
                     <em>{p.tag}</em> · {p.cat}
                   </div>

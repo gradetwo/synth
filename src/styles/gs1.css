@@ -707,3 +707,6 @@ input,textarea,[contenteditable='true']{
 .adsr-input:hover{border-color:var(--border)}
 .adsr-input:focus{background:var(--bg-inset);border-color:var(--mc);cursor:text;
   box-shadow:0 0 0 1px color-mix(in srgb,var(--mc) 45%,transparent)}
+
+/* Envelope value cells: vertical drag must not scroll the page. */
+.adsr-input{touch-action:none}

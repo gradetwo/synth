@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { clamp } from '@/audio/params';
+import { t } from '@/i18n';
 
 export type EditUnit = 'ms' | 'pct' | 'num';
 
@@ -33,10 +34,18 @@ const display = (value: number, unit: EditUnit, format?: (v: number) => string):
   return String(Number(value.toFixed(3)));
 };
 
+/** Long-press threshold before the value enters drag-to-scroll mode. */
+const HOLD_MS = 300;
+/** Vertical travel that also starts a drag (quick flick). */
+const DRAG_SLOP = 6;
+
 /**
- * A value cell that can be typed into, stepped with the mouse wheel, or nudged
- * with the arrow keys (Shift = fine). Used by the envelope editors so the
- * numbers are directly editable instead of display-only.
+ * Value cell with three input modes:
+ *   - tap            → focus and type a number (the old value is NOT selected)
+ *   - long-press/drag → vertical drag changes the value, no keyboard
+ *   - wheel / arrows  → nudge (Shift = fine)
+ *
+ * Once focused, normal caret placement / text selection is left to the browser.
  */
 export function EditableValue({
   value,
@@ -49,6 +58,9 @@ export function EditableValue({
 }: EditableValueProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const press = useRef<{ startY: number; dragging: boolean; timer: number; startValue: number } | null>(
+    null,
+  );
 
   const step = (direction: 1 | -1, fine: boolean) => {
     const delta =
@@ -62,6 +74,76 @@ export function EditableValue({
     const next = clamp(value + direction * delta, min, max);
     onChange(next);
     if (editing !== null) setEditing(toEdit(next, unit));
+  };
+
+  const beginDrag = () => {
+    if (!press.current) return;
+    press.current.dragging = true;
+    inputRef.current?.blur();
+    setEditing(null);
+  };
+
+  const onPointerDown = (event: React.PointerEvent<HTMLInputElement>) => {
+    // Already editing: let the browser handle caret placement and selection.
+    if (document.activeElement === inputRef.current) return;
+    // Keep the on-screen keyboard closed until we know it is a tap.
+    event.preventDefault();
+    const timer = window.setTimeout(beginDrag, HOLD_MS);
+    press.current = { startY: event.clientY, dragging: false, timer, startValue: value };
+    try {
+      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    } catch {
+      /* capture is an enhancement */
+    }
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLInputElement>) => {
+    const state = press.current;
+    if (!state) return;
+    const dy = state.startY - event.clientY;
+    if (!state.dragging) {
+      if (Math.abs(dy) < DRAG_SLOP) return;
+      window.clearTimeout(state.timer);
+      beginDrag();
+    }
+    const scale = event.shiftKey ? 4 : 1;
+    let next: number;
+    if (unit === 'pct') {
+      next = clamp(state.startValue + (dy / scale) * 0.005, min, max);
+    } else if (unit === 'ms') {
+      // Exponential feel: ~50 px doubles the time.
+      next = clamp(Math.max(state.startValue, min) * 2 ** (dy / (scale * 50)), min, max);
+    } else {
+      next = clamp(state.startValue + (dy / scale) * ((max - min) / 200), min, max);
+    }
+    onChange(next);
+  };
+
+  const endPress = (event: React.PointerEvent<HTMLInputElement>) => {
+    const state = press.current;
+    press.current = null;
+    if (!state) return;
+    window.clearTimeout(state.timer);
+    try {
+      (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+    } catch {
+      /* ignore */
+    }
+    if (!state.dragging) {
+      // Single tap: enter text-input mode with the caret at the end, without
+      // selecting the existing value.
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        setEditing(toEdit(value, unit));
+        window.setTimeout(() => el.setSelectionRange(el.value.length, el.value.length), 0);
+      }
+    }
+  };
+
+  const cancelPress = () => {
+    if (press.current) window.clearTimeout(press.current.timer);
+    press.current = null;
   };
 
   // React attaches wheel listeners passively, so use a native non-passive one.
@@ -90,12 +172,14 @@ export function EditableValue({
       type="text"
       inputMode="decimal"
       aria-label={ariaLabel}
+      title={t('env.valueHint')}
       value={editing ?? display(value, unit, format)}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endPress}
+      onPointerCancel={cancelPress}
       onChange={(event) => setEditing(event.target.value)}
-      onFocus={() => {
-        setEditing(toEdit(value, unit));
-        window.setTimeout(() => inputRef.current?.select(), 0);
-      }}
+      onFocus={() => setEditing(toEdit(value, unit))}
       onBlur={(event) => commit(event.target.value)}
       onKeyDown={(event) => {
         if (event.key === 'Enter') {
