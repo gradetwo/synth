@@ -6,6 +6,35 @@ import { LfoLed, LfoRateLabel, Scope, ScopeMeta, Spectrum, VuMeter } from '@/com
 import { Keyboard, Wheels } from '@/components/Keyboard';
 import { toast } from '@/components/Toast';
 import { engine, type EngineStatus } from '@/audio/engine';
+import { midi } from '@/audio/midi';
+
+function MidiButton() {
+  const [snap, setSnap] = useState(midi.snapshot());
+  useEffect(() => midi.subscribe(() => setSnap(midi.snapshot())), []);
+  const label = snap.enabled ? `MIDI ${snap.devices.length}` : 'MIDI';
+  const title = !snap.supported
+    ? '此浏览器不支持 Web MIDI'
+    : snap.error
+      ? `MIDI 错误：${snap.error}`
+      : snap.enabled
+        ? snap.devices.map((d) => d.name).join(', ') || '已启用 · 未检测到设备'
+        : '连接 MIDI 键盘 / 控制器';
+  return (
+    <button
+      type="button"
+      className={`tbtn${snap.enabled ? ' on' : ''}`}
+      title={title}
+      aria-pressed={snap.enabled}
+      onClick={() => (snap.enabled ? midi.disable() : void midi.enable())}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+        <path d="M4 4v10a4 4 0 0 0 4 4h12" />
+        <path d="M8 4v6M12 4v6M16 4v6" />
+      </svg>
+      {label}
+    </button>
+  );
+}
 
 // ---------------------------------------------------------------- top bar
 
@@ -80,6 +109,7 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
       </div>
 
       <div className="top-actions">
+        <MidiButton />
         <button
           type="button"
           className={`tbtn${keyboardVisible ? ' on' : ''}`}

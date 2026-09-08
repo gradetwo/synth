@@ -625,3 +625,4 @@ body.module-dragging .module-grip{cursor:grabbing}
 .env-foot{display:flex;align-items:center;gap:10px;margin-top:10px}
 .env-foot .seg{flex:1;margin-bottom:0}
 .env-foot .knob{flex:none;width:64px}
+.tbtn.on{color:var(--accent);border-color:var(--accent-dim);background:#1a1508}
