@@ -59,6 +59,9 @@ export function Keyboard() {
   const refresh = () => setPressed(new Set(noteBus.heldNotes()));
 
   const press = (midi: number, velocity = 0.9) => {
+    // iOS may suspend the AudioContext when the page is backgrounded; any key
+    // press is a valid gesture to bring it back.
+    void engine.resumeIfSuspended();
     noteBus.noteOn(midi, velocity);
     refresh();
   };
@@ -121,11 +124,18 @@ export function Keyboard() {
         onPointerDown={(e) => {
           e.preventDefault();
           pointerDown.current = true;
-          containerRef.current?.setPointerCapture(e.pointerId);
-          const midi = noteAt(e.clientX, e.clientY);
-          if (midi !== null) {
+          // Trigger the note first: on iOS `setPointerCapture` can throw, and a
+          // throw here would silently swallow the key press.
+          const target = (e.target as HTMLElement | null)?.closest('[data-midi]') as HTMLElement | null;
+          const midi = target ? Number(target.dataset.midi) : noteAt(e.clientX, e.clientY);
+          if (midi !== null && !Number.isNaN(midi)) {
             pointerNote.current = midi;
             press(midi);
+          }
+          try {
+            containerRef.current?.setPointerCapture(e.pointerId);
+          } catch {
+            /* capture is an enhancement; the note already started */
           }
         }}
         onPointerMove={(e) => {
@@ -209,7 +219,11 @@ export function Wheels() {
             e.preventDefault();
             drag.current = 'pitch';
             lastY.current = e.clientY;
-            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            try {
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            } catch {
+              /* non-fatal */
+            }
           }}
           onPointerMove={(e) => {
             if (drag.current !== 'pitch') return;
@@ -236,7 +250,11 @@ export function Wheels() {
             e.preventDefault();
             drag.current = 'mod';
             lastY.current = e.clientY;
-            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            try {
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            } catch {
+              /* non-fatal */
+            }
           }}
           onPointerMove={(e) => {
             if (drag.current !== 'mod') return;

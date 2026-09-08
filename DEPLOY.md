@@ -167,6 +167,8 @@ CMD ["nginx", "-g", "daemon off;"]
 | 现象 | 处理 |
 | :--- | :--- |
 | 无声音 | 点击“启动音频引擎”；确认系统/浏览器未静音；检查 iOS 静音开关 |
+| iPhone/iPad 无声 | 应用会设置 `navigator.audioSession.type = 'playback'` 以绕过静音开关；若仍无声，点按界面任意处恢复被挂起的 AudioContext（页面切后台后 iOS 会挂起） |
+| 点琴键无反应 | 已对 `setPointerCapture` 做容错；若自定义构建后仍无反应，查看控制台是否有异常 |
 | 控制台报 `application/wasm` MIME | Nginx 增加 `types { application/wasm wasm; }` |
 | 更新后仍是旧版本 | 确认 `sw.js` 未被 CDN 长缓存；强制刷新一次 |
 | 首次加载后离线打不开 | 确认 `sw.js` 与 `manifest.webmanifest` 可访问且未被缓存策略拦截 |

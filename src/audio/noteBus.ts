@@ -44,6 +44,8 @@ class NoteBus {
   }
 
   noteOn(note: number, velocity = 0.9) {
+    // A note is always triggered by a gesture; use it to un-suspend iOS audio.
+    void engine.resumeIfSuspended();
     if (this.held.has(note)) return;
     this.held.add(note);
     this.last.velocity = velocity;

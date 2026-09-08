@@ -51,9 +51,13 @@ export function Knob({ spec, big }: KnobProps) {
 
   const onPointerDown = (e: React.PointerEvent) => {
     e.preventDefault();
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
     drag.current = { y: e.clientY, t };
     setDragging(true);
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* dragging still works without capture */
+    }
   };
   const onPointerMove = (e: React.PointerEvent) => {
     if (!drag.current) return;

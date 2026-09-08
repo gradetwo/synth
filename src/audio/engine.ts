@@ -115,6 +115,17 @@ export class AudioEngine {
    */
   ensureContext(): AudioContext {
     if (this.ctx) return this.ctx;
+    // iOS routes Web Audio through the "ambient" session by default, which the
+    // hardware mute switch silences. `playback` keeps the synth audible on
+    // iPhone/iPad (Safari 16.4+).
+    const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+    if (session) {
+      try {
+        session.type = 'playback';
+      } catch {
+        /* older Safari: the API exists but rejects the assignment */
+      }
+    }
     try {
       this.ctx = new AudioContext({ latencyHint: 'interactive' });
     } catch {
@@ -122,9 +133,10 @@ export class AudioEngine {
     }
     this.sampleRate = this.ctx.sampleRate;
     this.ctx.onstatechange = () => {
-      const state = this.ctx?.state;
+      const state = this.ctx?.state as string | undefined;
       if (state === 'running') this.setStatus('running');
-      else if (state === 'suspended') this.setStatus('suspended');
+      // iOS reports `interrupted` during calls/Siri; treat it as suspended.
+      else if (state === 'suspended' || state === 'interrupted') this.setStatus('suspended');
     };
     return this.ctx;
   }
@@ -139,6 +151,8 @@ export class AudioEngine {
     try {
       await this.load(ctx, maxPolyphony, routes);
       await resume;
+      // iOS can re-suspend while the graph is being built; nudge it again.
+      await this.resumeIfSuspended();
       if (ctx.state === 'running') this.setStatus('running');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -247,6 +261,22 @@ export class AudioEngine {
     })();
 
     return this.loadPromise;
+  }
+
+  /**
+   * Resume the context if it is suspended. Safe to call from any gesture (and
+   * from `noteOn`); a no-op before the context exists or when already running.
+   */
+  async resumeIfSuspended(): Promise<void> {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if ((ctx.state as string) === 'running') return;
+    try {
+      await ctx.resume();
+      if ((this.ctx?.state as string) === 'running') this.setStatus('running');
+    } catch {
+      /* a later gesture will retry */
+    }
   }
 
   /** Must be called from a user gesture on iOS/Safari. */

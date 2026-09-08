@@ -103,17 +103,18 @@ export default function App() {
     }
   };
 
-  // Resume automatically on the first gesture once the context exists.
+  // Any gesture may (re)start or resume audio. iOS suspends the context when
+  // the page is backgrounded or interrupted, so this cannot be a one-shot.
   useEffect(() => {
-    const resume = () => {
+    const onGesture = () => {
       const s = engine.getState();
-      if (s === 'idle' || s === 'suspended') void start();
+      if (s === 'idle') void start();
+      else if (s === 'suspended') void engine.resumeIfSuspended();
     };
-    window.addEventListener('pointerdown', resume, { once: true });
-    window.addEventListener('keydown', resume, { once: true });
+    const events = ['pointerdown', 'touchend', 'keydown'] as const;
+    for (const event of events) window.addEventListener(event, onGesture, { passive: true });
     return () => {
-      window.removeEventListener('pointerdown', resume);
-      window.removeEventListener('keydown', resume);
+      for (const event of events) window.removeEventListener(event, onGesture);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -124,7 +125,7 @@ export default function App() {
     <div className="app">
       <div className="notice">
         <span className="dot" />
-        WASM 音频核心 · <b>Rust + AudioWorklet</b> · 完整离线 PWA · GS-1 v1.0.2
+        WASM 音频核心 · <b>Rust + AudioWorklet</b> · 完整离线 PWA · GS-1 v1.0.3
       </div>
 
       <TopBar onBrowse={() => setDrawerOpen(true)} status={status} />
@@ -146,6 +147,12 @@ export default function App() {
       </main>
 
       <KeyboardBar />
+
+      {status === 'suspended' ? (
+        <button type="button" className="audio-hint" onClick={() => void engine.resumeIfSuspended()}>
+          ⏸ 音频已暂停 · 点按此处恢复
+        </button>
+      ) : null}
 
       <PresetDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <ToastHost />
