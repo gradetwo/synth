@@ -8,7 +8,7 @@ import { type ParamId, type ParamSpec, type Wave, clamp } from '@/audio/params';
 // ---------------------------------------------------------------- knob
 
 /** Hold a finger still this long to enter touch fine-tune mode. */
-const FINE_HOLD_MS = 300;
+const FINE_HOLD_MS = 600;
 
 function polar(cx: number, cy: number, r: number, deg: number): [number, number] {
   const rad = ((deg - 90) * Math.PI) / 180;
