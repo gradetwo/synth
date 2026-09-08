@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { engine } from '@/audio/engine';
 import { store } from '@/state/store';
-import { useLayout, usePower } from '@/hooks/useSynth';
+import { useLayout, usePower, useTheme } from '@/hooks/useSynth';
 import { wireAnalysis } from '@/audio/analysis';
 import { TopBar, DisplayRow, KeyboardDock } from '@/panels/layout';
 import { ModuleFor } from '@/panels/modules';
@@ -77,6 +77,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const layout = useLayout();
   const power = usePower();
+  const theme = useTheme();
 
   useEffect(() => {
     // Apply a shared patch from the URL hash on first load.
@@ -100,6 +101,10 @@ export default function App() {
     // Keep the graph muted when the power switch is off.
     engine.setMuted(!power);
   }, [power]);
+
+  useEffect(() => {
+    document.body.classList.toggle('contrast', theme === 'contrast');
+  }, [theme]);
 
   const start = async () => {
     setBusy(true);

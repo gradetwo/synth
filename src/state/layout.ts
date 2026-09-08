@@ -32,10 +32,13 @@ export const MODULE_META: Record<ModuleId, ModuleMeta> = {
   fx2: { title: 'FX 2', sub: '调制效果', color: 'var(--fx)', span: 2 },
 };
 
+export type Theme = 'dark' | 'contrast';
+
 export interface LayoutState {
   order: ModuleId[];
   collapsed: Partial<Record<ModuleId, boolean>>;
   keyboardVisible: boolean;
+  theme: Theme;
 }
 
 export function defaultLayout(): LayoutState {
@@ -43,6 +46,7 @@ export function defaultLayout(): LayoutState {
     order: [...MODULE_IDS],
     collapsed: {},
     keyboardVisible: true,
+    theme: 'dark',
   };
 }
 
@@ -74,6 +78,7 @@ export function normalizeLayout(raw: unknown): LayoutState {
     order,
     collapsed,
     keyboardVisible: input.keyboardVisible !== false,
+    theme: input.theme === 'contrast' ? 'contrast' : 'dark',
   };
 }
 

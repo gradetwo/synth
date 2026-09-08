@@ -8,6 +8,7 @@ describe('layout model', () => {
     expect(new Set(layout.order).size).toBe(MODULE_IDS.length);
     expect(layout.keyboardVisible).toBe(true);
     expect(layout.collapsed).toEqual({});
+    expect(layout.theme).toBe('dark');
   });
 
   it('has metadata for every module', () => {
@@ -32,6 +33,12 @@ describe('layout model', () => {
     expect(layout.collapsed.filter).toBe(true);
     expect(layout.collapsed.osc1).toBeUndefined();
     expect(layout.keyboardVisible).toBe(false);
+    expect(layout.theme).toBe('dark');
+  });
+
+  it('validates the theme', () => {
+    expect(normalizeLayout({ theme: 'contrast' }).theme).toBe('contrast');
+    expect(normalizeLayout({ theme: 'nope' }).theme).toBe('dark');
   });
 
   it('falls back to defaults for garbage input', () => {

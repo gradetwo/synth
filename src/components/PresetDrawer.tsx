@@ -149,6 +149,16 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
               type="button"
               className="d-reset"
               onClick={() => {
+                store.toggleTheme();
+                toast(store.getSnapshot().layout.theme === 'contrast' ? '已切换高对比配色' : '已切换默认配色');
+              }}
+            >
+              高对比
+            </button>
+            <button
+              type="button"
+              className="d-reset"
+              onClick={() => {
                 store.resetLayout();
                 toast('已重置面板布局与键盘显示');
               }}

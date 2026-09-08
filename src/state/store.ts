@@ -444,6 +444,14 @@ class SynthStore {
     this.setKeyboardVisible(!this.layout.keyboardVisible);
   }
 
+  toggleTheme() {
+    this.layout = {
+      ...this.layout,
+      theme: this.layout.theme === 'contrast' ? 'dark' : 'contrast',
+    };
+    this.commit();
+  }
+
   moveModuleTo(id: ModuleId, index: number) {
     const order = moveModule(this.layout.order, id, index);
     if (order === this.layout.order) return;
