@@ -199,7 +199,10 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 
 .adsr-wrap{padding:2px 2px 0}
 .adsr-svg{display:block;width:100%;height:auto;background:var(--bg-socket);
-  border:1px solid #20242e;border-radius:8px;touch-action:none}
+  border:1px solid #20242e;border-radius:8px;touch-action:none;cursor:crosshair}
+.adsr-handle{cursor:grab}
+.adsr-handle.active{cursor:grabbing}
+.adsr-handle.active circle:first-child{stroke:#fff}
 .adsr-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:10px}
 .adsr-cell{background:var(--bg-socket);border:1px solid #20242e;border-radius:6px;
   padding:6px 8px;text-align:center}

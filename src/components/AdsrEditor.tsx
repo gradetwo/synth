@@ -1,6 +1,7 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { store } from '@/state/store';
 import { useParam } from '@/hooks/useSynth';
+import { useInputMode } from '@/hooks/useInputMode';
 import { Param, SPEC_BY_ID, clamp, fmt, type ParamId } from '@/audio/params';
 import { EditableValue } from './EditableValue';
 
@@ -38,7 +39,12 @@ export function AdsrEditor({ title = 'AMP ENV', ids = AMP_IDS }: { title?: strin
   const rpx = clamp(fromTime.r(r), 15, 95);
 
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const dragging = useRef<Handle | null>(null);
+  const dragRef = useRef<{ handle: Handle; originX: number; originY: number; base: [number, number] } | null>(null);
+  const [active, setActive] = useState<Handle | null>(null);
+  const touch = useInputMode() === 'touch';
+  const handleScale = touch ? 1.35 : 1;
+  // A finger needs a much larger grab radius than a mouse cursor.
+  const grabRadius = touch ? 48 : 26;
 
   const path = `M 8 95 L ${ax} 15 L ${dx} ${sy} L ${GATE} ${sy} L ${GATE + rpx} 95`;
   const pos: Record<Handle, [number, number]> = {
@@ -48,17 +54,58 @@ export function AdsrEditor({ title = 'AMP ENV', ids = AMP_IDS }: { title?: strin
     R: [GATE + rpx, 95],
   };
 
-  const onPointerMove = (e: React.PointerEvent) => {
-    const handle = dragging.current;
+  /** Convert a pointer event to the SVG's 300×110 user space. */
+  const svgPoint = (e: React.PointerEvent): [number, number] => {
     const svg = svgRef.current;
-    if (!handle || !svg) return;
+    if (!svg) return [0, 0];
     const rect = svg.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 300;
-    const y = ((e.clientY - rect.top) / rect.height) * 110;
+    return [((e.clientX - rect.left) / rect.width) * 300, ((e.clientY - rect.top) / rect.height) * 110];
+  };
+
+  const applyHandle = (handle: Handle, x: number, y: number) => {
     if (handle === 'A') store.setParam(ids[0] as ParamId, toTime.a(clamp(x, 10, 82)));
     if (handle === 'D') store.setParam(ids[1] as ParamId, toTime.d(clamp(x, ax + 10, ax + 90)));
     if (handle === 'S') store.setParam(ids[2] as ParamId, clamp(toTime.s(clamp(y, 15, 86)), 0, 1));
     if (handle === 'R') store.setParam(ids[3] as ParamId, toTime.r(clamp(x - GATE, 15, 95)));
+  };
+
+  /**
+   * Grab the nearest handle within the grab radius. Hit-testing the tiny circles
+   * directly is hopeless with a finger, so the whole plot acts as the target.
+   * Dragging is delta-based: the handle keeps its offset from the touch point.
+   */
+  const onPointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const [x, y] = svgPoint(e);
+    let best: Handle | null = null;
+    let bestDist = Infinity;
+    for (const h of ['A', 'D', 'S', 'R'] as Handle[]) {
+      const dist = Math.hypot(pos[h][0] - x, pos[h][1] - y);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = h;
+      }
+    }
+    if (!best || bestDist > grabRadius) return;
+    dragRef.current = { handle: best, originX: x, originY: y, base: pos[best] };
+    setActive(best);
+    try {
+      svgRef.current?.setPointerCapture(e.pointerId);
+    } catch {
+      /* capture is an enhancement */
+    }
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const [x, y] = svgPoint(e);
+    applyHandle(drag.handle, drag.base[0] + (x - drag.originX), drag.base[1] + (y - drag.originY));
+  };
+
+  const endDrag = () => {
+    dragRef.current = null;
+    setActive(null);
   };
 
   return (
@@ -68,10 +115,11 @@ export function AdsrEditor({ title = 'AMP ENV', ids = AMP_IDS }: { title?: strin
         className="adsr-svg"
         ref={svgRef}
         viewBox="0 0 300 110"
+        onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
-        onPointerUp={() => (dragging.current = null)}
-        onPointerLeave={() => (dragging.current = null)}
-        onPointerCancel={() => (dragging.current = null)}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onLostPointerCapture={endDrag}
       >
         <defs>
           <pattern id="gs1-adsr-grid" width="30" height="26" patternUnits="userSpaceOnUse">
@@ -93,15 +141,10 @@ export function AdsrEditor({ title = 'AMP ENV', ids = AMP_IDS }: { title?: strin
           <g
             key={h}
             transform={`translate(${pos[h][0]},${pos[h][1]})`}
-            style={{ cursor: 'grab' }}
-            onPointerDown={(e) => {
-              e.preventDefault();
-              dragging.current = h;
-              svgRef.current?.setPointerCapture(e.pointerId);
-            }}
+            className={`adsr-handle${active === h ? ' active' : ''}`}
           >
-            <circle r="6.5" fill="#101319" stroke="var(--env)" strokeWidth="1.6" />
-            <circle r="2.4" fill="var(--env)" />
+            <circle r={6.5 * handleScale} fill="#101319" stroke="var(--env)" strokeWidth={1.6 * handleScale} />
+            <circle r={2.4 * handleScale} fill="var(--env)" />
           </g>
         ))}
       </svg>
