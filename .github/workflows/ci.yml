@@ -44,6 +44,12 @@ jobs:
       - name: DSP regression baseline
         run: npm run test:dsp
 
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser E2E smoke
+        run: npm run test:e2e
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:

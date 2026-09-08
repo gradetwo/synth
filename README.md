@@ -124,13 +124,18 @@ DaisySP / Soundpipe 的源码按上游原样 vendor，仅编译所需模块；�
 ## 5. 质量门禁
 
 ```bash
-npm run test:rust    # 40 个 Rust 单元测试（含零分配门禁、C/Rust 一致性）
-npm test             # 27 个前端测试（含真实 WASM 的 Worklet 集成测试）
+npm run test:rust    # 43 个 Rust 单元测试（零分配门禁、C/Rust 一致性、模糊测试）
+npm test             # 41 个前端测试（含真实 WASM 的 Worklet 集成测试）
 npm run test:wasm    # 17 项 Node 端 WASM 集成校验（频率精度、动态块、复音…）
+npm run test:dsp     # DSP 回归基线（固定 patch 的 RMS + 12 频段指纹）
+npm run lint         # ESLint（typescript-eslint + react-hooks）
 npm run build        # WASM + tsc + Vite + SW
-npm run verify:dist  # 25 项构建产物校验（资源可达、SW 预缓存完整）
+npm run verify:dist  # 构建产物校验（资源可达、SW 预缓存完整）
 npm run verify       # 以上全部串联
 ```
+
+CI（`.github/workflows/ci.yml`）在每次 push / PR 上串联 Rust 测试、前端测试、
+构建、两套 WASM 门禁、产物校验与 DSP 基线。
 
 覆盖要点：440 Hz / 261.63 Hz 频率精度（施密特触发过零测量）、128–1024 动态块、
 复音上限与平滑降级、`process` 期间零分配、释放后归零、频谱能量、预设范围合法性、
@@ -160,6 +165,19 @@ public/                   manifest 与图标
 
 ---
 
-## 7. 许可证
+## 7. 功能一览（v1.0.5）
+
+- **合成**：双振荡器（6 波形 + 声像）、Moog 阶梯 / SVF 滤波、独立滤波器包络、
+  双 LFO、4 路调制矩阵、POLY/MONO/LEGATO + GLIDE。
+- **效果**：混响、同步延迟，以及 vendor 自 DaisySP 的合唱 / 镶边 / 移相 / 过载。
+- **演奏**：屏幕键盘（滑奏、八度切换）、弯音/调制轮、Web MIDI（力度、CC1、CC64、CC123）。
+- **工作流**：预设库（搜索/分类/本地保存）、随机音色、`.gs1.json` 导入导出、
+  URL 分享、A/B 对比、撤销/重做（Ctrl/Cmd+Z）、离线渲染导出 WAV。
+- **布局**：模块可折叠 / 拖拽排序、悬浮可隐藏键盘、高对比主题，全部本地持久化。
+- **性能**：选择器化 store（拖动旋钮只重渲染该控件）、单 rAF 循环、
+  负载过高自动降复音并平滑释放。
+- **工程**：CI、DSP 回归基线、NaN/Inf 防护 + 模糊测试、ESLint、版本注入。
+
+## 8. 许可证
 
 本项目代码 MIT（见 `LICENSE`）。第三方组件许可见 `THIRD_PARTY_NOTICES.md`。

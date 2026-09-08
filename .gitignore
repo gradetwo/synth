@@ -29,3 +29,9 @@ crates/synth-core/c_bridge/soundpipe.h
 # scratch
 .feas/
 .tmp/
+.serve/
+
+# playwright
+.pw-browsers/
+test-results/
+playwright-report/

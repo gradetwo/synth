@@ -1,7 +1,7 @@
 {
   "name": "groove-synth-gs1",
   "private": true,
-  "version": "1.0.4",
+  "version": "1.0.5",
   "type": "module",
   "description": "GROOVE SYNTH GS-1 — industrial-grade WebAssembly polyphonic synthesizer with a Rust DSP core, AudioWorklet rendering and a fully offline PWA shell.",
   "license": "MIT",
@@ -19,9 +19,10 @@
     "package": "npm run build && node scripts/package.mjs",
     "test:wasm": "npm run build:wasm && node scripts/verify-wasm.mjs && node scripts/verify-wasm.mjs src/generated/synth_core_scalar.wasm",
     "verify:dist": "node scripts/verify-dist.mjs",
-    "verify": "npm run test:rust && npm run test && npm run build && npm run test:wasm && npm run verify:dist",
+    "verify": "npm run test:rust && npm run test && npm run lint && npm run build && npm run test:wasm && npm run verify:dist && npm run test:dsp",
     "test:dsp": "node scripts/dsp-baseline.mjs",
-    "lint": "eslint src --max-warnings=999"
+    "lint": "eslint src --max-warnings=999",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.1.1",
@@ -31,6 +32,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
