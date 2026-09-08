@@ -122,6 +122,17 @@ export default function App() {
     }
   };
 
+  // iOS: suppress the long-press context menu outside real text inputs.
+  useEffect(() => {
+    const onContextMenu = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea, [contenteditable="true"]')) return;
+      event.preventDefault();
+    };
+    document.addEventListener('contextmenu', onContextMenu);
+    return () => document.removeEventListener('contextmenu', onContextMenu);
+  }, []);
+
   // Undo / redo shortcuts.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

@@ -1,7 +1,8 @@
 import { useRef } from 'react';
 import { store } from '@/state/store';
 import { useParam } from '@/hooks/useSynth';
-import { Param, clamp, fmt, type ParamId } from '@/audio/params';
+import { Param, SPEC_BY_ID, clamp, fmt, type ParamId } from '@/audio/params';
+import { EditableValue } from './EditableValue';
 
 const GATE = 190;
 
@@ -104,19 +105,51 @@ export function AdsrEditor({ title = 'AMP ENV', ids = AMP_IDS }: { title?: strin
       <div className="adsr-grid">
         <div className="adsr-cell">
           <div className="k">ATTCK</div>
-          <div className="v">{fmt.ms(a)}</div>
+          <EditableValue
+            value={a}
+            min={SPEC_BY_ID[ids[0]]?.min ?? 0.0005}
+            max={SPEC_BY_ID[ids[0]]?.max ?? 8}
+            unit="ms"
+            format={fmt.ms}
+            ariaLabel="Attack time"
+            onChange={(v) => store.setParam(ids[0] as ParamId, v)}
+          />
         </div>
         <div className="adsr-cell">
           <div className="k">DECAY</div>
-          <div className="v">{fmt.ms(d)}</div>
+          <EditableValue
+            value={d}
+            min={SPEC_BY_ID[ids[1]]?.min ?? 0.001}
+            max={SPEC_BY_ID[ids[1]]?.max ?? 12}
+            unit="ms"
+            format={fmt.ms}
+            ariaLabel="Decay time"
+            onChange={(v) => store.setParam(ids[1] as ParamId, v)}
+          />
         </div>
         <div className="adsr-cell">
           <div className="k">SUST</div>
-          <div className="v">{fmt.pct(s)}</div>
+          <EditableValue
+            value={s}
+            min={0}
+            max={1}
+            unit="pct"
+            format={fmt.pct}
+            ariaLabel="Sustain level"
+            onChange={(v) => store.setParam(ids[2] as ParamId, v)}
+          />
         </div>
         <div className="adsr-cell">
           <div className="k">REL</div>
-          <div className="v">{fmt.ms(r)}</div>
+          <EditableValue
+            value={r}
+            min={SPEC_BY_ID[ids[3]]?.min ?? 0.005}
+            max={SPEC_BY_ID[ids[3]]?.max ?? 16}
+            unit="ms"
+            format={fmt.ms}
+            ariaLabel="Release time"
+            onChange={(v) => store.setParam(ids[3] as ParamId, v)}
+          />
         </div>
       </div>
     </div>
