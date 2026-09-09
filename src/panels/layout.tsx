@@ -454,6 +454,27 @@ export function DisplayRow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
 
   return (
     <section className="display-row">
+      {device === 'phone' ? (
+        <div className="display-bar">
+          <span className="db-label">
+            {t('panel.scope')} · {t('panel.spectrum')} · {t('panel.monitor')}
+          </span>
+          <button
+            type="button"
+            className="display-toggle"
+            aria-label={t('display.collapse')}
+            title={t('display.collapse')}
+            onClick={() => {
+              haptic();
+              store.setDisplayExpanded(false);
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M6 15l6-6 6 6" />
+            </svg>
+          </button>
+        </div>
+      ) : null}
       <div className="panel scope-panel">
         <div className="panel-head">
           <span className="ph-title">{t('panel.scope')}</span>
@@ -477,22 +498,6 @@ export function DisplayRow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
       <div className="panel monitor-panel">
         <div className="panel-head">
           <span className="ph-title">{t('panel.monitor')}</span>
-          {device === 'phone' ? (
-            <button
-              type="button"
-              className="display-toggle in-head"
-              aria-label={t('display.collapse')}
-              title={t('display.collapse')}
-              onClick={() => {
-                haptic();
-                store.setDisplayExpanded(false);
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M6 15l6-6 6 6" />
-              </svg>
-            </button>
-          ) : null}
         </div>
         <div className="monitor-actions">
           <PlayerButton onOpen={onOpenPlayer} />
