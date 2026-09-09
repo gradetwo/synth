@@ -815,6 +815,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             'Order and collapsed state persist and are untouched by preset changes.',
           ],
           ['预设库底部「重置布局」恢复默认。', '“Reset layout” at the bottom of the preset library restores the default.'],
+          [
+            '**手机**默认只展开 OSC 1/2、FILTER 与 AMP ENV，收起 LFO/MATRIX/FX/FX 2，并把示波器与频谱收成一行（点右侧箭头展开）；顶栏「⋯」里放 MIDI、随机、保存等次要操作。',
+            'On **phones** only OSC 1/2, FILTER and AMP ENV start expanded; LFO/MATRIX/FX/FX 2 are collapsed and the scope/spectrum row shrinks to one strip (tap the arrow to expand). Secondary actions such as MIDI, randomise and save live under the “⋯” menu.',
+          ],
         ],
       },
       { kind: 'h', text: ['预设与音色管理', 'Presets and patch management'] },
