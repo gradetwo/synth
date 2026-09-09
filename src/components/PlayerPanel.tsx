@@ -42,6 +42,9 @@ export function PlayerPanel({ open, onClose }: { open: boolean; onClose: () => v
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
   const fileRef = useRef<HTMLInputElement | null>(null);
+  // Timestamp of the last track *change*, so a double-click on a new track does
+  // not immediately pause the playback it just started.
+  const lastSelect = useRef(0);
 
   useEffect(() => midiLibrary.subscribe(() => bump((v) => v + 1)), []);
   useEffect(() => midiPlayer.subscribe(setPlayer), []);
@@ -205,7 +208,17 @@ export function PlayerPanel({ open, onClose }: { open: boolean; onClose: () => v
                     className={`player-track${track.id === midiLibrary.getCurrentId() ? ' current' : ''}`}
                     onClick={() => {
                       haptic();
-                      midiLibrary.setCurrent(track.id);
+                      if (track.id !== midiLibrary.getCurrentId()) {
+                        lastSelect.current = performance.now();
+                        midiLibrary.setCurrent(track.id);
+                      }
+                    }}
+                    onDoubleClick={() => {
+                      // Double-click on the already-selected track toggles play/pause.
+                      if (performance.now() - lastSelect.current < 450) return;
+                      haptic();
+                      if (midiPlayer.getState().playing) midiPlayer.pause();
+                      else midiPlayer.play();
                     }}
                   >
                     <span className="pt-title">
@@ -235,6 +248,58 @@ export function PlayerPanel({ open, onClose }: { open: boolean; onClose: () => v
   );
 }
 
+/** Stroke-based icons matching the rest of the chrome (no font glyphs). */
+function TransportIcon({ name }: { name: 'play' | 'pause' | 'stop' | 'loop' | 'record' }) {
+  const stroke = {
+    viewBox: '0 0 24 24',
+    width: 15,
+    height: 15,
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    'aria-hidden': true,
+  };
+  const filled = { ...stroke, fill: 'currentColor', stroke: 'none' };
+  switch (name) {
+    case 'play':
+      return (
+        <svg {...filled}>
+          <path d="M8 5.4v13.2L19 12z" />
+        </svg>
+      );
+    case 'pause':
+      return (
+        <svg {...filled}>
+          <rect x="7" y="5" width="3.6" height="14" rx="1.4" />
+          <rect x="13.4" y="5" width="3.6" height="14" rx="1.4" />
+        </svg>
+      );
+    case 'stop':
+      return (
+        <svg {...filled}>
+          <rect x="6.6" y="6.6" width="10.8" height="10.8" rx="2.2" />
+        </svg>
+      );
+    case 'record':
+      return (
+        <svg {...filled}>
+          <circle cx="12" cy="12" r="5.8" />
+        </svg>
+      );
+    case 'loop':
+      return (
+        <svg {...stroke}>
+          <polyline points="17 2 21 6 17 10" />
+          <path d="M3 12v-1a4 4 0 0 1 4-4h14" />
+          <polyline points="7 22 3 18 7 14" />
+          <path d="M21 12v1a4 4 0 0 1-4 4H3" />
+        </svg>
+      );
+  }
+}
+
 /** Transport controls shared by the player panel and the performance bar. */
 export function Transport({
   player,
@@ -259,10 +324,10 @@ export function Transport({
         }}
         aria-label={player.playing ? t('player.pause') : t('player.play')}
       >
-        {player.playing ? '❚❚' : '▶'}
+        <TransportIcon name={player.playing ? 'pause' : 'play'} />
       </button>
       <button type="button" className="player-btn" onClick={() => { haptic(); midiPlayer.stop(); }} aria-label={t('player.stop')}>
-        ■
+        <TransportIcon name="stop" />
       </button>
       <button
         type="button"
@@ -271,7 +336,7 @@ export function Transport({
         aria-label={t('player.loop')}
         aria-pressed={player.loop}
       >
-        ↻
+        <TransportIcon name="loop" />
       </button>
       <button
         type="button"
@@ -279,7 +344,7 @@ export function Transport({
         onClick={onRecord}
         aria-label={rec.recording ? t('player.stopRec') : t('player.record')}
       >
-        {rec.recording ? '■' : '●'}
+        <TransportIcon name={rec.recording ? 'stop' : 'record'} />
       </button>
       <input
         className="player-seek"

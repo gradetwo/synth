@@ -66,16 +66,20 @@ class MidiLibrary {
     return this.currentId;
   }
 
-  /** Select a track and load it into the transport (stopping playback). */
-  setCurrent(id: string): void {
+  /**
+   * Select a track, load it and (unless disabled) start playback. Called from a
+   * tap/click, so the audio context can be resumed inside the same gesture.
+   */
+  setCurrent(id: string, options: { autoplay?: boolean } = {}): void {
     const track = this.tracks.find((tr) => tr.id === id);
     if (!track) return;
     this.currentId = id;
     midiPlayer.load(track.song);
+    if (options.autoplay !== false) midiPlayer.play();
     this.emit();
   }
 
-  /** Add or replace an imported file / recording. */
+  /** Add or replace an imported file / recording (never auto-plays). */
   put(track: Track): void {
     this.tracks = [...this.tracks.filter((tr) => tr.id !== track.id), track];
     this.currentId = track.id;
@@ -87,7 +91,7 @@ class MidiLibrary {
   remove(id: string): void {
     if (id.startsWith('demo:')) return;
     this.tracks = this.tracks.filter((tr) => tr.id !== id);
-    if (this.currentId === id) this.setCurrent(this.tracks[0]?.id ?? '');
+    if (this.currentId === id) this.setCurrent(this.tracks[0]?.id ?? '', { autoplay: false });
     else this.emit();
   }
 }
