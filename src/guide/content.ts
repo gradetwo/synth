@@ -866,7 +866,11 @@ export const GUIDE_SECTIONS: GuideSection[] = [
         kind: 'ul',
         items: [
           ['预设库底部 **EN / 中文** 切换语言，会记住。', 'Switch language with **EN / 中文** at the bottom of the preset library; it is remembered.'],
-          ['同一处的**高对比**切换强光下更清晰的配色。', 'The **Contrast** button next to it switches to a high-contrast theme for bright light.'],
+          ['同一处的**高对比**在深/浅色之上再加强对比度，适合强光环境或低视力用户。', 'The **Contrast** button next to it layers extra contrast on top of either colour scheme, for bright light or low vision.'],
+          [
+            '**主题**：预设库底部的「深色 / 浅色 / 自动」切换配色，**自动**会实时跟随系统的深色模式（改系统外观立即生效）；顶栏「⋯」里的主题按钮可以快速循环切换，选择会记住。',
+            '**Theme**: the “Dark / Light / Auto” control at the bottom of the preset library switches the colour scheme; **Auto** follows the operating system live (switching appearance takes effect immediately). The theme button in the top-bar “⋯” menu cycles through the three modes, and the choice is remembered.',
+          ],
           [
             '顶栏 **MIDI** 连接外部键盘；支持力度、CC1 调制轮、CC64 延音、CC123 全部音符关闭。',
             '**MIDI** in the top bar connects a hardware keyboard: velocity, CC1 mod wheel, CC64 sustain and CC123 all-notes-off.',
