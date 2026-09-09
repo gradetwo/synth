@@ -184,3 +184,49 @@ test.describe('flow detail card on phone', () => {
     expect(m.bottom).toBeLessThanOrEqual(m.dockTop + 1);
   });
 });
+
+test.describe('flow keyboard and sheet gestures', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('nodes are focusable, open with Enter and move with arrows', async ({ page }) => {
+    await boot(page);
+    const filter = page.locator('.flow-node[data-node="filter"]');
+    await filter.focus();
+    await expect(filter).toBeFocused();
+
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.flow-params')).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.flow-params')).toHaveCount(0);
+
+    const left = () => filter.evaluate((el) => parseFloat((el as HTMLElement).style.left));
+    const top = () => filter.evaluate((el) => parseFloat((el as HTMLElement).style.top));
+    const x0 = await left();
+    const y0 = await top();
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowDown');
+    expect(await left()).toBeGreaterThan(x0);
+    expect(await top()).toBeGreaterThan(y0);
+  });
+});
+
+test.describe('flow sheet swipe on phone', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('swiping the sheet down closes it', async ({ page }) => {
+    await boot(page);
+    await page.locator('.flow-node[data-node="filter"]').tap({ position: { x: 60, y: 46 } });
+    const panel = page.locator('.flow-params');
+    await expect(panel).toBeVisible();
+
+    const grip = await page.locator('.fp-grip').boundingBox();
+    expect(grip).not.toBeNull();
+    const x = grip!.x + grip!.width / 2;
+    const y = grip!.y + grip!.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x, y + 120, { steps: 8 });
+    await page.mouse.up();
+    await expect(panel).toHaveCount(0);
+  });
+});

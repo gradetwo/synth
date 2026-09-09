@@ -101,3 +101,20 @@ test.describe('player MIDI import', () => {
     await expect(page.locator('.player-track.current')).toContainText('unit-test');
   });
 });
+
+test.describe('player keyboard shortcuts', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test('space toggles playback and escape closes the panel', async ({ page }) => {
+    await boot(page);
+    await page.locator('.player-open').click();
+    const play = page.locator('.player-play');
+    await page.keyboard.press(' ');
+    await expect(play).toHaveClass(/\bon\b/);
+    await expect(page.locator('.player-track.current .pt-bars')).toHaveCount(1);
+    await page.keyboard.press(' ');
+    await expect(play).not.toHaveClass(/\bon\b/);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.player.open')).toHaveCount(0);
+  });
+});
