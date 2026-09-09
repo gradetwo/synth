@@ -19,13 +19,25 @@ test.describe('player', () => {
     await expect(page.locator('.player-track', { hasText: '茉莉花' })).toHaveCount(1);
     await expect(page.locator('.player-track', { hasText: '音阶' })).toHaveCount(1);
 
+    // Transport uses SVG icons, not platform-dependent font glyphs.
+    await expect(page.locator('.player-play svg')).toHaveCount(1);
+    await expect(page.locator('.player-transport .player-btn svg')).toHaveCount(3);
+
+    // Selecting a track auto-plays it.
     await page.locator('.player-track', { hasText: '致爱丽丝' }).click();
     await expect(page.locator('.player-track.current')).toHaveCount(1);
-
     const play = page.locator('.player-play');
-    await play.click();
     await expect(play).toHaveClass(/\bon\b/);
-    await page.locator('.player-btn', { hasText: '■' }).first().click();
+
+    // Stop halts playback.
+    await page.locator('.player-transport .player-btn').first().click();
+    await expect(play).not.toHaveClass(/\bon\b/);
+
+    // Double-clicking the current track toggles play/pause.
+    const current = page.locator('.player-track.current');
+    await current.dblclick();
+    await expect(play).toHaveClass(/\bon\b/);
+    await current.dblclick();
     await expect(play).not.toHaveClass(/\bon\b/);
   });
 
