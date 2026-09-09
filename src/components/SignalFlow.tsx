@@ -837,6 +837,34 @@ export function SignalFlow() {
             ⤢
           </button>
         </div>
+        <button
+          type="button"
+          className="flow-bar-btn flow-reset"
+          aria-label={t('flow.reset')}
+          title={t('flow.reset')}
+          onClick={() => {
+            haptic();
+            store.resetFlow();
+          }}
+        >
+          ⟲
+        </button>
+        {removed.length > 0 ? (
+          <div className="flow-palette" role="group" aria-label={t('flow.removed')}>
+            <span className="flow-palette-label">{t('flow.removed')}</span>
+            {removed.map((node) => (
+              <button
+                key={node.id}
+                type="button"
+                className="flow-chip"
+                style={{ ['--mc' as string]: node.color }}
+                onClick={() => store.toggleFlowHidden(node.id)}
+              >
+                + {node.title}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div className="flow-canvas-wrap" ref={wrapRef}>
@@ -920,34 +948,6 @@ export function SignalFlow() {
               onRemove={() => store.toggleFlowHidden(node.id)}
             />
           ))}
-
-          {removed.length > 0 ? (
-            <div className="flow-palette">
-              <span className="flow-palette-label">{t('flow.removed')}</span>
-              {removed.map((node) => (
-                <button
-                  key={node.id}
-                  type="button"
-                  className="flow-chip"
-                  style={{ ['--mc' as string]: node.color }}
-                  onClick={() => store.toggleFlowHidden(node.id)}
-                >
-                  + {node.title}
-                </button>
-              ))}
-              <button type="button" className="flow-chip" onClick={() => store.resetFlow()}>
-                <span className="fc-icon" aria-hidden="true">⟲</span>
-                <span className="fc-label">{t('flow.reset')}</span>
-              </button>
-            </div>
-          ) : (
-            <div className="flow-palette">
-              <button type="button" className="flow-chip" onClick={() => store.resetFlow()}>
-                <span className="fc-icon" aria-hidden="true">⟲</span>
-                <span className="fc-label">{t('flow.reset')}</span>
-              </button>
-            </div>
-          )}
           </div>
         </div>
       </div>

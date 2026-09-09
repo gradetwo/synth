@@ -976,8 +976,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Bypass / enable**: nodes with a power icon (oscillators, LFOs, effects) switch off with one tap; the node greys out and shows `BYPASS`.',
           ],
           [
-            '**移除 / 添加**：✕ 把节点从画布移除，底部面板会保留对应按钮，随时点回来；「重置画布」恢复默认布局。',
-            '**Remove / add**: ✕ takes a node off the canvas; a chip at the bottom brings it back at any time, and “Reset canvas” restores the default layout.',
+            '**移除 / 添加**：✕ 把节点从画布移除，工具栏会保留对应按钮，随时点回来；工具栏的 ⟲「重置画布」恢复默认布局。',
+            '**Remove / add**: ✕ takes a node off the canvas; a chip in the toolbar brings it back at any time, and the toolbar’s ⟲ “Reset canvas” restores the default layout.',
           ],
           [
             '**展开参数**：点节点或 ⤢ 打开右侧参数面板，里面就是该模块的完整控件。',

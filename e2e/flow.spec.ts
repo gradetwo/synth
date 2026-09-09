@@ -31,12 +31,23 @@ test.describe('signal flow view', () => {
     await expect(osc1).toHaveClass(/off/);
     await expect(osc1.locator('.flow-bypass')).toBeVisible();
 
-    // Remove LFO 2 and add it back from the palette.
+    // Remove LFO 2: the restore chip appears in the toolbar, never over the
+    // canvas, and the reset button sits with the zoom controls.
     const lfo2 = page.locator('.flow-node[data-node="lfo2"]');
     await lfo2.locator('.flow-icon').last().click();
     await expect(page.locator('.flow-node[data-node="lfo2"]')).toHaveCount(0);
+    const bar = (await page.locator('.flow-bar').boundingBox())!;
+    const chip = (await page.locator('.flow-chip', { hasText: 'LFO 2' }).boundingBox())!;
+    expect(chip.y).toBeGreaterThanOrEqual(bar.y - 1);
+    expect(chip.y + chip.height).toBeLessThanOrEqual(bar.y + bar.height + 1);
     await page.locator('.flow-chip', { hasText: 'LFO 2' }).click();
     await expect(page.locator('.flow-node[data-node="lfo2"]')).toHaveCount(1);
+
+    // Removing a node and hitting the toolbar reset brings the default back.
+    await lfo2.locator('.flow-icon').last().click();
+    await expect(page.locator('.flow-node[data-node="lfo2"]')).toHaveCount(0);
+    await page.locator('.flow-reset').click();
+    await expect(page.locator('.flow-node')).toHaveCount(10);
 
     // Expand the filter parameters.
     await filter.locator('.flow-icon', { hasText: '⤢' }).click();
@@ -47,8 +58,10 @@ test.describe('signal flow view', () => {
   test('performance bar plays a track and stays concise', async ({ page }) => {
     await boot(page);
     await expect(page.locator('.flow-select')).toBeVisible();
-    // Export/open-player actions live in the player panel, not duplicated here.
-    await expect(page.locator('.flow-bar > .flow-bar-btn')).toHaveCount(0);
+    // The only direct bar button is the canvas reset; export/open-player
+    // actions live in the player panel, not duplicated here.
+    await expect(page.locator('.flow-bar > .flow-bar-btn')).toHaveCount(1);
+    await expect(page.locator('.flow-bar > .flow-reset')).toHaveCount(1);
     await expect(page.locator('.flow-bar .flow-zoom .flow-bar-btn')).toHaveCount(3);
     const play = page.locator('.flow-bar .player-play');
     await play.click();
