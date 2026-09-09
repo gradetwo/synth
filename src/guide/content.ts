@@ -736,8 +736,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
         kind: 'ul',
         items: [
           [
-            '**顶栏**：电源、预设切换、A/B 音色槽、撤销/重做、MIDI、键盘显示、随机、保存、预设库。',
-            '**Top bar**: power, preset stepper, A/B slots, undo/redo, MIDI, keyboard toggle, randomize, save, preset library.',
+            '**顶栏**：预设切换、A/B 音色槽、撤销/重做、MIDI、钢琴卷帘、键盘显示、随机、保存、预设库（手机/平板竖屏把次要操作收进「⋯」）。',
+            '**Top bar**: preset stepper, A/B slots, undo/redo, MIDI, piano roll, keyboard toggle, randomize, save, preset library (phones and portrait tablets keep the secondary actions under “⋯”).',
           ],
           [
             '**监视区**：示波器、频谱、音符/力度/复音、VU 表，以及播放器入口。',
@@ -989,8 +989,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
       {
         kind: 'p',
         text: [
-          '信号流视图顶部的性能条就是演奏模式：选择曲目、播放 / 暂停 / 停止 / 循环、录制，以及画布缩放。导入、导出 MIDI / MP3 在「播放器」面板里。手机上进入信号流视图时，监视条和底部键盘会自动收起，把整屏留给信号图；切回「模块」即可继续弹奏、录制。',
-          'The bar at the top of the flow view is performance mode: pick a track, play/pause/stop/loop, record, and zoom the canvas. Import and MIDI/MP3 export live in the player panel. On phones the monitor strip and the keyboard tuck away in flow view so the graph owns the screen; switch back to Modules to play and record.',
+          '信号流视图顶部的性能条就是演奏模式：选择曲目、播放 / 暂停 / 停止 / 循环、录制，以及画布缩放、重置画布。导入、导出 MIDI / MP3 在「播放器」面板里。手机上进入信号流视图时，监视条会自动收起、底部键盘默认收起，把整屏留给信号图；点右下角「⌨ 键盘」或顶栏键盘按钮可以随时把键盘调出来，画布会自动让出空间。',
+          'The bar at the top of the flow view is performance mode: pick a track, play/pause/stop/loop, record, zoom and reset the canvas. Import and MIDI/MP3 export live in the player panel. On phones the monitor strip hides and the keyboard starts tucked away so the graph owns the screen; tap the “⌨ keyboard” pill or the top-bar toggle to bring it back and the canvas makes room automatically.',
         ],
       },
       { kind: 'h', text: ['钢琴卷帘编辑器', 'Piano-roll editor'] },
@@ -1009,8 +1009,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             'Toolbar: BPM, grid (1/32–1/4), length, quantize, transpose ±12, velocity, undo/redo, clear, export MIDI, save.',
           ],
           [
-            '**输入**开关打开后，点网格或弹底部键盘都能写入音符；外部 MIDI 键盘点「连接 MIDI」授权后同样可用。步进输入：停止状态下每弹一个音就在播放头处写入并前进一格。',
-            'With **Input** armed, tapping the grid or playing the keyboard strip writes notes; an external MIDI keyboard works after “Connect MIDI”. Step input: while stopped, each note you play lands at the playhead and advances it by one grid step.',
+            '**输入**开关打开后，点网格或弹底部键盘都能写入音符；外部 MIDI 键盘点「连接 MIDI」授权后同样可用。步进输入：停止状态下弹奏时，**按住琴键的时长就是音符长度**，松开后写入并前进到音符末尾。',
+            'With **Input** armed, tapping the grid or playing the keyboard strip writes notes; an external MIDI keyboard works after “Connect MIDI”. Step input: while stopped, **how long you hold the key becomes the note length**, and the playhead advances to the end of the note.',
           ],
           [
             '内置曲目保存时会另存为新片段，导入文件与录制片段则原地更新。',
