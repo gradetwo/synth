@@ -132,5 +132,8 @@ test.describe('desktop', () => {
     expect(m.more).toBe(false);
     expect(m.moduleCols).toBe(4);
     expect(m.displayCols).toBe(3);
+    // The monitor only keeps the player entry (the WAV button was removed).
+    await expect(page.locator('.monitor-actions .demo-btn')).toHaveCount(1);
+    await expect(page.locator('.monitor-actions')).not.toContainText('WAV');
   });
 });
