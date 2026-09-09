@@ -939,7 +939,16 @@ input,textarea,[contenteditable='true']{
   background:radial-gradient(circle at 20% 10%,#14171f,#0c0e13 70%);min-height:300px}
 .flow-stage{position:relative;min-width:1260px}
 .flow-wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
-.flow-wire{fill:none;stroke:#2c3342;stroke-width:2;stroke-dasharray:5 5}
+.flow-wire{fill:none;stroke:#2c3342;stroke-width:2;stroke-dasharray:6 8;transition:stroke .25s}
+.flow-stage.active .flow-wire{
+  stroke:color-mix(in srgb,var(--accent) 65%,#2c3342);
+  animation:flow-dash .6s linear infinite}
+@keyframes flow-dash{to{stroke-dashoffset:-14}}
+.flow-stage.active .flow-node{
+  box-shadow:0 10px 26px rgba(0,0,0,.6),
+             0 0 0 1px color-mix(in srgb,var(--mc) 45%,transparent)}
+.flow-stage.active .flow-dot.on{animation:flow-pulse 1s ease-in-out infinite}
+@keyframes flow-pulse{50%{transform:scale(1.4);opacity:.65}}
 .flow-node{position:absolute;display:flex;flex-direction:column;gap:5px;padding:8px 10px 7px;
   background:linear-gradient(180deg,#1b1f29,#14171e);border:1px solid var(--border-hi);
   border-radius:12px;cursor:grab;touch-action:none;user-select:none;
