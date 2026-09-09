@@ -5,6 +5,7 @@ import { subscribeFrame } from '@/audio/animationBus';
 import { store } from '@/state/store';
 import { useParam } from '@/hooks/useSynth';
 import { intToFilter, intToWave, intToLfoWave, type ParamId, type Wave } from '@/audio/params';
+import { scopeGain, spectrumDisplay, vuDisplay } from '@/audio/meter';
 import { t } from '@/i18n';
 
 const TAU = Math.PI * 2;
@@ -95,11 +96,23 @@ function lfoShape(type: ReturnType<typeof intToLfoWave>, p: number): number {
 
 export function Scope() {
   const buf = useRef(new Float32Array(1024));
+  const gain = useRef(1);
   const ref = useRafCanvas((ctx, w, h) => {
     ctx.fillStyle = 'rgba(11,13,18,.4)';
     ctx.fillRect(0, 0, w, h);
     const data = buf.current;
     if (!engine.getTimeDomain(data)) return;
+
+    // Auto-gain: fill the display instead of showing a flat line. Fast attack,
+    // slow release so the trace stays readable and does not flicker.
+    let peak = 0;
+    for (let i = 0; i < data.length; i++) {
+      const a = Math.abs(data[i]);
+      if (a > peak) peak = a;
+    }
+    gain.current = scopeGain(peak, gain.current);
+    const g = gain.current;
+
     ctx.beginPath();
     ctx.lineWidth = 1.6;
     ctx.strokeStyle = '#ffb340';
@@ -108,7 +121,8 @@ export function Scope() {
     const n = data.length;
     for (let i = 0; i < n; i++) {
       const x = (i / (n - 1)) * w;
-      const y = h / 2 - data[i] * h * 0.46;
+      const v = Math.max(-1.05, Math.min(1.05, data[i] * g));
+      const y = h / 2 - v * (h / 2 - 2);
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
@@ -137,9 +151,11 @@ export function Spectrum() {
     const bins = analysis.spectrum;
     const peaks = analysis.peaks;
     const bw = w / bins.length;
+    // Lift the mid/low bins so a normal patch actually fills the panel.
     for (let i = 0; i < bins.length; i++) {
-      const v = bins[i];
-      const bh = v * (h - 8);
+      const v = spectrumDisplay(bins[i]);
+      const pv = spectrumDisplay(peaks[i]);
+      const bh = v * (h - 6);
       if (bh > 0.5) {
         const x = i * bw + 1.5;
         const wid = Math.max(1, bw - 3);
@@ -155,9 +171,9 @@ export function Spectrum() {
           ctx.fillRect(x, h - bh, wid, bh);
         }
       }
-      if (peaks[i] > 0.01) {
-        ctx.fillStyle = 'rgba(255,255,255,.55)';
-        ctx.fillRect(i * bw + 1.5, h - peaks[i] * (h - 8) - 1.5, Math.max(1, bw - 3), 1.5);
+      if (pv > 0.01) {
+        ctx.fillStyle = 'rgba(255,255,255,.6)';
+        ctx.fillRect(i * bw + 1.5, h - pv * (h - 6) - 1.5, Math.max(1, bw - 3), 1.5);
       }
     }
   });
@@ -249,7 +265,8 @@ export function VuMeter() {
     const segs = 12;
     const gap = 3;
     const sh = (h - gap * (segs - 1)) / segs;
-    const level = Math.min(1, Math.max(analysis.peakL, analysis.peakR));
+    // dBFS scale (-48..0 dB) so ordinary levels light most of the meter.
+    const level = vuDisplay(Math.max(analysis.peakL, analysis.peakR));
     const lit = Math.round(level * segs);
     for (let i = 0; i < segs; i++) {
       const y = h - (i + 1) * sh - i * gap;
