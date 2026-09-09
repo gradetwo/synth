@@ -268,6 +268,9 @@ test.describe('signal flow zoom controls', () => {
   test('plus, minus and fit change the zoom', async ({ page }) => {
     await boot(page);
     const label = page.locator('.flow-zoom-val');
+    // Fit once so the baseline does not race the initial auto-fit effect.
+    await page.getByRole('button', { name: '适应全部节点' }).click();
+    await page.waitForTimeout(150);
     const start = parseInt((await label.textContent()) ?? '100', 10);
 
     await page.getByRole('button', { name: '放大' }).click();

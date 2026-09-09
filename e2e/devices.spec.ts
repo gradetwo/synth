@@ -117,7 +117,14 @@ test.describe('iPad landscape', () => {
     const m = await metrics(page);
     expect(m.compactTop).toBe(false);
     expect(m.moduleCols).toBe(3);
-    expect(m.displayCols).toBeGreaterThanOrEqual(2);
+    expect(m.displayCols).toBe(3);
+
+    // The monitor row can still collapse to the phone-style strip.
+    await expect(page.locator('.display-bar')).toBeVisible();
+    await page.locator('.display-bar .display-toggle').click();
+    await expect(page.locator('.display-row.compact')).toBeVisible();
+    await page.locator('.display-row.compact .display-toggle').click();
+    await expect(page.locator('.scope-body')).toBeVisible();
   });
 });
 
