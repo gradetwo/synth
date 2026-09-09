@@ -1057,3 +1057,31 @@ input,textarea,[contenteditable='true']{
   @keyframes fp-up{from{transform:translateY(24px);opacity:.35}to{transform:none;opacity:1}}
   .fp-preview canvas{height:48px}
 }
+
+/* ---- v1.7.1 polish: focus rings, press feedback, sheet affordance ---- */
+.flow-node:focus-visible{outline:2px solid var(--mc);outline-offset:2px}
+.flow-node:focus-visible .flow-node-title{color:#fff}
+.player-btn:active,.flow-bar-btn:active,.flow-icon:active,.vt-btn:active,
+.chip:active,.d-reset:active,.demo-btn:active,.nav-btn:active{transform:translateY(1px)}
+.fp-grip{cursor:grab;touch-action:none}
+.flow-params-head{cursor:grab;touch-action:none}
+@media (pointer: coarse){
+  .flow-params-head{cursor:default}
+}
+@media (max-width:720px){
+  .flow-bar{gap:7px}
+  .flow-select{max-width:150px}
+  .flow-bar .player-transport{flex-basis:100%;order:3}
+  .flow-bar .player-seek{min-width:70px}
+  .flow-bar-btn{flex:1}
+}
+
+/* ---- now-playing indicator in the track list ---- */
+.pt-title{display:flex;align-items:center;gap:7px}
+.pt-bars{display:inline-flex;align-items:flex-end;gap:2px;height:10px;flex:none}
+.pt-bars i{width:2px;background:var(--accent);border-radius:1px;
+  animation:pt-bar .85s ease-in-out infinite}
+.pt-bars i:nth-child(1){height:45%}
+.pt-bars i:nth-child(2){height:100%;animation-delay:.14s}
+.pt-bars i:nth-child(3){height:65%;animation-delay:.28s}
+@keyframes pt-bar{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}

@@ -47,6 +47,24 @@ export function PlayerPanel({ open, onClose }: { open: boolean; onClose: () => v
   useEffect(() => midiPlayer.subscribe(setPlayer), []);
   useEffect(() => recorder.subscribe(setRec), []);
 
+  // Keyboard transport while the panel is open: Space toggles, Esc closes.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      if (event.key === 'Escape') {
+        onClose();
+      } else if (event.key === ' ') {
+        event.preventDefault();
+        if (player.playing) midiPlayer.pause();
+        else midiPlayer.play();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose, player.playing]);
+
   const tracks = midiLibrary.getTracks();
   const current = midiLibrary.getCurrent();
 
@@ -190,7 +208,16 @@ export function PlayerPanel({ open, onClose }: { open: boolean; onClose: () => v
                       midiLibrary.setCurrent(track.id);
                     }}
                   >
-                    <span className="pt-title">{trackTitle(track)}</span>
+                    <span className="pt-title">
+                      {trackTitle(track)}
+                      {track.id === midiLibrary.getCurrentId() && player.playing ? (
+                        <span className="pt-bars" aria-hidden="true">
+                          <i />
+                          <i />
+                          <i />
+                        </span>
+                      ) : null}
+                    </span>
                     <span className="pt-meta">
                       {track.composer} · {track.song.notes.length} {t('player.notes')} ·{' '}
                       {fmtTime(track.song.duration)}

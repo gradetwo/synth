@@ -367,6 +367,25 @@ function NodeView({
       className={`flow-node ${node.type}${enabled ? '' : ' off'}`}
       style={{ left: position[0], top: position[1], width: NODE_W, height: NODE_H, ['--mc' as string]: node.color }}
       data-node={node.id}
+      role="button"
+      tabIndex={0}
+      aria-label={`${node.title} — ${t('flow.expand')}`}
+      onKeyDown={(event) => {
+        const step = event.shiftKey ? 48 : 12;
+        const delta: Record<string, [number, number]> = {
+          ArrowLeft: [-step, 0],
+          ArrowRight: [step, 0],
+          ArrowUp: [0, -step],
+          ArrowDown: [0, step],
+        };
+        if (delta[event.key]) {
+          event.preventDefault();
+          onDragEnd([position[0] + delta[event.key][0], position[1] + delta[event.key][1]]);
+        } else if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
       onPointerDown={(event) => {
         if ((event.target as HTMLElement).closest('button')) return;
         event.preventDefault();
@@ -498,9 +517,38 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const panelCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const selectedRef = useRef<FlowNodeDef | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const visibleRef = useRef(true);
+  const reduceMotionRef = useRef(false);
+  const sheetDrag = useRef<{ y: number } | null>(null);
 
   useEffect(() => {
     selectedRef.current = selected;
+  }, [selected]);
+
+  useEffect(() => {
+    reduceMotionRef.current = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+  }, []);
+
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        visibleRef.current = entry.isIntersecting;
+      },
+      { rootMargin: '140px' },
+    );
+    observer.observe(wrap);
+    return () => observer.disconnect();
+  }, []);
+
+  // Keep the selected node on screen (and away from the detail card).
+  useEffect(() => {
+    if (!selected) return;
+    document
+      .querySelector(`.flow-node[data-node="${selected.id}"]`)
+      ?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
   }, [selected]);
 
   useEffect(() => midiPlayer.subscribe(setPlayer), []);
@@ -523,11 +571,14 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
       raf = requestAnimationFrame(loop);
       if (now - last < 30) return;
       last = now;
+      // Pause the canvases while the stage is scrolled out of view.
+      if (!visibleRef.current) return;
       const hasWave = engine.getTimeDomain(wave);
       spectrum.set(analysis.spectrum);
       const level = Math.max(analysis.peakL, analysis.peakR);
       const live: LiveData = {
-        t: (now - start) / 1000,
+        // Reduced motion: freeze the animation but keep reflecting parameters.
+        t: reduceMotionRef.current ? 0 : (now - start) / 1000,
         wave: hasWave ? wave : null,
         spectrum,
         level,
@@ -595,6 +646,14 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
 
   const openNode = (node: FlowNodeDef) =>
     setSelected((prev) => (prev?.id === node.id ? null : node));
+
+  // The stage grows with the nodes so a dragged node is never clipped.
+  const allPos = NODES.map((node) => nodePos(node.id));
+  const contentW = Math.max(1260, ...allPos.map(([x]) => x + NODE_W + 56));
+  const contentH = Math.max(
+    narrow ? 16 + NODES.length * (NODE_H + 18) : 420,
+    ...allPos.map(([, y]) => y + NODE_H + 72),
+  );
 
   const isEnabled = (node: FlowNodeDef) =>
     node.enabledParams.length === 0 || node.enabledParams.some((id) => store.getParam(id as never) > 0.5);
@@ -676,11 +735,15 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
         </button>
       </div>
 
-      <div className="flow-canvas-wrap">
+      <div className="flow-canvas-wrap" ref={wrapRef}>
         <div
           className="flow-stage"
           ref={stageRef}
-          style={{ height: narrow ? 16 + NODES.length * (NODE_H + 18) : 420, ['--flow-speed' as string]: '1.2s' }}
+          style={{
+            width: narrow ? '100%' : contentW,
+            height: contentH,
+            ['--flow-speed' as string]: '1.2s',
+          }}
           onClick={(event) => {
             // Tapping empty canvas dismisses the detail card.
             if (!(event.target as HTMLElement).closest('.flow-node, .flow-palette')) setSelected(null);
@@ -733,7 +796,9 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
               position={nodePos(node.id)}
               enabled={isEnabled(node)}
               registerCanvas={registerCanvas}
-              onDragMove={(pos) => setDrag({ id: node.id, pos })}
+              onDragMove={(pos) =>
+                setDrag({ id: node.id, pos: [Math.max(0, pos[0]), Math.max(0, pos[1])] })
+              }
               onDragEnd={(pos) => {
                 store.setFlowPosition(node.id, pos);
                 setDrag(null);
@@ -774,7 +839,37 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
       </div>
 
       {selected ? (
-        <aside className="flow-params" role="dialog" aria-label={selected.title}>
+        <aside
+          className="flow-params"
+          role="dialog"
+          aria-label={selected.title}
+          onPointerDown={(event) => {
+            if (!(event.target as HTMLElement).closest('.fp-grip, .flow-params-head')) return;
+            if ((event.target as HTMLElement).closest('button')) return;
+            sheetDrag.current = { y: event.clientY };
+            try {
+              (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+            } catch {
+              /* capture is optional */
+            }
+          }}
+          onPointerMove={(event) => {
+            const state = sheetDrag.current;
+            if (!state) return;
+            const dy = Math.max(0, event.clientY - state.y);
+            (event.currentTarget as HTMLElement).style.transform = `translateY(${dy}px)`;
+          }}
+          onPointerUp={(event) => {
+            const state = sheetDrag.current;
+            sheetDrag.current = null;
+            const el = event.currentTarget as HTMLElement;
+            el.style.transform = '';
+            if (state && event.clientY - state.y > 70) setSelected(null);
+          }}
+          onPointerCancel={() => {
+            sheetDrag.current = null;
+          }}
+        >
           <span className="fp-grip" aria-hidden="true" />
           <header className="flow-params-head">
             <span className="fp-dot" style={{ background: selected.color }} />
@@ -791,6 +886,20 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
                     )
                     .join('  ')}
             </span>
+            {selected.enabledParams.length > 0 ? (
+              <button
+                type="button"
+                className={`flow-icon${isEnabled(selected) ? ' on' : ''}`}
+                title={isEnabled(selected) ? t('flow.disable') : t('flow.enable')}
+                aria-pressed={isEnabled(selected)}
+                onClick={() => {
+                  haptic();
+                  toggleNode(selected);
+                }}
+              >
+                ⏻
+              </button>
+            ) : null}
             <button
               type="button"
               className="d-close"
