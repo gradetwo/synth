@@ -93,6 +93,65 @@ test.describe('iPhone landscape', () => {
   });
 });
 
+test.describe('iPhone portrait flow view', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('hands the screen to the graph and restores the chrome on exit', async ({ page }) => {
+    await boot(page, true);
+    await page.getByRole('button', { name: '信号流' }).tap();
+    await page.waitForTimeout(500);
+
+    // Secondary chrome yields to the graph.
+    await expect(page.locator('.display-row')).toBeHidden();
+    await expect(page.locator('.kbd-dock')).toBeHidden();
+    await expect(page.locator('.top-actions .tbtn[data-kb]')).toBeHidden();
+
+    const geo = await page.evaluate(() => {
+      const wrap = document.querySelector('.flow-canvas-wrap')!.getBoundingClientRect();
+      const scale = document.querySelector('.flow-scale')!.getBoundingClientRect();
+      return {
+        bottom: Math.round(wrap.bottom),
+        vh: window.innerHeight,
+        wrapH: Math.round(wrap.height),
+        scaleH: Math.round(scale.height),
+      };
+    });
+    // The canvas runs to the bottom of the screen and the graph fits inside it.
+    expect(geo.bottom).toBeGreaterThan(geo.vh - 40);
+    expect(geo.scaleH).toBeLessThanOrEqual(geo.wrapH + 2);
+
+    // Going back to modules brings the monitor strip and the keyboard back.
+    await page.getByRole('button', { name: '模块' }).tap();
+    await expect(page.locator('.display-row.compact')).toBeVisible();
+    await expect(page.locator('.kbd-dock')).toBeVisible();
+  });
+});
+
+test.describe('iPhone landscape flow view', () => {
+  test.use({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true });
+
+  test('lays the nodes out in two rows that fit on one screen', async ({ page }) => {
+    await boot(page, true);
+    await page.getByRole('button', { name: '信号流' }).tap();
+    await page.waitForTimeout(700);
+    const geo = await page.evaluate(() => {
+      const nodes = [...document.querySelectorAll('.flow-node')].map((n) => n.getBoundingClientRect());
+      const wrap = document.querySelector('.flow-canvas-wrap')!.getBoundingClientRect();
+      const scale = document.querySelector('.flow-scale')!.getBoundingClientRect();
+      return {
+        rows: new Set(nodes.map((b) => Math.round(b.y))).size,
+        wrapH: Math.round(wrap.height),
+        scaleH: Math.round(scale.height),
+        bottom: Math.round(wrap.bottom),
+        vh: window.innerHeight,
+      };
+    });
+    expect(geo.rows).toBe(2);
+    expect(geo.scaleH).toBeLessThanOrEqual(geo.wrapH + 4);
+    expect(geo.bottom).toBeLessThanOrEqual(geo.vh);
+  });
+});
+
 test.describe('iPad portrait', () => {
   test.use({ viewport: { width: 768, height: 1024 }, hasTouch: true, isMobile: true });
 

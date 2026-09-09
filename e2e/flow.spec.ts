@@ -170,21 +170,24 @@ test.describe('flow detail card', () => {
 test.describe('flow detail card on phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-  test('opens as a bottom sheet above the keyboard', async ({ page }) => {
+  test('opens as a bottom sheet at the screen edge (no dock in flow view)', async ({ page }) => {
     await boot(page);
     await page.locator('.flow-node[data-node="filter"]').tap({ position: { x: 60, y: 46 } });
     const panel = page.locator('.flow-params');
     await expect(panel).toBeVisible();
     await expect(page.locator('.fp-grip')).toBeVisible();
+    // Flow view hands the screen to the graph, so the piano dock is gone and
+    // the sheet docks to the bottom of the viewport instead of clearing it.
+    await expect(page.locator('.kbd-dock')).toBeHidden();
     await page.waitForTimeout(350); // let the sheet slide-up animation settle
 
     const m = await panel.evaluate((el) => {
       const r = el.getBoundingClientRect();
-      const dock = document.querySelector('.kbd-dock')!.getBoundingClientRect();
-      return { w: Math.round(r.width), bottom: Math.round(r.bottom), dockTop: Math.round(dock.top), vw: window.innerWidth };
+      return { w: Math.round(r.width), bottom: Math.round(r.bottom), vw: window.innerWidth, vh: window.innerHeight };
     });
     expect(m.w).toBeGreaterThanOrEqual(m.vw - 2);
-    expect(m.bottom).toBeLessThanOrEqual(m.dockTop + 1);
+    expect(m.bottom).toBeLessThanOrEqual(m.vh + 1);
+    expect(m.bottom).toBeGreaterThan(m.vh - 24);
   });
 });
 
