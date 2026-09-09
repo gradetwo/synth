@@ -179,8 +179,8 @@ const DICT: Record<string, [string, string]> = {
     'Take finished · {n} notes — tap Edit to tweak it in the piano roll',
   ],
   'player.copyright': [
-    '内置曲目为简短示范片段，版权归原作者所有；古典与民乐为公版作品。',
-    'Built-in items are short demonstration excerpts; rights remain with their owners. Classical and folk pieces are public domain.',
+    '古典与民乐为公版作品，已完整编配；现代影视 / 游戏主题仅作简短示范，版权归原作者所有。',
+    'Classical and folk pieces are public domain and fully arranged; modern film/game themes are short demonstrations and remain the property of their owners.',
   ],
 
   // --- piano roll ----------------------------------------------------------
