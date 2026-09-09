@@ -47,16 +47,36 @@ test.describe('iPhone portrait', () => {
     // The player stays reachable from the compact strip.
     await expect(page.locator('.display-row.compact .player-open')).toBeVisible();
 
+    // The preset stepper sits on its own full-width row.
+    const rows = await page.evaluate(() => {
+      const r = (sel: string) => {
+        const b = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
+        return { y: Math.round(b.y), h: Math.round(b.height), w: Math.round(b.width) };
+      };
+      return { brand: r('.brand'), preset: r('.preset-ctrl'), vw: window.innerWidth };
+    });
+    expect(rows.preset.y).toBeGreaterThanOrEqual(rows.brand.y + rows.brand.h - 2);
+    expect(rows.preset.w).toBeGreaterThan(rows.vw - 30);
+
     // Overflow menu exposes the secondary actions.
     await page.locator('.top-more .tbtn').click();
     await expect(page.locator('.top-menu')).toBeVisible();
     await expect(page.locator('.top-menu')).toContainText('预设库');
     await page.keyboard.press('Escape');
 
-    // Expanding the monitor brings the scope/spectrum back.
+    // Expanding the monitor brings the scope/spectrum back, with a collapse
+    // control pinned at the top of the row (no scrolling required).
     await page.locator('.display-toggle').first().click();
     await expect(page.locator('.display-row.compact')).toHaveCount(0);
     await expect(page.locator('.scope-body')).toBeVisible();
+    const bar = await page.evaluate(() => {
+      const b = (document.querySelector('.display-bar') as HTMLElement).getBoundingClientRect();
+      const scope = (document.querySelector('.scope-panel') as HTMLElement).getBoundingClientRect();
+      return { barY: Math.round(b.y), scopeY: Math.round(scope.y) };
+    });
+    expect(bar.barY).toBeLessThan(bar.scopeY);
+    await page.locator('.display-bar .display-toggle').click();
+    await expect(page.locator('.display-row.compact')).toBeVisible();
   });
 });
 
