@@ -189,7 +189,7 @@ export default function App() {
   const running = status === 'running' || status === 'suspended';
 
   return (
-    <div className="app">
+    <div className="app" data-device={viewport.device} data-view={view}>
       <TopBar
         onBrowse={() => setDrawerOpen(true)}
         status={status}

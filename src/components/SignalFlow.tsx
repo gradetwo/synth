@@ -538,8 +538,17 @@ export function SignalFlow() {
   const [rec, setRec] = useState<RecorderState>(recorder.getState());
   const [tracksVersion, setTracksVersion] = useState(0);
   const viewport = useViewport();
-  // 0 = hand-tuned desktop layout; 2–3 = generated grid for phones/tablets.
-  const flowCols = viewport.width >= 1200 ? 0 : viewport.width >= 1000 ? 3 : viewport.width >= 340 ? 2 : 1;
+  // 0 = hand-tuned desktop layout; landscape screens get five columns (two rows)
+  // so the width is used instead of a tall, mostly empty canvas.
+  const landscape = viewport.width > viewport.height;
+  const flowCols =
+    viewport.width >= 1200
+      ? 0
+      : landscape && viewport.width >= 700
+        ? 5
+        : viewport.width >= 1000
+          ? 3
+          : 2;
   const [zoom, setZoom] = useState(1);
   // Live drag position, lifted here so the wires follow the node while moving.
   const [drag, setDrag] = useState<{ id: string; pos: [number, number] } | null>(null);
@@ -695,7 +704,7 @@ export function SignalFlow() {
   // The stage grows with the nodes so a dragged node is never clipped.
   const allPos = NODES.map((node) => nodePos(node.id));
   const contentW = Math.max(flowCols === 0 ? 1260 : 0, ...allPos.map(([x]) => x + NODE_W + 28));
-  const contentH = Math.max(320, ...allPos.map(([, y]) => y + NODE_H + 44));
+  const contentH = Math.max(flowCols === 0 ? 320 : 240, ...allPos.map(([, y]) => y + NODE_H + 44));
   // Committed bounds (ignoring the in-flight drag) drive the auto-fit so the
   // canvas does not zoom while a node is being moved.
   const committedW = Math.max(
@@ -703,7 +712,7 @@ export function SignalFlow() {
     ...NODES.map((node) => (positions[node.id] ?? defaults[node.id] ?? [0, 0])[0] + NODE_W + 28),
   );
   const committedH = Math.max(
-    320,
+    flowCols === 0 ? 320 : 240,
     ...NODES.map((node) => (positions[node.id] ?? defaults[node.id] ?? [0, 0])[1] + NODE_H + 44),
   );
   useEffect(() => {
@@ -714,11 +723,22 @@ export function SignalFlow() {
   const applyFit = () => {
     const wrap = wrapRef.current;
     if (!wrap) return;
+    const phone = viewport.device === 'phone';
+    if (phone) {
+      // Phones drop the player strip and the piano dock in flow view, so the
+      // canvas owns everything left below the chrome instead of the 55vh
+      // default. Document-relative top keeps the math stable while the page
+      // scroll position settles after a rotation.
+      const top = wrap.getBoundingClientRect().top + window.scrollY;
+      wrap.style.height = `${Math.max(180, Math.round(window.innerHeight - top - 14))}px`;
+    } else {
+      wrap.style.height = '';
+    }
     const widthFit = (wrap.clientWidth - 28) / committedW;
     const heightFit = (wrap.clientHeight - 28) / committedH;
-    // Prefer filling the width; allow up to ~50% vertical scrolling so a phone
+    // Prefer filling the width; allow up to ~60% vertical scrolling so a phone
     // does not end up with a tiny canvas and a large empty margin.
-    const z = Math.min(1.1, widthFit, heightFit * 1.5);
+    const z = Math.min(1.1, widthFit, heightFit * 1.6);
     setZoom(Math.max(0.32, z));
   };
 
@@ -911,13 +931,15 @@ export function SignalFlow() {
                 </button>
               ))}
               <button type="button" className="flow-chip" onClick={() => store.resetFlow()}>
-                {t('flow.reset')}
+                <span className="fc-icon" aria-hidden="true">⟲</span>
+                <span className="fc-label">{t('flow.reset')}</span>
               </button>
             </div>
           ) : (
             <div className="flow-palette">
               <button type="button" className="flow-chip" onClick={() => store.resetFlow()}>
-                {t('flow.reset')}
+                <span className="fc-icon" aria-hidden="true">⟲</span>
+                <span className="fc-label">{t('flow.reset')}</span>
               </button>
             </div>
           )}

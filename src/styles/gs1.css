@@ -981,7 +981,7 @@ input,textarea,[contenteditable='true']{
 .flow-node-head{display:flex;align-items:center;gap:6px}
 .flow-dot{width:7px;height:7px;border-radius:50%;background:#3a4152;flex:none}
 .flow-dot.on{background:var(--mc);box-shadow:0 0 7px var(--mc)}
-.flow-node-title{font:700 10.5px/1 var(--grot);letter-spacing:.1em;color:var(--txt-1);flex:1;
+.flow-node-title{font:700 10.5px/1 var(--grot);letter-spacing:.04em;color:var(--txt-1);flex:1;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .flow-icon{width:20px;height:20px;border-radius:6px;border:1px solid var(--border);
   background:var(--bg-inset);color:var(--txt-dim);font-size:10px;line-height:1;cursor:pointer;
@@ -998,6 +998,13 @@ input,textarea,[contenteditable='true']{
 .flow-palette{position:absolute;left:14px;bottom:14px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;
   background:rgba(10,12,16,.85);border:1px solid var(--border);border-radius:10px;padding:7px 10px;
   backdrop-filter:blur(3px)}
+.fc-icon{display:none}
+@media (max-width:900px){
+  /* Phone: an icon-only reset keeps the floating palette out of the nodes. */
+  .flow-palette .fc-label{display:none}
+  .flow-palette .fc-icon{display:inline}
+  .flow-palette{padding:7px;gap:6px}
+}
 .flow-palette-label{font:600 8.5px/1 var(--mono);letter-spacing:.1em;color:var(--txt-dim)}
 .flow-chip{font:700 9px/1 var(--mono);letter-spacing:.05em;color:var(--txt-2);
   background:var(--bg-inset);border:1px solid var(--border);border-radius:20px;padding:6px 10px;cursor:pointer}
@@ -1040,7 +1047,8 @@ input,textarea,[contenteditable='true']{
 
 /* Touch targets: bigger node chrome, roomier transport. */
 @media (pointer: coarse){
-  .flow-icon{width:27px;height:27px;font-size:12px;border-radius:8px}
+  /* 27px icons squeezed "OSC 1" out of the node head; 23px keeps the title. */
+  .flow-icon{width:23px;height:23px;font-size:11px;border-radius:7px}
   .flow-node-head{gap:5px}
   .flow-chip{min-height:34px}
   .flow-bar-btn{min-height:38px;padding:0 13px}
@@ -1172,3 +1180,58 @@ input,textarea,[contenteditable='true']{
   .monitor-body{height:132px;grid-template-columns:1fr auto;grid-template-rows:auto 1fr;gap:8px 10px}
   .monitor-body .lfo-mon{grid-column:1/-1}
 }
+
+/* ---- phone chrome: denser, nothing wasted -------------------------------- */
+@media (max-width:620px){
+  /* Top bar row: brand + status on the left, actions on the right. */
+  .topbar.compact .brand{flex:1;min-width:0}
+  .topbar.compact .top-actions > .tbtn .tbtn-label{display:none}
+
+  /* Performance bar: badge | track | zoom on row 1, transport on row 2. */
+  .flow-bar{display:grid;grid-template-columns:auto minmax(0,1fr) auto;
+    gap:8px;align-items:center}
+  .flow-badge{grid-column:1;grid-row:1}
+  .flow-select{grid-column:2;grid-row:1;max-width:none;width:100%}
+  .flow-zoom{grid-column:3;grid-row:1;margin-left:0}
+  .flow-bar .player-transport{grid-column:1/-1;grid-row:2;flex-basis:auto;min-width:0}
+
+  /* Compact monitor strip: tighter, so the canvas keeps the space. */
+  .display-row.compact{gap:6px}
+  .display-row.compact .note-display{padding:6px 9px;gap:2px}
+  .display-row.compact .nd-val{font-size:20px;min-height:20px}
+  .display-row.compact .nd-sub{font-size:8.5px}
+  .display-row.compact .player-open.icon-only,
+  .display-row.compact .display-toggle{width:38px;height:38px}
+  .display-row.compact .vu{width:46px}
+}
+
+/* ---- phone flow view: the graph owns the screen ------------------------- */
+/* The monitor strip and the piano dock are secondary while routing is on
+   screen, so phones collapse them (the keyboard toggle would be a dead
+   control, so it hides with them). SignalFlow sizes the canvas to the space
+   left below the chrome. */
+.app[data-device='phone'][data-view='flow'] .display-row,
+.app[data-device='phone'][data-view='flow'] .kbd-dock,
+.app[data-device='phone'][data-view='flow'] .dock-spacer,
+.app[data-device='phone'][data-view='flow'] .top-actions .tbtn[data-kb]{display:none}
+/* The 300px floor would fight the measured height on short landscape screens. */
+.app[data-device='phone'][data-view='flow'] .flow-canvas-wrap{min-height:0}
+/* No dock to clear in flow view, so the detail sheet docks to the screen edge. */
+.app[data-device='phone'][data-view='flow'] .flow-params{bottom:env(safe-area-inset-bottom)}
+
+/* Landscape phones: the view toggle joins the top row instead of spending a
+   whole row on itself, so both node rows fit on one screen. */
+@media (max-width:900px) and (orientation:landscape){
+  .topbar.compact .view-toggle{order:3;width:auto;margin-left:auto}
+  .vt-btn{padding:0 12px}
+  /* The wide strip carries the live waveform and spectrum rather than a
+     stretched, mostly empty note box. */
+  .display-row.compact .note-display{flex:0 1 236px}
+}
+
+.display-row.compact .strip-scope,
+.display-row.compact .strip-spec{flex:1;min-width:0;height:46px;border:1px solid var(--border);
+  border-radius:10px;background:var(--bg-socket);overflow:hidden;padding:3px 7px}
+.display-row.compact .strip-spec{flex:.72}
+.display-row.compact .strip-scope canvas,
+.display-row.compact .strip-spec canvas{display:block;width:100%;height:100%}

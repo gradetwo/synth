@@ -144,6 +144,7 @@ export function TopBar({
     <button
       type="button"
       className={`tbtn${keyboardVisible ? ' on' : ''}`}
+      data-kb="1"
       title={keyboardVisible ? t('top.keyboardHide') : t('top.keyboardShow')}
       aria-pressed={keyboardVisible}
       onClick={() => {
@@ -265,7 +266,7 @@ export function TopBar({
         >
           <span className={`pled${power ? ' on' : ''}`} />
         </button>
-        <EngineBadge status={status} />
+        {!phone ? <EngineBadge status={status} /> : null}
         {!phone ? viewToggle : null}
       </div>
 
@@ -293,6 +294,7 @@ export function TopBar({
 
       {phone ? (
         <div className="top-actions compact">
+          <EngineBadge status={status} />
           {keyboardButton}
           <div className="top-more">
             <button
@@ -396,16 +398,29 @@ function PolyBadge() {
 
 
 export function DisplayRow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
-  const { device } = useViewport();
+  const { device, width, height } = useViewport();
   const stored = useDisplayExpanded();
   // Phones default to the compact strip; tablets can collapse it on demand.
   const canCollapse = device !== 'desktop';
   const expanded = stored ?? device !== 'phone';
+  // A landscape phone has room to spare in the strip, so the live waveform and
+  // spectrum fill it instead of leaving a wide empty note box.
+  const widePhone = device === 'phone' && width > height;
 
   if (canCollapse && !expanded) {
     return (
       <section className="display-row compact">
         <NoteDisplay />
+        {widePhone ? (
+          <div className="strip-scope">
+            <Scope />
+          </div>
+        ) : null}
+        {widePhone ? (
+          <div className="strip-spec">
+            <Spectrum />
+          </div>
+        ) : null}
         <PlayerButton onOpen={onOpenPlayer} iconOnly />
         <VuMeter />
         <button
