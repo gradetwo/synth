@@ -52,3 +52,37 @@ test.describe('signal flow view', () => {
     await expect(play).toHaveClass(/\bon\b/);
   });
 });
+
+test.describe('signal flow animation', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('nodes redraw and wires flow while a note sounds', async ({ page }) => {
+    await boot(page);
+    const key = page.locator('.wkey').first();
+    const box = (await key.boundingBox())!;
+    await key.dispatchEvent('pointerdown', {
+      pointerId: 31,
+      pointerType: 'touch',
+      clientX: box.x + box.width / 2,
+      clientY: box.y + box.height - 6,
+    });
+
+    const snap = (id: string) =>
+      page
+        .locator(`.flow-node[data-node="${id}"] canvas`)
+        .evaluate((el) => (el as HTMLCanvasElement).toDataURL());
+
+    await page.waitForTimeout(350);
+    const first = await snap('osc1');
+    await page.waitForTimeout(300);
+    const second = await snap('osc1');
+    expect(first).not.toBe(second);
+
+    // The wire/glow "active" state follows the analyser level.
+    await expect(page.locator('.flow-stage')).toHaveClass(/active/);
+    const wire = page.locator('.flow-wire').first();
+    await expect(wire).toHaveCSS('animation-name', 'flow-dash');
+
+    await key.dispatchEvent('pointerup', { pointerId: 31, pointerType: 'touch' });
+  });
+});
