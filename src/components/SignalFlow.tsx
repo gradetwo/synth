@@ -28,17 +28,33 @@ interface FlowNodeDef {
   readout: number[];
 }
 
+/**
+ * Canvas cannot parse CSS custom properties (`var(--x)`), so node colours are
+ * mirrored here as concrete hex values for the 2D context. Keep in sync with
+ * the `--osc1 … --accent` variables in gs1.css.
+ */
+const C = {
+  osc1: '#4da3ff',
+  osc2: '#35d0c5',
+  filter: '#6ee7a0',
+  env: '#f472b6',
+  lfo: '#fb923c',
+  matrix: '#facc15',
+  fx: '#a78bfa',
+  accent: '#ffb340',
+};
+
 const NODES: FlowNodeDef[] = [
-  { id: 'osc1', module: 'osc1', type: 'source', title: 'OSC 1', color: 'var(--osc1)', enabledParams: [Param.OSC1_ON], readout: [Param.OSC1_WAVE, Param.OSC1_LEVEL] },
-  { id: 'osc2', module: 'osc2', type: 'source', title: 'OSC 2', color: 'var(--osc2)', enabledParams: [Param.OSC2_ON], readout: [Param.OSC2_WAVE, Param.OSC2_LEVEL] },
-  { id: 'filter', module: 'filter', type: 'filter', title: 'FILTER', color: 'var(--filter)', enabledParams: [], readout: [Param.FILTER_CUTOFF, Param.FILTER_RES] },
-  { id: 'env', module: 'env', type: 'mod', title: 'AMP ENV', color: 'var(--env)', enabledParams: [], readout: [Param.ENV_ATTACK, Param.ENV_RELEASE] },
-  { id: 'lfo', module: 'lfo', type: 'mod', title: 'LFO', color: 'var(--lfo)', enabledParams: [Param.LFO_ON], readout: [Param.LFO_RATE, Param.LFO_DEPTH] },
-  { id: 'lfo2', module: 'lfo', type: 'mod', title: 'LFO 2', color: 'var(--lfo)', enabledParams: [Param.LFO2_ON], readout: [Param.LFO2_RATE, Param.LFO2_DEPTH] },
-  { id: 'matrix', module: 'matrix', type: 'mod', title: 'MATRIX', color: 'var(--matrix)', enabledParams: [], readout: [] },
-  { id: 'fx', module: 'fx', type: 'effect', title: 'FX', color: 'var(--fx)', enabledParams: [Param.FX_REVERB_ON, Param.FX_DELAY_ON], readout: [Param.FX_REVERB_MIX, Param.FX_DELAY_MIX] },
-  { id: 'fx2', module: 'fx2', type: 'effect', title: 'FX 2', color: 'var(--fx)', enabledParams: [Param.FX_CHORUS_ON, Param.FX_FLANGER_ON, Param.FX_PHASER_ON, Param.FX_DRIVE_ON], readout: [Param.FX_CHORUS_MIX, Param.FX_DRIVE_MIX] },
-  { id: 'out', type: 'output', title: 'OUT', color: 'var(--accent)', enabledParams: [], readout: [Param.MASTER_VOLUME] },
+  { id: 'osc1', module: 'osc1', type: 'source', title: 'OSC 1', color: C.osc1, enabledParams: [Param.OSC1_ON], readout: [Param.OSC1_WAVE, Param.OSC1_LEVEL] },
+  { id: 'osc2', module: 'osc2', type: 'source', title: 'OSC 2', color: C.osc2, enabledParams: [Param.OSC2_ON], readout: [Param.OSC2_WAVE, Param.OSC2_LEVEL] },
+  { id: 'filter', module: 'filter', type: 'filter', title: 'FILTER', color: C.filter, enabledParams: [], readout: [Param.FILTER_CUTOFF, Param.FILTER_RES] },
+  { id: 'env', module: 'env', type: 'mod', title: 'AMP ENV', color: C.env, enabledParams: [], readout: [Param.ENV_ATTACK, Param.ENV_RELEASE] },
+  { id: 'lfo', module: 'lfo', type: 'mod', title: 'LFO', color: C.lfo, enabledParams: [Param.LFO_ON], readout: [Param.LFO_RATE, Param.LFO_DEPTH] },
+  { id: 'lfo2', module: 'lfo', type: 'mod', title: 'LFO 2', color: C.lfo, enabledParams: [Param.LFO2_ON], readout: [Param.LFO2_RATE, Param.LFO2_DEPTH] },
+  { id: 'matrix', module: 'matrix', type: 'mod', title: 'MATRIX', color: C.matrix, enabledParams: [], readout: [] },
+  { id: 'fx', module: 'fx', type: 'effect', title: 'FX', color: C.fx, enabledParams: [Param.FX_REVERB_ON, Param.FX_DELAY_ON], readout: [Param.FX_REVERB_MIX, Param.FX_DELAY_MIX] },
+  { id: 'fx2', module: 'fx2', type: 'effect', title: 'FX 2', color: C.fx, enabledParams: [Param.FX_CHORUS_ON, Param.FX_FLANGER_ON, Param.FX_PHASER_ON, Param.FX_DRIVE_ON], readout: [Param.FX_CHORUS_MIX, Param.FX_DRIVE_MIX] },
+  { id: 'out', type: 'output', title: 'OUT', color: C.accent, enabledParams: [], readout: [Param.MASTER_VOLUME] },
 ];
 
 const NODE_W = 158;
@@ -93,9 +109,11 @@ function drawNode(canvas: HTMLCanvasElement, node: FlowNodeDef, enabled: boolean
   const get = (id: number) => store.getParam(id as never) as number;
   const active = enabled && (live.voices > 0 || live.level > 0.004);
   ctx.clearRect(0, 0, w, h);
-  ctx.lineWidth = 1.4;
-  ctx.strokeStyle = enabled ? node.color : '#4a5060';
-  ctx.fillStyle = enabled ? node.color : '#4a5060';
+  ctx.lineWidth = 1.7;
+  ctx.strokeStyle = enabled ? node.color : '#8a93a7';
+  ctx.fillStyle = enabled ? node.color : '#8a93a7';
+  ctx.shadowColor = enabled ? node.color : 'transparent';
+  ctx.shadowBlur = enabled ? 7 : 0;
   ctx.globalAlpha = 1;
   ctx.beginPath();
 
@@ -134,13 +152,15 @@ function drawNode(canvas: HTMLCanvasElement, node: FlowNodeDef, enabled: boolean
 
       // Live spectrum behind the curve.
       const bins = live.spectrum.length;
-      ctx.globalAlpha = 0.22;
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 0.28;
       for (let i = 0; i < bins; i++) {
         const x = (i / bins) * w;
         const v = Math.min(1, live.spectrum[i] * 3);
         ctx.fillRect(x, h - 1 - v * (h - 4), w / bins - 1, v * (h - 4));
       }
       ctx.globalAlpha = 1;
+      ctx.shadowBlur = enabled ? 7 : 0;
 
       ctx.beginPath();
       for (let x = 0; x <= w; x++) {
@@ -266,7 +286,7 @@ function drawNode(canvas: HTMLCanvasElement, node: FlowNodeDef, enabled: boolean
         // Echoes re-fire while playing; idle keeps a gentle breathing decay.
         const cycle = active ? 1 : 3;
         const phase = ((live.t * (active ? 0.75 : 0.22) + tap * 0.14) % cycle) / cycle;
-        const amp = base * (active ? 1 - phase : 0.35 + 0.35 * Math.sin(live.t * 1.2 + tap));
+        const amp = base * (active ? 1 - phase : 0.5 + 0.32 * Math.sin(live.t * 1.2 + tap));
         ctx.globalAlpha = 0.2 + Math.max(0, amp) * 0.8;
         ctx.beginPath();
         ctx.moveTo(x, h / 2);
@@ -294,6 +314,13 @@ function drawNode(canvas: HTMLCanvasElement, node: FlowNodeDef, enabled: boolean
         }
         ctx.stroke();
         ctx.globalAlpha = 1;
+      } else {
+        ctx.globalAlpha = 0.4;
+        ctx.beginPath();
+        ctx.moveTo(0, h / 2);
+        ctx.lineTo(w, h / 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
       }
       const vol = get(Param.MASTER_VOLUME);
       const meter = Math.min(1, live.level * 1.6);
@@ -315,7 +342,9 @@ function NodeView({
   position,
   enabled,
   registerCanvas,
+  onDragMove,
   onDragEnd,
+  onDragCancel,
   onSelect,
   onToggle,
   onRemove,
@@ -324,24 +353,24 @@ function NodeView({
   position: [number, number];
   enabled: boolean;
   registerCanvas: (id: string, el: HTMLCanvasElement | null) => void;
+  onDragMove: (pos: [number, number]) => void;
   onDragEnd: (pos: [number, number]) => void;
+  onDragCancel: () => void;
   onSelect: () => void;
   onToggle: () => void;
   onRemove: () => void;
 }) {
   const drag = useRef<{ dx: number; dy: number; moved: boolean } | null>(null);
-  const [live, setLive] = useState<[number, number] | null>(null);
 
-  const pos = live ?? position;
   return (
     <div
       className={`flow-node ${node.type}${enabled ? '' : ' off'}`}
-      style={{ left: pos[0], top: pos[1], width: NODE_W, height: NODE_H, ['--mc' as string]: node.color }}
+      style={{ left: position[0], top: position[1], width: NODE_W, height: NODE_H, ['--mc' as string]: node.color }}
       data-node={node.id}
       onPointerDown={(event) => {
         if ((event.target as HTMLElement).closest('button')) return;
         event.preventDefault();
-        drag.current = { dx: event.clientX - pos[0], dy: event.clientY - pos[1], moved: false };
+        drag.current = { dx: event.clientX - position[0], dy: event.clientY - position[1], moved: false };
         try {
           (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
         } catch {
@@ -352,24 +381,24 @@ function NodeView({
         const state = drag.current;
         if (!state) return;
         const next: [number, number] = [event.clientX - state.dx, event.clientY - state.dy];
-        if (Math.abs(next[0] - pos[0]) + Math.abs(next[1] - pos[1]) > 2) state.moved = true;
-        setLive(next);
+        if (Math.abs(next[0] - position[0]) + Math.abs(next[1] - position[1]) > 2) state.moved = true;
+        // Report every move so the wires follow the node in real time.
+        onDragMove(next);
       }}
       onPointerUp={() => {
         const state = drag.current;
         drag.current = null;
         if (!state) return;
-        if (state.moved && live) {
+        if (state.moved) {
           haptic();
-          onDragEnd(live);
+          onDragEnd(position);
         } else {
           onSelect();
         }
-        setLive(null);
       }}
       onPointerCancel={() => {
         drag.current = null;
-        setLive(null);
+        onDragCancel();
       }}
     >
       <div className="flow-node-head">
@@ -463,6 +492,8 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   const [rec, setRec] = useState<RecorderState>(recorder.getState());
   const [tracksVersion, setTracksVersion] = useState(0);
   const [narrow, setNarrow] = useState(() => window.innerWidth < 760);
+  // Live drag position, lifted here so the wires follow the node while moving.
+  const [drag, setDrag] = useState<{ id: string; pos: [number, number] } | null>(null);
   const canvasRefs = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const stageRef = useRef<HTMLDivElement | null>(null);
 
@@ -516,6 +547,10 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   const visible = NODES.filter((node) => !hidden.includes(node.id));
   const removed = NODES.filter((node) => hidden.includes(node.id));
   const current = midiLibrary.getCurrent();
+
+  /** Node position including the in-flight drag, so wires track in real time. */
+  const nodePos = (id: string): [number, number] =>
+    drag?.id === id ? drag.pos : (positions[id] ?? defaults[id] ?? [0, 0]);
 
   const isEnabled = (node: FlowNodeDef) =>
     node.enabledParams.length === 0 || node.enabledParams.some((id) => store.getParam(id as never) > 0.5);
@@ -605,13 +640,13 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
         >
           <svg className="flow-wires" aria-hidden="true">
             {visible.map((node) => {
-              const from = positions[node.id] ?? defaults[node.id] ?? [0, 0];
+              const from = nodePos(node.id);
               const chain = ['osc1', 'osc2', 'filter', 'env', 'matrix', 'fx', 'fx2', 'out'];
               const idx = chain.indexOf(node.id);
               if (idx < 0) return null;
               const next = visible.find((n) => chain.indexOf(n.id) === idx + 1);
               if (!next) return null;
-              const to = positions[next.id] ?? defaults[next.id] ?? [0, 0];
+              const to = nodePos(next.id);
               const x1 = from[0] + NODE_W;
               const y1 = from[1] + NODE_H / 2;
               const x2 = to[0];
@@ -630,10 +665,15 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
             <NodeView
               key={node.id}
               node={node}
-              position={positions[node.id] ?? defaults[node.id] ?? [0, 0]}
+              position={nodePos(node.id)}
               enabled={isEnabled(node)}
               registerCanvas={registerCanvas}
-              onDragEnd={(pos) => store.setFlowPosition(node.id, pos)}
+              onDragMove={(pos) => setDrag({ id: node.id, pos })}
+              onDragEnd={(pos) => {
+                store.setFlowPosition(node.id, pos);
+                setDrag(null);
+              }}
+              onDragCancel={() => setDrag(null)}
               onSelect={() => setSelected(node)}
               onToggle={() => toggleNode(node)}
               onRemove={() => store.toggleFlowHidden(node.id)}
