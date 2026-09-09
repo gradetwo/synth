@@ -265,6 +265,11 @@ unsafe impl GlobalAlloc for ArenaAlloc {
 mod tests {
     use super::*;
 
+    // These tests share the process-global arena, exactly as the single audio
+    // thread does in production. Run the crate's tests serially
+    // (`--test-threads=1`, wired into `npm run test:rust`) so `init()` in one
+    // test cannot reset the arena while another test holds a pointer.
+
     #[test]
     fn allocates_aligned_and_zeroed() {
         let p = alloc_zeroed(100, 16);
