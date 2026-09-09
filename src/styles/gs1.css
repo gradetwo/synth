@@ -991,40 +991,34 @@ input,textarea,[contenteditable='true']{
   background:var(--bg-inset);border:1px solid var(--border);border-radius:20px;padding:6px 10px;cursor:pointer}
 .flow-chip:hover{color:var(--mc,var(--accent));border-color:var(--mc,var(--accent-dim))}
 /* Detail card: compact floating panel on desktop, bottom sheet on phones. */
-.flow-params{position:fixed;right:18px;z-index:46;
-  bottom:calc(var(--dock-h) + 18px + env(safe-area-inset-bottom));
-  width:330px;max-height:min(72vh,580px);display:flex;flex-direction:column;
-  background:linear-gradient(180deg,#1a1e27,#12151b);
-  border:1px solid var(--border-hi);border-radius:14px;overflow:hidden;
-  box-shadow:0 26px 70px rgba(0,0,0,.65);
-  animation:fp-in .22s cubic-bezier(.22,.9,.3,1)}
-@keyframes fp-in{from{transform:translateY(10px) scale(.98);opacity:0}to{transform:none;opacity:1}}
-.fp-grip{display:none}
-.flow-params-head{display:flex;align-items:center;gap:8px;
-  padding:11px 12px 10px;border-bottom:1px solid #222735;background:rgba(255,255,255,.015)}
-.fp-dot{width:8px;height:8px;border-radius:50%;flex:none;
-  box-shadow:0 0 10px currentColor}
-.fp-title{font:800 11px/1 var(--grot);letter-spacing:.14em;flex:none}
-.fp-readout{flex:1;min-width:0;text-align:right;font:600 8.5px/1.3 var(--mono);
-  color:var(--txt-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.fp-preview{padding:9px 12px 0}
-.fp-preview canvas{display:block;width:100%;height:58px;border-radius:8px;
-  background:linear-gradient(180deg,rgba(12,15,21,.92),rgba(6,8,12,.7));
-  border:1px solid rgba(255,255,255,.05)}
-.flow-params-body{overflow-y:auto;padding:10px 12px 14px}
-.flow-params-body::-webkit-scrollbar{width:8px}
-.flow-params-body::-webkit-scrollbar-thumb{background:#2a303c;border-radius:4px}
-.flow-out-panel{padding:4px 2px 2px}
-.flow-params .module{border:none;background:none;padding:0;box-shadow:none}
-.flow-params .module::before,.flow-params .module::after{display:none}
-.flow-params .screw{display:none}
-.flow-params .module-head{display:none}
-.flow-params .module-body{padding:0;gap:9px}
+.flow-params-mask{position:fixed;inset:0;background:rgba(5,6,9,.62);
+  backdrop-filter:blur(3px);z-index:46;animation:fp-mask .18s ease-out}
+@keyframes fp-mask{from{opacity:0}to{opacity:1}}
+/* The detail card is the module card itself, centred on screen. */
+.flow-params{position:fixed;z-index:47;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:min(430px,94vw);max-height:min(86vh,860px);display:flex;flex-direction:column;
+  animation:fp-in .22s cubic-bezier(.22,.9,.3,1);
+  filter:drop-shadow(0 26px 60px rgba(0,0,0,.7))}
+@keyframes fp-in{from{transform:translate(-50%,-48%) scale(.97);opacity:0}
+  to{transform:translate(-50%,-50%) scale(1);opacity:1}}
+.flow-params-scroll{overflow-y:auto;min-height:0;border-radius:12px}
+.flow-params-scroll::-webkit-scrollbar{width:8px}
+.flow-params-scroll::-webkit-scrollbar-thumb{background:#2a303c;border-radius:4px}
+.flow-params-close{position:absolute;top:8px;right:8px;z-index:3;width:30px;height:30px;
+  border-radius:8px;border:1px solid var(--border);background:rgba(16,19,25,.86);
+  color:var(--txt-2);display:grid;place-items:center;cursor:pointer;padding:0;
+  font:600 12px/1 var(--grot)}
+.flow-params-close:hover{color:var(--accent);border-color:var(--accent-dim)}
+/* Inside the card the module keeps its normal frame, just narrower. */
+.flow-params .module{min-width:0}
 .flow-params .knob{min-width:52px;flex:0 1 auto}
 .flow-params .knob-row{gap:6px;justify-content:flex-start}
-.flow-params .seg{margin-bottom:8px}
-.flow-params .fx-grid,.flow-params .fx2-grid{gap:8px}
 .flow-params .matrix-list{gap:6px}
+.fp-simple-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.fp-dot{width:8px;height:8px;border-radius:50%;flex:none;box-shadow:0 0 10px currentColor}
+.fp-title{font:800 11px/1 var(--grot);letter-spacing:.14em;flex:none}
+.flow-out-panel{background:linear-gradient(180deg,#222732,var(--bg-module) 40%,#191d26);
+  border:1px solid var(--border);border-radius:12px;padding:14px 12px}
 
 /* Touch targets: bigger node chrome, roomier transport. */
 @media (pointer: coarse){
@@ -1039,14 +1033,7 @@ input,textarea,[contenteditable='true']{
   .view-toggle{order:5;margin-left:0;width:100%}
   .vt-btn{flex:1}
   .flow-stage{min-width:0}
-  .flow-params{left:0;right:0;bottom:calc(var(--dock-h) + env(safe-area-inset-bottom));
-    width:100%;max-height:58vh;border-radius:16px 16px 0 0;
-    border-left:none;border-right:none;border-bottom:none;
-    animation:fp-up .26s cubic-bezier(.22,.9,.3,1)}
-  .fp-grip{display:block;width:44px;height:4px;border-radius:3px;background:#3a4152;
-    margin:8px auto 0}
-  @keyframes fp-up{from{transform:translateY(24px);opacity:.35}to{transform:none;opacity:1}}
-  .fp-preview canvas{height:48px}
+  .flow-params{width:min(420px,94vw);max-height:82vh}
 }
 
 /* ---- v1.7.1 polish: focus rings, press feedback, sheet affordance ---- */
@@ -1054,11 +1041,6 @@ input,textarea,[contenteditable='true']{
 .flow-node:focus-visible .flow-node-title{color:#fff}
 .player-btn:active,.flow-bar-btn:active,.flow-icon:active,.vt-btn:active,
 .chip:active,.d-reset:active,.demo-btn:active,.nav-btn:active{transform:translateY(1px)}
-.fp-grip{cursor:grab;touch-action:none}
-.flow-params-head{cursor:grab;touch-action:none}
-@media (pointer: coarse){
-  .flow-params-head{cursor:default}
-}
 @media (max-width:720px){
   .flow-bar{gap:7px}
   .flow-select{max-width:150px}

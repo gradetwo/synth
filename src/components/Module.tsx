@@ -14,6 +14,13 @@ import { ParamLed } from './controls';
  * in the new order while the drag is in flight.
  */
 const DragContext = createContext<(id: ModuleId) => void>(() => undefined);
+/** Plain modules hide the grid chrome (drag grip, collapse) and never collapse. */
+const PlainContext = createContext(false);
+
+/** Render module bodies as plain cards (used by the signal-flow detail panel). */
+export function PlainModules({ children }: { children: ReactNode }) {
+  return <PlainContext.Provider value={true}>{children}</PlainContext.Provider>;
+}
 
 export function ModulesGrid({ children }: { children: ReactNode }) {
   const gridRef = useRef<HTMLDivElement | null>(null);
@@ -99,13 +106,15 @@ export function ModuleShell({
   children: ReactNode;
   className?: string;
 }) {
-  const collapsed = useCollapsed(id);
+  const storedCollapsed = useCollapsed(id);
+  const plain = useContext(PlainContext);
+  const collapsed = plain ? false : storedCollapsed;
   const meta = MODULE_META[id];
   const startDrag = useContext(DragContext);
 
   return (
     <section
-      className={`module${collapsed ? ' collapsed' : ''}${className ? ` ${className}` : ''}`}
+      className={`module${collapsed ? ' collapsed' : ''}${plain ? ' plain' : ''}${className ? ` ${className}` : ''}`}
       data-module-id={id}
       style={{ ['--mc' as string]: meta.color, ['--span' as string]: String(meta.span) }}
     >
@@ -120,6 +129,7 @@ export function ModuleShell({
         <span className="sub">{t(meta.sub)}</span>
         <span className="spacer" />
         {meta.ledId !== undefined ? <ParamLed id={meta.ledId} label={t('module.ledAria', { title: meta.title })} /> : null}
+        {plain ? null : (
         <button
           type="button"
           className="module-grip"
@@ -141,6 +151,8 @@ export function ModuleShell({
             <circle cx="7.5" cy="11" r="1.2" fill="currentColor" />
           </svg>
         </button>
+        )}
+        {plain ? null : (
         <button
           type="button"
           className="module-collapse"
@@ -163,6 +175,7 @@ export function ModuleShell({
             />
           </svg>
         </button>
+        )}
       </div>
 
       {!collapsed ? <div className="module-body">{children}</div> : null}

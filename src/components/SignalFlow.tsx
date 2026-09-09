@@ -12,6 +12,7 @@ import { midiPlayer, type PlayerState } from '@/midi/player';
 import { recorder, type RecorderState } from '@/midi/recorder';
 import { midiLibrary, trackTitle } from '@/midi/library';
 import { ModuleFor } from '@/panels/modules';
+import { PlainModules } from '@/components/Module';
 import { toast } from './Toast';
 import { Transport } from './PlayerPanel';
 
@@ -559,18 +560,12 @@ export function SignalFlow() {
   const [drag, setDrag] = useState<{ id: string; pos: [number, number] } | null>(null);
   const canvasRefs = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const panelCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const selectedRef = useRef<FlowNodeDef | null>(null);
+
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const visibleRef = useRef(true);
   const reduceMotionRef = useRef(false);
-  const sheetDrag = useRef<{ y: number } | null>(null);
   const contentSizeRef = useRef({ w: 1260, h: 420 });
   const autoFitRef = useRef(true);
-
-  useEffect(() => {
-    selectedRef.current = selected;
-  }, [selected]);
 
   useEffect(() => {
     reduceMotionRef.current = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
@@ -653,14 +648,6 @@ export function SignalFlow() {
           node.enabledParams.length === 0 ||
           node.enabledParams.some((id) => store.getParam(id as never) > 0.5);
         drawNode(canvas, node, on, live);
-      }
-      // Larger live preview inside the open detail panel.
-      const panel = selectedRef.current;
-      if (panel && panelCanvasRef.current) {
-        const on =
-          panel.enabledParams.length === 0 ||
-          panel.enabledParams.some((id) => store.getParam(id as never) > 0.5);
-        drawNode(panelCanvasRef.current, panel, on, live);
       }
       const stage = stageRef.current;
       if (stage) {
@@ -961,84 +948,34 @@ export function SignalFlow() {
       </div>
 
       {selected ? (
-        <aside
-          className="flow-params"
-          role="dialog"
-          aria-label={selected.title}
-          onPointerDown={(event) => {
-            if (!(event.target as HTMLElement).closest('.fp-grip, .flow-params-head')) return;
-            if ((event.target as HTMLElement).closest('button')) return;
-            sheetDrag.current = { y: event.clientY };
-            try {
-              (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-            } catch {
-              /* capture is optional */
-            }
-          }}
-          onPointerMove={(event) => {
-            const state = sheetDrag.current;
-            if (!state) return;
-            const dy = Math.max(0, event.clientY - state.y);
-            (event.currentTarget as HTMLElement).style.transform = `translateY(${dy}px)`;
-          }}
-          onPointerUp={(event) => {
-            const state = sheetDrag.current;
-            sheetDrag.current = null;
-            const el = event.currentTarget as HTMLElement;
-            el.style.transform = '';
-            if (state && event.clientY - state.y > 70) setSelected(null);
-          }}
-          onPointerCancel={() => {
-            sheetDrag.current = null;
-          }}
-        >
-          <span className="fp-grip" aria-hidden="true" />
-          <header className="flow-params-head">
-            <span className="fp-dot" style={{ background: selected.color }} />
-            <span className="fp-title" style={{ color: selected.color }}>
-              {selected.title}
-            </span>
-            <span className="fp-readout">
-              {selected.readout.length === 0
-                ? t('flow.always')
-                : selected.readout
-                    .map(
-                      (id) =>
-                        `${shortParam(id)} ${formatParam(id, store.getParam(id as never) as number)}`,
-                    )
-                    .join('  ')}
-            </span>
-            {selected.enabledParams.length > 0 ? (
-              <button
-                type="button"
-                className={`flow-icon${isEnabled(selected) ? ' on' : ''}`}
-                title={isEnabled(selected) ? t('flow.disable') : t('flow.enable')}
-                aria-pressed={isEnabled(selected)}
-                onClick={() => {
-                  haptic();
-                  toggleNode(selected);
-                }}
-              >
-                ⏻
-              </button>
-            ) : null}
+        <>
+          <div
+            className="flow-params-mask"
+            onClick={() => setSelected(null)}
+            aria-hidden="true"
+          />
+          <aside className="flow-params" role="dialog" aria-label={selected.title}>
             <button
               type="button"
-              className="d-close"
+              className="flow-params-close"
               onClick={() => setSelected(null)}
               aria-label={t('drawer.close')}
             >
               ✕
             </button>
-          </header>
-          <div className="fp-preview">
-            <canvas ref={panelCanvasRef} width={330} height={64} />
-          </div>
-          <div className="flow-params-body">
+            <div className="flow-params-scroll">
             {selected.module ? (
-              <ModuleFor id={selected.module} />
+              <PlainModules>
+                <ModuleFor id={selected.module} />
+              </PlainModules>
             ) : (
               <div className="flow-out-panel">
+                <div className="fp-simple-head">
+                  <span className="fp-dot" style={{ background: selected.color }} />
+                  <span className="fp-title" style={{ color: selected.color }}>
+                    {selected.title}
+                  </span>
+                </div>
                 <label className="player-field">
                   <span>{t('flow.master')}</span>
                   <input
@@ -1053,8 +990,9 @@ export function SignalFlow() {
                 </label>
               </div>
             )}
-          </div>
-        </aside>
+            </div>
+          </aside>
+        </>
       ) : null}
     </section>
   );
