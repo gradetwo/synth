@@ -113,12 +113,18 @@ test.describe('piano roll on phone', () => {
     expect(geo.kbd!.h).toBeGreaterThan(90);
     await expect(page.locator('.roll-note').first()).toBeVisible();
 
-    // The toolbar scrolls horizontally on a phone instead of stacking rows.
+    // The toolbar scrolls horizontally on a phone instead of stacking rows,
+    // and the save button at the far end stays reachable.
     const tools = await page.locator('.roll-tools').evaluate((el) => ({
       scrollable: el.scrollWidth > el.clientWidth + 4,
       h: Math.round(el.getBoundingClientRect().height),
     }));
     expect(tools.scrollable).toBe(true);
     expect(tools.h).toBeLessThan(90);
+    await page.locator('.roll-tools').evaluate((el) => {
+      el.scrollLeft = el.scrollWidth;
+    });
+    await page.locator('.roll-btn.primary').tap();
+    await expect(page.locator('.toast')).toContainText('已保存');
   });
 });
