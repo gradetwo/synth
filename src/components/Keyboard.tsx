@@ -63,6 +63,23 @@ export function Keyboard() {
     return () => window.removeEventListener('resize', update);
   }, []);
 
+  // iOS pops a selection loupe / callout on a long press. CSS `user-select`
+  // alone is not enough there, so cancel the touch default on the keyboard
+  // surface (it is `touch-action: none` anyway, so nothing else is lost).
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const block = (event: Event) => event.preventDefault();
+    el.addEventListener('touchstart', block, { passive: false });
+    el.addEventListener('touchmove', block, { passive: false });
+    el.addEventListener('contextmenu', block);
+    return () => {
+      el.removeEventListener('touchstart', block);
+      el.removeEventListener('touchmove', block);
+      el.removeEventListener('contextmenu', block);
+    };
+  }, []);
+
   const baseMidi = 48 + octave * 12;
   const { keys } = useMemo(() => buildKeys(baseMidi, octaves), [baseMidi, octaves]);
 
