@@ -740,8 +740,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Top bar**: power, preset stepper, A/B slots, undo/redo, MIDI, keyboard toggle, randomize, save, preset library.',
           ],
           [
-            '**监视区**：示波器、频谱、音符/力度/复音、VU 表，以及 DEMO 和 WAV 导出。',
-            '**Monitor row**: scope, spectrum, note/velocity/voice readout, VU meter, plus DEMO and WAV export.',
+            '**监视区**：示波器、频谱、音符/力度/复音、VU 表，以及播放器入口。',
+            '**Monitor row**: scope, spectrum, note/velocity/voice readout, VU meter and the player entry.',
           ],
           [
             '**模块区**：OSC 1、OSC 2、FILTER、AMP ENV、LFO、MOD MATRIX、FX、FX 2，可折叠、可拖拽排序。',
@@ -878,14 +878,6 @@ export const GUIDE_SECTIONS: GuideSection[] = [
           [['`Ctrl/Cmd + Shift + Z` / `Ctrl/Cmd + Y`', '`Ctrl/Cmd + Shift + Z` / `Ctrl/Cmd + Y`'], ['重做', 'Redo']],
           [['方向键 / `Home`', 'Arrows / `Home`'], ['聚焦旋钮后调节 / 复位', 'Adjust / reset a focused knob']],
           [['`Esc`', '`Esc`'], ['取消数值输入', 'Cancel value editing']],
-        ],
-      },
-      { kind: 'h', text: ['导出 WAV', 'WAV export'] },
-      {
-        kind: 'p',
-        text: [
-          '监视区的「WAV」按钮会用当前音色离线渲染一段音频并下载，适合把音色拿到别的工程里用。',
-          'The WAV button in the monitor row renders the current patch offline and downloads it — handy for dropping the sound into another project.',
         ],
       },
       { kind: 'h', text: ['常见问题', 'Troubleshooting'] },
