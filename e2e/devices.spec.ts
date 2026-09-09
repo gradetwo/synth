@@ -56,7 +56,7 @@ test.describe('iPhone portrait', () => {
       return { brand: r('.brand'), preset: r('.preset-ctrl'), vw: window.innerWidth };
     });
     expect(rows.preset.y).toBeGreaterThanOrEqual(rows.brand.y + rows.brand.h - 2);
-    expect(rows.preset.w).toBeGreaterThan(rows.vw - 30);
+    expect(rows.preset.w).toBeGreaterThan(rows.vw * 0.9);
 
     // Overflow menu exposes the secondary actions.
     await page.locator('.top-more .tbtn').click();
@@ -155,51 +155,157 @@ test.describe('iPhone landscape flow view', () => {
 test.describe('iPad portrait', () => {
   test.use({ viewport: { width: 768, height: 1024 }, hasTouch: true, isMobile: true });
 
-  test('full chrome with two-column modules and monitor', async ({ page }) => {
+  test('two rows of chrome, two module columns, compact strip with meters', async ({ page }) => {
     await boot(page, true);
     const m = await metrics(page);
-    expect(m.compactTop).toBe(false);
-    expect(m.compactDisplay).toBe(false);
-    expect(m.brandText).toBe(true);
-    expect(m.scope).toBe(true);
-    expect(m.collapsed).toBe(0);
+    expect(m.compactTop).toBe(true);
+    expect(m.compactDisplay).toBe(true);
+    expect(m.brandText).toBe(true); // tablets keep the wordmark
+    expect(m.scope).toBe(false);
+    expect(m.collapsed).toBe(0); // modules stay expanded on tablets
     expect(m.moduleCols).toBe(2);
-    expect(m.displayCols).toBeGreaterThanOrEqual(2);
+    expect(m.displayCols).toBe(0); // compact strip is a flex row
+
+    // The preset stepper owns the second row and the name is never clipped.
+    const rows = await page.evaluate(() => {
+      const r = (sel: string) => {
+        const b = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
+        return { y: Math.round(b.y), h: Math.round(b.height), w: Math.round(b.width) };
+      };
+      const name = document.querySelector('.preset-name') as HTMLElement;
+      return {
+        brand: r('.brand'),
+        preset: r('.preset-ctrl'),
+        vw: window.innerWidth,
+        truncated: name.scrollWidth > name.clientWidth + 1,
+      };
+    });
+    expect(rows.preset.y).toBeGreaterThanOrEqual(rows.brand.y + rows.brand.h - 2);
+    expect(rows.preset.w).toBeGreaterThan(rows.vw * 0.9);
+    expect(rows.truncated).toBe(false);
+
+    // The wide strip carries the live waveform and spectrum.
+    await expect(page.locator('.display-row.compact.has-meters .strip-scope')).toBeVisible();
+    await expect(page.locator('.display-row.compact.has-meters .strip-spec')).toBeVisible();
   });
 });
 
 test.describe('iPad landscape', () => {
   test.use({ viewport: { width: 1024, height: 768 }, hasTouch: true, isMobile: true });
 
-  test('wide layout with three module columns', async ({ page }) => {
+  test('inline actions with the preset on its own row, three module columns', async ({ page }) => {
     await boot(page, true);
     const m = await metrics(page);
     expect(m.compactTop).toBe(false);
     expect(m.moduleCols).toBe(3);
-    expect(m.displayCols).toBe(3);
+    expect(m.compactDisplay).toBe(true);
 
-    // The monitor row can still collapse to the phone-style strip.
-    await expect(page.locator('.display-bar')).toBeVisible();
-    await page.locator('.display-bar .display-toggle').click();
-    await expect(page.locator('.display-row.compact')).toBeVisible();
+    // Inline action row: no overflow menu, and the preset row is full width.
+    await expect(page.locator('.top-more')).toHaveCount(0);
+    const rows = await page.evaluate(() => {
+      const r = (sel: string) => {
+        const b = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
+        return { y: Math.round(b.y), h: Math.round(b.height), w: Math.round(b.width) };
+      };
+      const name = document.querySelector('.preset-name') as HTMLElement;
+      return {
+        brand: r('.brand'),
+        preset: r('.preset-ctrl'),
+        vw: window.innerWidth,
+        truncated: name.scrollWidth > name.clientWidth + 1,
+      };
+    });
+    expect(rows.preset.y).toBeGreaterThanOrEqual(rows.brand.y + rows.brand.h - 2);
+    expect(rows.preset.w).toBeGreaterThan(rows.vw * 0.9);
+    expect(rows.truncated).toBe(false);
+
+    // Expanding the strip brings the full three-panel monitor row back.
     await page.locator('.display-row.compact .display-toggle').click();
     await expect(page.locator('.scope-body')).toBeVisible();
+    expect(await page.locator('.display-row').evaluate((el) => getComputedStyle(el).display)).toBe('grid');
+    await page.locator('.display-bar .display-toggle').click();
+    await expect(page.locator('.display-row.compact')).toBeVisible();
+  });
+});
+
+test.describe('iPad flow view', () => {
+  test.use({ viewport: { width: 768, height: 1024 }, hasTouch: true, isMobile: true });
+
+  test('portrait uses three columns and gives the graph the screen', async ({ page }) => {
+    await boot(page, true);
+    await page.getByRole('button', { name: '信号流' }).tap();
+    await page.waitForTimeout(600);
+    await expect(page.locator('.display-row')).toBeHidden();
+    const geo = await page.evaluate(() => {
+      const nodes = [...document.querySelectorAll('.flow-node')].map((n) => n.getBoundingClientRect());
+      const wrap = document.querySelector('.flow-canvas-wrap')!.getBoundingClientRect();
+      const scale = document.querySelector('.flow-scale')!.getBoundingClientRect();
+      return {
+        rows: new Set(nodes.map((b) => Math.round(b.y))).size,
+        cols: new Set(nodes.map((b) => Math.round(b.x))).size,
+        wrapH: Math.round(wrap.height),
+        scaleH: Math.round(scale.height),
+        bottom: Math.round(wrap.bottom),
+        vh: window.innerHeight,
+      };
+    });
+    expect(geo.cols).toBe(3);
+    expect(geo.rows).toBe(4);
+    // Everything fits on one screen and the canvas reaches the bottom.
+    expect(geo.scaleH).toBeLessThanOrEqual(geo.wrapH + 2);
+    expect(geo.bottom).toBeGreaterThan(geo.vh - 260);
+  });
+
+  test('landscape uses five columns in two rows', async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await boot(page, true);
+    await page.getByRole('button', { name: '信号流' }).tap();
+    await page.waitForTimeout(600);
+    const geo = await page.evaluate(() => {
+      const nodes = [...document.querySelectorAll('.flow-node')].map((n) => n.getBoundingClientRect());
+      const wrap = document.querySelector('.flow-canvas-wrap')!.getBoundingClientRect();
+      const scale = document.querySelector('.flow-scale')!.getBoundingClientRect();
+      return {
+        rows: new Set(nodes.map((b) => Math.round(b.y))).size,
+        cols: new Set(nodes.map((b) => Math.round(b.x))).size,
+        wrapH: Math.round(wrap.height),
+        scaleH: Math.round(scale.height),
+      };
+    });
+    expect(geo.cols).toBe(5);
+    expect(geo.rows).toBe(2);
+    expect(geo.scaleH).toBeLessThanOrEqual(geo.wrapH + 2);
   });
 });
 
 test.describe('desktop', () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test('full chrome and four module columns', async ({ page }) => {
+  test('full chrome, four module columns and a readable preset name', async ({ page }) => {
     await boot(page, false);
     const m = await metrics(page);
     expect(m.compactTop).toBe(false);
     expect(m.compactDisplay).toBe(false);
-    expect(m.more).toBe(false);
     expect(m.moduleCols).toBe(4);
     expect(m.displayCols).toBe(3);
+    expect(m.collapsed).toBe(0); // modules default to all expanded
     // The monitor only keeps the player entry (the WAV button was removed).
     await expect(page.locator('.monitor-actions .demo-btn')).toHaveCount(1);
     await expect(page.locator('.monitor-actions')).not.toContainText('WAV');
+
+    // Secondary actions moved into the overflow menu so the preset name fits.
+    await expect(page.locator('.top-actions .top-more')).toHaveCount(1);
+    const truncated = await page.locator('.preset-name').evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    expect(truncated).toBe(false);
+  });
+
+  test('a phone-sized visit does not leave the desktop modules collapsed', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await boot(page, false);
+    await page.waitForTimeout(400);
+    expect(await page.locator('.module.collapsed').count()).toBe(4);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(600);
+    expect(await page.locator('.module.collapsed').count()).toBe(0);
   });
 });
