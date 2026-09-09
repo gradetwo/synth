@@ -496,6 +496,12 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   const [drag, setDrag] = useState<{ id: string; pos: [number, number] } | null>(null);
   const canvasRefs = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const panelCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const selectedRef = useRef<FlowNodeDef | null>(null);
+
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
 
   useEffect(() => midiPlayer.subscribe(setPlayer), []);
   useEffect(() => recorder.subscribe(setRec), []);
@@ -537,7 +543,22 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
           node.enabledParams.some((id) => store.getParam(id as never) > 0.5);
         drawNode(canvas, node, on, live);
       }
-      stageRef.current?.classList.toggle('active', level > 0.006 || analysis.voices > 0);
+      // Larger live preview inside the open detail panel.
+      const panel = selectedRef.current;
+      if (panel && panelCanvasRef.current) {
+        const on =
+          panel.enabledParams.length === 0 ||
+          panel.enabledParams.some((id) => store.getParam(id as never) > 0.5);
+        drawNode(panelCanvasRef.current, panel, on, live);
+      }
+      const stage = stageRef.current;
+      if (stage) {
+        const isActive = level > 0.006 || analysis.voices > 0;
+        if (stage.classList.contains('active') !== isActive) {
+          stage.classList.toggle('active', isActive);
+          stage.style.setProperty('--flow-speed', isActive ? '0.4s' : '1.2s');
+        }
+      }
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
@@ -551,6 +572,29 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   /** Node position including the in-flight drag, so wires track in real time. */
   const nodePos = (id: string): [number, number] =>
     drag?.id === id ? drag.pos : (positions[id] ?? defaults[id] ?? [0, 0]);
+
+  // Signal-chain edges (osc → osc → filter → env → matrix → fx → fx2 → out).
+  const CHAIN = ['osc1', 'osc2', 'filter', 'env', 'matrix', 'fx', 'fx2', 'out'];
+  const edges = CHAIN.slice(0, -1).flatMap((id, i) => {
+    const target = CHAIN[i + 1];
+    if (hidden.includes(id) || hidden.includes(target)) return [];
+    const from = nodePos(id);
+    const to = nodePos(target);
+    const source = NODES.find((n) => n.id === id);
+    const dest = NODES.find((n) => n.id === target);
+    return [
+      {
+        id,
+        from,
+        to,
+        color: source?.color ?? C.accent,
+        toColor: dest?.color ?? C.accent,
+      },
+    ];
+  });
+
+  const openNode = (node: FlowNodeDef) =>
+    setSelected((prev) => (prev?.id === node.id ? null : node));
 
   const isEnabled = (node: FlowNodeDef) =>
     node.enabledParams.length === 0 || node.enabledParams.some((id) => store.getParam(id as never) > 0.5);
@@ -636,27 +680,48 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
         <div
           className="flow-stage"
           ref={stageRef}
-          style={{ height: narrow ? 16 + NODES.length * (NODE_H + 18) : 420 }}
+          style={{ height: narrow ? 16 + NODES.length * (NODE_H + 18) : 420, ['--flow-speed' as string]: '1.2s' }}
+          onClick={(event) => {
+            // Tapping empty canvas dismisses the detail card.
+            if (!(event.target as HTMLElement).closest('.flow-node, .flow-palette')) setSelected(null);
+          }}
         >
           <svg className="flow-wires" aria-hidden="true">
-            {visible.map((node) => {
-              const from = nodePos(node.id);
-              const chain = ['osc1', 'osc2', 'filter', 'env', 'matrix', 'fx', 'fx2', 'out'];
-              const idx = chain.indexOf(node.id);
-              if (idx < 0) return null;
-              const next = visible.find((n) => chain.indexOf(n.id) === idx + 1);
-              if (!next) return null;
-              const to = nodePos(next.id);
-              const x1 = from[0] + NODE_W;
-              const y1 = from[1] + NODE_H / 2;
-              const x2 = to[0];
-              const y2 = to[1] + NODE_H / 2;
+            <defs>
+              {edges.map((edge) => {
+                const x1 = edge.from[0] + NODE_W;
+                const y1 = edge.from[1] + NODE_H / 2;
+                const x2 = edge.to[0];
+                const y2 = edge.to[1] + NODE_H / 2;
+                return (
+                  <linearGradient
+                    key={edge.id}
+                    id={`wire-${edge.id}`}
+                    gradientUnits="userSpaceOnUse"
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
+                  >
+                    <stop offset="0%" stopColor={edge.color} stopOpacity="0.9" />
+                    <stop offset="55%" stopColor={edge.color} stopOpacity="0.55" />
+                    <stop offset="100%" stopColor={edge.toColor} stopOpacity="0.35" />
+                  </linearGradient>
+                );
+              })}
+            </defs>
+            {edges.map((edge) => {
+              const x1 = edge.from[0] + NODE_W;
+              const y1 = edge.from[1] + NODE_H / 2;
+              const x2 = edge.to[0];
+              const y2 = edge.to[1] + NODE_H / 2;
+              const d = `M ${x1} ${y1} C ${x1 + 46} ${y1}, ${x2 - 46} ${y2}, ${x2} ${y2}`;
               return (
-                <path
-                  key={node.id}
-                  d={`M ${x1} ${y1} C ${x1 + 40} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}`}
-                  className="flow-wire"
-                />
+                <g key={edge.id} className="flow-edge" data-edge={edge.id}>
+                  <path className="flow-wire base" d={d} stroke={`url(#wire-${edge.id})`} />
+                  <path className="flow-wire halo" d={d} stroke={edge.color} />
+                  <path className="flow-wire flow" d={d} stroke={edge.color} />
+                </g>
               );
             })}
           </svg>
@@ -674,7 +739,7 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
                 setDrag(null);
               }}
               onDragCancel={() => setDrag(null)}
-              onSelect={() => setSelected(node)}
+              onSelect={() => openNode(node)}
               onToggle={() => toggleNode(node)}
               onRemove={() => store.toggleFlowHidden(node.id)}
             />
@@ -710,12 +775,34 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
 
       {selected ? (
         <aside className="flow-params" role="dialog" aria-label={selected.title}>
+          <span className="fp-grip" aria-hidden="true" />
           <header className="flow-params-head">
-            <span style={{ color: selected.color }}>{selected.title}</span>
-            <button type="button" className="d-close" onClick={() => setSelected(null)} aria-label={t('drawer.close')}>
+            <span className="fp-dot" style={{ background: selected.color }} />
+            <span className="fp-title" style={{ color: selected.color }}>
+              {selected.title}
+            </span>
+            <span className="fp-readout">
+              {selected.readout.length === 0
+                ? t('flow.always')
+                : selected.readout
+                    .map(
+                      (id) =>
+                        `${shortParam(id)} ${formatParam(id, store.getParam(id as never) as number)}`,
+                    )
+                    .join('  ')}
+            </span>
+            <button
+              type="button"
+              className="d-close"
+              onClick={() => setSelected(null)}
+              aria-label={t('drawer.close')}
+            >
               ✕
             </button>
           </header>
+          <div className="fp-preview">
+            <canvas ref={panelCanvasRef} width={330} height={64} />
+          </div>
           <div className="flow-params-body">
             {selected.module ? (
               <ModuleFor id={selected.module} />
