@@ -195,6 +195,10 @@ public/                   manifest 与图标
   负载过高自动降复音并平滑释放。
 - **工程**：CI、DSP 回归基线、NaN/Inf 防护 + 模糊测试、ESLint、版本注入。
 
-## 8. 许可证
+## 8. 路线图
+
+后续开发与完善规划见 [`docs/ROADMAP.md`](docs/ROADMAP.md)（P0 音质与稳定性 → P1 合成能力扩展 → P2 动态信号图 → P3 无障碍/国际化/分发）。
+
+## 9. 许可证
 
 本项目代码 MIT（见 `LICENSE`）。第三方组件许可见 `THIRD_PARTY_NOTICES.md`。
