@@ -16,11 +16,11 @@ import { PARAM_NAMES, type SynthState } from './params';
 export interface RenderOptions {
   seconds?: number;
   sampleRate?: number;
-  /** [note, startSeconds, lengthSeconds] triples. */
-  notes?: [number, number, number][];
+  /** [note, startSeconds, lengthSeconds, velocity?] tuples. */
+  notes?: [number, number, number, number?][];
 }
 
-const DEFAULT_PHRASE: [number, number, number][] = [
+const DEFAULT_PHRASE: [number, number, number, number?][] = [
   [60, 0.1, 0.34],
   [64, 0.5, 0.34],
   [67, 0.9, 0.34],
@@ -41,8 +41,11 @@ async function fetchBytes(simd: boolean): Promise<ArrayBuffer> {
   return response.arrayBuffer();
 }
 
-/** Render the current patch and return a 16-bit stereo WAV blob. */
-export async function renderPatchToWav(state: SynthState, options: RenderOptions = {}): Promise<Blob> {
+/** Render the current patch and return the raw stereo AudioBuffer. */
+export async function renderPatchToBuffer(
+  state: SynthState,
+  options: RenderOptions = {},
+): Promise<AudioBuffer> {
   const sampleRate = options.sampleRate ?? 44100;
   const notes = options.notes ?? DEFAULT_PHRASE;
   const seconds = options.seconds ?? Math.max(2, ...notes.map(([, start, length]) => start + length + 1.5));
@@ -83,9 +86,9 @@ export async function renderPatchToWav(state: SynthState, options: RenderOptions
     node.parameters.get(name)?.setValueAtTime(value, 0);
   }
 
-  for (const [note, start, noteLength] of notes) {
+  for (const [note, start, noteLength, velocity] of notes) {
     ctx.suspend(start).then(() => {
-      node.port.postMessage({ type: 'noteOn', note, velocity: 0.9 });
+      node.port.postMessage({ type: 'noteOn', note, velocity: velocity ?? 0.9 });
       ctx.resume();
     });
     ctx.suspend(start + noteLength).then(() => {
@@ -94,8 +97,12 @@ export async function renderPatchToWav(state: SynthState, options: RenderOptions
     });
   }
 
-  const buffer = await ctx.startRendering();
-  return encodeWav(buffer);
+  return ctx.startRendering();
+}
+
+/** Render the current patch and return a 16-bit stereo WAV blob. */
+export async function renderPatchToWav(state: SynthState, options: RenderOptions = {}): Promise<Blob> {
+  return encodeWav(await renderPatchToBuffer(state, options));
 }
 
 export interface WavSource {

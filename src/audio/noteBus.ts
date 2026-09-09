@@ -1,5 +1,9 @@
 /**
  * Note display bus — the keyboard publishes, the monitor panel subscribes.
+ *
+ * Also re-broadcasts individual note-on/off events so the recorder can capture
+ * any performance source (screen keyboard, computer keyboard, MIDI input) with
+ * one subscription.
  */
 
 import { engine } from './engine';
@@ -10,7 +14,14 @@ export interface NoteInfo {
   voices: number;
 }
 
+export interface NoteEvent {
+  note: number;
+  velocity: number;
+  on: boolean;
+}
+
 type Listener = (info: NoteInfo) => void;
+type EventListener = (event: NoteEvent) => void;
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -24,6 +35,7 @@ export function noteToHz(midi: number): number {
 
 class NoteBus {
   private listeners = new Set<Listener>();
+  private eventListeners = new Set<EventListener>();
   private held = new Set<number>();
   private last: NoteInfo = { note: null, velocity: 1, voices: 0 };
 
@@ -33,9 +45,19 @@ class NoteBus {
     return () => this.listeners.delete(fn);
   }
 
+  /** Observe raw note events (used by the recorder). */
+  subscribeEvents(fn: EventListener): () => void {
+    this.eventListeners.add(fn);
+    return () => this.eventListeners.delete(fn);
+  }
+
   private emit() {
     this.last = { note: this.lastNote(), velocity: this.last.velocity, voices: this.held.size };
     for (const fn of this.listeners) fn(this.last);
+  }
+
+  private emitEvent(event: NoteEvent) {
+    for (const fn of this.eventListeners) fn(event);
   }
 
   private lastNote(): number | null {
@@ -51,6 +73,7 @@ class NoteBus {
     this.last.velocity = velocity;
     engine.noteOn(note, velocity);
     this.emit();
+    this.emitEvent({ note, velocity, on: true });
   }
 
   noteOff(note: number) {
@@ -58,9 +81,11 @@ class NoteBus {
     this.held.delete(note);
     engine.noteOff(note);
     this.emit();
+    this.emitEvent({ note, velocity: this.last.velocity, on: false });
   }
 
   allOff() {
+    for (const note of this.held) this.emitEvent({ note, velocity: this.last.velocity, on: false });
     this.held.clear();
     engine.allNotesOff();
     this.emit();
