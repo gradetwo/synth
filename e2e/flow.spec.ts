@@ -230,3 +230,55 @@ test.describe('flow sheet swipe on phone', () => {
     await expect(panel).toHaveCount(0);
   });
 });
+
+test.describe('signal flow zoom and phone layout', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('phones get two columns and an auto-fit canvas', async ({ page }) => {
+    await boot(page);
+    await page.waitForTimeout(500);
+    const m = await page.evaluate(() => {
+      const wrap = document.querySelector('.flow-canvas-wrap')!.getBoundingClientRect();
+      const nodes = [...document.querySelectorAll('.flow-node')].map((n) => {
+        const b = n.getBoundingClientRect();
+        return { x: b.x, y: b.y, w: b.width, h: b.height };
+      });
+      const xs = [...new Set(nodes.map((n) => Math.round(n.x)))];
+      return {
+        cols: xs.length,
+        count: nodes.length,
+        inside: nodes.every(
+          (n) => n.x >= wrap.x - 1 && n.x + n.w <= wrap.right + 1 && n.y >= wrap.y - 1 && n.y + n.h <= wrap.bottom + 1,
+        ),
+        zoom: parseInt((document.querySelector('.flow-zoom-val')?.textContent ?? '100'), 10),
+      };
+    });
+    expect(m.count).toBe(10);
+    expect(m.cols).toBe(2);
+    expect(m.inside).toBe(true);
+    expect(m.zoom).toBeLessThan(100);
+  });
+});
+
+test.describe('signal flow zoom controls', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('plus, minus and fit change the zoom', async ({ page }) => {
+    await boot(page);
+    const label = page.locator('.flow-zoom-val');
+    const start = parseInt((await label.textContent()) ?? '100', 10);
+
+    await page.getByRole('button', { name: '放大' }).click();
+    const zoomedIn = parseInt((await label.textContent()) ?? '100', 10);
+    expect(zoomedIn).toBeGreaterThan(start);
+
+    await page.getByRole('button', { name: '缩小' }).click();
+    await page.getByRole('button', { name: '缩小' }).click();
+    const zoomedOut = parseInt((await label.textContent()) ?? '100', 10);
+    expect(zoomedOut).toBeLessThan(start);
+
+    await page.getByRole('button', { name: '适应全部节点' }).click();
+    const fitted = parseInt((await label.textContent()) ?? '100', 10);
+    expect(Math.abs(fitted - start)).toBeLessThanOrEqual(2);
+  });
+});

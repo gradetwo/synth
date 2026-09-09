@@ -75,3 +75,20 @@ test('knob arc and needle stay concentric with the dial', async ({ page }) => {
   expect(report.filter((r) => r.off > 0.01)).toEqual([]);
   expect(report.filter((r) => r.filter === 'yes')).toEqual([]);
 });
+
+test('keyboard cancels the touch default (no iOS selection loupe)', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).tap();
+  const prevented = await page.evaluate(() => {
+    const key = document.querySelector('.wkey') as HTMLElement;
+    let seen = false;
+    const probe = (event: Event) => {
+      seen = event.defaultPrevented;
+    };
+    document.addEventListener('touchstart', probe);
+    key.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true }));
+    document.removeEventListener('touchstart', probe);
+    return seen;
+  });
+  expect(prevented).toBe(true);
+});
