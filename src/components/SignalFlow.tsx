@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { store } from '@/state/store';
 import { useFlowHidden, useFlowPos, useSynth } from '@/hooks/useSynth';
+import { useViewport } from '@/hooks/useViewport';
 import { haptic, HAPTIC } from '@/hooks/useInputMode';
 import { t } from '@/i18n';
 import type { ModuleId } from '@/state/layout';
@@ -59,20 +60,35 @@ const NODES: FlowNodeDef[] = [
 
 const NODE_W = 158;
 const NODE_H = 92;
+const NODE_GAP_X = 26;
+const NODE_GAP_Y = 18;
+const NODE_PAD = 14;
+/** Chain order used by every generated layout. */
+const CHAIN_ORDER = ['osc1', 'osc2', 'filter', 'env', 'lfo', 'lfo2', 'matrix', 'fx', 'fx2', 'out'];
 
-function defaultPositions(narrow: boolean): Record<string, [number, number]> {
-  if (narrow) {
-    const order = ['osc1', 'osc2', 'filter', 'env', 'lfo', 'lfo2', 'matrix', 'fx', 'fx2', 'out'];
-    return Object.fromEntries(order.map((id, i) => [id, [14, 16 + i * (NODE_H + 18)]]));
+/**
+ * `columns === 0` selects the hand-tuned wide desktop arrangement; 1–3 build a
+ * row-major grid so phones get a compact two-column canvas.
+ */
+function defaultPositions(columns: number): Record<string, [number, number]> {
+  if (columns === 0) {
+    return {
+      osc1: [24, 36], osc2: [24, 168],
+      filter: [232, 102],
+      env: [444, 16], lfo: [444, 150], lfo2: [444, 284],
+      matrix: [654, 150],
+      fx: [864, 36], fx2: [864, 168],
+      out: [1074, 102],
+    };
   }
-  return {
-    osc1: [24, 36], osc2: [24, 168],
-    filter: [232, 102],
-    env: [444, 16], lfo: [444, 150], lfo2: [444, 284],
-    matrix: [654, 150],
-    fx: [864, 36], fx2: [864, 168],
-    out: [1074, 102],
-  };
+  const colW = NODE_W + NODE_GAP_X;
+  return Object.fromEntries(
+    CHAIN_ORDER.map((id, i) => {
+      const col = i % columns;
+      const row = Math.floor(i / columns);
+      return [id, [NODE_PAD + col * colW, NODE_PAD + row * (NODE_H + NODE_GAP_Y)]];
+    }),
+  );
 }
 
 // ------------------------------------------------------------------ drawing
@@ -341,6 +357,7 @@ function NodeView({
   node,
   position,
   enabled,
+  zoom,
   registerCanvas,
   onDragMove,
   onDragEnd,
@@ -352,6 +369,7 @@ function NodeView({
   node: FlowNodeDef;
   position: [number, number];
   enabled: boolean;
+  zoom: number;
   registerCanvas: (id: string, el: HTMLCanvasElement | null) => void;
   onDragMove: (pos: [number, number]) => void;
   onDragEnd: (pos: [number, number]) => void;
@@ -360,7 +378,7 @@ function NodeView({
   onToggle: () => void;
   onRemove: () => void;
 }) {
-  const drag = useRef<{ dx: number; dy: number; moved: boolean } | null>(null);
+  const drag = useRef<{ startX: number; startY: number; base: [number, number]; moved: boolean } | null>(null);
 
   return (
     <div
@@ -389,7 +407,12 @@ function NodeView({
       onPointerDown={(event) => {
         if ((event.target as HTMLElement).closest('button')) return;
         event.preventDefault();
-        drag.current = { dx: event.clientX - position[0], dy: event.clientY - position[1], moved: false };
+        drag.current = {
+          startX: event.clientX,
+          startY: event.clientY,
+          base: position,
+          moved: false,
+        };
         try {
           (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
         } catch {
@@ -399,7 +422,11 @@ function NodeView({
       onPointerMove={(event) => {
         const state = drag.current;
         if (!state) return;
-        const next: [number, number] = [event.clientX - state.dx, event.clientY - state.dy];
+        // Screen delta → stage delta (the canvas may be zoomed).
+        const next: [number, number] = [
+          state.base[0] + (event.clientX - state.startX) / zoom,
+          state.base[1] + (event.clientY - state.startY) / zoom,
+        ];
         if (Math.abs(next[0] - position[0]) + Math.abs(next[1] - position[1]) > 2) state.moved = true;
         // Report every move so the wires follow the node in real time.
         onDragMove(next);
@@ -510,7 +537,10 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   const [player, setPlayer] = useState<PlayerState>(midiPlayer.getState());
   const [rec, setRec] = useState<RecorderState>(recorder.getState());
   const [tracksVersion, setTracksVersion] = useState(0);
-  const [narrow, setNarrow] = useState(() => window.innerWidth < 760);
+  const viewport = useViewport();
+  // 0 = hand-tuned desktop layout; 2–3 = generated grid for phones/tablets.
+  const flowCols = viewport.width >= 1200 ? 0 : viewport.width >= 1000 ? 3 : viewport.width >= 340 ? 2 : 1;
+  const [zoom, setZoom] = useState(1);
   // Live drag position, lifted here so the wires follow the node while moving.
   const [drag, setDrag] = useState<{ id: string; pos: [number, number] } | null>(null);
   const canvasRefs = useRef<Map<string, HTMLCanvasElement>>(new Map());
@@ -521,6 +551,8 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   const visibleRef = useRef(true);
   const reduceMotionRef = useRef(false);
   const sheetDrag = useRef<{ y: number } | null>(null);
+  const contentSizeRef = useRef({ w: 1260, h: 420 });
+  const autoFitRef = useRef(true);
 
   useEffect(() => {
     selectedRef.current = selected;
@@ -543,6 +575,25 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
     return () => observer.disconnect();
   }, []);
 
+  const zoomBy = (delta: number) => {
+    autoFitRef.current = false;
+    setZoom((z) => Math.min(2.5, Math.max(0.25, z + delta)));
+  };
+
+  // Ctrl/Cmd + wheel (trackpad pinch) zooms the canvas.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      event.preventDefault();
+      autoFitRef.current = false;
+      setZoom((z) => Math.min(2.5, Math.max(0.25, z * Math.exp(-event.deltaY * 0.0016))));
+    };
+    wrap.addEventListener('wheel', onWheel, { passive: false });
+    return () => wrap.removeEventListener('wheel', onWheel);
+  }, []);
+
   // Keep the selected node on screen (and away from the detail card).
   useEffect(() => {
     if (!selected) return;
@@ -554,11 +605,6 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   useEffect(() => midiPlayer.subscribe(setPlayer), []);
   useEffect(() => recorder.subscribe(setRec), []);
   useEffect(() => midiLibrary.subscribe(() => setTracksVersion((v) => v + 1)), []);
-  useEffect(() => {
-    const update = () => setNarrow(window.innerWidth < 760);
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
-  }, []);
 
   // Continuous animation loop: reads the live analyser and redraws every node.
   useEffect(() => {
@@ -615,7 +661,7 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  const defaults = defaultPositions(narrow);
+  const defaults = defaultPositions(flowCols);
   const visible = NODES.filter((node) => !hidden.includes(node.id));
   const removed = NODES.filter((node) => hidden.includes(node.id));
   const current = midiLibrary.getCurrent();
@@ -649,11 +695,39 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
 
   // The stage grows with the nodes so a dragged node is never clipped.
   const allPos = NODES.map((node) => nodePos(node.id));
-  const contentW = Math.max(1260, ...allPos.map(([x]) => x + NODE_W + 56));
-  const contentH = Math.max(
-    narrow ? 16 + NODES.length * (NODE_H + 18) : 420,
-    ...allPos.map(([, y]) => y + NODE_H + 72),
+  const contentW = Math.max(flowCols === 0 ? 1260 : 0, ...allPos.map(([x]) => x + NODE_W + 28));
+  const contentH = Math.max(320, ...allPos.map(([, y]) => y + NODE_H + 44));
+  // Committed bounds (ignoring the in-flight drag) drive the auto-fit so the
+  // canvas does not zoom while a node is being moved.
+  const committedW = Math.max(
+    flowCols === 0 ? 1260 : 0,
+    ...NODES.map((node) => (positions[node.id] ?? defaults[node.id] ?? [0, 0])[0] + NODE_W + 28),
   );
+  const committedH = Math.max(
+    320,
+    ...NODES.map((node) => (positions[node.id] ?? defaults[node.id] ?? [0, 0])[1] + NODE_H + 44),
+  );
+  useEffect(() => {
+    contentSizeRef.current = { w: contentW, h: contentH };
+  }, [contentW, contentH]);
+
+  /** Fit every committed node inside the visible canvas. */
+  const applyFit = () => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const z = Math.min(
+      1.1,
+      (wrap.clientWidth - 28) / committedW,
+      (wrap.clientHeight - 28) / committedH,
+    );
+    setZoom(Math.max(0.32, z));
+  };
+
+  // Auto-fit until the user zooms manually, and again on rotation/resize.
+  useEffect(() => {
+    if (autoFitRef.current) applyFit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewport.width, viewport.height, flowCols, committedW, committedH]);
 
   const isEnabled = (node: FlowNodeDef) =>
     node.enabledParams.length === 0 || node.enabledParams.some((id) => store.getParam(id as never) > 0.5);
@@ -733,22 +807,61 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
         >
           MP3
         </button>
+        <div className="flow-zoom" role="group" aria-label={t('flow.zoom')}>
+          <button
+            type="button"
+            className="flow-bar-btn"
+            aria-label={t('flow.zoomOut')}
+            title={t('flow.zoomOut')}
+            onClick={() => zoomBy(-0.15)}
+          >
+            −
+          </button>
+          <span className="flow-zoom-val">{Math.round(zoom * 100)}%</span>
+          <button
+            type="button"
+            className="flow-bar-btn"
+            aria-label={t('flow.zoomIn')}
+            title={t('flow.zoomIn')}
+            onClick={() => zoomBy(0.15)}
+          >
+            +
+          </button>
+          <button
+            type="button"
+            className="flow-bar-btn"
+            aria-label={t('flow.fit')}
+            title={t('flow.fit')}
+            onClick={() => {
+              autoFitRef.current = true;
+              applyFit();
+            }}
+          >
+            ⤢
+          </button>
+        </div>
       </div>
 
       <div className="flow-canvas-wrap" ref={wrapRef}>
         <div
-          className="flow-stage"
-          ref={stageRef}
-          style={{
-            width: narrow ? '100%' : contentW,
-            height: contentH,
-            ['--flow-speed' as string]: '1.2s',
-          }}
-          onClick={(event) => {
-            // Tapping empty canvas dismisses the detail card.
-            if (!(event.target as HTMLElement).closest('.flow-node, .flow-palette')) setSelected(null);
-          }}
+          className="flow-scale"
+          style={{ width: contentW * zoom, height: contentH * zoom }}
         >
+          <div
+            className="flow-stage"
+            ref={stageRef}
+            style={{
+              width: contentW,
+              height: contentH,
+              transform: `scale(${zoom})`,
+              transformOrigin: '0 0',
+              ['--flow-speed' as string]: '1.2s',
+            }}
+            onClick={(event) => {
+              // Tapping empty canvas dismisses the detail card.
+              if (!(event.target as HTMLElement).closest('.flow-node, .flow-palette')) setSelected(null);
+            }}
+          >
           <svg className="flow-wires" aria-hidden="true">
             <defs>
               {edges.map((edge) => {
@@ -795,6 +908,7 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
               node={node}
               position={nodePos(node.id)}
               enabled={isEnabled(node)}
+              zoom={zoom}
               registerCanvas={registerCanvas}
               onDragMove={(pos) =>
                 setDrag({ id: node.id, pos: [Math.max(0, pos[0]), Math.max(0, pos[1])] })
@@ -835,6 +949,7 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
               </button>
             </div>
           )}
+          </div>
         </div>
       </div>
 

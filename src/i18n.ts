@@ -192,6 +192,10 @@ const DICT: Record<string, [string, string]> = {
   'flow.removed': ['已移除：', 'Removed:'],
   'flow.reset': ['重置画布', 'Reset canvas'],
   'flow.master': ['主音量', 'Master'],
+  'flow.zoom': ['画布缩放', 'Canvas zoom'],
+  'flow.zoomIn': ['放大', 'Zoom in'],
+  'flow.zoomOut': ['缩小', 'Zoom out'],
+  'flow.fit': ['适应全部节点', 'Fit all nodes'],
 
   // --- keyboard ------------------------------------------------------------
   'kbd.region': ['演奏键盘', 'Performance keyboard'],

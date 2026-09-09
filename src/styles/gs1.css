@@ -1141,3 +1141,16 @@ input,textarea,[contenteditable='true']{
   /* Phone portrait: the preset stepper gets its own row. */
   .topbar.compact .preset-ctrl{order:3;flex-basis:100%;width:100%}
 }
+
+/* ---- signal-flow zoom ---- */
+.flow-scale{position:relative}
+.flow-zoom{display:flex;align-items:center;gap:4px;margin-left:auto}
+.flow-zoom .flow-bar-btn{min-width:32px;padding:0 8px}
+.flow-zoom-val{font:700 9.5px/1 var(--mono);color:var(--txt-dim);min-width:34px;text-align:center}
+.flow-canvas-wrap{height:clamp(240px, 55vh, 620px)}
+
+/* iOS: no loupe / callout / drag on the performance keyboard. */
+.keyboard,.wkey,.bkey,.wkey .kn{
+  -webkit-user-select:none;user-select:none;
+  -webkit-touch-callout:none;-webkit-user-drag:none;
+}
