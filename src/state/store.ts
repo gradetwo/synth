@@ -433,7 +433,12 @@ class SynthStore {
     const collapsed = { ...this.layout.collapsed };
     if (collapsed[id]) delete collapsed[id];
     else collapsed[id] = true;
-    this.layout = { ...this.layout, collapsed };
+    this.layout = {
+      ...this.layout,
+      collapsed,
+      // A manual toggle is the user's choice, so it stops being automatic.
+      autoCollapsed: this.layout.autoCollapsed.filter((m) => m !== id),
+    };
     this.commit();
   }
 
@@ -548,13 +553,27 @@ class SynthStore {
   applyPhoneDefaults() {
     if (this.layout.phoneDefaults) return;
     const collapsed = { ...this.layout.collapsed };
-    for (const id of ['lfo', 'matrix', 'fx', 'fx2'] as ModuleId[]) collapsed[id] = true;
+    const auto: ModuleId[] = ['lfo', 'matrix', 'fx', 'fx2'];
+    for (const id of auto) collapsed[id] = true;
     this.layout = {
       ...this.layout,
       collapsed,
       displayExpanded: this.layout.displayExpanded ?? false,
       phoneDefaults: true,
+      autoCollapsed: auto,
     };
+    this.commit();
+  }
+
+  /**
+   * Undo the phone first-run collapse when the same browser is used on a
+   * desktop-sized screen. Modules the user collapsed by hand are left alone.
+   */
+  expandAutoCollapsed() {
+    if (this.layout.autoCollapsed.length === 0) return;
+    const collapsed = { ...this.layout.collapsed };
+    for (const id of this.layout.autoCollapsed) delete collapsed[id];
+    this.layout = { ...this.layout, collapsed, autoCollapsed: [] };
     this.commit();
   }
 

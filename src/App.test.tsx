@@ -3,8 +3,16 @@ import { describe, expect, it } from 'vitest';
 import App from './App';
 import { store } from '@/state/store';
 
+/** Force the viewport module to classify the (jsdom) screen for this test. */
+function setViewport(width: number, height: number) {
+  Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
+  Object.defineProperty(window, 'innerHeight', { value: height, configurable: true });
+  window.dispatchEvent(new Event('resize'));
+}
+
 describe('App shell', () => {
-  it('renders every panel without crashing', () => {
+  it('renders every panel without crashing on desktop', () => {
+    setViewport(1440, 900);
     const html = renderToString(<App />);
     for (const marker of [
       'GROOVE',
@@ -27,7 +35,16 @@ describe('App shell', () => {
     }
   });
 
+  it('tablets start with the compact monitor strip', () => {
+    setViewport(768, 1024);
+    const html = renderToString(<App />);
+    expect(html).toContain('NOTE');
+    expect(html).toContain('VU');
+    expect(html).not.toContain('SPECTRUM');
+  });
+
   it('renders English after switching language', () => {
+    setViewport(1440, 900);
     store.toggleLang();
     try {
       const html = renderToString(<App />);

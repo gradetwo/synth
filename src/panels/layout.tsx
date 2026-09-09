@@ -76,8 +76,12 @@ export function TopBar({
   const slotAFilled = useSlotFilled('a');
   const slotBFilled = useSlotFilled('b');
   const preset = store.allPresets().find((p) => p.id === currentPresetId);
-  const { device } = useViewport();
+  const { device, width, height } = useViewport();
   const phone = device === 'phone';
+  // Phones and portrait tablets keep a compact bar with a secondary-action
+  // menu; landscape tablets and desktops have room for the inline row.
+  const compactBar = phone || (device === 'tablet' && height > width);
+  const desktop = device === 'desktop';
   const [moreOpen, setMoreOpen] = useState(false);
 
   // Close the phone overflow menu on outside tap or Escape.
@@ -237,7 +241,7 @@ export function TopBar({
   );
 
   return (
-    <header className={`topbar${phone ? ' compact' : ''}`}>
+    <header className={`topbar${compactBar ? ' compact' : ''}`}>
       <div className="brand">
         <div className="brand-mark">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -267,7 +271,7 @@ export function TopBar({
           <span className={`pled${power ? ' on' : ''}`} />
         </button>
         {!phone ? <EngineBadge status={status} /> : null}
-        {!phone ? viewToggle : null}
+        {!compactBar ? viewToggle : null}
       </div>
 
       <div className="preset-ctrl">
@@ -292,9 +296,9 @@ export function TopBar({
         </button>
       </div>
 
-      {phone ? (
+      {compactBar ? (
         <div className="top-actions compact">
-          <EngineBadge status={status} />
+          {phone ? <EngineBadge status={status} /> : null}
           {keyboardButton}
           <div className="top-more">
             <button
@@ -332,9 +336,34 @@ export function TopBar({
           {randomButton}
           {saveButton}
           {browseButton}
+          {desktop ? (
+            <div className="top-more">
+              <button
+                type="button"
+                className="tbtn icon"
+                aria-expanded={moreOpen}
+                aria-label={t('top.more')}
+                title={t('top.more')}
+                onClick={() => setMoreOpen((v) => !v)}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <circle cx="5" cy="12" r="1.8" />
+                  <circle cx="12" cy="12" r="1.8" />
+                  <circle cx="19" cy="12" r="1.8" />
+                </svg>
+              </button>
+              {moreOpen ? (
+                <div className="top-menu" role="menu">
+                  {abGroup}
+                  {randomButton}
+                  {saveButton}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       )}
-      {phone ? viewToggle : null}
+      {compactBar ? viewToggle : null}
     </header>
   );
 }
@@ -400,23 +429,24 @@ function PolyBadge() {
 export function DisplayRow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   const { device, width, height } = useViewport();
   const stored = useDisplayExpanded();
-  // Phones default to the compact strip; tablets can collapse it on demand.
+  // Only the desktop keeps the full scope/spectrum/monitor row by default;
+  // phones and tablets start with the compact strip and can expand it.
   const canCollapse = device !== 'desktop';
-  const expanded = stored ?? device !== 'phone';
-  // A landscape phone has room to spare in the strip, so the live waveform and
-  // spectrum fill it instead of leaving a wide empty note box.
-  const widePhone = device === 'phone' && width > height;
+  const expanded = stored ?? device === 'desktop';
+  // Any strip wide enough carries the live waveform and spectrum so the note
+  // box is not a stretched, mostly empty panel.
+  const showMeters = device === 'tablet' || (device === 'phone' && width > height);
 
   if (canCollapse && !expanded) {
     return (
-      <section className="display-row compact">
+      <section className={`display-row compact${showMeters ? ' has-meters' : ''}`}>
         <NoteDisplay />
-        {widePhone ? (
+        {showMeters ? (
           <div className="strip-scope">
             <Scope />
           </div>
         ) : null}
-        {widePhone ? (
+        {showMeters ? (
           <div className="strip-spec">
             <Spectrum />
           </div>

@@ -1163,8 +1163,11 @@ input,textarea,[contenteditable='true']{
   -webkit-touch-callout:none;-webkit-user-drag:none;
 }
 
-/* Centre the scaled canvas so slack is symmetric instead of one-sided. */
-.flow-scale{margin:0 auto}
+/* Centre the scaled canvas so slack is symmetric instead of one-sided. The
+   flex + auto-margin pair keeps an oversized graph scrollable instead of
+   clipping its top edge. */
+.flow-canvas-wrap{display:flex}
+.flow-scale{flex:none;margin:auto}
 
 /* ---- tablet (iPad) chrome ---------------------------------------------- */
 /* Icon-only actions so the preset stepper keeps a usable width. */
@@ -1205,18 +1208,17 @@ input,textarea,[contenteditable='true']{
   .display-row.compact .vu{width:46px}
 }
 
-/* ---- phone flow view: the graph owns the screen ------------------------- */
-/* The monitor strip and the piano dock are secondary while routing is on
-   screen, so phones collapse them (the keyboard toggle would be a dead
-   control, so it hides with them). SignalFlow sizes the canvas to the space
-   left below the chrome. */
-.app[data-device='phone'][data-view='flow'] .display-row,
+/* ---- flow view: the graph owns the screen ------------------------------- */
+/* The monitor strip is secondary while routing is on screen, so it steps aside
+   on every device. Phones also drop the piano dock (and the keyboard toggle,
+   which would be a dead control); SignalFlow sizes the canvas to the space
+   left below the chrome, minus the dock where it stays. */
+.app[data-view='flow'] .display-row{display:none}
+.app[data-view='flow'] .flow-canvas-wrap{min-height:0}
 .app[data-device='phone'][data-view='flow'] .kbd-dock,
 .app[data-device='phone'][data-view='flow'] .dock-spacer,
 .app[data-device='phone'][data-view='flow'] .top-actions .tbtn[data-kb]{display:none}
-/* The 300px floor would fight the measured height on short landscape screens. */
-.app[data-device='phone'][data-view='flow'] .flow-canvas-wrap{min-height:0}
-/* No dock to clear in flow view, so the detail sheet docks to the screen edge. */
+/* No dock to clear on phones, so the detail sheet docks to the screen edge. */
 .app[data-device='phone'][data-view='flow'] .flow-params{bottom:env(safe-area-inset-bottom)}
 
 /* Landscape phones: the view toggle joins the top row instead of spending a
@@ -1224,14 +1226,32 @@ input,textarea,[contenteditable='true']{
 @media (max-width:900px) and (orientation:landscape){
   .topbar.compact .view-toggle{order:3;width:auto;margin-left:auto}
   .vt-btn{padding:0 12px}
-  /* The wide strip carries the live waveform and spectrum rather than a
-     stretched, mostly empty note box. */
-  .display-row.compact .note-display{flex:0 1 236px}
 }
 
+/* Compact strips wide enough for meters cap the note box and share the rest. */
+.display-row.compact.has-meters .note-display{flex:0 1 236px}
 .display-row.compact .strip-scope,
 .display-row.compact .strip-spec{flex:1;min-width:0;height:46px;border:1px solid var(--border);
   border-radius:10px;background:var(--bg-socket);overflow:hidden;padding:3px 7px}
 .display-row.compact .strip-spec{flex:.72}
 .display-row.compact .strip-scope canvas,
 .display-row.compact .strip-spec canvas{display:block;width:100%;height:100%}
+
+/* ---- tablet chrome: two rows, no wasted corner -------------------------- */
+/* Portrait tablets (compact bar): brand, view toggle and the primary actions
+   share row one, the preset stepper owns row two. */
+.app[data-device='tablet'] .topbar.compact{flex-wrap:wrap}
+.app[data-device='tablet'] .topbar.compact .brand{flex:1;min-width:0}
+.app[data-device='tablet'] .topbar.compact .top-actions{order:2}
+.app[data-device='tablet'] .topbar.compact .view-toggle{order:1;width:auto;margin-left:0}
+.app[data-device='tablet'] .topbar.compact .view-toggle .vt-btn{padding:0 14px}
+.app[data-device='tablet'] .topbar.compact .preset-ctrl{order:3;flex-basis:100%;width:100%}
+
+/* Landscape tablets keep the inline action row, but the preset gets a full
+   row of its own so the name is never truncated. */
+.app[data-device='tablet'] .topbar:not(.compact){flex-wrap:wrap}
+.app[data-device='tablet'] .topbar:not(.compact) .preset-ctrl{order:3;flex-basis:100%;width:100%}
+
+/* Desktop: the preset needs the room the compare/random/save buttons took, so
+   those three move into the overflow menu. */
+.app[data-device='desktop'] .preset-ctrl{min-width:320px}

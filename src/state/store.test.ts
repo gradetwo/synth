@@ -92,6 +92,27 @@ describe('synth store', () => {
     expect(store.getSnapshot().layout.order[0]).toBe('osc1');
   });
 
+  it('expands the phone first-run collapse again on desktop', () => {
+    store.resetLayout();
+    store.applyPhoneDefaults();
+    const layout = () => store.getSnapshot().layout;
+    expect(layout().collapsed.lfo).toBe(true);
+    expect(layout().autoCollapsed).toEqual(['lfo', 'matrix', 'fx', 'fx2']);
+
+    // A manual collapse is the user's choice and survives the desktop reset.
+    store.toggleCollapsed('osc1');
+    expect(layout().autoCollapsed).not.toContain('osc1');
+
+    store.expandAutoCollapsed();
+    expect(layout().collapsed.lfo).toBeUndefined();
+    expect(layout().collapsed.fx2).toBeUndefined();
+    expect(layout().collapsed.osc1).toBe(true);
+    expect(layout().autoCollapsed).toEqual([]);
+
+    store.resetLayout();
+    expect(layout().collapsed.osc1).toBeUndefined();
+  });
+
   it('undoes and redoes preset changes', () => {
     store.applyPresetById('init');
     store.applyPresetById('acid');

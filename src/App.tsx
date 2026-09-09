@@ -111,6 +111,7 @@ export default function App() {
   // collapsed). Applied once, then the user's own choices win.
   useEffect(() => {
     if (viewport.device === 'phone') store.applyPhoneDefaults();
+    if (viewport.device === 'desktop') store.expandAutoCollapsed();
   }, [viewport.device]);
 
   useEffect(() => {

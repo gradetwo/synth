@@ -58,10 +58,12 @@ export interface LayoutState {
   flowPos: Record<string, [number, number]>;
   /** Nodes removed from the signal-flow canvas. */
   flowHidden: string[];
-  /** `null` = automatic (collapsed on phones, expanded elsewhere). */
+  /** `null` = automatic (collapsed on phones/tablets, expanded on desktop). */
   displayExpanded: boolean | null;
   /** Whether the phone first-run defaults (collapsed modules, compact row) were applied. */
   phoneDefaults: boolean;
+  /** Modules collapsed automatically by the phone defaults, not by the user. */
+  autoCollapsed: ModuleId[];
 }
 
 export function defaultLayout(): LayoutState {
@@ -78,6 +80,7 @@ export function defaultLayout(): LayoutState {
     flowHidden: [],
     displayExpanded: null,
     phoneDefaults: false,
+    autoCollapsed: [],
   };
 }
 
@@ -131,6 +134,14 @@ export function normalizeLayout(raw: unknown): LayoutState {
     displayExpanded:
       typeof input.displayExpanded === 'boolean' ? input.displayExpanded : null,
     phoneDefaults: input.phoneDefaults === true,
+    autoCollapsed: Array.isArray(input.autoCollapsed)
+      ? input.autoCollapsed.filter(
+          (id, index, list): id is ModuleId =>
+            typeof id === 'string' &&
+            (MODULE_IDS as string[]).includes(id) &&
+            list.indexOf(id) === index,
+        )
+      : [],
   };
 }
 

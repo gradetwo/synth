@@ -538,16 +538,20 @@ export function SignalFlow() {
   const [rec, setRec] = useState<RecorderState>(recorder.getState());
   const [tracksVersion, setTracksVersion] = useState(0);
   const viewport = useViewport();
-  // 0 = hand-tuned desktop layout; landscape screens get five columns (two rows)
-  // so the width is used instead of a tall, mostly empty canvas.
+  // 0 = hand-tuned desktop layout. Every other class gets a grid tuned to its
+  // screen shape: phones stack two columns in portrait and five across (two
+  // rows) in landscape; tablets use three columns in portrait and five in
+  // landscape so the graph fills the canvas instead of leaving dead space.
   const landscape = viewport.width > viewport.height;
   const flowCols =
-    viewport.width >= 1200
+    viewport.device === 'desktop'
       ? 0
-      : landscape && viewport.width >= 700
-        ? 5
-        : viewport.width >= 1000
-          ? 3
+      : viewport.device === 'tablet'
+        ? landscape
+          ? 5
+          : 3
+        : landscape && viewport.width >= 660
+          ? 5
           : 2;
   const [zoom, setZoom] = useState(1);
   // Live drag position, lifted here so the wires follow the node while moving.
@@ -723,22 +727,23 @@ export function SignalFlow() {
   const applyFit = () => {
     const wrap = wrapRef.current;
     if (!wrap) return;
-    const phone = viewport.device === 'phone';
-    if (phone) {
-      // Phones drop the player strip and the piano dock in flow view, so the
-      // canvas owns everything left below the chrome instead of the 55vh
-      // default. Document-relative top keeps the math stable while the page
-      // scroll position settles after a rotation.
-      const top = wrap.getBoundingClientRect().top + window.scrollY;
-      wrap.style.height = `${Math.max(180, Math.round(window.innerHeight - top - 14))}px`;
-    } else {
-      wrap.style.height = '';
-    }
+    // The graph owns the space left below the chrome (the monitor row is hidden
+    // in flow view and phones also drop the piano dock). Document-relative top
+    // keeps the math stable while the page scroll position settles after a
+    // rotation, and the dock height keeps the canvas clear of the keyboard on
+    // tablets and desktops.
+    const dockH =
+      (document.querySelector('.dock-spacer') as HTMLElement | null)?.getBoundingClientRect().height ?? 0;
+    const top = wrap.getBoundingClientRect().top + window.scrollY;
+    wrap.style.height = `${Math.max(180, Math.round(window.innerHeight - top - dockH - 14))}px`;
     const widthFit = (wrap.clientWidth - 28) / committedW;
     const heightFit = (wrap.clientHeight - 28) / committedH;
-    // Prefer filling the width; allow up to ~60% vertical scrolling so a phone
-    // does not end up with a tiny canvas and a large empty margin.
-    const z = Math.min(1.1, widthFit, heightFit * 1.6);
+    // Prefer filling the width. When the graph is only a little taller than the
+    // width-fit allows, shrink just enough to land on one screen; a genuinely
+    // tall graph keeps up to ~60% scrolling so its nodes stay readable instead
+    // of collapsing to unreadable dots.
+    const slack = heightFit > widthFit * 0.75 ? 1.05 : 1.6;
+    const z = Math.min(1.3, widthFit, heightFit * slack);
     setZoom(Math.max(0.32, z));
   };
 
