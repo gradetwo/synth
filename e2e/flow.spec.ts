@@ -186,7 +186,7 @@ test.describe('signal flow live content', () => {
 test.describe('flow detail card', () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test('tapping a node toggles the card; empty canvas closes it', async ({ page }) => {
+  test('tapping a node opens the card; the mask closes it', async ({ page }) => {
     await boot(page);
     const filter = page.locator('.flow-node[data-node="filter"]');
     const panel = page.locator('.flow-params');
@@ -195,39 +195,77 @@ test.describe('flow detail card', () => {
     await expect(panel).toBeVisible();
     await expect(panel).toContainText('FILTER');
 
-    // Tap the same node again collapses the card.
-    await filter.click({ position: { x: 70, y: 46 } });
+    // The centred card is modal, so the backdrop dismisses it.
+    await page.locator('.flow-params-mask').click({ position: { x: 20, y: 20 } });
     await expect(panel).toHaveCount(0);
 
-    // Open again, then click empty canvas.
+    // Opening it again still works.
     await filter.click({ position: { x: 70, y: 46 } });
     await expect(panel).toBeVisible();
-    await page.locator('.flow-stage').click({ position: { x: 620, y: 370 } });
-    await expect(panel).toHaveCount(0);
+  });
+});
+
+test.describe('flow detail card layout', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('is the real module card, centred on screen', async ({ page }) => {
+    await boot(page);
+    await page.locator('.flow-node[data-node="filter"]').click({ position: { x: 60, y: 46 } });
+    const panel = page.locator('.flow-params');
+    await expect(panel).toBeVisible();
+    await page.waitForTimeout(300);
+
+    const m = await panel.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const mod = el.querySelector('.module')!.getBoundingClientRect();
+      return {
+        cx: Math.round(r.x + r.width / 2),
+        cy: Math.round(r.y + r.height / 2),
+        vw: window.innerWidth,
+        vh: window.innerHeight,
+        moduleW: Math.round(mod.width),
+        hasHead: !!el.querySelector('.module-head'),
+        grip: el.querySelectorAll('.module-grip').length,
+        collapse: el.querySelectorAll('.module-collapse').length,
+      };
+    });
+    // Centred both ways, and it really is the module card (frame + head, no
+    // grid-only drag/collapse chrome).
+    expect(Math.abs(m.cx - m.vw / 2)).toBeLessThan(3);
+    expect(Math.abs(m.cy - m.vh / 2)).toBeLessThan(3);
+    expect(m.hasHead).toBe(true);
+    expect(m.grip).toBe(0);
+    expect(m.collapse).toBe(0);
+    await expect(panel).toContainText('CUTOFF');
   });
 });
 
 test.describe('flow detail card on phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-  test('opens as a bottom sheet at the screen edge (no dock in flow view)', async ({ page }) => {
+  test('opens centred and closes from the mask', async ({ page }) => {
     await boot(page);
     await page.locator('.flow-node[data-node="filter"]').tap({ position: { x: 60, y: 46 } });
     const panel = page.locator('.flow-params');
     await expect(panel).toBeVisible();
-    await expect(page.locator('.fp-grip')).toBeVisible();
-    // Flow view hands the screen to the graph, so the piano dock starts
-    // tucked away and the sheet docks to the bottom of the viewport.
+    // Flow view hands the screen to the graph, so the piano dock starts away.
     await expect(page.locator('.kbd-dock.open')).toHaveCount(0);
-    await page.waitForTimeout(350); // let the sheet slide-up animation settle
+    await page.waitForTimeout(300);
 
     const m = await panel.evaluate((el) => {
       const r = el.getBoundingClientRect();
-      return { w: Math.round(r.width), bottom: Math.round(r.bottom), vw: window.innerWidth, vh: window.innerHeight };
+      return {
+        cx: Math.round(r.x + r.width / 2),
+        cy: Math.round(r.y + r.height / 2),
+        vw: window.innerWidth,
+        vh: window.innerHeight,
+      };
     });
-    expect(m.w).toBeGreaterThanOrEqual(m.vw - 2);
-    expect(m.bottom).toBeLessThanOrEqual(m.vh + 1);
-    expect(m.bottom).toBeGreaterThan(m.vh - 24);
+    expect(Math.abs(m.cx - m.vw / 2)).toBeLessThan(3);
+    expect(Math.abs(m.cy - m.vh / 2)).toBeLessThan(3);
+
+    await page.locator('.flow-params-mask').tap({ position: { x: 8, y: 8 } });
+    await expect(panel).toHaveCount(0);
   });
 });
 
@@ -256,23 +294,20 @@ test.describe('flow keyboard and sheet gestures', () => {
   });
 });
 
-test.describe('flow sheet swipe on phone', () => {
-  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+test.describe('flow detail card dismissal', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
 
-  test('swiping the sheet down closes it', async ({ page }) => {
+  test('closes from the ✕ button and from the mask', async ({ page }) => {
     await boot(page);
-    await page.locator('.flow-node[data-node="filter"]').tap({ position: { x: 60, y: 46 } });
     const panel = page.locator('.flow-params');
+    await page.locator('.flow-node[data-node="filter"]').click({ position: { x: 60, y: 46 } });
     await expect(panel).toBeVisible();
+    await page.locator('.flow-params-close').click();
+    await expect(panel).toHaveCount(0);
 
-    const grip = await page.locator('.fp-grip').boundingBox();
-    expect(grip).not.toBeNull();
-    const x = grip!.x + grip!.width / 2;
-    const y = grip!.y + grip!.height / 2;
-    await page.mouse.move(x, y);
-    await page.mouse.down();
-    await page.mouse.move(x, y + 120, { steps: 8 });
-    await page.mouse.up();
+    await page.locator('.flow-node[data-node="filter"]').click({ position: { x: 60, y: 46 } });
+    await expect(panel).toBeVisible();
+    await page.locator('.flow-params-mask').click({ position: { x: 8, y: 8 } });
     await expect(panel).toHaveCount(0);
   });
 });
