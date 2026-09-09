@@ -142,10 +142,14 @@ const DICT: Record<string, [string, string]> = {
   'drawer.footer': ['共 <b>{n}</b> 个预设 · {m} 个本地收藏', '<b>{n}</b> presets · {m} local'],
 
   // --- guide ---------------------------------------------------------------
-  'guide.title': ['使用指南', 'Guide'],
-  'guide.sub': ['合成器基础 · 新手教学 · 使用帮助 · 从零捏音色', 'Synthesis · Getting started · Help · Sound design'],
+  'guide.title': ['使用指南', 'Guide'],  'guide.sub': ['合成器基础 · 新手教学 · 使用帮助 · 从零捏音色', 'Synthesis · Getting started · Help · Sound design'],
   'guide.toc': ['目录', 'Contents'],
   'guide.footer': ['按 Esc 或点击空白处关闭 · 全部内容随应用离线可用', 'Press Esc or click outside to close · fully offline'],
+
+  // --- responsive chrome ---------------------------------------------------
+  'display.expand': ['展开示波器与频谱', 'Show scope & spectrum'],
+  'display.collapse': ['收起示波器与频谱', 'Hide scope & spectrum'],
+  'top.more': ['更多操作', 'More actions'],
 
   // --- player / midi -------------------------------------------------------
   'player.title': ['播放器', 'Player'],

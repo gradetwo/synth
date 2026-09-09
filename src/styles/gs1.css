@@ -1087,3 +1087,44 @@ input,textarea,[contenteditable='true']{
 .pt-bars i:nth-child(2){height:100%;animation-delay:.14s}
 .pt-bars i:nth-child(3){height:65%;animation-delay:.28s}
 @keyframes pt-bar{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
+
+/* ==========================================================================
+   v1.8.0 — device-aware chrome (phone / tablet / desktop)
+   ========================================================================== */
+
+/* Compact top bar on phones: brand text hidden, secondary actions in a menu. */
+.topbar.compact{gap:8px;padding:8px 0 10px}
+.topbar.compact .brand{gap:8px}
+.topbar.compact .preset-ctrl{order:1;flex:1;min-width:0}
+.topbar.compact .top-actions{order:2;width:auto}
+.topbar.compact .view-toggle{order:9;margin-left:0;width:100%}
+.top-more{position:relative}
+.top-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:60;min-width:196px;
+  display:flex;flex-direction:column;gap:6px;padding:10px;
+  background:linear-gradient(180deg,#1b1f29,#12151b);border:1px solid var(--border-hi);
+  border-radius:12px;box-shadow:0 18px 44px rgba(0,0,0,.62);
+  animation:fp-in .16s ease-out}
+.top-menu .ab-group{width:100%;justify-content:center}
+.top-menu .tbtn{justify-content:flex-start;width:100%}
+
+/* Collapsed monitor strip on phones: note/chord + meter + expand. */
+.display-row.compact{display:flex;align-items:center;gap:8px;margin-top:10px}
+.display-row.compact .note-display{flex:1;min-width:0;padding:8px 10px}
+.display-row.compact .vu{width:54px;flex:none;padding-top:0}
+.display-toggle{width:40px;height:40px;flex:none;border-radius:10px;padding:0;
+  border:1px solid var(--border);background:var(--bg-inset);color:var(--txt-2);
+  display:grid;place-items:center;cursor:pointer}
+.display-toggle:hover{color:var(--accent);border-color:var(--accent-dim)}
+.display-toggle.in-head{width:26px;height:26px;margin-left:auto;border-radius:7px}
+
+/* Tablet: a touch more breathing room, still one bar. */
+@media (min-width:621px) and (max-width:1099px){
+  .topbar{gap:12px}
+  .top-actions{gap:6px}
+  .display-row{gap:10px}
+}
+
+/* Mid-size landscape (iPad landscape, small laptops): three module columns. */
+@media (min-width:900px) and (max-width:1240px){
+  .modules-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+}

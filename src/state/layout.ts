@@ -58,6 +58,10 @@ export interface LayoutState {
   flowPos: Record<string, [number, number]>;
   /** Nodes removed from the signal-flow canvas. */
   flowHidden: string[];
+  /** `null` = automatic (collapsed on phones, expanded elsewhere). */
+  displayExpanded: boolean | null;
+  /** Whether the phone first-run defaults (collapsed modules, compact row) were applied. */
+  phoneDefaults: boolean;
 }
 
 export function defaultLayout(): LayoutState {
@@ -72,6 +76,8 @@ export function defaultLayout(): LayoutState {
     view: 'modules',
     flowPos: {},
     flowHidden: [],
+    displayExpanded: null,
+    phoneDefaults: false,
   };
 }
 
@@ -122,6 +128,9 @@ export function normalizeLayout(raw: unknown): LayoutState {
     view: input.view === 'flow' ? 'flow' : 'modules',
     flowPos,
     flowHidden,
+    displayExpanded:
+      typeof input.displayExpanded === 'boolean' ? input.displayExpanded : null,
+    phoneDefaults: input.phoneDefaults === true,
   };
 }
 

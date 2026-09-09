@@ -536,6 +536,28 @@ class SynthStore {
     this.commit();
   }
 
+  setDisplayExpanded(expanded: boolean | null) {
+    this.layout = { ...this.layout, displayExpanded: expanded };
+    this.commit();
+  }
+
+  /**
+   * First-run defaults for phones: keep the essential modules open, collapse the
+   * rest and shrink the scope/spectrum row to a single strip.
+   */
+  applyPhoneDefaults() {
+    if (this.layout.phoneDefaults) return;
+    const collapsed = { ...this.layout.collapsed };
+    for (const id of ['lfo', 'matrix', 'fx', 'fx2'] as ModuleId[]) collapsed[id] = true;
+    this.layout = {
+      ...this.layout,
+      collapsed,
+      displayExpanded: this.layout.displayExpanded ?? false,
+      phoneDefaults: true,
+    };
+    this.commit();
+  }
+
   // --------------------------------------------------------------- power etc.
 
   setPower(on: boolean) {

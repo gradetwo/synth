@@ -111,6 +111,14 @@ export function useFlowHidden(): string[] {
   );
 }
 
+export function useDisplayExpanded(): boolean | null {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getSnapshot().layout.displayExpanded,
+    () => store.getSnapshot().layout.displayExpanded,
+  );
+}
+
 export function usePower(): boolean {
   return useSyncExternalStore(
     subscribe,

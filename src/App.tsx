@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { engine } from '@/audio/engine';
 import { store } from '@/state/store';
 import { useLayout, usePower, useTheme, useView } from '@/hooks/useSynth';
+import { useViewport } from '@/hooks/useViewport';
 import { wireAnalysis } from '@/audio/analysis';
 import { TopBar, DisplayRow, KeyboardDock } from '@/panels/layout';
 import { ModuleFor } from '@/panels/modules';
@@ -84,6 +85,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const layout = useLayout();
   const view = useView();
+  const viewport = useViewport();
   const power = usePower();
   const theme = useTheme();
 
@@ -104,6 +106,12 @@ export default function App() {
     void registerServiceWorker();
     return off;
   }, []);
+
+  // Phones get a compact first-run layout (essential modules open, scope row
+  // collapsed). Applied once, then the user's own choices win.
+  useEffect(() => {
+    if (viewport.device === 'phone') store.applyPhoneDefaults();
+  }, [viewport.device]);
 
   useEffect(() => {
     // Keep the graph muted when the power switch is off.
