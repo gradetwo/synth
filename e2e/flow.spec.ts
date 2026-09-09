@@ -80,7 +80,7 @@ test.describe('signal flow animation', () => {
 
     // The wire/glow "active" state follows the analyser level.
     await expect(page.locator('.flow-stage')).toHaveClass(/active/);
-    const wire = page.locator('.flow-wire').first();
+    const wire = page.locator('.flow-wire.flow').first();
     await expect(wire).toHaveCSS('animation-name', 'flow-dash');
 
     await key.dispatchEvent('pointerup', { pointerId: 31, pointerType: 'touch' });
@@ -93,7 +93,7 @@ test.describe('signal flow live content', () => {
   test('wires track the node during the drag, not only on release', async ({ page }) => {
     await boot(page);
     const filter = page.locator('.flow-node[data-node="filter"]');
-    const wire = page.locator('.flow-wire').nth(2); // filter -> env
+    const wire = page.locator('.flow-edge[data-edge="filter"] .flow-wire.base'); // filter -> env
     const before = await wire.getAttribute('d');
     const box = (await filter.boundingBox())!;
 
@@ -137,5 +137,50 @@ test.describe('signal flow live content', () => {
       expect(row.lit, row.id).toBeGreaterThan(50);
     }
     await key.dispatchEvent('pointerup', { pointerId: 41, pointerType: 'touch' });
+  });
+});
+
+test.describe('flow detail card', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('tapping a node toggles the card; empty canvas closes it', async ({ page }) => {
+    await boot(page);
+    const filter = page.locator('.flow-node[data-node="filter"]');
+    const panel = page.locator('.flow-params');
+
+    await filter.click({ position: { x: 70, y: 46 } });
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText('FILTER');
+
+    // Tap the same node again collapses the card.
+    await filter.click({ position: { x: 70, y: 46 } });
+    await expect(panel).toHaveCount(0);
+
+    // Open again, then click empty canvas.
+    await filter.click({ position: { x: 70, y: 46 } });
+    await expect(panel).toBeVisible();
+    await page.locator('.flow-stage').click({ position: { x: 620, y: 370 } });
+    await expect(panel).toHaveCount(0);
+  });
+});
+
+test.describe('flow detail card on phone', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('opens as a bottom sheet above the keyboard', async ({ page }) => {
+    await boot(page);
+    await page.locator('.flow-node[data-node="filter"]').tap({ position: { x: 60, y: 46 } });
+    const panel = page.locator('.flow-params');
+    await expect(panel).toBeVisible();
+    await expect(page.locator('.fp-grip')).toBeVisible();
+    await page.waitForTimeout(350); // let the sheet slide-up animation settle
+
+    const m = await panel.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const dock = document.querySelector('.kbd-dock')!.getBoundingClientRect();
+      return { w: Math.round(r.width), bottom: Math.round(r.bottom), dockTop: Math.round(dock.top), vw: window.innerWidth };
+    });
+    expect(m.w).toBeGreaterThanOrEqual(m.vw - 2);
+    expect(m.bottom).toBeLessThanOrEqual(m.dockTop + 1);
   });
 });
