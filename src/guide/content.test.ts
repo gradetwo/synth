@@ -20,7 +20,7 @@ function pairsOf(block: Block): Bi[] {
 }
 
 describe('guide content', () => {
-  it('ships the seven sections with unique ids', () => {
+  it('ships the eight sections with unique ids', () => {
     expect(GUIDE_SECTIONS.map((s) => s.id)).toEqual([
       'basics',
       'history',
@@ -28,6 +28,7 @@ describe('guide content', () => {
       'modules',
       'start',
       'help',
+      'tools',
       'build',
     ]);
     expect(new Set(GUIDE_SECTIONS.map((s) => s.id)).size).toBe(GUIDE_SECTIONS.length);
@@ -83,6 +84,13 @@ describe('guide content', () => {
     expect(modules).toMatch(/Huovilainen|ladder/i);
     expect(modules).toMatch(/reverbsc/);
     expect(modules).toMatch(/AudioWorklet/);
+
+    // Player, signal flow and chord recognition.
+    const tools = textOf('tools');
+    expect(tools).toMatch(/MIDI/);
+    expect(tools).toMatch(/MP3/);
+    expect(tools).toMatch(/BYPASS/);
+    expect(tools).toMatch(/CHORD/);
 
     // Help and the walkthrough.
     expect(textOf('help')).toMatch(/shortcut/i);

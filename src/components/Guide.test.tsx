@@ -15,6 +15,7 @@ describe('Guide', () => {
     expect(html).toContain('傅里叶');
     expect(html).toContain('新手教学');
     expect(html).toContain('使用帮助');
+    expect(html).toContain('播放器与信号流');
     expect(html).toContain('从零捏一个音色');
   });
 
@@ -30,6 +31,7 @@ describe('Guide', () => {
       expect(html).toContain('Build a sound from scratch');
       expect(html).toContain('Getting started');
       expect(html).toContain('Usage help');
+      expect(html).toContain('signal flow');
     } finally {
       setLang('zh');
     }

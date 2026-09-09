@@ -905,6 +905,97 @@ export const GUIDE_SECTIONS: GuideSection[] = [
     ],
   },
 
+  // ================================================================ tools
+  {
+    id: 'tools',
+    title: ['播放器与信号流', 'Player & signal flow'],
+    intro: [
+      '监视区的「播放器」按钮打开 MIDI 播放器；顶栏「信号流」切换到可拖拽的信号流视图，两者共同构成演奏与录制的工作区。',
+      'The Player button in the monitor opens the MIDI player; the Flow toggle in the top bar switches to a draggable signal-flow canvas. Together they are the performance and recording workspace.',
+    ],
+    blocks: [
+      { kind: 'h', text: ['MIDI 播放器', 'MIDI player'] },
+      {
+        kind: 'ul',
+        items: [
+          [
+            '内置 16 首曲目：致爱丽丝、卡农、月光奏鸣曲（第一乐章）、梦中的婚礼、土耳其进行曲、River Flows in You、Summer、克罗地亚狂想曲、天空之城、超级玛丽主题曲、权力的游戏主题曲、茉莉花、梁祝（选段）、沧海一声笑，以及琶音、音阶两条练习素材。',
+            'Sixteen built-in items: Für Elise, Canon in D, Moonlight Sonata (I), Mariage d’Amour, Turkish March, River Flows in You, Summer, Croatian Rhapsody, Castle in the Sky, the Super Mario theme, the Game of Thrones theme, Jasmine Flower, Butterfly Lovers (excerpt), A Chinese Ghost Story, plus arpeggio and scale exercises.',
+          ],
+          [
+            '**导入 MIDI**：支持标准 MIDI 文件（`.mid` / `.midi`，格式 0/1），自动合并多轨、读取速度与音轨名，导入后立即出现在曲目列表并可播放。',
+            '**Import MIDI**: standard MIDI files (`.mid` / `.midi`, format 0/1) are parsed, multi-track files merged, tempo and track names read, and the result appears in the list ready to play.',
+          ],
+          [
+            '**播放控制**：播放 / 暂停、停止、循环、拖动进度条定位、速度 0.5–1.5×、移调 ±12 半音。播放使用当前音色，所以边播边换预设就能听到同一旋律的不同配器。',
+            '**Transport**: play/pause, stop, loop, seek, rate 0.5–1.5× and transpose ±12 semitones. Playback uses the current patch, so changing presets while it plays re-orchestrates the same melody live.',
+          ],
+          [
+            '**录制**：点 ● 录制后用屏幕键盘、电脑键盘或 MIDI 控制器演奏，再点 ■ 结束；录制会忽略播放器自身的输出，只记录你弹的内容。',
+            '**Recording**: hit ● and play on the screen keyboard, computer keyboard or a MIDI controller, then ■ to stop. The player’s own output is ignored, so only your playing is captured.',
+          ],
+          [
+            '**导出 MIDI**：把当前曲目或录制保存为 `.mid`，可在别的 DAW 里继续编辑。',
+            '**Export MIDI**: saves the current track or take as `.mid` for further editing in a DAW.',
+          ],
+          [
+            '**导出 MP3**：用当前音色离线渲染整首曲目并编码为 192 kbps MP3。录制的片段可以在换音色后重新导出，得到不同音色的版本。',
+            '**Export MP3**: renders the whole track offline with the current patch and encodes it to 192 kbps MP3. A recorded take can be re-exported after changing the patch for a different timbre.',
+          ],
+        ],
+      },
+      {
+        kind: 'tip',
+        text: [
+          '内置曲目是简短示范片段，版权归原作者所有；古典与民乐为公版作品。练习素材（琶音、音阶）可直接用来熟悉键盘与音色。',
+          'The built-in items are short demonstration excerpts; rights remain with their owners. Classical and folk pieces are public domain. The exercises (arpeggios, scales) are there for getting comfortable with the keyboard and patches.',
+        ],
+      },
+      { kind: 'h', text: ['信号流视图', 'Signal-flow view'] },
+      {
+        kind: 'ul',
+        items: [
+          [
+            '每个节点代表一个处理单元：OSC 1、OSC 2、FILTER、AMP ENV、LFO、LFO 2、MATRIX、FX、FX 2、OUT。节点内的迷你画面实时显示波形、滤波响应、包络、LFO 形状、矩阵路由或效果衰减。',
+            'Each node is one processing unit: OSC 1, OSC 2, FILTER, AMP ENV, LFO, LFO 2, MATRIX, FX, FX 2, OUT. The mini display inside shows the waveform, filter response, envelope, LFO shape, matrix routing or effect decay in real time.',
+          ],
+          [
+            '**拖拽**节点可自定义布局，位置会记住；手机竖屏自动改为单列。',
+            '**Drag** nodes to arrange the canvas; positions persist, and narrow screens fall back to a single column.',
+          ],
+          [
+            '**旁通 / 启用**：带电源图标的节点（振荡器、LFO、效果）可以一键开关，节点变灰并显示 `BYPASS`。',
+            '**Bypass / enable**: nodes with a power icon (oscillators, LFOs, effects) switch off with one tap; the node greys out and shows `BYPASS`.',
+          ],
+          [
+            '**移除 / 添加**：✕ 把节点从画布移除，底部面板会保留对应按钮，随时点回来；「重置画布」恢复默认布局。',
+            '**Remove / add**: ✕ takes a node off the canvas; a chip at the bottom brings it back at any time, and “Reset canvas” restores the default layout.',
+          ],
+          [
+            '**展开参数**：点节点或 ⤢ 打开右侧参数面板，里面就是该模块的完整控件。',
+            '**Open parameters**: click a node or ⤢ to open the full control set for that module in a side panel.',
+          ],
+        ],
+      },
+      { kind: 'h', text: ['演奏模式', 'Performance mode'] },
+      {
+        kind: 'p',
+        text: [
+          '信号流视图顶部的性能条就是演奏模式：选择曲目、播放 / 暂停 / 停止 / 循环、录制，以及一键导出 MIDI 和 MP3。底部键盘始终可用，所以可以一边看信号流一边弹奏、录制。',
+          'The bar at the top of the flow view is performance mode: pick a track, play/pause/stop/loop, record, and export MIDI or MP3. The keyboard stays available at the bottom, so you can play and record while watching the signal flow.',
+        ],
+      },
+      { kind: 'h', text: ['和弦识别', 'Chord recognition'] },
+      {
+        kind: 'p',
+        text: [
+          '同时按住两个以上音符时，监视器会把 `NOTE` 自动切换为 `CHORD` 并显示和弦名（大三、小三、减、增、挂留、七和弦、九和弦、加九，以及 `/低音` 转位），下方列出实际按下的音。',
+          'When two or more notes are held, the monitor switches from `NOTE` to `CHORD` and shows the chord name (major, minor, diminished, augmented, sus, sevenths, ninths, add9 and slash inversions), with the actual notes listed underneath.',
+        ],
+      },
+    ],
+  },
+
   // ================================================================ build
   {
     id: 'build',
