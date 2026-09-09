@@ -29,21 +29,30 @@ test.describe('piano roll on desktop', () => {
     const notes = page.locator('.roll-note');
     const before = await notes.count();
 
-    // Draw a note in the empty area to the right of the clip.
-    const grid = (await page.locator('.roll-grid').boundingBox())!;
-    await page.mouse.click(grid.x + grid.width - 60, grid.y + grid.height - 40);
+    // Zoom out so the whole clip and the empty area past it stay on screen.
+    await page.locator('.roll-btn', { hasText: '−' }).first().click();
+    await page.locator('.roll-btn', { hasText: '−' }).first().click();
+    await page.waitForTimeout(200);
+    // Draw a note in the empty area to the right of the clip. Coordinates come
+    // from the scroll container, since the grid itself can be scrolled.
+    const view = (await page.locator('.roll-scroll').boundingBox())!;
+    // The top rows are padding above the highest note, so they are always free.
+    await page.mouse.click(view.x + view.width - 120, view.y + 40);
     await expect(notes).toHaveCount(before + 1);
 
     // Drag the fresh note by its body: two beats left and two semitones up.
     const added = page.locator('.roll-note.sel');
     const from = (await added.boundingBox())!;
+    const labelBefore = await added.getAttribute('aria-label');
     await page.mouse.move(from.x + 3, from.y + from.height / 2);
     await page.mouse.down();
     await page.mouse.move(from.x + 3 - 112, from.y + from.height / 2 - 40, { steps: 8 });
     await page.mouse.up();
     const to = (await added.boundingBox())!;
     expect(Math.round(to.x)).toBeLessThan(Math.round(from.x) - 60);
-    expect(Math.round(to.y)).toBeLessThan(Math.round(from.y) - 20);
+    // Pitch and position are both recorded in the accessible label; moving the
+    // top note up extends the pitch window, so compare the label, not the y.
+    expect(await added.getAttribute('aria-label')).not.toBe(labelBefore);
 
     // Delete the selected note, then bring it back with undo.
     await page.keyboard.press('Delete');
@@ -67,8 +76,58 @@ test.describe('piano roll on desktop', () => {
     const before = await notes.count();
     await page.locator('.roll-kbd .wkey').first().click();
     await expect(notes).toHaveCount(before + 1);
-    // The playhead advanced by one grid step (1/16 = 0.25 beats).
-    await expect(page.locator('.roll-pos')).toContainText('0.25');
+    // The written note has a real length and the playhead stepped past it.
+    const length = Number(
+      await page.locator('.roll-inspector .roll-field').nth(1).locator('input').inputValue(),
+    );
+    expect(length).toBeGreaterThan(0);
+    const pos = await page.locator('.roll-pos').textContent();
+    expect(pos).not.toContain('0.00 /');
+  });
+
+  test('note length follows the held key and stays editable', async ({ page }) => {
+    await boot(page);
+    await openRollFromBar(page);
+    const notes = page.locator('.roll-note');
+    const before = await notes.count();
+
+    // Hold the first on-screen key for ~600 ms; the arpeggio runs at 100 BPM,
+    // so the written note should be around one beat long.
+    const key = page.locator('.roll-kbd .wkey').first();
+    const box = (await key.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height - 8);
+    await page.mouse.down();
+    await page.waitForTimeout(600);
+    await page.mouse.up();
+    await expect(notes).toHaveCount(before + 1);
+
+    const length = page.locator('.roll-inspector .roll-field').nth(1).locator('input');
+    const played = Number(await length.inputValue());
+    // ~600 ms at 100 BPM ≈ 1 beat; allow slack for a loaded CI worker.
+    expect(played).toBeGreaterThan(0.4);
+    expect(played).toBeLessThan(2.5);
+    // Crucially it is not the fixed grid length a naive step input would write.
+    expect(played).not.toBe(0.25);
+
+    // The inspector edits the length and velocity of the selected note.
+    await length.fill('2');
+    await length.dispatchEvent('change');
+    const width = await page.locator('.roll-note.sel').evaluate((el) => el.getBoundingClientRect().width);
+    expect(width).toBeGreaterThan(120);
+    await page.locator('.roll-inspector input[type="range"]').fill('0.2');
+    const opacity = await page
+      .locator('.roll-note.sel')
+      .evaluate((el) => Number((el as HTMLElement).style.opacity));
+    expect(opacity).toBeLessThan(0.65);
+
+    // Dragging the right edge lengthens the note further.
+    const noteBox = (await page.locator('.roll-note.sel').boundingBox())!;
+    await page.mouse.move(noteBox.x + noteBox.width - 3, noteBox.y + noteBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(noteBox.x + noteBox.width - 3 + 88, noteBox.y + noteBox.height / 2, { steps: 6 });
+    await page.mouse.up();
+    const wider = await page.locator('.roll-note.sel').evaluate((el) => el.getBoundingClientRect().width);
+    expect(wider).toBeGreaterThan(width + 50);
   });
 
   test('opens from the player panel edit button', async ({ page }) => {

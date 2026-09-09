@@ -47,6 +47,16 @@ test.describe('iPhone portrait', () => {
     // The player stays reachable from the compact strip.
     await expect(page.locator('.display-row.compact .player-open')).toBeVisible();
 
+    // Opening the library from the overflow menu closes the menu first, so it
+    // cannot float over the drawer.
+    await page.locator('.top-more .tbtn').click();
+    await expect(page.locator('.top-menu')).toBeVisible();
+    await page.locator('.top-menu .tbtn', { hasText: '预设库' }).click();
+    await expect(page.locator('.top-menu')).toHaveCount(0);
+    await expect(page.locator('.drawer.open')).toBeVisible();
+    await page.locator('.drawer .d-close').click();
+    await expect(page.locator('.drawer.open')).toHaveCount(0);
+
     // The preset stepper sits on its own full-width row.
     const rows = await page.evaluate(() => {
       const r = (sel: string) => {
@@ -101,10 +111,11 @@ test.describe('iPhone portrait flow view', () => {
     await page.getByRole('button', { name: '信号流' }).tap();
     await page.waitForTimeout(500);
 
-    // Secondary chrome yields to the graph.
+    // Secondary chrome yields to the graph: the monitor row is hidden and the
+    // dock starts tucked away.
     await expect(page.locator('.display-row')).toBeHidden();
-    await expect(page.locator('.kbd-dock')).toBeHidden();
-    await expect(page.locator('.top-actions .tbtn[data-kb]')).toBeHidden();
+    await expect(page.locator('.kbd-dock.open')).toHaveCount(0);
+    await expect(page.locator('.dock-show')).toBeVisible();
 
     const geo = await page.evaluate(() => {
       const wrap = document.querySelector('.flow-canvas-wrap')!.getBoundingClientRect();
@@ -120,10 +131,20 @@ test.describe('iPhone portrait flow view', () => {
     expect(geo.bottom).toBeGreaterThan(geo.vh - 40);
     expect(geo.scaleH).toBeLessThanOrEqual(geo.wrapH + 2);
 
-    // Going back to modules brings the monitor strip and the keyboard back.
+    // The show-keyboard pill still works and the canvas makes room for it.
+    await page.locator('.dock-show').tap();
+    await expect(page.locator('.kbd-dock.open')).toBeVisible();
+    const withDock = await page.evaluate(() => {
+      const wrap = document.querySelector('.flow-canvas-wrap')!.getBoundingClientRect();
+      const spacer = document.querySelector('.dock-spacer')!.getBoundingClientRect();
+      return { bottom: Math.round(wrap.bottom), spacerTop: Math.round(spacer.top) };
+    });
+    expect(withDock.bottom).toBeLessThanOrEqual(withDock.spacerTop + 2);
+
+    // Going back to modules brings the monitor strip back.
     await page.getByRole('button', { name: '模块' }).tap();
     await expect(page.locator('.display-row.compact')).toBeVisible();
-    await expect(page.locator('.kbd-dock')).toBeVisible();
+    await expect(page.locator('.kbd-dock.open')).toBeVisible();
   });
 });
 
@@ -297,6 +318,14 @@ test.describe('desktop', () => {
     await expect(page.locator('.top-actions .top-more')).toHaveCount(1);
     const truncated = await page.locator('.preset-name').evaluate((el) => el.scrollWidth > el.clientWidth + 1);
     expect(truncated).toBe(false);
+    // The decorative power light and engine badge were removed.
+    await expect(page.locator('.power-btn, .engine-badge')).toHaveCount(0);
+    // Using an overflow action closes the menu instead of leaving it floating
+    // over the page.
+    await page.locator('.top-more .tbtn').click();
+    await expect(page.locator('.top-menu')).toBeVisible();
+    await page.locator('.top-menu .tbtn', { hasText: '保存' }).click();
+    await expect(page.locator('.top-menu')).toHaveCount(0);
   });
 
   test('a phone-sized visit does not leave the desktop modules collapsed', async ({ page }) => {

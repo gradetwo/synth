@@ -21,10 +21,6 @@ test('boots, starts audio and stays error-free', async ({ page }) => {
   await start.click();
   await expect(start).toBeHidden();
 
-  // The engine badge must leave STANDBY (ONLINE or SUSPENDED depending on the
-  // headless audio device).
-  await expect(page.locator('.engine-badge')).toHaveText(/ONLINE|SUSPENDED/);
-
   // Hold middle C: the note display must update.
   const key = page.locator('[data-midi="60"]').first();
   await key.dispatchEvent('pointerdown', { pointerId: 1 });

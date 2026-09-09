@@ -69,6 +69,33 @@ test.describe('signal flow view', () => {
   });
 });
 
+test.describe('flow view keyboard on phone', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('auto-hides the dock but the keyboard toggle brings it back', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).tap();
+    await page.waitForTimeout(250);
+    await page.getByRole('button', { name: '信号流' }).tap();
+    await page.waitForTimeout(700);
+
+    // Flow view starts without the piano so the graph gets the screen.
+    await expect(page.locator('.kbd-dock.open')).toHaveCount(0);
+    await expect(page.locator('.dock-show')).toBeVisible();
+
+    // The show-keyboard pill still works and the canvas makes room for it.
+    await page.locator('.dock-show').tap();
+    await expect(page.locator('.kbd-dock.open')).toBeVisible();
+    const geo = await page.evaluate(() => {
+      const wrap = document.querySelector('.flow-canvas-wrap')!.getBoundingClientRect();
+      const spacer = document.querySelector('.dock-spacer')!.getBoundingClientRect();
+      return { bottom: Math.round(wrap.bottom), spacerTop: Math.round(spacer.top), vh: window.innerHeight };
+    });
+    expect(geo.bottom).toBeLessThanOrEqual(geo.spacerTop + 2);
+    expect(geo.spacerTop).toBeLessThan(geo.vh);
+  });
+});
+
 test.describe('signal flow animation', () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
@@ -189,9 +216,9 @@ test.describe('flow detail card on phone', () => {
     const panel = page.locator('.flow-params');
     await expect(panel).toBeVisible();
     await expect(page.locator('.fp-grip')).toBeVisible();
-    // Flow view hands the screen to the graph, so the piano dock is gone and
-    // the sheet docks to the bottom of the viewport instead of clearing it.
-    await expect(page.locator('.kbd-dock')).toBeHidden();
+    // Flow view hands the screen to the graph, so the piano dock starts
+    // tucked away and the sheet docks to the bottom of the viewport.
+    await expect(page.locator('.kbd-dock.open')).toHaveCount(0);
     await page.waitForTimeout(350); // let the sheet slide-up animation settle
 
     const m = await panel.evaluate((el) => {
