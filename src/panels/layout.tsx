@@ -7,8 +7,6 @@ import { Keyboard, Wheels } from '@/components/Keyboard';
 import { toast } from '@/components/Toast';
 import { engine, type EngineStatus } from '@/audio/engine';
 import { midi } from '@/audio/midi';
-import { renderPatchToWav } from '@/audio/render';
-import { downloadBlob } from '@/state/share';
 import { localizeName, t } from '@/i18n';
 import { haptic, useInputMode } from '@/hooks/useInputMode';
 import { useViewport } from '@/hooks/useViewport';
@@ -396,31 +394,6 @@ function PolyBadge() {
   );
 }
 
-function WavButton() {
-  const [busy, setBusy] = useState(false);
-  return (
-    <button
-      type="button"
-      className="demo-btn"
-      disabled={busy}
-      title={t('monitor.wavTitle')}
-      onClick={async () => {
-        setBusy(true);
-        try {
-          const blob = await renderPatchToWav(store.getSnapshot().state);
-          downloadBlob('gs1-patch.wav', blob);
-          toast(t('monitor.wavDone'));
-        } catch (err) {
-          toast(t('monitor.wavFailed', { msg: err instanceof Error ? err.message : String(err) }));
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      {busy ? t('monitor.rendering') : t('monitor.wav')}
-    </button>
-  );
-}
 
 export function DisplayRow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   const { device } = useViewport();
@@ -501,7 +474,6 @@ export function DisplayRow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
         </div>
         <div className="monitor-actions">
           <PlayerButton onOpen={onOpenPlayer} />
-          <WavButton />
         </div>
         <div className="monitor-body">
           <NoteDisplay />
