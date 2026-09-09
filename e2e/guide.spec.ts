@@ -33,6 +33,8 @@ test.describe('guide (phone)', () => {
   test('fills the screen with a horizontal section bar', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: /启动音频引擎/ }).tap();
+    // Phone top bar keeps 预设库 inside the overflow menu.
+    await page.locator('.top-more .tbtn').tap();
     await page.getByRole('button', { name: '预设库' }).tap();
     await page.getByRole('button', { name: '使用指南' }).tap();
     const guide = page.locator('.guide.open');

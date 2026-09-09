@@ -44,6 +44,8 @@ test.describe('iPhone portrait', () => {
     expect(m.scope).toBe(false);
     expect(m.collapsed).toBe(4); // lfo, matrix, fx, fx2
     expect(m.moduleCols).toBe(1);
+    // The player stays reachable from the compact strip.
+    await expect(page.locator('.display-row.compact .player-open')).toBeVisible();
 
     // Overflow menu exposes the secondary actions.
     await page.locator('.top-more .tbtn').click();
