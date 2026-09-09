@@ -1,0 +1,149 @@
+import { expect, test, type Page } from '@playwright/test';
+
+/**
+ * Colour schemes: the light palette must fully repaint every surface, `auto`
+ * must follow the operating system live, and the choice must persist.
+ */
+
+async function boot(page: Page) {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(250);
+}
+
+/** Every rgb() inside a computed background must be light in light mode. */
+async function darkSurfaces(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const luminance = (r: number, g: number, b: number) =>
+      (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    const selectors = [
+      'body',
+      '.topbar',
+      '.preset-display',
+      '.panel',
+      '.module',
+      '.module-body',
+      '.display-row',
+      '.scope-body',
+      '.kbd-dock',
+      '.flow-bar',
+      '.flow-canvas-wrap',
+      '.flow-node',
+      '.flow-canvas',
+      '.flow-params',
+      '.roll',
+      '.roll-tools',
+      '.roll-scroll',
+      '.roll-grid',
+      '.roll-kbd',
+      '.drawer',
+      '.player',
+      '.guide',
+      '.d-theme',
+      '.vu-track',
+      '.mini-canvas',
+    ];
+    const bad: string[] = [];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      const cs = getComputedStyle(el);
+      for (const source of [cs.backgroundColor, cs.backgroundImage]) {
+        for (const match of source.matchAll(/rgba?\((\d+), ?(\d+), ?(\d+)(?:, ?([\d.]+))?\)/g)) {
+          const [r, g, b] = [Number(match[1]), Number(match[2]), Number(match[3])];
+          const alpha = match[4] === undefined ? 1 : Number(match[4]);
+          if (alpha < 0.35) continue; // translucent overlays are fine
+          if (luminance(r, g, b) < 0.42) bad.push(`${sel}: rgb(${r},${g},${b})`);
+        }
+      }
+    }
+    return bad;
+  });
+}
+
+test.describe('colour scheme', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('light mode repaints every surface without dark leftovers', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await boot(page);
+    // Fresh installs follow the system, which is dark here.
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+
+    // Pin light mode from the preset drawer.
+    await page.getByRole('button', { name: '预设库' }).click();
+    await page.locator('.d-theme-btn', { hasText: '浅色' }).click();
+    await page.locator('.drawer .d-close').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    expect(await page.evaluate(() => document.documentElement.style.colorScheme)).toBe('light');
+
+    // Open every surface that paints its own colours before scanning.
+    await page.getByRole('button', { name: '信号流' }).click();
+    await page.waitForTimeout(700);
+    await page.locator('.flow-node[data-node="filter"]').click({ position: { x: 60, y: 46 } });
+    await page.waitForTimeout(400);
+    expect(await darkSurfaces(page)).toEqual([]);
+    await page.locator('.flow-params-close').click();
+
+    await page.locator('.top-actions .tbtn', { hasText: '钢琴卷帘' }).click();
+    await page.waitForTimeout(600);
+    expect(await darkSurfaces(page)).toEqual([]);
+    await page.locator('.roll-head .d-close').click();
+
+    await page.getByRole('button', { name: '模块' }).click();
+    await page.waitForTimeout(300);
+    await page.locator('.display-row .monitor-actions .demo-btn').click();
+    await page.waitForTimeout(400);
+    expect(await darkSurfaces(page)).toEqual([]);
+
+    // Text must be dark ink, not light.
+    const ink = await page.evaluate(() =>
+      getComputedStyle(document.querySelector('.brand-name')!).color,
+    );
+    const [r, g, b] = ink.match(/\d+/g)!.map(Number);
+    expect(0.2126 * r + 0.7152 * g + 0.0722 * b).toBeLessThan(160);
+  });
+
+  test('auto follows the system live, and the choice persists', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await boot(page);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+
+    // The operating system switches while the app is open.
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await page.emulateMedia({ colorScheme: 'light' });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+
+    // Pin dark, then reload: the pinned choice wins over the system.
+    await page.getByRole('button', { name: '预设库' }).click();
+    await page.locator('.d-theme-btn', { hasText: '深色' }).click();
+    await page.locator('.drawer .d-close').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await page.reload();
+    await page.waitForTimeout(600);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  });
+
+  test('the overflow menu cycles dark → light → auto', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await boot(page);
+    // Fresh install is auto → light with a light system preference. The cycle
+    // is auto → dark → light → auto.
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await page.locator('.top-more .tbtn').click();
+    await page.locator('.top-menu .tbtn', { hasText: '自动' }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+
+    await page.locator('.top-more .tbtn').click();
+    await page.locator('.top-menu .tbtn', { hasText: '深色' }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+
+    await page.locator('.top-more .tbtn').click();
+    await page.locator('.top-menu .tbtn', { hasText: '浅色' }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    // Back to auto, still light because the system is light.
+    await page.locator('.top-more .tbtn').click();
+    await expect(page.locator('.top-menu .tbtn', { hasText: '自动' })).toBeVisible();
+  });
+});

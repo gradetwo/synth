@@ -8,7 +8,7 @@ describe('layout model', () => {
     expect(new Set(layout.order).size).toBe(MODULE_IDS.length);
     expect(layout.keyboardVisible).toBe(true);
     expect(layout.collapsed).toEqual({});
-    expect(layout.theme).toBe('dark');
+    expect(layout.theme).toBe('auto');
   });
 
   it('has metadata for every module', () => {
@@ -33,12 +33,19 @@ describe('layout model', () => {
     expect(layout.collapsed.filter).toBe(true);
     expect(layout.collapsed.osc1).toBeUndefined();
     expect(layout.keyboardVisible).toBe(false);
-    expect(layout.theme).toBe('dark');
+    expect(layout.theme).toBe('auto');
   });
 
-  it('validates the theme', () => {
-    expect(normalizeLayout({ theme: 'contrast' }).theme).toBe('contrast');
-    expect(normalizeLayout({ theme: 'nope' }).theme).toBe('dark');
+  it('validates the theme and migrates the old contrast mode', () => {
+    expect(normalizeLayout({ theme: 'light' }).theme).toBe('light');
+    expect(normalizeLayout({ theme: 'auto' }).theme).toBe('auto');
+    expect(normalizeLayout({ theme: 'nope' }).theme).toBe('auto');
+    expect(normalizeLayout({}).theme).toBe('auto');
+    // Older saves stored high contrast as a theme value.
+    const migrated = normalizeLayout({ theme: 'contrast' });
+    expect(migrated.theme).toBe('dark');
+    expect(migrated.contrast).toBe(true);
+    expect(normalizeLayout({ contrast: true }).contrast).toBe(true);
   });
 
   it('validates velocity mode and haptics', () => {
