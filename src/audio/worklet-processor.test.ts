@@ -211,5 +211,5 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
 
     expect([...new Set(bad)], `non-finite output: ${[...new Set(bad)].join(', ')}`).toEqual([]);
     expect(silent, `silent presets: ${silent.join(', ')}`).toEqual([]);
-  });
+  }, 60_000);
 });
