@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { store } from '@/state/store';
-import { useFlowHidden, useFlowPos, useSynth } from '@/hooks/useSynth';
+import { useFlowHidden, useFlowPos, useKeyboardVisible, useSynth } from '@/hooks/useSynth';
 import { useViewport } from '@/hooks/useViewport';
 import { haptic, HAPTIC } from '@/hooks/useInputMode';
 import { t } from '@/i18n';
@@ -538,6 +538,7 @@ export function SignalFlow() {
   const [rec, setRec] = useState<RecorderState>(recorder.getState());
   const [tracksVersion, setTracksVersion] = useState(0);
   const viewport = useViewport();
+  const keyboardVisible = useKeyboardVisible();
   // 0 = hand-tuned desktop layout. Every other class gets a grid tuned to its
   // screen shape: phones stack two columns in portrait and five across (two
   // rows) in landscape; tablets use three columns in portrait and five in
@@ -723,19 +724,24 @@ export function SignalFlow() {
     contentSizeRef.current = { w: contentW, h: contentH };
   }, [contentW, contentH]);
 
-  /** Fit every committed node inside the visible canvas. */
-  const applyFit = () => {
+  /** Size the canvas to the space left below the chrome. */
+  const sizeWrap = () => {
     const wrap = wrapRef.current;
     if (!wrap) return;
-    // The graph owns the space left below the chrome (the monitor row is hidden
-    // in flow view and phones also drop the piano dock). Document-relative top
-    // keeps the math stable while the page scroll position settles after a
-    // rotation, and the dock height keeps the canvas clear of the keyboard on
-    // tablets and desktops.
+    // Document-relative top keeps the math stable while the page scroll
+    // position settles after a rotation, and the dock height keeps the canvas
+    // clear of the keyboard whenever it is visible.
     const dockH =
       (document.querySelector('.dock-spacer') as HTMLElement | null)?.getBoundingClientRect().height ?? 0;
     const top = wrap.getBoundingClientRect().top + window.scrollY;
     wrap.style.height = `${Math.max(180, Math.round(window.innerHeight - top - dockH - 14))}px`;
+  };
+
+  /** Fit every committed node inside the visible canvas. */
+  const applyFit = () => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    sizeWrap();
     const widthFit = (wrap.clientWidth - 28) / committedW;
     const heightFit = (wrap.clientHeight - 28) / committedH;
     // Prefer filling the width. When the graph is only a little taller than the
@@ -747,11 +753,13 @@ export function SignalFlow() {
     setZoom(Math.max(0.32, z));
   };
 
-  // Auto-fit until the user zooms manually, and again on rotation/resize.
+  // Re-fit on rotation/resize; the wrap always resizes so showing the keyboard
+  // never overlaps the graph, even after a manual zoom.
   useEffect(() => {
+    sizeWrap();
     if (autoFitRef.current) applyFit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewport.width, viewport.height, flowCols, committedW, committedH]);
+  }, [viewport.width, viewport.height, flowCols, committedW, committedH, keyboardVisible]);
 
   const isEnabled = (node: FlowNodeDef) =>
     node.enabledParams.length === 0 || node.enabledParams.some((id) => store.getParam(id as never) > 0.5);

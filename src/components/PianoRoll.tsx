@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '@/i18n';
 import { toast } from './Toast';
-import { haptic, HAPTIC } from '@/hooks/useInputMode';
+import { haptic, HAPTIC, useInputMode } from '@/hooks/useInputMode';
 import { midiPlayer, type PlayerState } from '@/midi/player';
 import { midi } from '@/audio/midi';
 import { noteBus, noteName } from '@/audio/noteBus';
@@ -45,7 +45,7 @@ import { TransportIcon } from './TransportIcon';
 /** Pixels per semitone; the grid scrolls vertically. */
 const ROW_H = 20;
 /** Horizontal zoom steps, in pixels per beat. */
-const ZOOMS = [24, 32, 44, 56, 72, 96, 128];
+const ZOOMS = [24, 36, 48, 64, 88, 120, 160];
 
 const emptyDoc = (): RollDoc => ({ name: '', bpm: 120, beats: 4, notes: [] });
 
@@ -60,22 +60,33 @@ const noteColor = (note: number, low: number, high: number): string => {
 
 type Gesture =
   | { kind: 'tap'; x: number; y: number }
-  | { kind: 'note' | 'resize'; id: string; orig: RollNote; x: number; y: number; moved: boolean };
+  | {
+      kind: 'note' | 'resize';
+      /** Which edge is being dragged, for resize gestures. */
+      edge?: 'l' | 'r';
+      id: string;
+      orig: RollNote;
+      x: number;
+      y: number;
+      moved: boolean;
+    };
 
 export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [doc, setDoc] = useState<RollDoc>(emptyDoc);
   const [track, setTrack] = useState<Track | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [snap, setSnap] = useState(0.25);
-  const [zoom, setZoom] = useState(56);
+  const [zoom, setZoom] = useState(88);
   const [input, setInput] = useState(true);
   const [velocity, setVelocity] = useState(0.85);
   const [player, setPlayer] = useState<PlayerState>(midiPlayer.getState());
   const [midiState, setMidiState] = useState(midi.snapshot());
   const [history, setHistory] = useState({ undo: false, redo: false });
+  const [pending, setPending] = useState<{ note: number; start: number } | null>(null);
 
   const docRef = useRef(doc);
   const snapRef = useRef(snap);
+  const zoomRef = useRef(zoom);
   const velocityRef = useRef(velocity);
   const selectedRef = useRef<string | null>(null);
   const gesture = useRef<Gesture | null>(null);
@@ -84,6 +95,8 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   const gridRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const auditionTimer = useRef(0);
+  /** Notes currently held on an input source, waiting for note-off to size them. */
+  const heldInput = useRef(new Map<number, { start: number; velocity: number; wall: number }>());
 
   useEffect(() => {
     docRef.current = doc;
@@ -91,6 +104,9 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   useEffect(() => {
     snapRef.current = snap;
   }, [snap]);
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
   useEffect(() => {
     velocityRef.current = velocity;
   }, [velocity]);
@@ -141,6 +157,24 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
     const duration = midiPlayer.getState().duration;
     if (time > 0) midiPlayer.seek(Math.min(time, duration));
     if (wasPlaying) midiPlayer.play();
+  }, []);
+
+  /** Scroll a freshly written note into view (step input can land off-screen). */
+  const revealNote = useCallback((pitch: number, beat: number) => {
+    // Wait for the inspector row and the new note to be laid out first.
+    requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      const [, hi] = pitchRange(docRef.current);
+      const y = (hi - pitch) * ROW_H;
+      if (y < el.scrollTop + 8 || y + ROW_H > el.scrollTop + el.clientHeight - 8) {
+        el.scrollTop = Math.max(0, y - el.clientHeight / 2 + ROW_H / 2);
+      }
+      const x = beat * zoomRef.current;
+      if (x < el.scrollLeft + 8 || x > el.scrollLeft + el.clientWidth - 48) {
+        el.scrollLeft = Math.max(0, x - el.clientWidth / 3);
+      }
+    });
   }, []);
 
   /** Audition a drawn note. Goes straight to the engine so the step-input
@@ -290,27 +324,40 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   }, [open, onClose, undo, redo, deleteSelected]);
 
   // Step input: notes played on the keyboard strip, the computer keyboard or
-  // external MIDI land at the playhead while the transport is stopped.
+  // external MIDI land at the playhead while the transport is stopped, and the
+  // note's length follows how long the key was actually held.
   useEffect(() => {
     if (!open || !input) return;
+    const held = heldInput.current;
     const off = noteBus.subscribeEvents((event) => {
-      if (!event.on) return;
       if (midiPlayer.getState().playing) return;
-      const beats = midiPlayer.getState().time / secondsPerBeat(docRef.current.bpm);
-      const start = snapBeat(beats, snapRef.current);
-      const { doc: next, id } = addNote(
-        docRef.current,
-        event.note,
-        start,
-        snapRef.current,
-        event.velocity,
-      );
+      const bpm = docRef.current.bpm;
+      if (event.on) {
+        const beats = midiPlayer.getState().time / secondsPerBeat(bpm);
+        const start = snapBeat(beats, snapRef.current);
+        held.set(event.note, { start, velocity: event.velocity, wall: performance.now() });
+        setPending({ note: event.note, start });
+        return;
+      }
+      const open_ = held.get(event.note);
+      if (!open_) return;
+      held.delete(event.note);
+      setPending(null);
+      const heldBeats = (performance.now() - open_.wall) / 1000 / secondsPerBeat(bpm);
+      const length = Math.max(MIN_LENGTH, heldBeats);
+      const { doc: next, id } = addNote(docRef.current, event.note, open_.start, length, open_.velocity);
       commit(next);
       setSelected(id);
-      syncPlayer(next, start + snapRef.current);
+      revealNote(event.note, open_.start);
+      // Step forward past the written note.
+      syncPlayer(next, open_.start + length);
     });
-    return off;
-  }, [open, input, commit, syncPlayer]);
+    return () => {
+      off();
+      held.clear();
+      setPending(null);
+    };
+  }, [open, input, commit, syncPlayer, revealNote]);
 
   const beatAt = (clientX: number): number => {
     const el = gridRef.current;
@@ -330,10 +377,11 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
     if (noteEl?.dataset.note) {
       const orig = docRef.current.notes.find((n) => n.id === noteEl.dataset.note);
       if (!orig) return;
-      const resize = (event.target as HTMLElement).dataset.handle === '1';
+      const handle = (event.target as HTMLElement).dataset.handle;
       setSelected(orig.id);
       gesture.current = {
-        kind: resize ? 'resize' : 'note',
+        kind: handle ? 'resize' : 'note',
+        edge: handle === 'l' ? 'l' : 'r',
         id: orig.id,
         orig,
         x: event.clientX,
@@ -363,6 +411,16 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
           note: g.orig.note - Math.round(dy / ROW_H),
         }),
       );
+    } else if (g.edge === 'l') {
+      // Dragging the left edge moves the start and keeps the end put.
+      const latest = Math.max(0, g.orig.start + g.orig.length - MIN_LENGTH);
+      const start = Math.min(latest, snapBeat(g.orig.start + dx / zoom, snap));
+      commitLive(
+        updateNote(docRef.current, g.id, {
+          start,
+          length: g.orig.length + (g.orig.start - start),
+        }),
+      );
     } else {
       const snapped = snapBeat(g.orig.length + dx / zoom, snap);
       commitLive(updateNote(docRef.current, g.id, { length: Math.max(MIN_LENGTH, snapped) }));
@@ -384,6 +442,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       const { doc: next, id } = addNote(docRef.current, note, start, snap, velocityRef.current);
       commit(next);
       setSelected(id);
+      revealNote(note, start);
       audition(note, velocityRef.current);
       return;
     }
@@ -405,6 +464,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   };
 
   const bars = Math.max(1, Math.round(doc.beats / 4));
+  const touch = useInputMode() === 'touch';
 
   return (
     <>
@@ -551,19 +611,15 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
             </button>
           </div>
 
-          <label className="roll-field vel">
+          <label className="roll-field vel" title={t('roll.holdHint')}>
             {t('roll.velocity')}
             <input
               type="range"
               min={0.05}
               max={1}
               step={0.01}
-              value={selectedNote ? selectedNote.velocity : velocity}
-              onChange={(event) => {
-                const value = Number(event.target.value);
-                if (selectedNote) commit(updateNote(docRef.current, selectedNote.id, { velocity: value }));
-                setVelocity(value);
-              }}
+              value={velocity}
+              onChange={(event) => setVelocity(Number(event.target.value))}
             />
           </label>
 
@@ -679,6 +735,66 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
           </div>
         </div>
 
+        {selectedNote ? (
+          <div className="roll-inspector">
+            <span className="ri-pitch">{noteName(selectedNote.note)}</span>
+            <label className="roll-field">
+              {t('roll.start')}
+              <input
+                type="number"
+                min={0}
+                step={snap}
+                value={selectedNote.start}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isFinite(value)) {
+                    commit(updateNote(docRef.current, selectedNote.id, { start: Math.max(0, value) }));
+                  }
+                }}
+              />
+            </label>
+            <label className="roll-field">
+              {t('roll.duration')}
+              <input
+                type="number"
+                min={MIN_LENGTH}
+                step={snap}
+                value={selectedNote.length}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isFinite(value)) {
+                    commit(updateNote(docRef.current, selectedNote.id, { length: Math.max(MIN_LENGTH, value) }));
+                  }
+                }}
+              />
+            </label>
+            <label className="roll-field vel">
+              {t('roll.velocity')}
+              <input
+                type="range"
+                min={0.05}
+                max={1}
+                step={0.01}
+                value={selectedNote.velocity}
+                onChange={(event) =>
+                  commit(
+                    updateNote(docRef.current, selectedNote.id, { velocity: Number(event.target.value) }),
+                  )
+                }
+              />
+            </label>
+            <button
+              type="button"
+              className="roll-btn"
+              onClick={deleteSelected}
+              aria-label={t('roll.delete')}
+              title={t('roll.delete')}
+            >
+              ⌫
+            </button>
+          </div>
+        ) : null}
+
         <div className="roll-scroll" ref={scrollRef}>
           <div className="roll-gutter" style={{ width: 56 }}>
             <div className="roll-corner" />
@@ -745,41 +861,60 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                 );
               })}
 
-              {doc.notes.map((note) => (
-                <div
-                  key={note.id}
-                  className={`roll-note${selected === note.id ? ' sel' : ''}`}
-                  data-note={note.id}
-                  style={{
-                    left: note.start * zoom,
-                    top: (high - note.note) * ROW_H + 1,
-                    width: Math.max(6, note.length * zoom - 2),
-                    height: ROW_H - 2,
-                    background: noteColor(note.note, low, high),
-                    opacity: 0.45 + note.velocity * 0.55,
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`${noteName(note.note)} · ${note.start.toFixed(2)}`}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      setSelected(note.id);
-                    } else if (event.key === 'Delete' || event.key === 'Backspace') {
+              {doc.notes.map((note) => {
+                const width = Math.max(12, note.length * zoom - 2);
+                return (
+                  <div
+                    key={note.id}
+                    className={`roll-note${selected === note.id ? ' sel' : ''}`}
+                    data-note={note.id}
+                    style={{
+                      left: note.start * zoom,
+                      top: (high - note.note) * ROW_H + 1,
+                      width,
+                      height: ROW_H - 2,
+                      background: noteColor(note.note, low, high),
+                      opacity: 0.45 + note.velocity * 0.55,
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${noteName(note.note)} · ${note.start.toFixed(2)}`}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelected(note.id);
+                      } else if (event.key === 'Delete' || event.key === 'Backspace') {
+                        event.preventDefault();
+                        commit(removeNote(docRef.current, note.id));
+                      }
+                    }}
+                    onDoubleClick={() => commit(removeNote(docRef.current, note.id))}
+                    onContextMenu={(event) => {
                       event.preventDefault();
                       commit(removeNote(docRef.current, note.id));
-                    }
+                    }}
+                    title={`${noteName(note.note)} · ${note.length.toFixed(2)} ${t('roll.beats')}`}
+                  >
+                    {width >= (touch ? 46 : 30) ? (
+                      <span className="rn-handle left" data-handle="l" />
+                    ) : null}
+                    {width >= (touch ? 30 : 18) ? <span className="rn-handle" data-handle="r" /> : null}
+                  </div>
+                );
+              })}
+
+              {pending ? (
+                <div
+                  className="roll-note pending"
+                  style={{
+                    left: pending.start * zoom,
+                    top: (high - pending.note) * ROW_H + 1,
+                    width: Math.max(12, snap * zoom - 2),
+                    height: ROW_H - 2,
+                    background: noteColor(pending.note, low, high),
                   }}
-                  onDoubleClick={() => commit(removeNote(docRef.current, note.id))}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    commit(removeNote(docRef.current, note.id));
-                  }}
-                  title={`${noteName(note.note)} · ${note.length.toFixed(2)} ${t('roll.bars')}`}
-                >
-                  {note.length * zoom > 26 ? <span className="rn-handle" data-handle="1" /> : null}
-                </div>
-              ))}
+                />
+              ) : null}
 
               {doc.notes.length === 0 ? <div className="roll-empty">{t('roll.empty')}</div> : null}
 

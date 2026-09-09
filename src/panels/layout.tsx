@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { store } from '@/state/store';
-import { useActiveSlot, useCanRedo, useCanUndo, useDisplayExpanded, useKeyboardVisible, usePower, usePresetId, useSlotFilled } from '@/hooks/useSynth';
+import { useActiveSlot, useCanRedo, useCanUndo, useDisplayExpanded, useKeyboardVisible, usePresetId, useSlotFilled } from '@/hooks/useSynth';
 import { noteBus, noteName, noteToHz } from '@/audio/noteBus';
 import { LfoLed, LfoRateLabel, Scope, ScopeMeta, Spectrum, VuMeter } from '@/components/canvas';
 import { Keyboard, Wheels } from '@/components/Keyboard';
 import { toast } from '@/components/Toast';
-import { engine, type EngineStatus } from '@/audio/engine';
+import { engine } from '@/audio/engine';
 import { midi } from '@/audio/midi';
 import { localizeName, t } from '@/i18n';
 import { haptic, useInputMode } from '@/hooks/useInputMode';
@@ -42,35 +42,18 @@ function MidiButton() {
 
 // ---------------------------------------------------------------- top bar
 
-function EngineBadge({ status }: { status: EngineStatus }) {
-  const label =
-    status === 'running'
-      ? 'ONLINE'
-      : status === 'loading'
-        ? 'LOADING'
-        : status === 'suspended'
-          ? 'SUSPENDED'
-          : status === 'error'
-            ? 'ERROR'
-            : 'STANDBY';
-  return <span className={`engine-badge ${status}`}>{label}</span>;
-}
-
 export function TopBar({
   onBrowse,
   onRoll,
-  status,
   view,
   onView,
 }: {
   onBrowse: () => void;
   onRoll: () => void;
-  status: EngineStatus;
   view: 'modules' | 'flow';
   onView: (view: 'modules' | 'flow') => void;
 }) {
   const currentPresetId = usePresetId();
-  const power = usePower();
   const keyboardVisible = useKeyboardVisible();
   const canUndo = useCanUndo();
   const canRedo = useCanRedo();
@@ -278,20 +261,6 @@ export function TopBar({
             <div className="brand-sub">GS-1 · WEB POLYPHONIC SYNTH</div>
           </div>
         ) : null}
-        <button
-          type="button"
-          className="power-btn"
-          title={t('top.power')}
-          aria-label={t('top.power')}
-          aria-pressed={power}
-          onClick={() => {
-            haptic();
-            store.setPower(!power);
-          }}
-        >
-          <span className={`pled${power ? ' on' : ''}`} />
-        </button>
-        {!phone ? <EngineBadge status={status} /> : null}
         {!compactBar ? viewToggle : null}
       </div>
 
@@ -319,7 +288,6 @@ export function TopBar({
 
       {compactBar ? (
         <div className="top-actions compact">
-          {phone ? <EngineBadge status={status} /> : null}
           {keyboardButton}
           <div className="top-more">
             <button
@@ -337,7 +305,7 @@ export function TopBar({
               </svg>
             </button>
             {moreOpen ? (
-              <div className="top-menu" role="menu">
+              <div className="top-menu" role="menu" onClick={() => setMoreOpen(false)}>
                 {abGroup}
                 {undoRedo}
                 <MidiButton />
@@ -376,7 +344,7 @@ export function TopBar({
                 </svg>
               </button>
               {moreOpen ? (
-                <div className="top-menu" role="menu">
+                <div className="top-menu" role="menu" onClick={() => setMoreOpen(false)}>
                   {abGroup}
                   {randomButton}
                   {saveButton}

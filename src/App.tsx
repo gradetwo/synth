@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { engine } from '@/audio/engine';
 import { store } from '@/state/store';
 import { useLayout, usePower, useTheme, useView } from '@/hooks/useSynth';
@@ -119,6 +119,23 @@ export default function App() {
     if (viewport.device === 'desktop') store.expandAutoCollapsed();
   }, [viewport.device]);
 
+  // On phones the flow view starts without the piano dock so the graph gets the
+  // screen, but the keyboard toggle keeps working — restore it on the way back.
+  const keyboardBeforeFlow = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (viewport.device !== 'phone') return;
+    if (view === 'flow') {
+      if (keyboardBeforeFlow.current === null) {
+        keyboardBeforeFlow.current = store.getSnapshot().layout.keyboardVisible;
+        if (keyboardBeforeFlow.current) store.setKeyboardVisible(false);
+      }
+    } else if (keyboardBeforeFlow.current !== null) {
+      const restore = keyboardBeforeFlow.current;
+      keyboardBeforeFlow.current = null;
+      if (restore) store.setKeyboardVisible(true);
+    }
+  }, [view, viewport.device]);
+
   useEffect(() => {
     // Keep the graph muted when the power switch is off.
     engine.setMuted(!power);
@@ -223,7 +240,6 @@ export default function App() {
       <TopBar
         onBrowse={() => setDrawerOpen(true)}
         onRoll={openRoll}
-        status={status}
         view={view}
         onView={(next) => store.setView(next)}
       />

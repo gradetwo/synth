@@ -46,11 +46,6 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 .brand-text .brand-name{font:700 15px/1.1 var(--grot);letter-spacing:.06em}
 .brand-text .brand-name b{color:var(--accent)}
 .brand-text .brand-sub{font:500 8.5px/1 var(--mono);color:var(--txt-dim);letter-spacing:.14em;margin-top:3px}
-.power-btn{margin-left:10px;width:34px;height:22px;border-radius:6px;cursor:pointer;
-  background:var(--bg-inset);border:1px solid var(--border);display:grid;place-items:center}
-.power-btn .pled{width:9px;height:9px;border-radius:50%;background:#3a2230;
-  box-shadow:inset 0 0 3px #000;transition:.2s}
-.power-btn .pled.on{background:#ff5d5d;box-shadow:0 0 10px #ff5d5d88}
 .preset-ctrl{display:flex;align-items:stretch;gap:8px;flex:1;min-width:0;justify-content:center}
 .nav-btn{width:30px;border:1px solid var(--border);border-radius:8px;cursor:pointer;
   background:var(--bg-inset);color:var(--txt-2);font-size:16px;font-family:var(--mono);transition:.15s}
@@ -460,12 +455,6 @@ button{touch-action:manipulation}
 }
 
 /* Engine status pill in the top bar. */
-.engine-badge{font:600 8px/1 var(--mono);letter-spacing:.14em;padding:5px 8px;border-radius:20px;
-  border:1px solid var(--border);color:var(--txt-dim);background:var(--bg-inset)}
-.engine-badge.running{color:#6ee7a0;border-color:#2f5f43;background:#0f1a14}
-.engine-badge.loading{color:var(--accent);border-color:var(--accent-dim);background:#1a1508}
-.engine-badge.error{color:#ff6b6b;border-color:#5f2f2f;background:#1a0f0f}
-.engine-badge.suspended{color:#ffd166;border-color:#5f532f;background:#1a1708}
 
 /* Octave shift controls above the keyboard. */
 .keyboard-head{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:8px}
@@ -1099,7 +1088,7 @@ input,textarea,[contenteditable='true']{
 .topbar.compact .top-actions{order:2;width:auto}
 .topbar.compact .view-toggle{order:9;margin-left:0;width:100%}
 .top-more{position:relative}
-.top-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:60;min-width:196px;
+.top-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:45;min-width:196px;
   display:flex;flex-direction:column;gap:6px;padding:10px;
   background:linear-gradient(180deg,#1b1f29,#12151b);border:1px solid var(--border-hi);
   border-radius:12px;box-shadow:0 18px 44px rgba(0,0,0,.62);
@@ -1164,7 +1153,7 @@ input,textarea,[contenteditable='true']{
 /* ---- tablet (iPad) chrome ---------------------------------------------- */
 /* Icon-only actions so the preset stepper keeps a usable width. */
 @media (min-width:621px) and (max-width:1100px){
-  .top-actions .tbtn-label{display:none}
+  .top-actions:not(.compact) > .tbtn .tbtn-label{display:none}
   .top-actions .tbtn{padding:10px 11px}
   .preset-ctrl{flex:1 1 auto;min-width:220px}
 }
@@ -1210,10 +1199,8 @@ input,textarea,[contenteditable='true']{
    left below the chrome, minus the dock where it stays. */
 .app[data-view='flow'] .display-row{display:none}
 .app[data-view='flow'] .flow-canvas-wrap{min-height:0}
-.app[data-device='phone'][data-view='flow'] .kbd-dock,
-.app[data-device='phone'][data-view='flow'] .dock-spacer,
-.app[data-device='phone'][data-view='flow'] .top-actions .tbtn[data-kb]{display:none}
-/* No dock to clear on phones, so the detail sheet docks to the screen edge. */
+/* The phone keyboard is auto-hidden when flow view opens (App), but the user
+   can always bring it back — so no forced display:none here. */
 .app[data-device='phone'][data-view='flow'] .flow-params{bottom:env(safe-area-inset-bottom)}
 
 /* Landscape phones: the view toggle joins the top row instead of spending a
@@ -1330,10 +1317,21 @@ input,textarea,[contenteditable='true']{
 .roll-note.sel{outline:2px solid #fff;outline-offset:-1px;z-index:2}
 .rn-handle{position:absolute;top:0;right:0;bottom:0;width:7px;cursor:ew-resize;
   background:linear-gradient(90deg,transparent,rgba(0,0,0,.35))}
+.rn-handle.left{left:0;right:auto;
+  background:linear-gradient(270deg,transparent,rgba(0,0,0,.35))}
+.roll-note.pending{opacity:.5;pointer-events:none;outline:1px dashed rgba(255,255,255,.75)}
 .roll-playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--accent);
   box-shadow:0 0 8px rgba(255,179,64,.8);pointer-events:none;z-index:4}
 .roll-empty{position:absolute;left:18px;top:16px;font:600 11px/1.4 var(--grot);
   color:var(--txt-dim);pointer-events:none;max-width:260px}
+
+/* ---- selected-note inspector -------------------------------------------- */
+.roll-inspector{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:none;
+  padding:7px 12px;border-bottom:1px solid #222735;background:rgba(255,199,106,.05)}
+.ri-pitch{font:800 13px/1 var(--mono);color:var(--accent);min-width:34px}
+.roll-inspector .roll-field input[type='number']{width:60px}
+.roll-inspector .roll-field.vel input[type='range']{width:90px}
+.roll-inspector .roll-btn{margin-left:auto}
 
 /* ---- input keyboard ----------------------------------------------------- */
 .roll-kbd{flex:none;position:relative;padding:6px 12px calc(8px + env(safe-area-inset-bottom));
@@ -1346,7 +1344,7 @@ input,textarea,[contenteditable='true']{
 @media (pointer: coarse){
   .roll-btn{min-height:38px;padding:0 12px}
   .roll-note{min-height:14px}
-  .rn-handle{width:14px}
+  .rn-handle{width:12px}
   .roll-kbd .keyboard{height:92px}
 }
 
