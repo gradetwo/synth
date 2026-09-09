@@ -86,3 +86,56 @@ test.describe('signal flow animation', () => {
     await key.dispatchEvent('pointerup', { pointerId: 31, pointerType: 'touch' });
   });
 });
+
+test.describe('signal flow live content', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('wires track the node during the drag, not only on release', async ({ page }) => {
+    await boot(page);
+    const filter = page.locator('.flow-node[data-node="filter"]');
+    const wire = page.locator('.flow-wire').nth(2); // filter -> env
+    const before = await wire.getAttribute('d');
+    const box = (await filter.boundingBox())!;
+
+    await page.mouse.move(box.x + 60, box.y + 12);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 160, box.y + 90, { steps: 6 });
+    const during = await wire.getAttribute('d');
+    expect(during).not.toBe(before);
+    await page.mouse.up();
+  });
+
+  test('every node canvas draws visible content, not a black box', async ({ page }) => {
+    await boot(page);
+    const key = page.locator('.wkey').first();
+    const box = (await key.boundingBox())!;
+    await key.dispatchEvent('pointerdown', {
+      pointerId: 41,
+      pointerType: 'touch',
+      clientX: box.x + box.width / 2,
+      clientY: box.y + box.height - 6,
+    });
+    await page.waitForTimeout(600);
+
+    const rows = await page.evaluate(() => {
+      const out: { id: string; lit: number }[] = [];
+      document.querySelectorAll('.flow-node').forEach((node) => {
+        const canvas = node.querySelector('canvas') as HTMLCanvasElement;
+        const data = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
+        let lit = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i] + data[i + 1] + data[i + 2] > 60) lit++;
+        }
+        out.push({ id: node.getAttribute('data-node') ?? '', lit });
+      });
+      return out;
+    });
+
+    expect(rows.length).toBe(10);
+    for (const row of rows) {
+      // Even bypassed nodes stay visible; enabled ones are far brighter.
+      expect(row.lit, row.id).toBeGreaterThan(50);
+    }
+    await key.dispatchEvent('pointerup', { pointerId: 41, pointerType: 'touch' });
+  });
+});
