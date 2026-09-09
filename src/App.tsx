@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { engine } from '@/audio/engine';
 import { store } from '@/state/store';
-import { useLayout, usePower, useTheme, useView } from '@/hooks/useSynth';
+import { useContrast, useLayout, usePower, useTheme, useView } from '@/hooks/useSynth';
 import { useViewport } from '@/hooks/useViewport';
 import { wireAnalysis } from '@/audio/analysis';
 import { TopBar, DisplayRow, KeyboardDock } from '@/panels/layout';
@@ -22,6 +22,7 @@ import { toast } from '@/components/Toast';
 import { midiPlayer } from '@/midi/player';
 import { recorder } from '@/midi/recorder';
 import { midiLibrary } from '@/midi/library';
+import { setResolvedTheme } from '@/state/theme';
 
 wireAnalysis();
 
@@ -93,6 +94,8 @@ export default function App() {
   const viewport = useViewport();
   const power = usePower();
   const theme = useTheme();
+  const contrast = useContrast();
+  const [systemDark, setSystemDark] = useState(true);
 
   useEffect(() => {
     // Apply a shared patch from the URL hash on first load.
@@ -141,9 +144,28 @@ export default function App() {
     engine.setMuted(!power);
   }, [power]);
 
+  // Follow the OS colour scheme while `theme` is `auto`, including live
+  // switches (macOS sunset, iOS appearance toggle, browser devtools).
   useEffect(() => {
-    document.body.classList.toggle('contrast', theme === 'contrast');
-  }, [theme]);
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const sync = () => setSystemDark(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+
+  const resolvedTheme = theme === 'auto' ? (systemDark ? 'dark' : 'light') : theme;
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.theme = resolvedTheme;
+    root.style.colorScheme = resolvedTheme;
+    document.body.classList.toggle('contrast', contrast);
+    setResolvedTheme(resolvedTheme);
+    // Keep the mobile browser chrome in step with the app.
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', resolvedTheme === 'light' ? '#eef1f6' : '#0b0d11');
+  }, [resolvedTheme, contrast]);
 
   useEffect(() => {
     setHapticsEnabled(layout.haptics);

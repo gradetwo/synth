@@ -27,6 +27,7 @@ import {
   normalizeLayout,
   type LayoutState,
   type ModuleId,
+  type Theme,
   type ViewMode,
 } from './layout';
 import {
@@ -458,11 +459,21 @@ class SynthStore {
     this.commit();
   }
 
-  toggleTheme() {
-    this.layout = {
-      ...this.layout,
-      theme: this.layout.theme === 'contrast' ? 'dark' : 'contrast',
-    };
+  setTheme(theme: Theme) {
+    if (this.layout.theme === theme) return;
+    this.layout = { ...this.layout, theme };
+    this.commit();
+  }
+
+  /** Cycle dark → light → auto, used by the quick toggle. */
+  cycleTheme() {
+    const order: Theme[] = ['dark', 'light', 'auto'];
+    const next = order[(order.indexOf(this.layout.theme) + 1) % order.length];
+    this.setTheme(next);
+  }
+
+  toggleContrast() {
+    this.layout = { ...this.layout, contrast: !this.layout.contrast };
     this.commit();
   }
 

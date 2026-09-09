@@ -17,6 +17,7 @@ import { midi } from '@/audio/midi';
 import { noteBus, noteName } from '@/audio/noteBus';
 import { engine } from '@/audio/engine';
 import { midiLibrary, trackTitle, type Track } from '@/midi/library';
+import { useResolvedTheme } from '@/state/theme';
 import { exportSongMidi } from '@/midi/export';
 import {
   addNote,
@@ -53,9 +54,11 @@ const snapLabel = (beats: number): string =>
   ({ 0.125: '1/32', 0.25: '1/16', 0.5: '1/8', 1: '1/4' })[beats] ?? `${beats}`;
 
 /** Blue for low notes through orange for high ones. */
-const noteColor = (note: number, low: number, high: number): string => {
+const noteColor = (note: number, low: number, high: number, light = false): string => {
   const ratio = high === low ? 0.5 : (note - low) / (high - low);
-  return `hsl(${Math.round(205 - ratio * 165)} 82% 56%)`;
+  return light
+    ? `hsl(${Math.round(205 - ratio * 165)} 68% 44%)`
+    : `hsl(${Math.round(205 - ratio * 165)} 82% 56%)`;
 };
 
 type Gesture =
@@ -465,6 +468,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
 
   const bars = Math.max(1, Math.round(doc.beats / 4));
   const touch = useInputMode() === 'touch';
+  const light = useResolvedTheme() === 'light';
 
   return (
     <>
@@ -873,7 +877,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                       top: (high - note.note) * ROW_H + 1,
                       width,
                       height: ROW_H - 2,
-                      background: noteColor(note.note, low, high),
+                      background: noteColor(note.note, low, high, light),
                       opacity: 0.45 + note.velocity * 0.55,
                     }}
                     role="button"
@@ -911,7 +915,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                     top: (high - pending.note) * ROW_H + 1,
                     width: Math.max(12, snap * zoom - 2),
                     height: ROW_H - 2,
-                    background: noteColor(pending.note, low, high),
+                    background: noteColor(pending.note, low, high, light),
                   }}
                 />
               ) : null}

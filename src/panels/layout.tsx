@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { store } from '@/state/store';
-import { useActiveSlot, useCanRedo, useCanUndo, useDisplayExpanded, useKeyboardVisible, usePresetId, useSlotFilled } from '@/hooks/useSynth';
+import { useActiveSlot, useCanRedo, useCanUndo, useDisplayExpanded, useKeyboardVisible, usePresetId, useSlotFilled, useTheme } from '@/hooks/useSynth';
 import { noteBus, noteName, noteToHz } from '@/audio/noteBus';
 import { LfoLed, LfoRateLabel, Scope, ScopeMeta, Spectrum, VuMeter } from '@/components/canvas';
 import { Keyboard, Wheels } from '@/components/Keyboard';
@@ -54,6 +54,7 @@ export function TopBar({
   onView: (view: 'modules' | 'flow') => void;
 }) {
   const currentPresetId = usePresetId();
+  const theme = useTheme();
   const keyboardVisible = useKeyboardVisible();
   const canUndo = useCanUndo();
   const canRedo = useCanRedo();
@@ -165,6 +166,39 @@ export function TopBar({
         <path d="M6 5v5.5M10 5v5.5M14 5v5.5M18 5v5.5" strokeWidth="3.4" />
       </svg>
       <span className="tbtn-label">{t('roll.title')}</span>
+    </button>
+  );
+
+  const themeIcon =
+    theme === 'light' ? (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="4.2" />
+        <path d="M12 2v2.4M12 19.6V22M2 12h2.4M19.6 12H22M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7" />
+      </svg>
+    ) : theme === 'auto' ? (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M12 3.5v17" />
+        <path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none" />
+      </svg>
+    ) : (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" />
+      </svg>
+    );
+
+  const themeButton = (
+    <button
+      type="button"
+      className="tbtn"
+      title={`${t('theme.label')} · ${t(`theme.${theme}`)}`}
+      onClick={() => {
+        haptic();
+        store.cycleTheme();
+      }}
+    >
+      {themeIcon}
+      <span className="tbtn-label">{t(`theme.${theme}`)}</span>
     </button>
   );
 
@@ -310,6 +344,7 @@ export function TopBar({
                 {undoRedo}
                 <MidiButton />
                 {rollButton}
+                {themeButton}
                 {randomButton}
                 {saveButton}
                 {browseButton}
@@ -346,6 +381,7 @@ export function TopBar({
               {moreOpen ? (
                 <div className="top-menu" role="menu" onClick={() => setMoreOpen(false)}>
                   {abGroup}
+                  {themeButton}
                   {randomButton}
                   {saveButton}
                 </div>

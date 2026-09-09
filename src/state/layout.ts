@@ -33,7 +33,8 @@ export const MODULE_META: Record<ModuleId, ModuleMeta> = {
   fx2: { title: 'FX 2', sub: 'module.fx2.sub', color: 'var(--fx)', span: 2 },
 };
 
-export type Theme = 'dark' | 'contrast';
+/** Colour scheme. `auto` follows the operating system preference live. */
+export type Theme = 'dark' | 'light' | 'auto';
 
 /**
  * How a touch on a key maps to note velocity.
@@ -50,6 +51,8 @@ export interface LayoutState {
   collapsed: Partial<Record<ModuleId, boolean>>;
   keyboardVisible: boolean;
   theme: Theme;
+  /** High-contrast overlay, independent of the colour scheme. */
+  contrast: boolean;
   lang: Lang;
   velocityMode: VelocityMode;
   haptics: boolean;
@@ -71,7 +74,9 @@ export function defaultLayout(): LayoutState {
     order: [...MODULE_IDS],
     collapsed: {},
     keyboardVisible: true,
-    theme: 'dark',
+    // Fresh installs follow the operating system; the user can pin either mode.
+    theme: 'auto',
+    contrast: false,
     lang: 'zh',
     velocityMode: 'fixed',
     haptics: true,
@@ -124,7 +129,15 @@ export function normalizeLayout(raw: unknown): LayoutState {
     order,
     collapsed,
     keyboardVisible: input.keyboardVisible !== false,
-    theme: input.theme === 'contrast' ? 'contrast' : 'dark',
+    // Older saves used `theme: 'contrast'`; migrate it to dark + contrast.
+    theme:
+      input.theme === 'light'
+        ? 'light'
+        : input.theme === 'dark' || (input.theme as string) === 'contrast'
+          ? 'dark'
+          : 'auto',
+    // `contrast` was a theme value in older saves.
+    contrast: input.contrast === true || (input.theme as string) === 'contrast',
     lang: input.lang === 'en' ? 'en' : 'zh',
     velocityMode: input.velocityMode === 'touch' ? 'touch' : 'fixed',
     haptics: input.haptics !== false,

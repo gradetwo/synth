@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { store, type Snapshot } from '@/state/store';
 import type { ParamId } from '@/audio/params';
-import type { LayoutState, ModuleId } from '@/state/layout';
+import type { LayoutState, ModuleId, Theme } from '@/state/layout';
 import type { ModRoute } from '@/audio/params';
 import type { Preset } from '@/state/presets';
 
@@ -55,11 +55,19 @@ export function useLang(): 'zh' | 'en' {
   );
 }
 
-export function useTheme(): 'dark' | 'contrast' {
+export function useTheme(): Theme {
   return useSyncExternalStore(
     subscribe,
     () => store.getSnapshot().layout.theme,
     () => store.getSnapshot().layout.theme,
+  );
+}
+
+export function useContrast(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getSnapshot().layout.contrast,
+    () => store.getSnapshot().layout.contrast,
   );
 }
 

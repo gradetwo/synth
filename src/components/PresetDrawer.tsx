@@ -5,7 +5,7 @@ import { PRESET_CATEGORIES, type PresetCategory } from '@/state/presets';
 import { WaveIcon } from './controls';
 import { toast } from './Toast';
 import { LANG_LABELS, localizeName, t } from '@/i18n';
-import { useLang, useHaptics } from '@/hooks/useSynth';
+import { useLang, useHaptics, useTheme, useContrast } from '@/hooks/useSynth';
 import { canVibrate, haptic, HAPTIC } from '@/hooks/useInputMode';
 
 const SW_COLOR: Record<string, string> = {
@@ -28,6 +28,8 @@ export function PresetDrawer({
 }) {
   const { userPresets, currentPresetId } = useSynth();
   const lang = useLang();
+  const theme = useTheme();
+  const contrast = useContrast();
   const hapticsOn = useHaptics();
   const vibrate = canVibrate();
   const [category, setCategory] = useState<PresetCategory>('ALL');
@@ -182,12 +184,33 @@ export function PresetDrawer({
             >
               {lang === 'zh' ? LANG_LABELS.en : LANG_LABELS.zh}
             </button>
+            <div className="d-theme" role="group" aria-label={t('theme.label')}>
+              <span className="d-theme-label">{t('theme.label')}</span>
+              {(['dark', 'light', 'auto'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={`d-theme-btn${theme === mode ? ' on' : ''}`}
+                  aria-pressed={theme === mode}
+                  title={mode === 'auto' ? t('theme.autoHint') : t(`theme.${mode}`)}
+                  onClick={() => {
+                    haptic();
+                    store.setTheme(mode);
+                  }}
+                >
+                  {t(`theme.${mode}`)}
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               className="d-reset"
+              aria-pressed={contrast}
               onClick={() => {
-                store.toggleTheme();
-                toast(store.getSnapshot().layout.theme === 'contrast' ? t('drawer.contrastOn') : t('drawer.contrastOff'));
+                store.toggleContrast();
+                toast(
+                  store.getSnapshot().layout.contrast ? t('drawer.contrastOn') : t('drawer.contrastOff'),
+                );
               }}
             >
               {t('drawer.contrast')}

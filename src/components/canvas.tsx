@@ -7,6 +7,7 @@ import { useParam } from '@/hooks/useSynth';
 import { intToFilter, intToWave, intToLfoWave, type ParamId, type Wave } from '@/audio/params';
 import { scopeGain, spectrumDisplay, vuDisplay } from '@/audio/meter';
 import { t } from '@/i18n';
+import { canvasInk } from '@/state/theme';
 
 const TAU = Math.PI * 2;
 
@@ -98,7 +99,8 @@ export function Scope() {
   const buf = useRef(new Float32Array(1024));
   const gain = useRef(1);
   const ref = useRafCanvas((ctx, w, h) => {
-    ctx.fillStyle = 'rgba(11,13,18,.4)';
+    const ink = canvasInk();
+    ctx.fillStyle = ink.spectrumBg;
     ctx.fillRect(0, 0, w, h);
     const data = buf.current;
     if (!engine.getTimeDomain(data)) return;
@@ -115,8 +117,8 @@ export function Scope() {
 
     ctx.beginPath();
     ctx.lineWidth = 1.6;
-    ctx.strokeStyle = '#ffb340';
-    ctx.shadowColor = 'rgba(255,179,64,.7)';
+    ctx.strokeStyle = ink.accent;
+    ctx.shadowColor = ink.accentFade;
     ctx.shadowBlur = 7;
     const n = data.length;
     for (let i = 0; i < n; i++) {
@@ -146,7 +148,8 @@ export function ScopeMeta() {
 
 export function Spectrum() {
   const ref = useRafCanvas((ctx, w, h) => {
-    ctx.fillStyle = 'rgba(11,13,18,.5)';
+    const ink = canvasInk();
+    ctx.fillStyle = ink.spectrumBg;
     ctx.fillRect(0, 0, w, h);
     const bins = analysis.spectrum;
     const peaks = analysis.peaks;
@@ -160,8 +163,8 @@ export function Spectrum() {
         const x = i * bw + 1.5;
         const wid = Math.max(1, bw - 3);
         const g = ctx.createLinearGradient(0, h, 0, h - bh);
-        g.addColorStop(0, 'rgba(255,179,64,.18)');
-        g.addColorStop(1, '#ffb340');
+        g.addColorStop(0, ink.accentFade);
+        g.addColorStop(1, ink.accent);
         ctx.fillStyle = g;
         if (ctx.roundRect) {
           ctx.beginPath();
@@ -172,7 +175,7 @@ export function Spectrum() {
         }
       }
       if (pv > 0.01) {
-        ctx.fillStyle = 'rgba(255,255,255,.6)';
+        ctx.fillStyle = ink.peak;
         ctx.fillRect(i * bw + 1.5, h - pv * (h - 6) - 1.5, Math.max(1, bw - 3), 1.5);
       }
     }
@@ -197,7 +200,7 @@ export function MiniWave({
       ? intToLfoWave(store.getParam(24 as ParamId))
       : intToWave(store.getParam((which === 1 ? 2 : 8) as ParamId));
     ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = on ? color : '#333a48';
+    ctx.strokeStyle = on ? color : canvasInk().off;
     ctx.lineWidth = 1.6;
     if (on) {
       ctx.shadowColor = color;
@@ -271,7 +274,13 @@ export function VuMeter() {
     for (let i = 0; i < segs; i++) {
       const y = h - (i + 1) * sh - i * gap;
       const on = i < lit;
-      ctx.fillStyle = on ? (i < 8 ? '#6ee7a0' : i < 10 ? '#ffd166' : '#ff6b6b') : '#1c2029';
+      ctx.fillStyle = on
+        ? i < 8
+          ? '#6ee7a0'
+          : i < 10
+            ? '#ffd166'
+            : '#ff6b6b'
+        : canvasInk().off;
       ctx.fillRect(0, y, w, sh);
     }
   });
