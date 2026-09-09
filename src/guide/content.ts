@@ -981,8 +981,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
       {
         kind: 'p',
         text: [
-          '信号流视图顶部的性能条就是演奏模式：选择曲目、播放 / 暂停 / 停止 / 循环、录制，以及画布缩放。导入、导出 MIDI / MP3 在「播放器」面板里。底部键盘始终可用，所以可以一边看信号流一边弹奏、录制。',
-          'The bar at the top of the flow view is performance mode: pick a track, play/pause/stop/loop, record, and zoom the canvas. Import and MIDI/MP3 export live in the player panel. The keyboard stays available at the bottom, so you can play and record while watching the signal flow.',
+          '信号流视图顶部的性能条就是演奏模式：选择曲目、播放 / 暂停 / 停止 / 循环、录制，以及画布缩放。导入、导出 MIDI / MP3 在「播放器」面板里。手机上进入信号流视图时，监视条和底部键盘会自动收起，把整屏留给信号图；切回「模块」即可继续弹奏、录制。',
+          'The bar at the top of the flow view is performance mode: pick a track, play/pause/stop/loop, record, and zoom the canvas. Import and MIDI/MP3 export live in the player panel. On phones the monitor strip and the keyboard tuck away in flow view so the graph owns the screen; switch back to Modules to play and record.',
         ],
       },
       { kind: 'h', text: ['和弦识别', 'Chord recognition'] },
