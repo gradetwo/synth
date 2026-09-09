@@ -29,9 +29,27 @@ test.describe('player', () => {
     await expect(play).not.toHaveClass(/\bon\b/);
   });
 
-  test('shows a chord name for three held notes', async ({ page }) => {
+  test('shows a chord name for three held notes, visually distinct', async ({ page }) => {
     await boot(page);
     const keys = page.locator('.wkey');
+    const valStyle = () =>
+      page.locator('.note-display .nd-val').evaluate((el) => {
+        const s = getComputedStyle(el);
+        return { size: parseFloat(s.fontSize), color: s.color };
+      });
+
+    // Single note first, for comparison.
+    const single = (await keys.nth(0).boundingBox())!;
+    await keys.nth(0).dispatchEvent('pointerdown', {
+      pointerId: 9,
+      pointerType: 'touch',
+      clientX: single.x + single.width / 2,
+      clientY: single.y + single.height - 6,
+    });
+    await expect(page.locator('.nd-label')).toHaveText('NOTE');
+    const noteStyle = await valStyle();
+    await keys.nth(0).dispatchEvent('pointerup', { pointerId: 9, pointerType: 'touch' });
+
     const picks = [0, 2, 4]; // C E G
     const boxes = [];
     for (const i of picks) boxes.push((await keys.nth(i).boundingBox())!);
@@ -45,6 +63,12 @@ test.describe('player', () => {
     }
     await expect(page.locator('.nd-label')).toHaveText('CHORD');
     await expect(page.locator('.nd-val')).toHaveText('C');
+    await expect(page.locator('.note-display')).toHaveClass(/chord/);
+
+    const chordStyle = await valStyle();
+    expect(chordStyle.size).toBeGreaterThan(noteStyle.size);
+    expect(chordStyle.color).not.toBe(noteStyle.color);
+
     for (let n = 0; n < picks.length; n++) {
       await keys.nth(picks[n]).dispatchEvent('pointerup', { pointerId: 20 + n, pointerType: 'touch' });
     }

@@ -268,7 +268,7 @@ function NoteDisplay() {
   );
   const chord = detectChord(held);
   return (
-    <div className="note-display">
+    <div className={`note-display${chord ? ' chord' : ''}`}>
       <span className="nd-label">{chord ? 'CHORD' : 'NOTE'}</span>
       <span className="nd-val">{chord ? chord.name : info.note === null ? '—' : noteName(info.note)}</span>
       <span className="nd-sub">

@@ -7,7 +7,7 @@
   --bg-inset:#101319; --bg-socket:#0c0e13;
   --border:#282d38; --border-hi:#3a4152;
   --txt-1:#e8ecf4; --txt-2:#8b93a7; --txt-dim:#565e72;
-  --accent:#ffb340; --accent-dim:#8a5f1e;
+  --accent:#ffb340; --accent-dim:#8a5f1e; --chord:#5ee7ff;
   --osc1:#4da3ff; --osc2:#35d0c5; --filter:#6ee7a0;
   --env:#f472b6; --lfo:#fb923c; --matrix:#facc15; --fx:#a78bfa;
   --mono:'IBM Plex Mono',monospace; --grot:'Space Grotesk','Noto Sans SC',sans-serif;
@@ -95,6 +95,24 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 .nd-val{font:700 26px/1 var(--mono);color:var(--accent);
   text-shadow:0 0 14px rgba(255,179,64,.4);font-variant-numeric:tabular-nums;min-height:26px}
 .nd-sub{font:500 9px/1 var(--mono);color:var(--txt-dim)}
+/* Chord mode: bigger, cyan and clearly separated from a single note. */
+.note-display.chord{
+  background:color-mix(in srgb,var(--chord) 12%,var(--bg-socket));
+  border-color:color-mix(in srgb,var(--chord) 55%,#20242e);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--chord) 22%,transparent),
+             0 0 20px color-mix(in srgb,var(--chord) 20%,transparent)}
+.note-display.chord .nd-label{
+  align-self:flex-start;background:var(--chord);color:#062028;
+  border-radius:4px;padding:2px 6px;font-weight:800}
+.note-display.chord .nd-val{
+  font-size:36px;min-height:36px;color:#eafcff;letter-spacing:.02em;
+  text-shadow:0 0 4px rgba(94,231,255,.95),0 0 20px rgba(94,231,255,.65);
+  animation:chord-pop .18s ease-out}
+.note-display.chord .nd-sub{color:color-mix(in srgb,var(--chord) 60%,var(--txt-2))}
+@keyframes chord-pop{
+  from{transform:scale(.82);opacity:.4}
+  to{transform:scale(1);opacity:1}
+}
 .vu{display:flex;flex-direction:column;align-items:center;gap:5px;padding-top:2px}
 .vu-track{display:flex;flex-direction:column-reverse;gap:3px;flex:1;padding:4px 4px 0;
   background:var(--bg-socket);border:1px solid #20242e;border-radius:6px}
@@ -515,6 +533,7 @@ button{touch-action:manipulation}
   .scope-body,.spec-body{height:104px}
   .monitor-body{height:104px;gap:8px;padding:8px}
   .nd-val{font-size:22px;min-height:22px}
+  .note-display.chord .nd-val{font-size:30px;min-height:30px}
   .modules{gap:10px}
   .module{padding:11px 10px 12px}
   .knob{min-width:52px}
