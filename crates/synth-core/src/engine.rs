@@ -12,7 +12,8 @@ use crate::dsp::simd;
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_clip, Rng};
 use crate::fft::Spectrum;
 use crate::params::{
-    id, LfoTarget, ModDst, ModSrc, OscParams, Params, MAX_BLOCK_SIZE, MAX_VOICES,
+    id, is_continuous, LfoTarget, ModDst, ModSrc, OscParams, Params, MAX_BLOCK_SIZE, MAX_VOICES,
+    PARAM_COUNT,
 };
 use crate::voice::{NoteOnResult, VoiceManager};
 
@@ -53,6 +54,26 @@ extern "C" {
 const STEAL_RELEASE: f32 = 0.004;
 /// Per-voice gain before the mix bus.
 const VOICE_GAIN: f32 = 0.22;
+/// One-pole time constant for continuous-parameter smoothing (seconds).
+const SMOOTH_TAU_S: f32 = 0.02;
+/// Peak limiter: ceiling, attack and release (seconds).
+const LIMIT_CEILING: f32 = 0.95;
+const LIMIT_ATTACK_S: f32 = 0.002;
+const LIMIT_RELEASE_S: f32 = 0.15;
+
+fn is_env_param(param_id: u32) -> bool {
+    matches!(
+        param_id,
+        id::ENV_ATTACK
+            | id::ENV_DECAY
+            | id::ENV_SUSTAIN
+            | id::ENV_RELEASE
+            | id::FILTER_ENV_ATTACK
+            | id::FILTER_ENV_DECAY
+            | id::FILTER_ENV_SUSTAIN
+            | id::FILTER_ENV_RELEASE
+    )
+}
 
 #[derive(Clone, Copy)]
 struct FxSnapshot {
@@ -114,6 +135,15 @@ pub struct Engine {
     mono_held: [u8; 16],
     mono_len: usize,
     master_gain: f32,
+    /// Block-rate one-pole smoother for continuous parameters (anti-zipper).
+    /// `smooth_set` marks parameters the host has actually provided, so unset
+    /// parameters keep their defaults instead of snapping to zero.
+    smooth_target: [f32; PARAM_COUNT],
+    smooth_value: [f32; PARAM_COUNT],
+    smooth_set: [bool; PARAM_COUNT],
+    smooth_ready: [bool; PARAM_COUNT],
+    /// Peak-limiter gain reduction (1.0 = no limiting).
+    limit_gain: f32,
     peak_l: f32,
     peak_r: f32,
     active_voices: u32,
@@ -155,6 +185,11 @@ impl Engine {
             mono_held: [0; 16],
             mono_len: 0,
             master_gain: 0.75,
+            smooth_target: [0.0; PARAM_COUNT],
+            smooth_value: [0.0; PARAM_COUNT],
+            smooth_set: [false; PARAM_COUNT],
+            smooth_ready: [false; PARAM_COUNT],
+            limit_gain: 1.0,
             peak_l: 0.0,
             peak_r: 0.0,
             active_voices: 0,
@@ -210,6 +245,13 @@ impl Engine {
         let mode_changed =
             param_id == id::VOICE_MODE && (value as u32).min(2) != self.params.voice_mode;
         self.params.set(param_id, value);
+        if is_continuous(param_id) {
+            let index = param_id as usize;
+            if index < PARAM_COUNT {
+                self.smooth_target[index] = if value.is_finite() { value } else { 0.0 };
+                self.smooth_set[index] = true;
+            }
+        }
         if matches!(
             param_id,
             id::ENV_ATTACK
@@ -235,6 +277,36 @@ impl Engine {
 
     pub fn set_route(&mut self, index: usize, src: u32, dst: u32, amount: f32, enabled: bool) {
         self.params.set_route(index, src, dst, amount, enabled);
+    }
+
+    /// Advance the block-rate smoothers and write the smoothed values into the
+    /// parameter block the DSP reads. First call snaps to the host value so
+    /// patch loading stays sample-accurate.
+    fn update_smoothing(&mut self, frames: usize) {
+        let sr = self.sample_rate.max(1000.0);
+        let coeff = 1.0 - (-(frames as f32) / (SMOOTH_TAU_S * sr)).exp();
+        let mut env_changed = false;
+        for index in 0..PARAM_COUNT {
+            let param_id = index as u32;
+            if !is_continuous(param_id) || !self.smooth_set[index] {
+                continue;
+            }
+            let target = self.smooth_target[index];
+            let value = if self.smooth_ready[index] {
+                self.smooth_value[index] + (target - self.smooth_value[index]) * coeff
+            } else {
+                self.smooth_ready[index] = true;
+                target
+            };
+            if is_env_param(param_id) && (value - self.smooth_value[index]).abs() > 1e-7 {
+                env_changed = true;
+            }
+            self.smooth_value[index] = value;
+            self.params.set(param_id, value);
+        }
+        if env_changed {
+            self.env_dirty = true;
+        }
     }
 
     pub fn set_max_polyphony(&mut self, n: usize) {
@@ -437,6 +509,7 @@ impl Engine {
         let frames = frames.clamp(1, MAX_BLOCK_SIZE);
 
         alloc_arena::enter_process();
+        self.update_smoothing(frames);
         self.flush_pending();
         if self.env_dirty {
             self.apply_env_to_all();
@@ -500,14 +573,37 @@ impl Engine {
         // --- global FX (Soundpipe reverb + delay) ---------------------------
         self.apply_fx(frames);
 
-        // --- volume ramp + final soft clip ----------------------------------
+        // --- volume ramp + limiter + final soft clip ------------------------
         let target = self.params.master_volume;
         let start = self.master_gain;
         let step = (target - start) / frames as f32;
+
+        // Peak limiter: duck loud polyphonic passages before the clipper works.
+        let mut block_peak = 0.0f32;
         for i in 0..frames {
             let g = start + step * (i as f32 + 1.0);
-            let l = soft_clip(self.fx_l[i]) * g;
-            let r = soft_clip(self.fx_r[i]) * g;
+            block_peak = block_peak
+                .max((self.fx_l[i] * g).abs())
+                .max((self.fx_r[i] * g).abs());
+        }
+        let desired = if block_peak > LIMIT_CEILING {
+            LIMIT_CEILING / block_peak
+        } else {
+            1.0
+        };
+        let sr = self.sample_rate.max(1000.0);
+        let coeff = if desired < self.limit_gain {
+            1.0 - (-(frames as f32) / (LIMIT_ATTACK_S * sr)).exp()
+        } else {
+            1.0 - (-(frames as f32) / (LIMIT_RELEASE_S * sr)).exp()
+        };
+        self.limit_gain += (desired - self.limit_gain) * coeff;
+        let limit = self.limit_gain;
+
+        for i in 0..frames {
+            let g = start + step * (i as f32 + 1.0);
+            let l = soft_clip(self.fx_l[i] * limit) * g;
+            let r = soft_clip(self.fx_r[i] * limit) * g;
             if l.is_finite() {
                 self.out_l[i] = l;
             } else {
@@ -1126,5 +1222,71 @@ mod tests {
             .cloned()
             .fold(0.0f32, f32::max);
         assert!(peak > 0.05, "spectrum should show energy, got {peak}");
+    }
+
+    #[test]
+    fn continuous_params_snap_on_first_block_then_smooth() {
+        let _guard = ENGINE_LOCK.lock().unwrap();
+        let mut e = new_engine(16);
+        e.set_param(id::FILTER_CUTOFF, 12000.0);
+        e.process(128);
+        // First block snaps to the host value.
+        assert!((e.params.filter.cutoff - 12000.0).abs() < 1e-3);
+
+        // A later change is ramped, not stepped.
+        e.set_param(id::FILTER_CUTOFF, 400.0);
+        e.process(128);
+        let after_one = e.params.filter.cutoff;
+        assert!(
+            after_one < 12000.0 && after_one > 400.0,
+            "cutoff should be mid-ramp, got {after_one}"
+        );
+        for _ in 0..120 {
+            e.process(128);
+        }
+        assert!(
+            (e.params.filter.cutoff - 400.0).abs() < 1.0,
+            "cutoff should converge, got {}",
+            e.params.filter.cutoff
+        );
+    }
+
+    #[test]
+    fn discrete_params_change_immediately() {
+        let _guard = ENGINE_LOCK.lock().unwrap();
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.process(128);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Square as u32 as f32);
+        e.process(128);
+        assert_eq!(e.params.osc[0].wave, crate::params::Wave::Square);
+    }
+
+    #[test]
+    fn limiter_keeps_the_master_bus_bounded() {
+        let _guard = ENGINE_LOCK.lock().unwrap();
+        let mut e = new_engine(16);
+        for param in [id::OSC1_LEVEL, id::OSC2_LEVEL] {
+            e.set_param(param, 1.0);
+        }
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::OSC2_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_RES, 1.0);
+        e.set_param(id::FILTER_DRIVE, 1.0);
+        e.set_param(id::FX_REVERB_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        for note in [48, 52, 55, 59, 62, 64, 67, 71, 74, 77, 79, 83] {
+            e.note_on(note, 1.0);
+        }
+        for _ in 0..80 {
+            e.process(128);
+        }
+        for i in 0..128 {
+            assert!(e.out_l[i].is_finite() && e.out_r[i].is_finite());
+            assert!(e.out_l[i].abs() <= 1.0 + 1e-6, "left over unity at {i}");
+            assert!(e.out_r[i].abs() <= 1.0 + 1e-6, "right over unity at {i}");
+        }
+        assert!(e.limit_gain <= 1.0 && e.limit_gain > 0.0);
     }
 }

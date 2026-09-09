@@ -80,6 +80,64 @@ pub mod id {
     pub const LFO2_TARGET: u32 = 66;
 }
 
+/// Highest parameter id + 1 (ids are 0..=66).
+pub const PARAM_COUNT: usize = 67;
+
+/// Continuous parameters are smoothed across blocks (one-pole, ~20 ms) so the
+/// host can drag a knob without producing zipper noise. Discrete/stepped
+/// parameters (waveforms, switches, sync, voice mode) change immediately.
+pub fn is_continuous(param_id: u32) -> bool {
+    use id as p;
+    matches!(
+        param_id,
+        p::OSC1_PITCH
+            | p::OSC1_DETUNE
+            | p::OSC1_LEVEL
+            | p::OSC1_PW
+            | p::OSC1_PAN
+            | p::OSC2_PITCH
+            | p::OSC2_DETUNE
+            | p::OSC2_LEVEL
+            | p::OSC2_PW
+            | p::OSC2_PAN
+            | p::FILTER_CUTOFF
+            | p::FILTER_RES
+            | p::FILTER_DRIVE
+            | p::FILTER_ENV_AMT
+            | p::ENV_ATTACK
+            | p::ENV_DECAY
+            | p::ENV_SUSTAIN
+            | p::ENV_RELEASE
+            | p::LFO_RATE
+            | p::LFO_DEPTH
+            | p::FX_REVERB_SIZE
+            | p::FX_REVERB_MIX
+            | p::FX_DELAY_FB
+            | p::FX_DELAY_MIX
+            | p::GLIDE
+            | p::TEMPO
+            | p::PITCH_BEND_RANGE
+            | p::MASTER_TUNE
+            | p::FX_CHORUS_DEPTH
+            | p::FX_CHORUS_RATE
+            | p::FX_CHORUS_MIX
+            | p::FX_FLANGER_RATE
+            | p::FX_FLANGER_FB
+            | p::FX_FLANGER_MIX
+            | p::FX_PHASER_RATE
+            | p::FX_PHASER_FB
+            | p::FX_PHASER_MIX
+            | p::FX_DRIVE_AMT
+            | p::FX_DRIVE_MIX
+            | p::FILTER_ENV_ATTACK
+            | p::FILTER_ENV_DECAY
+            | p::FILTER_ENV_SUSTAIN
+            | p::FILTER_ENV_RELEASE
+            | p::LFO2_RATE
+            | p::LFO2_DEPTH
+    )
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Wave {
     Sine,
