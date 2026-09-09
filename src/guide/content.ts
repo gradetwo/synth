@@ -956,8 +956,12 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             'Each node is one processing unit: OSC 1, OSC 2, FILTER, AMP ENV, LFO, LFO 2, MATRIX, FX, FX 2, OUT. The mini display inside shows the waveform, filter response, envelope, LFO shape, matrix routing or effect decay in real time.',
           ],
           [
-            '**拖拽**节点可自定义布局，位置会记住；手机竖屏自动改为单列。',
-            '**Drag** nodes to arrange the canvas; positions persist, and narrow screens fall back to a single column.',
+            '**拖拽**节点可自定义布局，位置会记住；手机竖屏默认两列。',
+            '**Drag** nodes to arrange the canvas; positions persist, and phones default to two columns.',
+          ],
+          [
+            '**缩放**：顶栏 `−` / `+` 缩放、`⤢` 一键适应全部节点，桌面端 `Ctrl/Cmd + 滚轮`（触控板双指）也可缩放；打开时默认自动适应到全部节点可见。',
+            '**Zoom**: `−` / `+` in the toolbar, `⤢` to fit every node, and `Ctrl/Cmd + wheel` (trackpad pinch) on desktop. The canvas auto-fits so all nodes are visible when it opens.',
           ],
           [
             '**旁通 / 启用**：带电源图标的节点（振荡器、LFO、效果）可以一键开关，节点变灰并显示 `BYPASS`。',
