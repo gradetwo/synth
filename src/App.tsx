@@ -5,6 +5,7 @@ import { useLayout, usePower, useTheme, useView } from '@/hooks/useSynth';
 import { useViewport } from '@/hooks/useViewport';
 import { wireAnalysis } from '@/audio/analysis';
 import { TopBar, DisplayRow, KeyboardDock } from '@/panels/layout';
+import { PianoRoll } from '@/components/PianoRoll';
 import { ModuleFor } from '@/panels/modules';
 import { ModulesGrid } from '@/components/Module';
 import { PresetDrawer } from '@/components/PresetDrawer';
@@ -18,6 +19,9 @@ import { readShareCode } from '@/state/share';
 import { APP_VERSION } from '@/version';
 import { t } from '@/i18n';
 import { toast } from '@/components/Toast';
+import { midiPlayer } from '@/midi/player';
+import { recorder } from '@/midi/recorder';
+import { midiLibrary } from '@/midi/library';
 
 wireAnalysis();
 
@@ -80,6 +84,7 @@ export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [playerOpen, setPlayerOpen] = useState(false);
+  const [rollOpen, setRollOpen] = useState(false);
   const [status, setStatus] = useState(engine.getState());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -189,10 +194,35 @@ export default function App() {
 
   const running = status === 'running' || status === 'suspended';
 
+  /**
+   * Open the piano-roll editor for the current track. Any running take is
+   * finished and saved first so opening the editor never loses a recording.
+   */
+  const openRoll = () => {
+    if (recorder.getState().recording) {
+      const clip = recorder.stop();
+      if (clip) {
+        midiLibrary.put({
+          id: 'clip',
+          title: [t('player.recordingName'), t('player.recordingName')],
+          composer: t('player.recordedBy'),
+          song: clip,
+          group: 'clip',
+        });
+        toast(t('player.clipSaved', { n: clip.notes.length }));
+      }
+    }
+    midiPlayer.stop();
+    setPlayerOpen(false);
+    setDrawerOpen(false);
+    setRollOpen(true);
+  };
+
   return (
     <div className="app" data-device={viewport.device} data-view={view}>
       <TopBar
         onBrowse={() => setDrawerOpen(true)}
+        onRoll={openRoll}
         status={status}
         view={view}
         onView={(next) => store.setView(next)}
@@ -220,6 +250,8 @@ export default function App() {
         </button>
       ) : null}
 
+      <PianoRoll open={rollOpen} onClose={() => setRollOpen(false)} />
+
       <PresetDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
@@ -229,7 +261,11 @@ export default function App() {
         }}
       />
       <Guide open={guideOpen} onClose={() => setGuideOpen(false)} />
-      <PlayerPanel open={playerOpen} onClose={() => setPlayerOpen(false)} />
+      <PlayerPanel
+        open={playerOpen}
+        onClose={() => setPlayerOpen(false)}
+        onEdit={openRoll}
+      />
       <ToastHost />
       <UpdateBanner />
       {!running ? <StartOverlay onStart={start} error={error} busy={busy} /> : null}
