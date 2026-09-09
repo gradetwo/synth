@@ -1,41 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { store } from '@/state/store';
 import { t } from '@/i18n';
 import { toast } from './Toast';
-import { downloadBlob } from '@/state/share';
 import { haptic, HAPTIC } from '@/hooks/useInputMode';
-import { renderPatchToBuffer } from '@/audio/render';
-import { encodeMp3 } from '@/audio/mp3';
 import { midiPlayer, type PlayerState } from '@/midi/player';
 import { recorder, type RecorderState } from '@/midi/recorder';
-import { parseMidi, writeMidi, type MidiSong } from '@/midi/smf';
+import { parseMidi } from '@/midi/smf';
 import { midiLibrary, trackTitle, type TrackGroup } from '@/midi/library';
+import { exportSongMidi, exportSongMp3 } from '@/midi/export';
+import { TransportIcon } from './TransportIcon';
 
 const fmtTime = (s: number) => {
   const total = Math.max(0, Math.round(s));
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 };
-const safeName = (s: string) => s.replace(/[^\w\u4e00-\u9fa5-]+/g, '_').slice(0, 48) || 'gs1';
-
-export function exportSongMidi(song: MidiSong, name: string): void {
-  const bytes = writeMidi(song.notes, { bpm: song.bpm, name });
-  downloadBlob(`${safeName(name)}.mid`, new Blob([bytes.buffer as ArrayBuffer], { type: 'audio/midi' }));
-}
-
-export async function exportSongMp3(song: MidiSong, name: string): Promise<void> {
-  const notes = song.notes.map(
-    (n) => [n.note, n.start, n.duration, n.velocity] as [number, number, number, number],
-  );
-  const buffer = await renderPatchToBuffer(store.getSnapshot().state, {
-    notes,
-    seconds: song.duration + 1.6,
-  });
-  const blob = await encodeMp3(buffer);
-  downloadBlob(`${safeName(name)}.mp3`, blob);
-}
 
 /** Transport + playlist modal, replacing the old DEMO button. */
-export function PlayerPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function PlayerPanel({
+  open,
+  onClose,
+  onEdit,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onEdit: () => void;
+}) {
   const [, bump] = useState(0);
   const [player, setPlayer] = useState<PlayerState>(midiPlayer.getState());
   const [rec, setRec] = useState<RecorderState>(recorder.getState());
@@ -155,6 +143,17 @@ export function PlayerPanel({ open, onClose }: { open: boolean; onClose: () => v
           </button>
           <button
             type="button"
+            className="player-btn wide"
+            disabled={!current}
+            onClick={() => {
+              haptic();
+              onEdit();
+            }}
+          >
+            {t('roll.edit')}
+          </button>
+          <button
+            type="button"
             className="player-btn wide primary"
             disabled={!current || busy}
             onClick={async () => {
@@ -246,58 +245,6 @@ export function PlayerPanel({ open, onClose }: { open: boolean; onClose: () => v
       </aside>
     </>
   );
-}
-
-/** Stroke-based icons matching the rest of the chrome (no font glyphs). */
-function TransportIcon({ name }: { name: 'play' | 'pause' | 'stop' | 'loop' | 'record' }) {
-  const stroke = {
-    viewBox: '0 0 24 24',
-    width: 15,
-    height: 15,
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 2,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-    'aria-hidden': true,
-  };
-  const filled = { ...stroke, fill: 'currentColor', stroke: 'none' };
-  switch (name) {
-    case 'play':
-      return (
-        <svg {...filled}>
-          <path d="M8 5.4v13.2L19 12z" />
-        </svg>
-      );
-    case 'pause':
-      return (
-        <svg {...filled}>
-          <rect x="7" y="5" width="3.6" height="14" rx="1.4" />
-          <rect x="13.4" y="5" width="3.6" height="14" rx="1.4" />
-        </svg>
-      );
-    case 'stop':
-      return (
-        <svg {...filled}>
-          <rect x="6.6" y="6.6" width="10.8" height="10.8" rx="2.2" />
-        </svg>
-      );
-    case 'record':
-      return (
-        <svg {...filled}>
-          <circle cx="12" cy="12" r="5.8" />
-        </svg>
-      );
-    case 'loop':
-      return (
-        <svg {...stroke}>
-          <polyline points="17 2 21 6 17 10" />
-          <path d="M3 12v-1a4 4 0 0 1 4-4h14" />
-          <polyline points="7 22 3 18 7 14" />
-          <path d="M21 12v1a4 4 0 0 1-4 4H3" />
-        </svg>
-      );
-  }
 }
 
 /** Transport controls shared by the player panel and the performance bar. */
