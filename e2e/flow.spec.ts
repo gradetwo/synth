@@ -44,9 +44,12 @@ test.describe('signal flow view', () => {
     await expect(page.locator('.flow-params')).toContainText('CUTOFF');
   });
 
-  test('performance bar plays a track', async ({ page }) => {
+  test('performance bar plays a track and stays concise', async ({ page }) => {
     await boot(page);
     await expect(page.locator('.flow-select')).toBeVisible();
+    // Export/open-player actions live in the player panel, not duplicated here.
+    await expect(page.locator('.flow-bar > .flow-bar-btn')).toHaveCount(0);
+    await expect(page.locator('.flow-bar .flow-zoom .flow-bar-btn')).toHaveCount(3);
     const play = page.locator('.flow-bar .player-play');
     await play.click();
     await expect(play).toHaveClass(/\bon\b/);
@@ -239,23 +242,22 @@ test.describe('signal flow zoom and phone layout', () => {
     await page.waitForTimeout(500);
     const m = await page.evaluate(() => {
       const wrap = document.querySelector('.flow-canvas-wrap')!.getBoundingClientRect();
-      const nodes = [...document.querySelectorAll('.flow-node')].map((n) => {
-        const b = n.getBoundingClientRect();
-        return { x: b.x, y: b.y, w: b.width, h: b.height };
-      });
+      const scale = document.querySelector('.flow-scale')!.getBoundingClientRect();
+      const nodes = [...document.querySelectorAll('.flow-node')].map((n) => n.getBoundingClientRect());
       const xs = [...new Set(nodes.map((n) => Math.round(n.x)))];
       return {
         cols: xs.length,
         count: nodes.length,
-        inside: nodes.every(
-          (n) => n.x >= wrap.x - 1 && n.x + n.w <= wrap.right + 1 && n.y >= wrap.y - 1 && n.y + n.h <= wrap.bottom + 1,
-        ),
-        zoom: parseInt((document.querySelector('.flow-zoom-val')?.textContent ?? '100'), 10),
+        // Fills the width (small symmetric slack), vertical scrolling allowed.
+        horizontal: nodes.every((n) => n.x >= wrap.x - 1 && n.right <= wrap.right + 1),
+        fill: scale.width / wrap.width,
+        zoom: parseInt(document.querySelector('.flow-zoom-val')?.textContent ?? '100', 10),
       };
     });
     expect(m.count).toBe(10);
     expect(m.cols).toBe(2);
-    expect(m.inside).toBe(true);
+    expect(m.horizontal).toBe(true);
+    expect(m.fill).toBeGreaterThan(0.85);
     expect(m.zoom).toBeLessThan(100);
   });
 });
