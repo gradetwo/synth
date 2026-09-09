@@ -13,7 +13,7 @@ import { recorder, type RecorderState } from '@/midi/recorder';
 import { midiLibrary, trackTitle } from '@/midi/library';
 import { ModuleFor } from '@/panels/modules';
 import { toast } from './Toast';
-import { Transport, exportSongMidi, exportSongMp3 } from './PlayerPanel';
+import { Transport } from './PlayerPanel';
 
 type NodeType = 'source' | 'filter' | 'mod' | 'effect' | 'output';
 
@@ -529,7 +529,7 @@ function formatParam(id: number, value: number): string {
 }
 
 /** Signal-flow canvas: draggable nodes, live mini-visuals and a performance bar. */
-export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
+export function SignalFlow() {
   useSynth(); // re-render readouts when parameters change
   const positions = useFlowPos();
   const hidden = useFlowHidden();
@@ -664,7 +664,6 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   const defaults = defaultPositions(flowCols);
   const visible = NODES.filter((node) => !hidden.includes(node.id));
   const removed = NODES.filter((node) => hidden.includes(node.id));
-  const current = midiLibrary.getCurrent();
 
   /** Node position including the in-flight drag, so wires track in real time. */
   const nodePos = (id: string): [number, number] =>
@@ -715,11 +714,11 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   const applyFit = () => {
     const wrap = wrapRef.current;
     if (!wrap) return;
-    const z = Math.min(
-      1.1,
-      (wrap.clientWidth - 28) / committedW,
-      (wrap.clientHeight - 28) / committedH,
-    );
+    const widthFit = (wrap.clientWidth - 28) / committedW;
+    const heightFit = (wrap.clientHeight - 28) / committedH;
+    // Prefer filling the width; allow up to ~50% vertical scrolling so a phone
+    // does not end up with a tiny canvas and a large empty margin.
+    const z = Math.min(1.1, widthFit, heightFit * 1.5);
     setZoom(Math.max(0.32, z));
   };
 
@@ -780,33 +779,6 @@ export function SignalFlow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
           ))}
         </select>
         <Transport player={player} rec={rec} onRecord={toggleRecord} compact />
-        <button type="button" className="flow-bar-btn" onClick={onOpenPlayer}>
-          {t('player.title')}
-        </button>
-        <button
-          type="button"
-          className="flow-bar-btn"
-          disabled={!current}
-          onClick={() => current && exportSongMidi(current.song, trackTitle(current))}
-        >
-          MID
-        </button>
-        <button
-          type="button"
-          className="flow-bar-btn"
-          disabled={!current}
-          onClick={async () => {
-            if (!current) return;
-            try {
-              await exportSongMp3(current.song, trackTitle(current));
-              toast(t('player.mp3Saved', { name: trackTitle(current) }));
-            } catch (err) {
-              toast(t('player.mp3Failed', { msg: err instanceof Error ? err.message : String(err) }));
-            }
-          }}
-        >
-          MP3
-        </button>
         <div className="flow-zoom" role="group" aria-label={t('flow.zoom')}>
           <button
             type="button"

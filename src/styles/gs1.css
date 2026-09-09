@@ -1154,3 +1154,6 @@ input,textarea,[contenteditable='true']{
   -webkit-user-select:none;user-select:none;
   -webkit-touch-callout:none;-webkit-user-drag:none;
 }
+
+/* Centre the scaled canvas so slack is symmetric instead of one-sided. */
+.flow-scale{margin:0 auto}

@@ -200,7 +200,7 @@ export default function App() {
       <DisplayRow onOpenPlayer={() => setPlayerOpen(true)} />
 
       {view === 'flow' ? (
-        <SignalFlow onOpenPlayer={() => setPlayerOpen(true)} />
+        <SignalFlow />
       ) : (
         <main className="modules">
           <ModulesGrid>
