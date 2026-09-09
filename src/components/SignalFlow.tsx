@@ -560,6 +560,7 @@ export function SignalFlow() {
   const [drag, setDrag] = useState<{ id: string; pos: [number, number] } | null>(null);
   const canvasRefs = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const hudRef = useRef<HTMLDivElement | null>(null);
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const visibleRef = useRef(true);
@@ -711,6 +712,8 @@ export function SignalFlow() {
     contentSizeRef.current = { w: contentW, h: contentH };
   }, [contentW, contentH]);
 
+  const hudHeight = () => hudRef.current?.getBoundingClientRect().height ?? 0;
+
   /** Size the canvas to the space left below the chrome. */
   const sizeWrap = () => {
     const wrap = wrapRef.current;
@@ -722,6 +725,9 @@ export function SignalFlow() {
       (document.querySelector('.dock-spacer') as HTMLElement | null)?.getBoundingClientRect().height ?? 0;
     const top = wrap.getBoundingClientRect().top + window.scrollY;
     wrap.style.height = `${Math.max(180, Math.round(window.innerHeight - top - dockH - 14))}px`;
+    // Reserve the top-left corner for the zoom/reset HUD so the graph never
+    // hides underneath it.
+    wrap.style.paddingTop = `${Math.round(hudHeight() + 8)}px`;
   };
 
   /** Fit every committed node inside the visible canvas. */
@@ -730,7 +736,7 @@ export function SignalFlow() {
     if (!wrap) return;
     sizeWrap();
     const widthFit = (wrap.clientWidth - 28) / committedW;
-    const heightFit = (wrap.clientHeight - 28) / committedH;
+    const heightFit = (wrap.clientHeight - 28 - hudHeight()) / committedH;
     // Prefer filling the width. When the graph is only a little taller than the
     // width-fit allows, shrink just enough to land on one screen; a genuinely
     // tall graph keeps up to ~60% scrolling so its nodes stay readable instead
@@ -799,51 +805,6 @@ export function SignalFlow() {
           ))}
         </select>
         <Transport player={player} rec={rec} onRecord={toggleRecord} compact />
-        <div className="flow-zoom" role="group" aria-label={t('flow.zoom')}>
-          <button
-            type="button"
-            className="flow-bar-btn"
-            aria-label={t('flow.zoomOut')}
-            title={t('flow.zoomOut')}
-            onClick={() => zoomBy(-0.15)}
-          >
-            −
-          </button>
-          <span className="flow-zoom-val">{Math.round(zoom * 100)}%</span>
-          <button
-            type="button"
-            className="flow-bar-btn"
-            aria-label={t('flow.zoomIn')}
-            title={t('flow.zoomIn')}
-            onClick={() => zoomBy(0.15)}
-          >
-            +
-          </button>
-          <button
-            type="button"
-            className="flow-bar-btn"
-            aria-label={t('flow.fit')}
-            title={t('flow.fit')}
-            onClick={() => {
-              autoFitRef.current = true;
-              applyFit();
-            }}
-          >
-            ⤢
-          </button>
-        </div>
-        <button
-          type="button"
-          className="flow-bar-btn flow-reset"
-          aria-label={t('flow.reset')}
-          title={t('flow.reset')}
-          onClick={() => {
-            haptic();
-            store.resetFlow();
-          }}
-        >
-          ⟲
-        </button>
         {removed.length > 0 ? (
           <div className="flow-palette" role="group" aria-label={t('flow.removed')}>
             <span className="flow-palette-label">{t('flow.removed')}</span>
@@ -862,6 +823,56 @@ export function SignalFlow() {
         ) : null}
       </div>
 
+      <div className="flow-canvas-shell">
+        {/* Canvas controls live on the board itself so the performance bar can
+            stay a single clean transport row on phones. */}
+        <div className="flow-hud" ref={hudRef}>
+          <div className="flow-zoom" role="group" aria-label={t('flow.zoom')}>
+            <button
+              type="button"
+              className="flow-bar-btn"
+              aria-label={t('flow.zoomOut')}
+              title={t('flow.zoomOut')}
+              onClick={() => zoomBy(-0.15)}
+            >
+              −
+            </button>
+            <span className="flow-zoom-val">{Math.round(zoom * 100)}%</span>
+            <button
+              type="button"
+              className="flow-bar-btn"
+              aria-label={t('flow.zoomIn')}
+              title={t('flow.zoomIn')}
+              onClick={() => zoomBy(0.15)}
+            >
+              +
+            </button>
+            <button
+              type="button"
+              className="flow-bar-btn"
+              aria-label={t('flow.fit')}
+              title={t('flow.fit')}
+              onClick={() => {
+                autoFitRef.current = true;
+                applyFit();
+              }}
+            >
+              ⤢
+            </button>
+          </div>
+          <button
+            type="button"
+            className="flow-bar-btn flow-reset"
+            aria-label={t('flow.reset')}
+            title={t('flow.reset')}
+            onClick={() => {
+              haptic();
+              store.resetFlow();
+            }}
+          >
+            ⟲
+          </button>
+        </div>
       <div className="flow-canvas-wrap" ref={wrapRef}>
         <div
           className="flow-scale"
@@ -945,6 +956,7 @@ export function SignalFlow() {
           ))}
           </div>
         </div>
+      </div>
       </div>
 
       {selected ? (

@@ -972,7 +972,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Drag** nodes to arrange the canvas; positions persist, and phones default to two columns.',
           ],
           [
-            '**缩放**：顶栏 `−` / `+` 缩放、`⤢` 一键适应全部节点，桌面端 `Ctrl/Cmd + 滚轮`（触控板双指）也可缩放；打开时默认自动适应到全部节点可见。',
+            '**缩放 / 重置**：画布左上角的浮层里有 `−` / `+` 缩放、`⤢` 一键适应全部节点、`⟲` 重置画布；桌面端 `Ctrl/Cmd + 滚轮`（触控板双指）也可缩放。打开时默认自动适应到全部节点可见，画布会自动为浮层让出空间。',
             '**Zoom**: `−` / `+` in the toolbar, `⤢` to fit every node, and `Ctrl/Cmd + wheel` (trackpad pinch) on desktop. The canvas auto-fits so all nodes are visible when it opens.',
           ],
           [
@@ -993,8 +993,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
       {
         kind: 'p',
         text: [
-          '信号流视图顶部的性能条就是演奏模式：选择曲目、播放 / 暂停 / 停止 / 循环、录制，以及画布缩放、重置画布。导入、导出 MIDI / MP3 在「播放器」面板里。手机上进入信号流视图时，监视条会自动收起、底部键盘默认收起，把整屏留给信号图；点右下角「⌨ 键盘」或顶栏键盘按钮可以随时把键盘调出来，画布会自动让出空间。',
-          'The bar at the top of the flow view is performance mode: pick a track, play/pause/stop/loop, record, zoom and reset the canvas. Import and MIDI/MP3 export live in the player panel. On phones the monitor strip hides and the keyboard starts tucked away so the graph owns the screen; tap the “⌨ keyboard” pill or the top-bar toggle to bring it back and the canvas makes room automatically.',
+          '信号流视图顶部的性能条就是演奏模式：选择曲目、播放 / 暂停 / 停止 / 循环、录制。缩放与重置画布在画布左上角的浮层里；导入、导出 MIDI / MP3 在「播放器」面板里。手机上进入信号流视图时，监视条会自动收起、底部键盘默认收起，把整屏留给信号图；点右下角「⌨ 键盘」或顶栏键盘按钮可以随时把键盘调出来，画布会自动让出空间。',
+          'The bar at the top of the flow view is performance mode: pick a track, play/pause/stop/loop and record. Zoom and canvas reset live in a floating panel at the top-left of the board; import and MIDI/MP3 export live in the player panel. On phones the monitor strip hides and the keyboard starts tucked away so the graph owns the screen; tap the “⌨ keyboard” pill or the top-bar toggle to bring it back and the canvas makes room automatically.',
         ],
       },
       { kind: 'h', text: ['钢琴卷帘编辑器', 'Piano-roll editor'] },

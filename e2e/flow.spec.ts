@@ -58,11 +58,16 @@ test.describe('signal flow view', () => {
   test('performance bar plays a track and stays concise', async ({ page }) => {
     await boot(page);
     await expect(page.locator('.flow-select')).toBeVisible();
-    // The only direct bar button is the canvas reset; export/open-player
-    // actions live in the player panel, not duplicated here.
-    await expect(page.locator('.flow-bar > .flow-bar-btn')).toHaveCount(1);
-    await expect(page.locator('.flow-bar > .flow-reset')).toHaveCount(1);
-    await expect(page.locator('.flow-bar .flow-zoom .flow-bar-btn')).toHaveCount(3);
+    // Zoom and reset live on the canvas board, not in the performance bar, and
+    // export/open-player actions live in the player panel.
+    await expect(page.locator('.flow-bar > .flow-bar-btn')).toHaveCount(0);
+    await expect(page.locator('.flow-hud .flow-reset')).toHaveCount(1);
+    await expect(page.locator('.flow-hud .flow-zoom .flow-bar-btn')).toHaveCount(3);
+    const hud = (await page.locator('.flow-hud').boundingBox())!;
+    const board = (await page.locator('.flow-canvas-wrap').boundingBox())!;
+    expect(hud.x).toBeGreaterThanOrEqual(board.x - 1);
+    expect(hud.y).toBeGreaterThanOrEqual(board.y - 1);
+    expect(hud.x + hud.width).toBeLessThan(board.x + board.width / 2);
     const play = page.locator('.flow-bar .player-play');
     await play.click();
     await expect(play).toHaveClass(/\bon\b/);
@@ -71,6 +76,41 @@ test.describe('signal flow view', () => {
 
 test.describe('flow view keyboard on phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('canvas HUD owns zoom/reset and the bar stays a clean transport', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).tap();
+    await page.waitForTimeout(250);
+    await page.getByRole('button', { name: '信号流' }).tap();
+    await page.waitForTimeout(900);
+
+    const geo = await page.evaluate(() => {
+      const r = (sel: string) => {
+        const el = document.querySelector(sel) as HTMLElement | null;
+        if (!el) return null;
+        const b = el.getBoundingClientRect();
+        return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height), right: Math.round(b.right), bottom: Math.round(b.bottom) };
+      };
+      return {
+        hud: r('.flow-hud'),
+        board: r('.flow-canvas-wrap'),
+        firstNode: r('.flow-node'),
+        time: r('.player-time'),
+        reset: r('.flow-reset'),
+        select: r('.flow-select'),
+        transport: r('.flow-bar .player-transport'),
+      };
+    });
+    // HUD pinned to the board's top-left corner…
+    expect(geo.hud!.x - geo.board!.x).toBeLessThan(20);
+    expect(geo.hud!.y - geo.board!.y).toBeLessThan(20);
+    // …and the graph starts below it, so nothing hides underneath.
+    expect(geo.firstNode!.y).toBeGreaterThanOrEqual(geo.hud!.bottom - 1);
+    // The reset no longer sits on top of the elapsed time.
+    expect(geo.reset!.right).toBeLessThan(geo.time!.x);
+    // Two clean rows: track select, then the transport beneath it.
+    expect(geo.transport!.y).toBeGreaterThanOrEqual(geo.select!.bottom - 2);
+  });
 
   test('auto-hides the dock but the keyboard toggle brings it back', async ({ page }) => {
     await page.goto('/');
