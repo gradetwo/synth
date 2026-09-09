@@ -819,6 +819,14 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**手机**默认只展开 OSC 1/2、FILTER 与 AMP ENV，收起 LFO/MATRIX/FX/FX 2，并把示波器与频谱收成一行（点右侧箭头展开）；顶栏「⋯」里放 MIDI、随机、保存等次要操作。',
             'On **phones** only OSC 1/2, FILTER and AMP ENV start expanded; LFO/MATRIX/FX/FX 2 are collapsed and the scope/spectrum row shrinks to one strip (tap the arrow to expand). Secondary actions such as MIDI, randomise and save live under the “⋯” menu.',
           ],
+          [
+            '**平板**竖屏把品牌、视图切换与常用动作排在第一行、预设独占第二行，监视区默认也是一条带波形与频谱的紧凑条（点箭头展开三块面板），模块全部保持展开。',
+            'On **tablets** in portrait the wordmark, view toggle and primary actions share the first row while the preset stepper owns the second; the monitor also starts as a compact strip with live waveform and spectrum (tap the arrow for the three panels) and every module stays expanded.',
+          ],
+          [
+            '**电脑**顶栏保持单行，但把 A/B 对比、随机、保存收进右侧「⋯」，让预设名完整显示；模块默认全部展开，监视区显示示波器、频谱与监视三块面板。',
+            'On **desktop** the bar stays a single row, but A/B compare, randomise and save move into the “⋯” menu so the preset name is never clipped. Every module starts expanded and the monitor shows the scope, spectrum and monitor panels.',
+          ],
         ],
       },
       { kind: 'h', text: ['预设与音色管理', 'Presets and patch management'] },
