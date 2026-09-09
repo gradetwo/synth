@@ -993,6 +993,31 @@ export const GUIDE_SECTIONS: GuideSection[] = [
           'The bar at the top of the flow view is performance mode: pick a track, play/pause/stop/loop, record, and zoom the canvas. Import and MIDI/MP3 export live in the player panel. On phones the monitor strip and the keyboard tuck away in flow view so the graph owns the screen; switch back to Modules to play and record.',
         ],
       },
+      { kind: 'h', text: ['钢琴卷帘编辑器', 'Piano-roll editor'] },
+      {
+        kind: 'p',
+        text: [
+          '顶栏「钢琴卷帘」（手机/平板在「⋯」里）或播放器面板的「编辑」按钮打开。它编辑当前曲目：点空白处画音符，拖动音符移动音高与时间，拖右缘改长度，双击或 `⌫` 删除，`Ctrl/Cmd+Z` 撤销。',
+          'Open it from **Piano roll** in the top bar (under “⋯” on phones/tablets) or the **Edit** button in the player panel. It edits the current track: tap empty space to draw a note, drag a note to move it in pitch and time, drag its right edge to resize, double-click or press `⌫` to delete, and `Ctrl/Cmd+Z` to undo.',
+        ],
+      },
+      {
+        kind: 'ul',
+        items: [
+          [
+            '工具栏：BPM、网格（1/32–1/4）、长度、量化、移调 ±12、力度、撤销/重做、清空、导出 MIDI、保存。',
+            'Toolbar: BPM, grid (1/32–1/4), length, quantize, transpose ±12, velocity, undo/redo, clear, export MIDI, save.',
+          ],
+          [
+            '**输入**开关打开后，点网格或弹底部键盘都能写入音符；外部 MIDI 键盘点「连接 MIDI」授权后同样可用。步进输入：停止状态下每弹一个音就在播放头处写入并前进一格。',
+            'With **Input** armed, tapping the grid or playing the keyboard strip writes notes; an external MIDI keyboard works after “Connect MIDI”. Step input: while stopped, each note you play lands at the playhead and advances it by one grid step.',
+          ],
+          [
+            '内置曲目保存时会另存为新片段，导入文件与录制片段则原地更新。',
+            'Saving a built-in track creates a new clip; imported files and recordings are updated in place.',
+          ],
+        ],
+      },
       { kind: 'h', text: ['和弦识别', 'Chord recognition'] },
       {
         kind: 'p',
