@@ -35,7 +35,7 @@ function MidiButton() {
         <path d="M4 4v10a4 4 0 0 0 4 4h12" />
         <path d="M8 4v6M12 4v6M16 4v6" />
       </svg>
-      {label}
+      <span className="tbtn-label">{label}</span>
     </button>
   );
 }
@@ -155,7 +155,7 @@ export function TopBar({
         <rect x="2" y="6" width="20" height="12" rx="2" />
         <path d="M6 10h1M9 10h1M12 10h1M15 10h1M18 10h1M7 14h10" strokeLinecap="round" />
       </svg>
-      {t('top.keyboard')}
+      <span className="tbtn-label">{t('top.keyboard')}</span>
     </button>
   );
 
@@ -178,7 +178,7 @@ export function TopBar({
         <circle cx="8.5" cy="15.5" r="1.4" fill="currentColor" stroke="none" />
         <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
       </svg>
-      {t('top.random')}
+      <span className="tbtn-label">{t('top.random')}</span>
     </button>
   );
 
@@ -195,7 +195,7 @@ export function TopBar({
         <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
         <path d="M17 21v-8H7v8M7 3v5h8" />
       </svg>
-      {t('top.save')}
+      <span className="tbtn-label">{t('top.save')}</span>
     </button>
   );
 
@@ -204,7 +204,7 @@ export function TopBar({
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
         <path d="M4 6h16M4 12h16M4 18h10" />
       </svg>
-      {t('top.browse')}
+      <span className="tbtn-label">{t('top.browse')}</span>
     </button>
   );
 
@@ -398,10 +398,11 @@ function PolyBadge() {
 export function DisplayRow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   const { device } = useViewport();
   const stored = useDisplayExpanded();
-  // Auto: collapsed on phones, expanded everywhere else.
+  // Phones default to the compact strip; tablets can collapse it on demand.
+  const canCollapse = device !== 'desktop';
   const expanded = stored ?? device !== 'phone';
 
-  if (device === 'phone' && !expanded) {
+  if (canCollapse && !expanded) {
     return (
       <section className="display-row compact">
         <NoteDisplay />
@@ -427,7 +428,7 @@ export function DisplayRow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
 
   return (
     <section className="display-row">
-      {device === 'phone' ? (
+      {canCollapse ? (
         <div className="display-bar">
           <span className="db-label">
             {t('panel.scope')} · {t('panel.spectrum')} · {t('panel.monitor')}
