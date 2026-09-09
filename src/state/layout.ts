@@ -42,6 +42,9 @@ export type Theme = 'dark' | 'contrast';
  */
 export type VelocityMode = 'fixed' | 'touch';
 
+/** Top-level workspace: the classic module grid or the signal-flow canvas. */
+export type ViewMode = 'modules' | 'flow';
+
 export interface LayoutState {
   order: ModuleId[];
   collapsed: Partial<Record<ModuleId, boolean>>;
@@ -50,6 +53,11 @@ export interface LayoutState {
   lang: Lang;
   velocityMode: VelocityMode;
   haptics: boolean;
+  view: ViewMode;
+  /** Signal-flow node positions in canvas pixels. */
+  flowPos: Record<string, [number, number]>;
+  /** Nodes removed from the signal-flow canvas. */
+  flowHidden: string[];
 }
 
 export function defaultLayout(): LayoutState {
@@ -61,6 +69,9 @@ export function defaultLayout(): LayoutState {
     lang: 'zh',
     velocityMode: 'fixed',
     haptics: true,
+    view: 'modules',
+    flowPos: {},
+    flowHidden: [],
   };
 }
 
@@ -88,6 +99,18 @@ export function normalizeLayout(raw: unknown): LayoutState {
     }
   }
 
+  const flowPos: Record<string, [number, number]> = {};
+  if (input.flowPos && typeof input.flowPos === 'object') {
+    for (const [id, pos] of Object.entries(input.flowPos as Record<string, unknown>)) {
+      if (Array.isArray(pos) && pos.length === 2 && pos.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+        flowPos[id] = [pos[0], pos[1]];
+      }
+    }
+  }
+  const flowHidden = Array.isArray(input.flowHidden)
+    ? input.flowHidden.filter((id): id is string => typeof id === 'string')
+    : [];
+
   return {
     order,
     collapsed,
@@ -96,6 +119,9 @@ export function normalizeLayout(raw: unknown): LayoutState {
     lang: input.lang === 'en' ? 'en' : 'zh',
     velocityMode: input.velocityMode === 'touch' ? 'touch' : 'fixed',
     haptics: input.haptics !== false,
+    view: input.view === 'flow' ? 'flow' : 'modules',
+    flowPos,
+    flowHidden,
   };
 }
 

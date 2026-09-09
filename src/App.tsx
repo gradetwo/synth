@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { engine } from '@/audio/engine';
 import { store } from '@/state/store';
-import { useLayout, usePower, useTheme } from '@/hooks/useSynth';
+import { useLayout, usePower, useTheme, useView } from '@/hooks/useSynth';
 import { wireAnalysis } from '@/audio/analysis';
 import { TopBar, DisplayRow, KeyboardDock } from '@/panels/layout';
 import { ModuleFor } from '@/panels/modules';
 import { ModulesGrid } from '@/components/Module';
 import { PresetDrawer } from '@/components/PresetDrawer';
 import { Guide } from '@/components/Guide';
+import { PlayerPanel } from '@/components/PlayerPanel';
+import { SignalFlow } from '@/components/SignalFlow';
 import { ToastHost } from '@/components/Toast';
 import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/register';
 import { setHapticsEnabled } from '@/hooks/useInputMode';
@@ -76,10 +78,12 @@ function UpdateBanner() {
 export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [playerOpen, setPlayerOpen] = useState(false);
   const [status, setStatus] = useState(engine.getState());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const layout = useLayout();
+  const view = useView();
   const power = usePower();
   const theme = useTheme();
 
@@ -178,17 +182,26 @@ export default function App() {
 
   return (
     <div className="app">
-      <TopBar onBrowse={() => setDrawerOpen(true)} status={status} />
+      <TopBar
+        onBrowse={() => setDrawerOpen(true)}
+        status={status}
+        view={view}
+        onView={(next) => store.setView(next)}
+      />
 
-      <DisplayRow />
+      <DisplayRow onOpenPlayer={() => setPlayerOpen(true)} />
 
-      <main className="modules">
-        <ModulesGrid>
-          {layout.order.map((id) => (
-            <ModuleFor key={id} id={id} />
-          ))}
-        </ModulesGrid>
-      </main>
+      {view === 'flow' ? (
+        <SignalFlow onOpenPlayer={() => setPlayerOpen(true)} />
+      ) : (
+        <main className="modules">
+          <ModulesGrid>
+            {layout.order.map((id) => (
+              <ModuleFor key={id} id={id} />
+            ))}
+          </ModulesGrid>
+        </main>
+      )}
 
       <KeyboardDock />
 
@@ -207,6 +220,7 @@ export default function App() {
         }}
       />
       <Guide open={guideOpen} onClose={() => setGuideOpen(false)} />
+      <PlayerPanel open={playerOpen} onClose={() => setPlayerOpen(false)} />
       <ToastHost />
       <UpdateBanner />
       {!running ? <StartOverlay onStart={start} error={error} busy={busy} /> : null}

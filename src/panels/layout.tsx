@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { store } from '@/state/store';
 import { useActiveSlot, useCanRedo, useCanUndo, useKeyboardVisible, usePower, usePresetId, useSlotFilled } from '@/hooks/useSynth';
 import { noteBus, noteName, noteToHz } from '@/audio/noteBus';
@@ -11,6 +11,7 @@ import { renderPatchToWav } from '@/audio/render';
 import { downloadBlob } from '@/state/share';
 import { localizeName, t } from '@/i18n';
 import { haptic, useInputMode } from '@/hooks/useInputMode';
+import { detectChord } from '@/audio/chords';
 
 function MidiButton() {
   const [snap, setSnap] = useState(midi.snapshot());
@@ -56,7 +57,17 @@ function EngineBadge({ status }: { status: EngineStatus }) {
   return <span className={`engine-badge ${status}`}>{label}</span>;
 }
 
-export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: EngineStatus }) {
+export function TopBar({
+  onBrowse,
+  status,
+  view,
+  onView,
+}: {
+  onBrowse: () => void;
+  status: EngineStatus;
+  view: 'modules' | 'flow';
+  onView: (view: 'modules' | 'flow') => void;
+}) {
   const currentPresetId = usePresetId();
   const power = usePower();
   const keyboardVisible = useKeyboardVisible();
@@ -96,6 +107,30 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
           <span className={`pled${power ? ' on' : ''}`} />
         </button>
         <EngineBadge status={status} />
+        <div className="view-toggle" role="group" aria-label={t('view.label')}>
+          <button
+            type="button"
+            className={`vt-btn${view === 'modules' ? ' on' : ''}`}
+            aria-pressed={view === 'modules'}
+            onClick={() => {
+              haptic();
+              onView('modules');
+            }}
+          >
+            {t('view.modules')}
+          </button>
+          <button
+            type="button"
+            className={`vt-btn${view === 'flow' ? ' on' : ''}`}
+            aria-pressed={view === 'flow'}
+            onClick={() => {
+              haptic();
+              onView('flow');
+            }}
+          >
+            {t('view.flow')}
+          </button>
+        </div>
       </div>
 
       <div className="preset-ctrl">
@@ -222,13 +257,26 @@ export function TopBar({ onBrowse, status }: { onBrowse: () => void; status: Eng
 
 function NoteDisplay() {
   const [info, setInfo] = useState({ note: null as number | null, velocity: 1, voices: 0 });
-  useEffect(() => noteBus.subscribe(setInfo), []);
+  const [held, setHeld] = useState<number[]>([]);
+  useEffect(
+    () =>
+      noteBus.subscribe((next) => {
+        setInfo(next);
+        setHeld(noteBus.heldNotes());
+      }),
+    [],
+  );
+  const chord = detectChord(held);
   return (
     <div className="note-display">
-      <span className="nd-label">NOTE</span>
-      <span className="nd-val">{info.note === null ? '—' : noteName(info.note)}</span>
+      <span className="nd-label">{chord ? 'CHORD' : 'NOTE'}</span>
+      <span className="nd-val">{chord ? chord.name : info.note === null ? '—' : noteName(info.note)}</span>
       <span className="nd-sub">
-        {info.note === null ? '0.0 Hz' : `${noteToHz(info.note).toFixed(1)} Hz`}
+        {chord
+          ? `${held.map(noteName).join(' ')}`
+          : info.note === null
+            ? '0.0 Hz'
+            : `${noteToHz(info.note).toFixed(1)} Hz`}
         {` · VEL ${Math.round(info.velocity * 127)}`}
         {info.voices > 1 ? ` · ${info.voices} VOICES` : ''}
       </span>
@@ -236,45 +284,10 @@ function NoteDisplay() {
   );
 }
 
-const ARP = [60, 63, 65, 67, 70, 72, 70, 67];
-
-function DemoButton() {
-  const [running, setRunning] = useState(false);
-  const timer = useRef<number | null>(null);
-  const step = useRef(0);
-
-  const stop = () => {
-    if (timer.current !== null) window.clearInterval(timer.current);
-    timer.current = null;
-    setRunning(false);
-    noteBus.allOff();
-  };
-
-  useEffect(() => stop, []);
-
+function PlayerButton({ onOpen }: { onOpen: () => void }) {
   return (
-    <button
-      type="button"
-      className={`demo-btn${running ? ' running' : ''}`}
-      onClick={() => {
-        if (running) {
-          stop();
-          return;
-        }
-        if (!store.getSnapshot().state.power) return;
-        setRunning(true);
-        step.current = 0;
-        const tick = () => {
-          const note = ARP[step.current % ARP.length];
-          step.current += 1;
-          noteBus.noteOn(note, 0.9);
-          window.setTimeout(() => noteBus.noteOff(note), 210);
-        };
-        tick();
-        timer.current = window.setInterval(tick, 300);
-      }}
-    >
-      {running ? t('monitor.stop') : t('monitor.demo')}
+    <button type="button" className="demo-btn player-open" onClick={onOpen}>
+      <span className="po-icon" aria-hidden="true">▶</span> {t('player.title')}
     </button>
   );
 }
@@ -316,7 +329,7 @@ function WavButton() {
   );
 }
 
-export function DisplayRow() {
+export function DisplayRow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
   return (
     <section className="display-row">
       <div className="panel scope-panel">
@@ -344,7 +357,7 @@ export function DisplayRow() {
           <span className="ph-title">{t('panel.monitor')}</span>
         </div>
         <div className="monitor-actions">
-          <DemoButton />
+          <PlayerButton onOpen={onOpenPlayer} />
           <WavButton />
         </div>
         <div className="monitor-body">

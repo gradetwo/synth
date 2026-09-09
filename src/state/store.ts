@@ -27,6 +27,7 @@ import {
   normalizeLayout,
   type LayoutState,
   type ModuleId,
+  type ViewMode,
 } from './layout';
 import {
   FACTORY_PRESETS,
@@ -506,6 +507,32 @@ class SynthStore {
   resetLayout() {
     this.layout = defaultLayout();
     setLang(this.layout.lang);
+    this.commit();
+  }
+
+  // ------------------------------------------------------------ signal flow
+
+  setView(view: ViewMode) {
+    if (this.layout.view === view) return;
+    this.layout = { ...this.layout, view };
+    this.commit();
+  }
+
+  setFlowPosition(id: string, pos: [number, number]) {
+    this.layout = { ...this.layout, flowPos: { ...this.layout.flowPos, [id]: pos } };
+    this.commit();
+  }
+
+  toggleFlowHidden(id: string) {
+    const hidden = this.layout.flowHidden.includes(id)
+      ? this.layout.flowHidden.filter((x) => x !== id)
+      : [...this.layout.flowHidden, id];
+    this.layout = { ...this.layout, flowHidden: hidden };
+    this.commit();
+  }
+
+  resetFlow() {
+    this.layout = { ...this.layout, flowPos: {}, flowHidden: [] };
     this.commit();
   }
 

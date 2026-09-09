@@ -87,6 +87,30 @@ export function useHaptics(): boolean {
   );
 }
 
+export function useView(): 'modules' | 'flow' {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getSnapshot().layout.view,
+    () => store.getSnapshot().layout.view,
+  );
+}
+
+export function useFlowPos(): Record<string, [number, number]> {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getSnapshot().layout.flowPos,
+    () => store.getSnapshot().layout.flowPos,
+  );
+}
+
+export function useFlowHidden(): string[] {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getSnapshot().layout.flowHidden,
+    () => store.getSnapshot().layout.flowHidden,
+  );
+}
+
 export function usePower(): boolean {
   return useSyncExternalStore(
     subscribe,
