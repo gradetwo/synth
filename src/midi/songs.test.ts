@@ -39,6 +39,20 @@ describe('demo playlist', () => {
     }
   });
 
+  it('ships full-length arrangements, not snippets', () => {
+    // Public-domain works are arranged in full; the modern themes stay as
+    // longer demonstrations for copyright reasons.
+    const publicDomain = ['elise', 'canon', 'moonlight', 'turkish', 'jasmine'];
+    for (const spec of DEMO_SONGS) {
+      const song = specToSong(spec);
+      expect(song.duration, spec.id).toBeGreaterThan(40);
+      if (publicDomain.includes(spec.id)) {
+        expect(song.duration, spec.id).toBeGreaterThan(60);
+        expect(song.notes.length, spec.id).toBeGreaterThan(200);
+      }
+    }
+  });
+
   it('parses note names with accidentals', () => {
     expect(midiOf('C4')).toBe(60);
     expect(midiOf('A4')).toBe(69);
