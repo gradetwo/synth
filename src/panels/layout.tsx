@@ -370,10 +370,17 @@ function NoteDisplay() {
   );
 }
 
-function PlayerButton({ onOpen }: { onOpen: () => void }) {
+function PlayerButton({ onOpen, iconOnly }: { onOpen: () => void; iconOnly?: boolean }) {
   return (
-    <button type="button" className="demo-btn player-open" onClick={onOpen}>
-      <span className="po-icon" aria-hidden="true">▶</span> {t('player.title')}
+    <button
+      type="button"
+      className={`demo-btn player-open${iconOnly ? ' icon-only' : ''}`}
+      onClick={onOpen}
+      aria-label={t('player.title')}
+      title={t('player.title')}
+    >
+      <span className="po-icon" aria-hidden="true">▶</span>
+      {iconOnly ? null : t('player.title')}
     </button>
   );
 }
@@ -425,6 +432,7 @@ export function DisplayRow({ onOpenPlayer }: { onOpenPlayer: () => void }) {
     return (
       <section className="display-row compact">
         <NoteDisplay />
+        <PlayerButton onOpen={onOpenPlayer} iconOnly />
         <VuMeter />
         <button
           type="button"
