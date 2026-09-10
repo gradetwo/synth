@@ -102,3 +102,59 @@ describe('midi player transport', () => {
     expect(player.getState().loopEnd).toBeNull();
   });
 });
+
+describe('layers', () => {
+  const layered = {
+    name: 'two layers',
+    bpm: 120,
+    duration: 2,
+    notes: [
+      { note: 48, velocity: 0.8, start: 0, duration: 0.5 },
+      { note: 60, velocity: 0.8, start: 0.5, duration: 0.5 },
+    ],
+    tracks: [
+      { name: 'Bass', notes: [{ note: 48, velocity: 0.8, start: 0, duration: 0.5 }] },
+      { name: 'Lead', notes: [{ note: 60, velocity: 0.8, start: 0.5, duration: 0.5 }] },
+    ],
+  };
+
+  it('plays every layer, and honours mute and solo', () => {
+    const player = new MidiPlayer();
+    player.load(layered);
+    expect(player.getLayers().map((layer) => layer.name)).toEqual(['Bass', 'Lead']);
+    const notesPlayed = () => player['events'].filter((e) => e.on).map((e) => e.note);
+
+    expect(notesPlayed().sort()).toEqual([48, 60]);
+    player.setLayer(0, { muted: true });
+    expect(notesPlayed()).toEqual([60]);
+    player.setLayer(0, { muted: false });
+    // Solo wins: only the soloed layer is heard, muted ones stay out.
+    player.setLayer(1, { soloed: true });
+    expect(notesPlayed()).toEqual([60]);
+    player.setLayer(0, { muted: true });
+    expect(notesPlayed()).toEqual([60]);
+    // Dropping solo leaves the un-muted layer audible again…
+    player.setLayer(1, { soloed: false });
+    expect(notesPlayed()).toEqual([60]);
+    // …and muting both is silence.
+    player.setLayer(1, { muted: true });
+    expect(notesPlayed()).toEqual([]);
+  });
+
+  it('gives a single-layer song one layer with everything audible', () => {
+    const player = new MidiPlayer();
+    player.load({
+      name: 'one',
+      bpm: 120,
+      duration: 1,
+      notes: [{ note: 60, velocity: 1, start: 0, duration: 0.5 }],
+    });
+    expect(player.getLayers()).toHaveLength(1);
+    expect(player.getLayers()[0].muted).toBe(false);
+    expect(player['events'].filter((e) => e.on)).toHaveLength(1);
+    // Reloading a song resets the layer state rather than carrying it over.
+    player.setLayer(0, { muted: true });
+    player.load(layered);
+    expect(player.getLayers().every((layer) => !layer.muted)).toBe(true);
+  });
+});

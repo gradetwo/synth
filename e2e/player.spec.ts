@@ -179,6 +179,34 @@ test.describe('player MIDI import', () => {
     await page.locator('.player-open').click();
     await expect(page.locator('.player-track', { hasText: 'unit-test' })).toHaveCount(1);
     await expect(page.locator('.player-track.current')).toContainText('unit-test');
+
+    // A format-1 file keeps its layers: the panel shows a strip with mute and
+    // solo per track.
+    const track2 = [
+      0x00, 0xff, 0x03, 0x04, 0x4c, 0x65, 0x61, 0x64,
+      0x00, 0x90, 0x3e, 0x64,
+      0x83, 0x60, 0x80, 0x3e, 0x40,
+      0x00, 0xff, 0x2f, 0x00,
+    ];
+    const layered = Buffer.from([
+      0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, 0, 2, 0x01, 0xe0,
+      0x4d, 0x54, 0x72, 0x6b, 0, 0, 0, track.length, ...track,
+      0x4d, 0x54, 0x72, 0x6b, 0, 0, 0, track2.length, ...track2,
+    ]);
+    await page.locator('.player input[type=file]').setInputFiles({
+      name: 'two-tracks.mid',
+      mimeType: 'audio/midi',
+      buffer: layered,
+    });
+    const strip = page.locator('.layer-strip');
+    await expect(strip).toHaveAttribute('data-layers', '2');
+    const mute = strip.locator('[data-layer="0"] [data-act="mute"]');
+    await expect(mute).toHaveAttribute('aria-pressed', 'false');
+    await mute.click();
+    await expect(mute).toHaveAttribute('aria-pressed', 'true');
+    await strip.locator('[data-layer="1"] [data-act="solo"]').click();
+    await expect(strip.locator('[data-layer="1"] [data-act="solo"]')).toHaveAttribute('aria-pressed', 'true');
+
   });
 });
 

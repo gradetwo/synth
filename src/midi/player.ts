@@ -10,7 +10,7 @@
 import { engine } from '@/audio/engine';
 import { metronome } from '@/audio/metronome';
 import { noteBus } from '@/audio/noteBus';
-import type { MidiSong } from './smf';
+import { songTracks, type MidiSong } from './smf';
 
 interface TimedEvent {
   t: number;
@@ -38,10 +38,26 @@ export interface PlayerState {
   countIn: boolean;
 }
 
-function buildEvents(song: MidiSong | null): TimedEvent[] {
+/** Mute and solo per file track. */
+export interface LayerState {
+  name: string;
+  muted: boolean;
+  soloed: boolean;
+}
+
+function buildEvents(song: MidiSong | null, layers: LayerState[]): TimedEvent[] {
   if (!song) return [];
   const events: TimedEvent[] = [];
-  for (const n of song.notes) {
+  // One layer is the normal case and behaves exactly as before; with several,
+  // mute and solo decide which of them reach the synth.
+  const anySolo = layers.some((layer) => layer.soloed);
+  const audible = songTracks(song).filter((_, index) => {
+    const layer = layers[index];
+    if (!layer) return true;
+    if (anySolo) return layer.soloed && !layer.muted;
+    return !layer.muted;
+  });
+  for (const n of audible.flatMap((layer) => layer.notes)) {
     events.push({ t: n.start, note: n.note, on: true, velocity: n.velocity });
     events.push({ t: n.start + n.duration, note: n.note, on: false, velocity: n.velocity });
   }
@@ -71,13 +87,18 @@ export class MidiPlayer {
   };
   /** Song tempo, used by the metronome. */
   private bpm = 120;
+  private song: MidiSong | null = null;
+  private layers: LayerState[] = [];
 
   /** Called when a non-looping song reaches its end. */
   onEnded: (() => void) | null = null;
 
   load(song: MidiSong | null): void {
     this.stop();
-    this.events = buildEvents(song);
+    this.song = song;
+    // Layer state is per song: a fresh load starts with everything audible.
+    this.layers = song ? songTracks(song).map((layer) => ({ name: layer.name, muted: false, soloed: false })) : [];
+    this.events = buildEvents(song, this.layers);
     this.cursor = 0;
     this.bpm = song?.bpm ?? 120;
     // A new song invalidates any loop region from the previous one.
@@ -89,6 +110,37 @@ export class MidiPlayer {
       loopEnd: null,
     };
     this.emit();
+  }
+
+  /** The current song's layers, for the panel's mute/solo strip. */
+  getLayers(): LayerState[] {
+    return this.layers;
+  }
+
+  setLayer(index: number, patch: Partial<Pick<LayerState, 'muted' | 'soloed'>>): void {
+    const layer = this.layers[index];
+    if (!layer) return;
+    this.layers = this.layers.map((entry, i) => (i === index ? { ...entry, ...patch } : entry));
+    this.rebuild();
+  }
+
+  /**
+   * Rebuild the event list after a mute/solo change. A change while playing
+   * takes effect immediately: the notes that are already sounding are released
+   * so a muted layer goes quiet instead of ringing on.
+   */
+  private rebuild(): void {
+    const time = this.state.time;
+    const playing = this.state.playing;
+    this.events = buildEvents(this.song, this.layers);
+    if (!playing) {
+      this.cursor = 0;
+      return;
+    }
+    for (const note of this.active) engine.noteOff(note);
+    this.active.clear();
+    this.cursor = this.events.findIndex((event) => event.t >= time);
+    if (this.cursor < 0) this.cursor = this.events.length;
   }
 
   getState(): PlayerState {

@@ -47,6 +47,7 @@ export function PlayerPanel({
 }) {
   const [, bump] = useState(0);
   const [player, setPlayer] = useState<PlayerState>(midiPlayer.getState());
+  const [layers, setLayers] = useState(midiPlayer.getLayers());
   const [rec, setRec] = useState<RecorderState>(recorder.getState());
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
@@ -55,7 +56,14 @@ export function PlayerPanel({
   // not immediately pause the playback it just started.
   const lastSelect = useRef(0);
 
-  useEffect(() => midiLibrary.subscribe(() => bump((v) => v + 1)), []);
+  useEffect(
+    () =>
+      midiLibrary.subscribe(() => {
+        bump((v) => v + 1);
+        setLayers(midiPlayer.getLayers());
+      }),
+    [],
+  );
   useEffect(() => midiPlayer.subscribe(setPlayer), []);
   useEffect(() => recorder.subscribe(setRec), []);
 
@@ -243,6 +251,46 @@ export function PlayerPanel({
             onChange={(event) => setQuery(event.target.value)}
           />
         </div>
+
+        {/* Multi-track songs get a strip: one row per layer with its own mute
+            and solo, so a two-track file can be auditioned part by part. */}
+        {layers.length > 1 ? (
+          <div className="layer-strip" data-layers={layers.length}>
+            {layers.map((layer, index) => (
+              <div className="layer-row" key={`${layer.name}-${index}`} data-layer={index}>
+                <span className="layer-name">{layer.name}</span>
+                <button
+                  type="button"
+                  className={`layer-btn${layer.muted ? ' on' : ''}`}
+                  data-act="mute"
+                  aria-pressed={layer.muted}
+                  aria-label={`${t('layer.mute')} ${layer.name}`}
+                  onClick={() => {
+                    haptic();
+                    midiPlayer.setLayer(index, { muted: !layer.muted });
+                    setLayers(midiPlayer.getLayers());
+                  }}
+                >
+                  M
+                </button>
+                <button
+                  type="button"
+                  className={`layer-btn${layer.soloed ? ' on' : ''}`}
+                  data-act="solo"
+                  aria-pressed={layer.soloed}
+                  aria-label={`${t('layer.solo')} ${layer.name}`}
+                  onClick={() => {
+                    haptic();
+                    midiPlayer.setLayer(index, { soloed: !layer.soloed });
+                    setLayers(midiPlayer.getLayers());
+                  }}
+                >
+                  S
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         <div className="player-list">
           {groups.map((group) => {

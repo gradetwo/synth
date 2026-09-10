@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.58.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '多轨 MIDI 现在**分层播放**：导入格式 1 文件后，播放器上方会出现一条轨道条，每层都有 `M`（静音）与 `S`（独奏）；播放中按下立即生效（被静音层正在发声的音会立刻收掉）。',
+        'Multi-track MIDI now **plays by layer**: import a format-1 file and a track strip appears above the player list, with `M` (mute) and `S` (solo) per layer. Changes take effect immediately while playing — a muted layer\'s sounding notes are released rather than ringing on.',
+      ],
+      [
+        '单轨文件（含内置曲目与录音）行为不变，仍然只有一层、没有轨道条。',
+        'Single-track files (including the built-in songs and recordings) behave exactly as before: one layer, no strip.',
+      ],
+    ],
+  },
+  {
     version: '1.57.0',
     date: '2026-09-10',
     kind: 'feature',
