@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.43.2',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '内置使用指南补齐本轮新增能力：**波表（WT，PW 选表）、MIDI 输出、输出设备选择**。',
+        'The built-in guide now covers this round of additions: the **wavetable (WT, chosen with the PW knob)**, **MIDI output** and the **output device picker**.',
+      ],
+    ],
+  },
+  {
     version: '1.43.1',
     date: '2026-09-10',
     kind: 'fix',

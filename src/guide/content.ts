@@ -983,12 +983,20 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Export WAV (lossless)**: the same render with no encoder in the path — the way to tell an encoder artefact from a playback-chain one. Export rendering uses the full 32-voice pool (offline has no deadline), so long-release patches are not cut short by voice stealing.',
           ],
           [
+            '**输出设备**（音频设置）：把声音送到指定的耳机/扬声器/音频接口，不改动系统默认设备；浏览器不支持时会说明。',
+            '**Output device** (Audio settings): route the sound to chosen headphones, speakers or an interface without changing the system default; browsers without support say so.',
+          ],
+          [
             '**场景**：预设库里的「场景」可把当前工作区（模块顺序与折叠、视图、信号流节点位置）存成命名场景并一键切回；语言/配色/触感/MIDI 映射等个人偏好不会被改动。',
             '**Scenes**: save the current workspace (module order and collapse, view, signal-flow node positions) under a name and recall it in one tap; personal preferences such as language, colours, haptics and MIDI mappings are never changed.',
           ],
           [
             '**力度曲线**：预设库里的「力度曲线」可选线性 / 柔和 / 强硬，只影响实时演奏（触摸屏、MIDI 键盘）；曲目播放保持原谱力度，不会被改写。',
             '**Velocity curves**: pick Linear, Soft or Hard under Velocity curve in the preset drawer. They shape live playing only (touchscreen, MIDI keyboard); song playback keeps the dynamics in the file.',
+          ],
+          [
+            '**波表（WT）**：波形最后一项，五张由谐波构成的表（风琴/中空/人声/金属/玻璃），每张按八度分层**抗混叠**；**用 `PW` 旋钮切换表**（波表本身没有脉宽）。',
+            '**Wavetable (WT)**: the last wave, five harmonic tables (organ, hollow, vocal, metallic, glass), each stored as anti-aliased tables per octave; the **PW knob picks which one**, since a table has no pulse width of its own.',
           ],
           [
             '**噪声颜色**：波形里的 `PNK`（粉噪，每倍频程 −3 dB）与 `BRN`（棕噪，−6 dB）在合成噪声层（风声、海浪、鼓）时比白噪自然得多；白噪保留在 `NOI`。',
@@ -1001,6 +1009,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
           [
             '**导入 .scl**：支持 Scala 调律文件（任意音数、比例或音分、非八度周期）；导入即切到该调律并记住。非 12 音音阶按音数逐键展开，不做 ±50 音分折算（那样会把 19 平均律这类音阶压坏）。',
             '**Import .scl**: Scala tuning files are supported (any note count, ratios or cents, non-octave periods); importing switches to the scale and remembers it. Non-12-note scales spread by degree instead of being folded into ±50 cents, which would collapse them.',
+          ],
+          [
+            '**MIDI 输出**（音频设置）：把演奏的音符发送到外部设备（硬件合成器/鼓机/DAW）；先在顶栏授权 MIDI，再选端口并打开开关，关闭时会先发送 all-notes-off。',
+            '**MIDI output** (Audio settings): send played notes to an external device (hardware synth, drum machine, DAW). Grant MIDI access in the top bar, pick a port and switch it on; switching off sends all-notes-off first.',
           ],
           [
             '**MIDI CC 映射**：在「音频设置」里选控件 → 点「学习」→ 转动控制器旋钮即可绑定；对数控件按对数缩放、步进控件取整，映射会记住并可单独清除。CC1/CC64 未映射时仍保留调制轮与延音功能。',
