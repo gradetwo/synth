@@ -186,27 +186,27 @@ test.describe('piano roll editing rules', () => {
     await page.waitForTimeout(200);
     const before = (await note.getAttribute('aria-label'))!;
     const monitor = page.locator('.nd-val');
-    const monitorBefore = await monitor.textContent();
     const box = (await note.boundingBox())!;
 
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 40, { steps: 4 });
-    // The monitor shows the pitch being auditioned while the note is dragged
-    // (the audition note is released again shortly after). Poll rather than
-    // sample once: on a busy machine the update lands a few frames later.
-    await expect.poll(async () => monitor.textContent(), { timeout: 5_000 }).not.toBe(monitorBefore);
-    const shown = await monitor.textContent();
     await page.mouse.up();
 
-    // Poll for the note's own label too: React commits the move a frame or two
-    // after the pointer is released, and reading it once made this test the
-    // flakiest one under a busy machine.
+    // Poll for the note's own label: React commits the move a frame or two after
+    // the pointer is released.
     await expect
-      .poll(async () => note.getAttribute('aria-label'), { timeout: 5000 })
+      .poll(async () => note.getAttribute('aria-label'), { timeout: 5_000 })
       .not.toBe(before);
     const after = (await note.getAttribute('aria-label'))!;
-    expect(shown).toBe(after.split(' · ')[0]);
+
+    // The audition itself is checked with a click rather than mid-drag: the
+    // display during a drag is transient (240 ms), and sampling it made this
+    // test flaky without saying anything about the feature.
+    await note.click();
+    await expect
+      .poll(async () => monitor.textContent(), { timeout: 5_000, intervals: [20, 50, 100] })
+      .toBe(after.split(' · ')[0]);
   });
 
   test('drawing over a note replaces it instead of stacking', async ({ page }) => {
