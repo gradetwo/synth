@@ -219,11 +219,16 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
   }
 
   monitorLoad(frames, cost, rate) {
-    if (this.blockCount < 60) return; // ignore JIT warm-up
+    if (this.blockCount < 30) return; // ignore JIT warm-up
     const budget = (frames / rate) * 1000;
-    this.costAvg = this.costAvg ? this.costAvg * 0.95 + cost * 0.05 : cost;
+    // A faster average (about twelve blocks) so a patch that is too heavy is
+    // caught in ~15 ms rather than after a visible stumble.
+    this.costAvg = this.costAvg ? this.costAvg * 0.92 + cost * 0.08 : cost;
     const now = nowMs();
-    if (this.costAvg > budget * 0.45 && this.currentPoly > 4 && now - this.lastDowngrade > 1500) {
+    // 35% of the block period leaves headroom for the browser's own work on the
+    // audio thread; past that a slow device starts missing deadlines, which is
+    // exactly what "crackling" is.
+    if (this.costAvg > budget * 0.35 && this.currentPoly > 4 && now - this.lastDowngrade > 900) {
       this.currentPoly = Math.max(4, this.currentPoly - 4);
       this.wasm.gs_set_max_polyphony(this.currentPoly);
       this.wasm.gs_force_release_excess();
@@ -231,7 +236,7 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
       this.costAvg = 0;
       this.port.postMessage({ type: 'polyphony', value: this.currentPoly, reason: 'overload' });
     } else if (
-      this.costAvg < budget * 0.18 &&
+      this.costAvg < budget * 0.12 &&
       this.currentPoly < this.maxPoly &&
       now - this.lastUpgrade > 8000
     ) {

@@ -54,6 +54,13 @@ extern "C" {
 /// Short release applied to a stolen voice (seconds).
 const STEAL_RELEASE: f32 = 0.008;
 /// Per-voice gain before the mix bus.
+/// Trim applied *before* the per-voice filter, with the same amount made up
+/// after it. The ladder's tanh stages saturate around unity, and the raw
+/// oscillator sum can reach ~1.2 at full level, so without this trim every
+/// loud note picked up intermodulation grit — very audible on clean patches
+/// such as the bell, which is nothing but two sines.
+const FILTER_TRIM: f32 = 0.65;
+
 /// Per-voice bus gain. With decorrelated start phases a dense chord sums to
 /// roughly sqrt(N) instead of N, so this leaves the master bus inside the
 /// limiter's linear region even with every oscillator at full level.
@@ -284,7 +291,8 @@ impl Engine {
             env.reset();
         }
         self.vm.reset();
-        self.vm.set_max_polyphony(max_polyphony);
+        self.poly_request = max_polyphony.clamp(2, MAX_VOICES);
+        self.apply_polyphony_cap();
         self.pitch_bend = 0.0;
         self.mod_wheel = 0.0;
         self.aftertouch = 0.0;
@@ -304,6 +312,7 @@ impl Engine {
         // here must be edge-triggered rather than level-triggered.
         let mode_changed =
             param_id == id::VOICE_MODE && (value as u32).min(2) != self.params.voice_mode;
+        let unison_before = (self.params.osc[0].unison, self.params.osc[1].unison);
         self.params.set(param_id, value);
         if is_continuous(param_id) {
             let index = param_id as usize;
@@ -325,7 +334,9 @@ impl Engine {
         ) {
             self.env_dirty = true;
         }
-        if matches!(param_id, id::OSC1_UNISON | id::OSC2_UNISON) {
+        if matches!(param_id, id::OSC1_UNISON | id::OSC2_UNISON)
+            && (self.params.osc[0].unison, self.params.osc[1].unison) != unison_before
+        {
             self.apply_polyphony_cap();
         }
         if mode_changed {
@@ -384,9 +395,12 @@ impl Engine {
 
     /// prd.md §7.1 — elastic downgrade with smooth release.
     pub fn trigger_smooth_downgrade(&mut self) {
-        let next = self.vm.max_polyphony.saturating_sub(2).max(4);
-        self.vm.set_max_polyphony(next);
-        self.vm.force_release_excess(next);
+        // Lower the *request* so a later unison change cannot restore the old
+        // ceiling, then let the cap apply as usual.
+        self.poly_request = self.poly_request.saturating_sub(2).max(4);
+        self.apply_polyphony_cap();
+        let cap = self.vm.max_polyphony();
+        self.vm.force_release_excess(cap);
     }
 
     pub fn pitch_bend(&mut self, semitones: f32) {
@@ -1019,8 +1033,8 @@ impl Engine {
             &self.osc_a[..frames],
             &self.osc_b[..frames],
             &mut self.voice_buf[..frames],
-            osc_level[0],
-            osc_level[1],
+            osc_level[0] * FILTER_TRIM,
+            osc_level[1] * FILTER_TRIM,
         );
 
         // --- amplitude envelope ---------------------------------------------
@@ -1106,6 +1120,12 @@ impl Engine {
                 self.voice_buf.as_mut_ptr(),
                 frames as u32,
             );
+        }
+
+        // Make up the trim that kept the filter inside its linear region.
+        let makeup = 1.0 / FILTER_TRIM;
+        for sample in self.voice_buf[..frames].iter_mut() {
+            *sample *= makeup;
         }
 
         // --- pan + accumulate into the stereo mix bus -----------------------
@@ -1746,6 +1766,40 @@ mod tests {
             "LIM worst_out={worst:.3} at_sample={worst_at} gain={worst_gain:.3} bus={worst_bus:.3} over_knee={:.2}%",
             100.0 * over as f32 / total as f32
         );
+    }
+
+    /// The host pushes every parameter on every block, so a parameter flood
+    /// must not undo the polyphony the load monitor asked for (it did, which
+    /// left slow devices at sixteen voices and dropping out).
+    #[test]
+    fn parameter_flood_keeps_the_host_polyphony() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        let flood = |e: &mut Engine| {
+            for param in 0..crate::params::PARAM_COUNT as u32 {
+                e.set_param(param, 0.0);
+            }
+            // …with the values the worklet actually sends for the switches.
+            e.set_param(id::OSC1_ON, 1.0);
+            e.set_param(id::OSC2_ON, 0.0);
+        };
+        e.set_max_polyphony(4);
+        assert_eq!(e.max_polyphony(), 4);
+        flood(&mut e);
+        assert_eq!(e.max_polyphony(), 4, "a parameter push restored the old cap");
+
+        // Unison still divides whatever the host asked for.
+        e.set_param(id::OSC1_UNISON, 2.0);
+        assert_eq!(e.max_polyphony(), 2);
+        e.set_param(id::OSC1_UNISON, 1.0);
+        assert_eq!(e.max_polyphony(), 4);
+
+        // The emergency downgrade sticks as well.
+        e.set_max_polyphony(16);
+        e.trigger_smooth_downgrade();
+        assert_eq!(e.max_polyphony(), 14);
+        flood(&mut e);
+        assert_eq!(e.max_polyphony(), 14, "the emergency downgrade was undone");
     }
 
     /// The lookahead limiter must catch a transient *before* it reaches the
