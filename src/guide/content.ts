@@ -623,7 +623,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
         kind: 'ul',
         items: [
           [
-            '**混响**：Soundpipe 的 `reverbsc`（Sean Costello 的八延时线反馈网络）。`SIZE` 映射反馈 0.70–0.97 与低通 4–14 kHz，`MIX` 控制干湿比。',
+            '**混响**：自研 Freeverb 结构（每声道 8 个阻尼梳状滤波器 + 4 个全通扩散器，带立体声扩展）。`SIZE` 控制衰减长度、`DAMP` 控制尾音高频衰减、`WIDTH` 控制立体声宽度、`PRE` 是 0–100 ms 预延迟、`MIX` 是干湿比；内部有慢速延时调制，尾音不会发金属声。',
             '**Reverb**: Soundpipe’s `reverbsc` (Sean Costello’s eight-delay-line feedback network). `SIZE` maps feedback 0.70–0.97 and a low-pass from 4–14 kHz; `MIX` sets the dry/wet balance.',
           ],
           [
