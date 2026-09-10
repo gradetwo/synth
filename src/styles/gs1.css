@@ -850,8 +850,13 @@ body.module-dragging .module-grip{cursor:grabbing}
   --thumb-bg:#ffffff; --thumb-border:#9aa3b8;
   --key-edge:#9aa3b8; --key-label:#5c6478;
   --txt-1:#161a24; --txt-2:#4c5468; --txt-dim:#767f94;
-  --accent:#d9820a; --accent-dim:#c8a468; --chord:#0e8fa8;
+  /* Light mode reads a *deep* amber as ink/lines and a filled amber for
+     buttons: a bright amber slab with near-black text is harsh on white. */
+  --accent:#a85f06; --accent-dim:#c8944a; --chord:#0e7d92;
   --accent-tint:#fdf0da;
+  --accent-ink:#8a4b00;
+  /* Deep enough for white ink to clear 4.5:1 (WCAG AA) on a filled button. */
+  --accent-fill:#a35f00; --accent-fill-ink:#fff;
   --sheen:rgba(255,255,255,.9); --sheen-soft:rgba(20,28,48,.035);
   --shadow-1:rgba(24,32,52,.10); --shadow-2:rgba(24,32,52,.16); --shadow-3:rgba(24,32,52,.22);
   --mask:rgba(32,38,54,.38);
@@ -870,6 +875,36 @@ body.module-dragging .module-grip{cursor:grabbing}
   background-image:radial-gradient(1200px 600px at 50% -10%,#ffffff 0%,transparent 60%),
     radial-gradient(800px 400px at 90% 110%,#e4eaf5 0%,transparent 55%);
 }
+/* Filled amber controls: white ink on a deep amber slab instead of the dark
+   text on a bright slab that the dark theme uses. */
+:root[data-theme='light'] .tbtn.primary,
+:root[data-theme='light'] .vt-btn.on,
+:root[data-theme='light'] .player-btn.on,
+:root[data-theme='light'] .player-btn.primary,
+:root[data-theme='light'] .player-play.on,
+:root[data-theme='light'] .flow-badge,
+:root[data-theme='light'] .key-btn.primary,
+:root[data-theme='light'] .vel-btn.on,
+:root[data-theme='light'] .demo-btn.running,
+:root[data-theme='light'] .update-banner button,
+:root[data-theme='light'] .start-btn,
+:root[data-theme='light'] .start-retry,
+:root[data-theme='light'] .dock-show,
+:root[data-theme='light'] .seg button.active.seg-on,
+:root[data-theme='light'] .notice .dot,
+:root[data-theme='light'] .guide-mark,
+:root[data-theme='light'] .guide-step-n,
+:root[data-theme='light'] .ab-slot.on.filled::after{
+  background:var(--accent-fill); color:var(--accent-fill-ink);
+  border-color:var(--accent-fill); box-shadow:none}
+:root[data-theme='light'] .tbtn.primary{border:1px solid #8f5500}
+:root[data-theme='light'] .roll-btn.primary,
+:root[data-theme='light'] .demo-btn.running{box-shadow:0 1px 2px var(--shadow-1)}
+/* Active *view* toggles stay tonal: they sit next to each other all day. */
+:root[data-theme='light'] .vt-btn.on{
+  background:var(--accent-tint); color:var(--accent-ink); border-color:#e6c69b}
+:root[data-theme='light'] .flow-badge{background:var(--accent-tint); color:var(--accent-ink)}
+
 /* The module frame and panels get a soft daylight shadow instead of a glow. */
 :root[data-theme='light'] .module,
 :root[data-theme='light'] .panel,
@@ -896,6 +931,7 @@ body.module-dragging .module-grip{cursor:grabbing}
   --border:#6b7280; --border-hi:#111827;
   --txt-1:#000; --txt-2:#1f2937; --txt-dim:#374151;
   --accent:#a35b00; --accent-dim:#7a4400;
+  --accent-ink:#7a4400; --accent-fill:#8f4e00; --accent-fill-ink:#fff;
   --shadow-1:rgba(0,0,0,.18); --shadow-2:rgba(0,0,0,.25); --shadow-3:rgba(0,0,0,.3);
 }
 :root[data-theme='light'] body.contrast .panel,
@@ -989,13 +1025,29 @@ input,textarea,[contenteditable='true']{
 .player-btn.wide{flex:1;min-width:96px;height:36px;font:700 10px/1 var(--grot);letter-spacing:.05em}
 .player-btn.primary{background:var(--accent);border-color:var(--accent);color:#141414}
 .player-btn:disabled{opacity:.45;cursor:not-allowed}
-.player-seek{flex:1;min-width:90px;accent-color:var(--accent);height:20px}
+.player-seek,.player-field input[type='range']{-webkit-appearance:none;appearance:none;
+  flex:1;min-width:90px;height:20px;background:transparent;cursor:pointer}
+.player-seek::-webkit-slider-runnable-track,
+.player-field input[type='range']::-webkit-slider-runnable-track{
+  height:6px;border-radius:3px;background:var(--bg-inset);border:1px solid var(--line-soft)}
+.player-seek::-webkit-slider-thumb,
+.player-field input[type='range']::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;margin-top:-5px;border-radius:50%;
+  background:var(--accent-fill);border:0;box-shadow:0 1px 2px var(--shadow-1)}
+.player-seek::-moz-range-track,
+.player-field input[type='range']::-moz-range-track{
+  height:6px;border-radius:3px;background:var(--bg-inset);border:1px solid var(--line-soft)}
+.player-seek::-moz-range-progress,
+.player-field input[type='range']::-moz-range-progress{
+  height:6px;border-radius:3px;background:var(--accent-fill)}
+.player-seek::-moz-range-thumb,
+.player-field input[type='range']::-moz-range-thumb{
+  width:14px;height:14px;border-radius:50%;background:var(--accent-fill);border:0}
 .player-time{font:600 10px/1 var(--mono);color:var(--txt-dim);white-space:nowrap;min-width:78px;text-align:right}
 .player-controls{display:flex;flex-direction:column;gap:8px;padding:6px 16px 4px}
 .player-field{display:flex;align-items:center;gap:9px;font:600 9.5px/1 var(--mono);
   letter-spacing:.08em;color:var(--txt-dim)}
 .player-field span{min-width:56px}
-.player-field input[type='range']{flex:1;accent-color:var(--accent)}
 .player-field em{font-style:normal;color:var(--txt-1);min-width:44px;text-align:right}
 .player-actions{display:flex;gap:7px;padding:8px 16px;flex-wrap:wrap}
 .player-search{padding:4px 16px 8px}

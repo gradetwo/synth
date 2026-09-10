@@ -104,6 +104,56 @@ test.describe('colour scheme', () => {
     expect(0.2126 * r + 0.7152 * g + 0.0722 * b).toBeLessThan(160);
   });
 
+  test('filled controls keep their contrast in light mode', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await boot(page);
+
+    // WCAG relative luminance + contrast ratio, straight from the spec.
+    const contrastOf = (fg: string, bg: string) => {
+      const parse = (c: string) => {
+        const [r, g, b] = c.match(/[\d.]+/g)!.map(Number);
+        const lin = (v: number) => {
+          const s = v / 255;
+          return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+      };
+      const a = parse(fg);
+      const b = parse(bg);
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    };
+    const ratio = async (selector: string) =>
+      page.locator(selector).first().evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return [cs.color, cs.backgroundColor] as const;
+      });
+
+    // The preset drawer button is a filled control in the top bar.
+    const [presetInk, presetBg] = await ratio('.tbtn.primary');
+    expect(contrastOf(presetInk, presetBg)).toBeGreaterThan(4.4);
+
+    // So are the transport buttons and the performance badge, in flow view.
+    await page.getByRole('button', { name: '信号流' }).click();
+    await page.waitForTimeout(600);
+    const loop = page.getByRole('button', { name: '循环' });
+    await loop.click();
+    await page.waitForTimeout(200);
+    const [loopInk, loopBg] = await loop.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return [cs.color, cs.backgroundColor] as const;
+    });
+    expect(contrastOf(loopInk, loopBg)).toBeGreaterThan(4.4);
+
+    const badge = page.locator('.flow-badge').first();
+    if (await badge.count()) {
+      const [badgeInk, badgeBg] = await badge.evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return [cs.color, cs.backgroundColor] as const;
+      });
+      expect(contrastOf(badgeInk, badgeBg)).toBeGreaterThan(4.4);
+    }
+  });
+
   test('auto follows the system live, and the choice persists', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'light' });
     await boot(page);
