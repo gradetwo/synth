@@ -82,6 +82,10 @@ export const Param = {
   OSC1_SPREAD: 71,
   OSC2_UNISON: 72,
   OSC2_SPREAD: 73,
+  LFO_RETRIG: 74,
+  LFO_ONESHOT: 75,
+  LFO2_RETRIG: 76,
+  LFO2_ONESHOT: 77,
 } as const;
 
 export type ParamId = (typeof Param)[keyof typeof Param];
@@ -126,6 +130,10 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.OSC1_SPREAD]: 'osc1Spread',
   [Param.OSC2_UNISON]: 'osc2Unison',
   [Param.OSC2_SPREAD]: 'osc2Spread',
+  [Param.LFO_RETRIG]: 'lfoRetrig',
+  [Param.LFO_ONESHOT]: 'lfoOneshot',
+  [Param.LFO2_RETRIG]: 'lfo2Retrig',
+  [Param.LFO2_ONESHOT]: 'lfo2Oneshot',
   [Param.FX_REVERB_MIX]: 'fxReverbMix',
   [Param.FX_DELAY_ON]: 'fxDelayOn',
   [Param.FX_DELAY_SYNC]: 'fxDelaySync',
@@ -370,6 +378,10 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.OSC1_SPREAD]: 0.35,
   [Param.OSC2_UNISON]: 1,
   [Param.OSC2_SPREAD]: 0.35,
+  [Param.LFO_RETRIG]: 0,
+  [Param.LFO_ONESHOT]: 0,
+  [Param.LFO2_RETRIG]: 0,
+  [Param.LFO2_ONESHOT]: 0,
   [Param.FX_REVERB_MIX]: 0.25,
   [Param.FX_DELAY_ON]: 0,
   [Param.FX_DELAY_SYNC]: 2,

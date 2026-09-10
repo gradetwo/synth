@@ -617,6 +617,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             'Eight slots are available (add with “+ add route”, remove with `✕`). Amounts are **bipolar** — left of centre inverts the modulation. RANDOM samples a fresh value per note and holds it for that note; KEY maps ±48 semitones around middle C to ±1.',
           ],
           [
+            '**LFO 模式**：`RETRIG` 让 LFO 随每个音符重新起振（每个声部有独立相位，颤音/滤波扫频会与起音对齐）；`ONE SHOT` 只跑一个周期后停住，等于一条额外的包络。两者对 LFO 1 / LFO 2 各自独立。',
+            '**LFO modes**: `RETRIG` restarts the LFO with every note (each voice gets its own phase, so vibrato and filter sweeps line up with the attack), and `ONE SHOT` runs a single cycle then holds — an extra envelope, in effect. Both are independent for LFO 1 and LFO 2.',
+          ],
+          [
             '矩阵以**块速率**（每 128 采样）在每个声部上计算一次，然后在整个块内平滑应用，兼顾效率与稳定。',
             'The matrix is evaluated once per **block** (128 samples) per voice and applied smoothly across the block — efficient and stable.',
           ],

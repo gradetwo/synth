@@ -1517,3 +1517,7 @@ input,textarea,[contenteditable='true']{
 .vu-meter{font:600 8px/1 var(--mono);letter-spacing:.04em;color:var(--txt-dim);
   white-space:nowrap;min-height:9px}
 .vu-meter.hot{color:#ff6b6b}
+
+/* LFO mode toggles (retrigger / one shot) under the sync row. */
+.lfo-modes{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.lfo-modes .hint{font:600 8.5px/1 var(--mono);letter-spacing:.1em;color:var(--txt-dim)}

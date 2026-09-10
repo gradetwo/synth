@@ -88,10 +88,14 @@ pub mod id {
     pub const OSC1_SPREAD: u32 = 71;
     pub const OSC2_UNISON: u32 = 72;
     pub const OSC2_SPREAD: u32 = 73;
+    pub const LFO_RETRIG: u32 = 74;
+    pub const LFO_ONESHOT: u32 = 75;
+    pub const LFO2_RETRIG: u32 = 76;
+    pub const LFO2_ONESHOT: u32 = 77;
 }
 
-/// Highest parameter id + 1 (ids are 0..=73).
-pub const PARAM_COUNT: usize = 74;
+/// Highest parameter id + 1 (ids are 0..=77).
+pub const PARAM_COUNT: usize = 78;
 
 /// Continuous parameters are smoothed across blocks (one-pole, ~20 ms) so the
 /// host can drag a knob without producing zipper noise. Discrete/stepped
@@ -389,6 +393,11 @@ pub struct LfoParams {
     pub depth: f32,
     pub target: LfoTarget,
     pub sync: bool,
+    /// Restart the cycle for every new note (per-voice LFO) instead of running
+    /// free for the whole patch.
+    pub retrigger: bool,
+    /// Run a single cycle and hold its final value.
+    pub one_shot: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -472,6 +481,8 @@ impl Params {
                 depth: 0.3,
                 target: LfoTarget::Cutoff,
                 sync: false,
+                retrigger: false,
+                one_shot: false,
             },
             lfo2: LfoParams {
                 on: false,
@@ -480,6 +491,8 @@ impl Params {
                 depth: 0.3,
                 target: LfoTarget::Cutoff,
                 sync: false,
+                retrigger: false,
+                one_shot: false,
             },
             filter_env: EnvParams {
                 attack: 0.01,
@@ -628,6 +641,10 @@ impl Params {
             p::LFO2_RATE => self.lfo2.rate = value.clamp(0.02, 40.0),
             p::LFO2_DEPTH => self.lfo2.depth = clamp01(value),
             p::LFO2_TARGET => self.lfo2.target = LfoTarget::from_u32(value as u32),
+            p::LFO_RETRIG => self.lfo.retrigger = value > 0.5,
+            p::LFO_ONESHOT => self.lfo.one_shot = value > 0.5,
+            p::LFO2_RETRIG => self.lfo2.retrigger = value > 0.5,
+            p::LFO2_ONESHOT => self.lfo2.one_shot = value > 0.5,
             _ => {}
         }
     }

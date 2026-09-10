@@ -174,6 +174,12 @@ function LfoModule() {
         <span className="hint">SYNC</span>
         <LfoRateLabel />
       </div>
+      <div className="lfo-modes">
+        <ParamLed id={Param.LFO_RETRIG} label={t('module.lfoRetrig')} />
+        <span className="hint">{t('module.lfoRetrigShort')}</span>
+        <ParamLed id={Param.LFO_ONESHOT} label={t('module.lfoOneshot')} />
+        <span className="hint">{t('module.lfoOneshotShort')}</span>
+      </div>
 
       <div className="lfo2">
         <div className="module-subhead">
@@ -192,6 +198,12 @@ function LfoModule() {
           label={t('module.lfo2Target')}
           options={LFO_TARGETS.map((t, i) => ({ label: t.toUpperCase(), value: i }))}
         />
+        <div className="lfo-modes">
+          <ParamLed id={Param.LFO2_RETRIG} label={t('module.lfo2Retrig')} />
+          <span className="hint">{t('module.lfoRetrigShort')}</span>
+          <ParamLed id={Param.LFO2_ONESHOT} label={t('module.lfo2Oneshot')} />
+          <span className="hint">{t('module.lfoOneshotShort')}</span>
+        </div>
       </div>
     </ModuleShell>
   );

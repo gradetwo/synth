@@ -20,9 +20,9 @@
 | 2 | A2 lookahead 限制器 + 真峰值/响度/GR 表 + 导出 −1 dBFS 规范化 + A9 音质门禁 | ✅ v1.15.0 |
 | 3 | A6 调制扩展：矩阵 8 槽 + 双极深度、AFTER/RANDOM/KEY 源、PAN/RES 目标、MIDI 触后 | ✅ v1.16.0 |
 | 4 | A6 合成能力：**Unison 1–7 子声部 + SPREAD**（复音按层数折算） | ✅ v1.17.0 |
-| 4a | A6 续：每声部（poly）LFO、LFO 重触发/单次/同步 | ⏳ 下一批 |
+| 4a | A6 续：每声部（poly）LFO + **RETRIG / ONE SHOT** 模式 | ✅ v1.18.0 |
 | 4b | A1 抗混叠：**重估后并入波表批次**——实测混叠 −57.7 dB（不可闻），而 2× 过采样预期仅再降约 6 dB 却要 +60% CPU；改由 A6.2 的 mipmap 波表振荡器（成本更低、抗混叠更好）统一解决 | 🔁 已改排期 |
-| 5 | A4 + 扩展滤波：每振荡器真立体声、SEM / Comb / Formant | ⏳ |
+| 5 | A4 + 扩展滤波：每振荡器真立体声、SEM / Comb / Formant | ⏳ 下一批 |
 | 6 | A6.2 波表振荡器（mipmap 抗混叠 + 单周期导入） | ⏳ |
 | 7 | A5 效果：并联/可重排链路、ping-pong 延迟、卷积混响（IR 导入） | ⏳ |
 | 8 | A7 表达：MPE、CC Learn、aftertouch、微调律（Scala） | ⏳ |

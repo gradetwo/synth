@@ -10,6 +10,8 @@ use crate::params::LfoWave;
 pub struct Lfo {
     phase: f32,
     pub value: f32,
+    /// One-shot mode stops after a single cycle instead of looping.
+    pub one_shot: bool,
 }
 
 impl Lfo {
@@ -17,12 +19,18 @@ impl Lfo {
         Self {
             phase: 0.0,
             value: 0.0,
+            one_shot: false,
         }
     }
 
     pub fn reset(&mut self) {
         self.phase = 0.0;
         self.value = 0.0;
+    }
+
+    /// Restart the cycle (used by the per-note retrigger mode).
+    pub fn retrigger(&mut self) {
+        self.phase = 0.0;
     }
 
     #[inline]
@@ -60,7 +68,9 @@ impl Lfo {
             *sample = last;
             phase += inc;
             if phase >= 1.0 {
-                phase -= 1.0;
+                // A one-shot LFO parks at the end of its cycle and holds the
+                // value there, so it behaves like an extra envelope.
+                phase = if self.one_shot { 1.0 } else { phase - 1.0 };
             }
         }
         self.phase = phase;

@@ -118,6 +118,12 @@ pub struct Engine {
     osc_b: [f32; MAX_BLOCK_SIZE],
     /// Scratch for rendering one unison sub-voice at a time.
     unison_buf: [f32; MAX_BLOCK_SIZE],
+    /// Per-voice LFO state, used when a patch retriggers the LFO per note.
+    voice_lfos: [Lfo; MAX_VOICES],
+    voice_lfo2s: [Lfo; MAX_VOICES],
+    /// Scratch for a per-voice LFO block (voices render one at a time).
+    lfo_scratch: [f32; MAX_BLOCK_SIZE],
+    lfo2_scratch: [f32; MAX_BLOCK_SIZE],
     env_buf: [f32; MAX_BLOCK_SIZE],
     voice_buf: [f32; MAX_BLOCK_SIZE],
     lfo_buf: [f32; MAX_BLOCK_SIZE],
@@ -196,6 +202,10 @@ impl Engine {
             osc_a: [0.0; MAX_BLOCK_SIZE],
             osc_b: [0.0; MAX_BLOCK_SIZE],
             unison_buf: [0.0; MAX_BLOCK_SIZE],
+            voice_lfos: [Lfo::new(); MAX_VOICES],
+            voice_lfo2s: [Lfo::new(); MAX_VOICES],
+            lfo_scratch: [0.0; MAX_BLOCK_SIZE],
+            lfo2_scratch: [0.0; MAX_BLOCK_SIZE],
             env_buf: [0.0; MAX_BLOCK_SIZE],
             voice_buf: [0.0; MAX_BLOCK_SIZE],
             lfo_buf: [0.0; MAX_BLOCK_SIZE],
@@ -478,6 +488,8 @@ impl Engine {
             unsafe { gs_voice_phase(slot as i32, p0, p1) };
             let random = self.next_random();
             self.vm.voices[slot].random = random;
+            self.voice_lfos[slot].retrigger();
+            self.voice_lfo2s[slot].retrigger();
             let p = self.params.env;
             let env = &mut self.envs[slot];
             env.reset();
@@ -526,6 +538,8 @@ impl Engine {
         unsafe { gs_voice_phase(slot as i32, p0, p1) };
         let random = self.next_random();
         self.vm.voices[slot].random = random;
+        self.voice_lfos[slot].retrigger();
+        self.voice_lfo2s[slot].retrigger();
         let p = self.params.env;
         let env = &mut self.envs[slot];
         env.reset();
@@ -677,13 +691,28 @@ impl Engine {
         self.mix_r[..frames].fill(0.0);
 
         // --- render voices --------------------------------------------------
+        // The per-voice LFO scratch buffers are moved out so the loop can keep
+        // borrowing `self` for the voice state.
+        let mut lfo_scratch = self.lfo_scratch;
+        let mut lfo2_scratch = self.lfo2_scratch;
         let mut active = 0u32;
         for slot in 0..MAX_VOICES {
             if self.vm.voices[slot].active {
-                self.render_voice(slot, frames, depth, lfo_value, depth2, lfo2_value);
+                self.render_voice(
+                    slot,
+                    frames,
+                    depth,
+                    lfo_value,
+                    depth2,
+                    lfo2_value,
+                    &mut lfo_scratch,
+                    &mut lfo2_scratch,
+                );
                 active += 1;
             }
         }
+        self.lfo_scratch = lfo_scratch;
+        self.lfo2_scratch = lfo2_scratch;
         self.active_voices = active;
 
         // --- master bus: hand the raw sum to the FX send ---------------------
@@ -816,6 +845,8 @@ impl Engine {
             unsafe { gs_voice_phase(slot as i32, p0, p1) };
             let random = self.next_random();
             self.vm.voices[slot].random = random;
+            self.voice_lfos[slot].retrigger();
+            self.voice_lfo2s[slot].retrigger();
             let env = &mut self.envs[slot];
             env.reset();
             env.set_params(params.attack, params.decay, params.sustain, params.release);
@@ -828,6 +859,7 @@ impl Engine {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_voice(
         &mut self,
         slot: usize,
@@ -836,10 +868,46 @@ impl Engine {
         lfo_value: f32,
         depth2: f32,
         lfo2_value: f32,
+        lfo_scratch: &mut [f32; MAX_BLOCK_SIZE],
+        lfo2_scratch: &mut [f32; MAX_BLOCK_SIZE],
     ) {
         let voice = self.vm.voices[slot];
         let sr = self.sample_rate;
         let params = self.params;
+
+        // --- LFOs: global, or per-voice when RETRIG is on -------------------
+        // A retriggered LFO restarts with every note, which is what makes
+        // vibrato and filter sweeps line up with the attack.
+        let lfo_per_voice = params.lfo.on && params.lfo.retrigger;
+        let lfo2_per_voice = params.lfo2.on && params.lfo2.retrigger;
+        let lfo_value = if lfo_per_voice {
+            let rate = if params.lfo.sync {
+                params.tempo / 60.0
+            } else {
+                params.lfo.rate
+            };
+            let mut lfo = self.voice_lfos[slot];
+            lfo.one_shot = params.lfo.one_shot;
+            lfo.render(params.lfo.wave, rate, sr, &mut lfo_scratch[..frames]);
+            self.voice_lfos[slot] = lfo;
+            lfo.value
+        } else {
+            lfo_value
+        };
+        let lfo2_value = if lfo2_per_voice {
+            let rate = if params.lfo2.sync {
+                params.tempo / 60.0
+            } else {
+                params.lfo2.rate
+            };
+            let mut lfo = self.voice_lfo2s[slot];
+            lfo.one_shot = params.lfo2.one_shot;
+            lfo.render(params.lfo2.wave, rate, sr, &mut lfo2_scratch[..frames]);
+            self.voice_lfo2s[slot] = lfo;
+            lfo.value
+        } else {
+            lfo2_value
+        };
 
         // --- glide ----------------------------------------------------------
         let target_freq = voice.target_freq;
@@ -985,8 +1053,12 @@ impl Engine {
         let vol_depth2 = depth2 * matches!(params.lfo2.target, LfoTarget::Volume) as u32 as f32;
         if vol_depth > 0.0 || vol_depth2 > 0.0 || mod_volume != 0.0 {
             for i in 0..frames {
-                let l = self.lfo_buf[i];
-                let l2 = self.lfo2_buf[i];
+                let l = if lfo_per_voice { lfo_scratch[i] } else { self.lfo_buf[i] };
+                let l2 = if lfo2_per_voice {
+                    lfo2_scratch[i]
+                } else {
+                    self.lfo2_buf[i]
+                };
                 let mut g = 1.0 - vol_depth * (0.5 - 0.5 * l) - vol_depth2 * (0.5 - 0.5 * l2);
                 g += mod_volume * (0.5 + 0.5 * l);
                 self.voice_buf[i] *= g.clamp(0.0, 4.0);
@@ -1853,6 +1925,50 @@ mod tests {
         assert!(e.max_polyphony() <= 2, "voice cap not scaled: {}", e.max_polyphony());
         e.set_param(id::OSC1_UNISON, 1.0);
         assert!(e.max_polyphony() >= 16, "voice cap did not recover");
+    }
+
+    /// A retriggered LFO must restart with every note (so vibrato lines up with
+    /// the attack), while a free-running LFO keeps going.
+    #[test]
+    fn lfo_retrigger_resets_the_phase_per_note() {
+        let _guard = lock_engine();
+        let measure = |retrigger: bool, gap_blocks: usize| -> f32 {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_CUTOFF, 2000.0);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::LFO_ON, 1.0);
+            e.set_param(id::LFO_WAVE, crate::params::LfoWave::Square as u32 as f32);
+            e.set_param(id::LFO_RATE, 2.0);
+            e.set_param(id::LFO_DEPTH, 1.0);
+            e.set_param(id::LFO_TARGET, crate::params::LfoTarget::Cutoff as u32 as f32);
+            e.set_param(id::LFO_RETRIG, if retrigger { 1.0 } else { 0.0 });
+            e.set_route(0, ModSrc::Lfo as u32, ModDst::Cutoff as u32, 0.0, false);
+            // Let a free-running LFO drift to a different part of its cycle.
+            for _ in 0..gap_blocks {
+                e.process(128);
+            }
+            e.note_on(60, 1.0);
+            for _ in 0..10 {
+                e.process(128);
+            }
+            // Brightness of the first block after the attack: with retrigger the
+            // LFO always starts its cycle at the same point, without it depends
+            // on where the free-running phase happened to be.
+            let mut sum = 0.0f32;
+            let mut prev = e.out_l[0];
+            for sample in e.out_l[..128].iter() {
+                sum += (sample - prev).abs();
+                prev = *sample;
+            }
+            sum
+        };
+        let early = measure(true, 3);
+        let late = measure(true, 900);
+        let ratio = (early / late).max(late / early);
+        assert!(ratio < 1.05, "retriggered LFO drifted with time: {early} vs {late}");
     }
 
     /// A quiet signal must pass through the limiter untouched (gain exactly 1)
