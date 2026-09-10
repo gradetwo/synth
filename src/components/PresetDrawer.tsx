@@ -21,10 +21,12 @@ export function PresetDrawer({
   open,
   onClose,
   onOpenGuide,
+  onOpenChangelog,
 }: {
   open: boolean;
   onClose: () => void;
   onOpenGuide: () => void;
+  onOpenChangelog: () => void;
 }) {
   const { userPresets, currentPresetId } = useSynth();
   const lang = useLang();
@@ -175,6 +177,17 @@ export function PresetDrawer({
               title={t('guide.sub')}
             >
               {t('drawer.guide')}
+            </button>
+            <button
+              type="button"
+              className="d-reset"
+              onClick={() => {
+                haptic();
+                onOpenChangelog();
+              }}
+              title={t('changelog.sub')}
+            >
+              {t('drawer.changelog')}
             </button>
             <button
               type="button"

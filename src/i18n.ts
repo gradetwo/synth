@@ -125,6 +125,7 @@ const DICT: Record<string, [string, string]> = {
   'drawer.export': ['导出', 'Export'],
   'drawer.share': ['分享', 'Share'],
   'drawer.guide': ['使用指南', 'Guide'],
+  'drawer.changelog': ['更新记录', 'Changelog'],
   'drawer.contrast': ['高对比', 'Contrast'],
   'theme.label': ['主题', 'Theme'],
   'theme.dark': ['深色', 'Dark'],
@@ -147,7 +148,11 @@ const DICT: Record<string, [string, string]> = {
   'drawer.footer': ['共 <b>{n}</b> 个预设 · {m} 个本地收藏', '<b>{n}</b> presets · {m} local'],
 
   // --- guide ---------------------------------------------------------------
-  'guide.title': ['使用指南', 'Guide'],  'guide.sub': ['合成器基础 · 新手教学 · 使用帮助 · 从零捏音色', 'Synthesis · Getting started · Help · Sound design'],
+  'guide.title': ['使用指南', 'Guide'],
+  'changelog.title': ['更新记录', 'Changelog'],
+  'changelog.sub': ['版本历史与更新内容 · 当前版本', 'Release history · running'],
+  'changelog.current': ['当前版本', 'current'],
+  'changelog.footer': ['更新记录随应用离线保存；部署新版本后这里会列出对应的改动。', 'The changelog ships with the app and works offline; each deployment lists its changes here.'],  'guide.sub': ['合成器基础 · 新手教学 · 使用帮助 · 从零捏音色', 'Synthesis · Getting started · Help · Sound design'],
   'guide.toc': ['目录', 'Contents'],
   'guide.footer': ['按 Esc 或点击空白处关闭 · 全部内容随应用离线可用', 'Press Esc or click outside to close · fully offline'],
 

@@ -60,3 +60,40 @@ test.describe('guide (phone)', () => {
     expect(m.tabs).toContain('合成器基础');
   });
 });
+
+test.describe('changelog', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test('opens from the preset drawer next to the guide', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.getByRole('button', { name: '预设库' }).click();
+    // Same action row as the guide.
+    await expect(page.getByRole('button', { name: '使用指南' })).toBeVisible();
+    await page.getByRole('button', { name: '更新记录' }).click();
+
+    const panel = page.locator('.changelog.open');
+    await expect(panel).toBeVisible();
+    // The running build is marked and its notes are shown.
+    await expect(panel.locator('.release.current')).toHaveCount(1);
+    await expect(panel.locator('.release.current .release-version')).toHaveText(/^v\d+\.\d+\.\d+$/);
+    await expect(panel.locator('.release')).not.toHaveCount(1);
+    await expect(panel).toContainText('修复');
+    await expect(panel).toContainText('新功能');
+
+    // Escape closes it, like the guide.
+    await page.keyboard.press('Escape');
+    await expect(panel).not.toBeVisible();
+  });
+
+  test('follows the interface language', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.getByRole('button', { name: '预设库' }).click();
+    await page.locator('.d-reset', { hasText: 'EN' }).click();
+    await page.getByRole('button', { name: 'Changelog' }).click();
+    const panel = page.locator('.changelog.open');
+    await expect(panel).toContainText('current');
+    await expect(panel).toContainText('Release history');
+  });
+});

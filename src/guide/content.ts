@@ -970,6 +970,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**导出 MP3**：用当前音色离线渲染整首曲目并编码为 192 kbps MP3。录制的片段可以在换音色后重新导出，得到不同音色的版本。',
             '**Export MP3**: renders the whole track offline with the current patch and encodes it to 192 kbps MP3. A recorded take can be re-exported after changing the patch for a different timbre.',
           ],
+          [
+            '**更新记录**：预设库面板里的「更新记录」列出当前版本与历史版本的改动（音质 / 新功能 / 修复三类），随应用离线保存，不需要联网。',
+            '**Changelog**: the “Changelog” button in the preset drawer lists what changed in the running build and in earlier ones (tagged sound / feature / fix). It ships with the app and works offline.',
+          ],
         ],
       },
       {

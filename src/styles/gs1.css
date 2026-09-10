@@ -1644,3 +1644,26 @@ input,textarea,[contenteditable='true']{
     var(--bg-inset) 0 var(--lo),
     var(--accent-dim) var(--lo) var(--hi),
     var(--bg-inset) var(--hi) 100%)}
+
+/* Changelog: the guide shell without the section nav, one release per block.
+   The version this build reports is tinted so "what's new" is obvious. */
+.changelog .guide-body{grid-template-columns:1fr}
+.changelog-list{overflow-y:auto;padding:18px 22px 40px}
+.changelog-list::-webkit-scrollbar{width:9px}
+.changelog-list::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:5px}
+.release{border-top:1px solid var(--line-soft);padding:14px 0 6px}
+.release:first-of-type{border-top:none}
+.release.current{background:var(--accent-tint);border-radius:11px;padding:13px 15px 7px;
+  border-top:none;margin-bottom:8px;box-shadow:inset 0 0 0 1px var(--accent-tint-line)}
+.release-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px}
+.release-version{font:800 13px/1 var(--grot);letter-spacing:.04em;color:var(--txt-1)}
+.release.current .release-version{color:var(--accent-ink)}
+.release-badge{font:700 8.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
+  background:var(--accent);color:var(--chip-ink,#12151c);border-radius:5px;padding:3px 6px}
+.release-kind{font:700 8.5px/1 var(--mono);letter-spacing:.08em;padding:3px 7px;border-radius:5px;
+  border:1px solid var(--border);color:var(--txt-dim)}
+.release-kind.sound{border-color:var(--chord);color:var(--chord)}
+.release-kind.fix{border-color:var(--accent-dim);color:var(--accent)}
+.release-date{font:600 9.5px/1 var(--mono);color:var(--txt-dim);margin-left:auto}
+.release .guide-ul{margin:0}
+.release .guide-ul li{font-size:12.5px;line-height:1.65}

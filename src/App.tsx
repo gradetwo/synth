@@ -9,6 +9,7 @@ import { PianoRoll } from '@/components/PianoRoll';
 import { ModuleFor } from '@/panels/modules';
 import { ModulesGrid } from '@/components/Module';
 import { PresetDrawer } from '@/components/PresetDrawer';
+import { Changelog } from '@/components/Changelog';
 import { Guide } from '@/components/Guide';
 import { PlayerPanel } from '@/components/PlayerPanel';
 import { SignalFlow } from '@/components/SignalFlow';
@@ -84,6 +85,7 @@ function UpdateBanner() {
 export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
   const [playerOpen, setPlayerOpen] = useState(false);
   const [rollOpen, setRollOpen] = useState(false);
   const [status, setStatus] = useState(engine.getState());
@@ -297,8 +299,13 @@ export default function App() {
           setDrawerOpen(false);
           setGuideOpen(true);
         }}
+        onOpenChangelog={() => {
+          setDrawerOpen(false);
+          setChangelogOpen(true);
+        }}
       />
       <Guide open={guideOpen} onClose={() => setGuideOpen(false)} />
+      <Changelog open={changelogOpen} onClose={() => setChangelogOpen(false)} />
       <PlayerPanel
         open={playerOpen}
         onClose={() => setPlayerOpen(false)}
