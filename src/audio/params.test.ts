@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PARAMS,
@@ -31,6 +32,34 @@ import {
 } from './params';
 
 describe('parameter model', () => {
+  it('keeps the worklet parameter table in step with the Rust ids', () => {
+    const source = readFileSync('src/audio/worklet-processor.js', 'utf8');
+    const table = source.slice(source.indexOf('const PARAMS = ['), source.indexOf('];', source.indexOf('const PARAMS = [')));
+    const rows = [
+      ...table.matchAll(/\['(\w+)',\s*(\d+),\s*(-?[\d.]+),\s*(-?[\d.]+),\s*(-?[\d.]+)\]/g),
+    ].map((m) => ({
+      name: m[1],
+      id: Number(m[2]),
+      defaultValue: Number(m[3]),
+      min: Number(m[4]),
+      max: Number(m[5]),
+    }));
+    expect(rows.length).toBeGreaterThan(60);
+    // Every Rust/TS id must have exactly one worklet descriptor…
+    const ids = Object.values(Param);
+    for (const id of ids) {
+      const row = rows.filter((r) => r.id === id);
+      expect(row, `id ${id}`).toHaveLength(1);
+      expect(PARAM_NAMES[id]).toBe(row[0].name);
+    }
+    // …and the worklet must not declare ids the model does not know.
+    expect(rows.map((r) => r.id).sort((a, b) => a - b)).toEqual([...ids].sort((a, b) => a - b));
+    // Defaults must line up as well, so a patch sounds the same either side.
+    for (const row of rows) {
+      expect(DEFAULT_PARAMS[row.id], row.name).toBeCloseTo(row.defaultValue, 6);
+    }
+  });
+
   it('has a unique AudioParam name for every id', () => {
     const names = Object.values(PARAM_NAMES);
     expect(new Set(names).size).toBe(names.length);

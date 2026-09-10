@@ -79,6 +79,9 @@ const PARAMS = [
   ['lfo2Rate', 64, 0.5, 0.02, 40],
   ['lfo2Depth', 65, 0.3, 0, 1],
   ['lfo2Target', 66, 0, 0, 3],
+  ['fxReverbDamp', 67, 0.35, 0, 1],
+  ['fxReverbWidth', 68, 0.8, 0, 1],
+  ['fxReverbPredelay', 69, 0.012, 0, 0.1],
 ];
 
 const SPECTRUM_BINS = 36;

@@ -271,6 +271,9 @@ function FxModule() {
           <div className="knob-row">
             <Knob spec={SPEC_BY_ID[Param.FX_REVERB_SIZE]} />
             <Knob spec={SPEC_BY_ID[Param.FX_REVERB_MIX]} />
+            <Knob spec={SPEC_BY_ID[Param.FX_REVERB_DAMP]} />
+            <Knob spec={SPEC_BY_ID[Param.FX_REVERB_WIDTH]} />
+            <Knob spec={SPEC_BY_ID[Param.FX_REVERB_PREDELAY]} />
           </div>
         </div>
         <div className="fx-sep" />

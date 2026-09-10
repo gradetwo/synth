@@ -75,6 +75,9 @@ export const Param = {
   LFO2_RATE: 64,
   LFO2_DEPTH: 65,
   LFO2_TARGET: 66,
+  FX_REVERB_DAMP: 67,
+  FX_REVERB_WIDTH: 68,
+  FX_REVERB_PREDELAY: 69,
 } as const;
 
 export type ParamId = (typeof Param)[keyof typeof Param];
@@ -112,6 +115,9 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.LFO_SYNC]: 'lfoSync',
   [Param.FX_REVERB_ON]: 'fxReverbOn',
   [Param.FX_REVERB_SIZE]: 'fxReverbSize',
+  [Param.FX_REVERB_DAMP]: 'fxReverbDamp',
+  [Param.FX_REVERB_WIDTH]: 'fxReverbWidth',
+  [Param.FX_REVERB_PREDELAY]: 'fxReverbPredelay',
   [Param.FX_REVERB_MIX]: 'fxReverbMix',
   [Param.FX_DELAY_ON]: 'fxDelayOn',
   [Param.FX_DELAY_SYNC]: 'fxDelaySync',
@@ -311,6 +317,9 @@ export const DEFAULT_PARAMS: Record<number, number> = {
 
   [Param.FX_REVERB_ON]: 1,
   [Param.FX_REVERB_SIZE]: 0.45,
+  [Param.FX_REVERB_DAMP]: 0.35,
+  [Param.FX_REVERB_WIDTH]: 0.8,
+  [Param.FX_REVERB_PREDELAY]: 0.012,
   [Param.FX_REVERB_MIX]: 0.25,
   [Param.FX_DELAY_ON]: 0,
   [Param.FX_DELAY_SYNC]: 2,
@@ -416,6 +425,9 @@ export const PARAM_SPECS: ParamSpec[] = [
   spec(Param.LFO_DEPTH, 'DEPTH', 0, 1, 0.32, fmt.pct),
   spec(Param.FX_REVERB_SIZE, 'SIZE', 0, 1, 0.45, fmt.pct),
   spec(Param.FX_REVERB_MIX, 'MIX', 0, 1, 0.25, fmt.pct),
+  spec(Param.FX_REVERB_DAMP, 'DAMP', 0, 1, 0.35, fmt.pct),
+  spec(Param.FX_REVERB_WIDTH, 'WIDTH', 0, 1, 0.8, fmt.pct),
+  spec(Param.FX_REVERB_PREDELAY, 'PRE', 0, 0.1, 0.012, (v) => `${Math.round(v * 1000)} ms`),
   spec(Param.FX_DELAY_FB, 'FDBK', 0, 0.9, 0.35, fmt.pct),
   spec(Param.FX_DELAY_MIX, 'MIX', 0, 1, 0.22, fmt.pct),
   spec(Param.FILTER_ENV_ATTACK, 'ATTACK', 0.0005, 8, 0.01, fmt.ms, { curve: 'log' }),
