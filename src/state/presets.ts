@@ -676,11 +676,96 @@ export const FACTORY_PRESETS: Preset[] = [
 ];
 
 /** Merge a preset over the default patch (returns a fresh parameter record). */
+/**
+ * Per-patch loudness trims.
+ *
+ * Measured, not guessed: every factory preset is rendered through the same
+ * phrase and its RMS compared, then each patch gets the gain that brings it to
+ * the median level (capped so a patch's peak never runs into the limiter, and
+ * so no patch is boosted absurdly). Factory presets used to span 47 dB, which
+ * made changing patch feel like changing the volume knob; `preset-loudness`
+ * keeps them honest.
+ *
+ * The trim is applied as `patchGain`, which is deliberately not a UI control:
+ * the player's own master volume must not move when the patch changes.
+ */
+const PATCH_TRIM: Record<string, number> = {
+  acid: 2.81,
+  acidlead: 2.986,
+  angelic: 1.96,
+  bell: 0.969,
+  blip: 3.075,
+  celesta: 1.0,
+  chipsaw: 0.419,
+  clav: 4.503,
+  crystalbell: 1.2,
+  darkpad: 1.808,
+  drift: 3.554,
+  driftpad: 8.0,
+  drone: 3.987,
+  epiano: 0.664,
+  fbsaw: 0.698,
+  fmbass: 1.147,
+  fmbite: 1.137,
+  formant: 0.768,
+  gate: 0.674,
+  glasskeys: 1.134,
+  glasspad: 0.667,
+  gong: 1.341,
+  hardbass: 1.267,
+  hardlead: 0.566,
+  harp: 1.619,
+  hoover: 1.418,
+  init: 0.193,
+  kalimba: 1.399,
+  koto: 2.136,
+  laser: 2.51,
+  lofi: 0.815,
+  marimba: 1.26,
+  monoglide: 0.894,
+  monoinit: 0.54,
+  monosub: 0.295,
+  neon: 2.3,
+  nylon: 2.228,
+  organ: 0.28,
+  pad: 0.866,
+  pluck: 3.862,
+  pluckbass: 3.114,
+  pluckstack: 3.668,
+  pulseinit: 0.359,
+  reese: 0.353,
+  reesegrowl: 0.054,
+  rhodes: 0.708,
+  riser: 7.663,
+  sawinit: 0.481,
+  shimmer: 1.554,
+  sinelead: 0.25,
+  siren: 0.49,
+  squareinit: 0.337,
+  squarelead: 0.392,
+  stab: 1.3,
+  strings: 0.936,
+  sub: 0.29,
+  sub808: 0.638,
+  supersaw: 0.605,
+  sync: 0.76,
+  theremin: 0.458,
+  trem: 1.078,
+  voxpad: 1.279,
+  whiteriser: 4.75,
+  widepad: 0.799,
+  wind: 1.436,
+  wobble: 0.585,
+  wurli: 0.664,
+};
+
 export function presetParams(preset: Preset): Record<number, number> {
   const merged: Record<number, number> = { ...DEFAULT_PARAMS };
   for (const [id, value] of Object.entries(preset.params)) {
     if (typeof value === 'number') merged[Number(id)] = value;
   }
+  const trim = PATCH_TRIM[preset.id];
+  if (trim) merged[Param.PATCH_GAIN] = trim;
   return merged;
 }
 

@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.36.0',
+    date: '2026-09-10',
+    kind: 'sound',
+    items: [
+      [
+        '**统一了各预设的响度**：此前不同音色之间的响度差异最大可到约 47 dB，换音色像在拧音量；现在每个预设带一个出厂响度校准，实测差异收敛到约 **6 dB** 以内。你自己的音量旋钮不受影响（换音色不会动它）。',
+        '**Preset loudness is now consistent**: patches used to differ by as much as 47 dB, so changing patch felt like turning the volume knob. Every factory preset now carries a level trim, bringing the spread down to about **6 dB**. Your own volume setting is untouched by patch changes.',
+      ],
+    ],
+  },
+  {
     version: '1.35.2',
     date: '2026-09-10',
     kind: 'fix',

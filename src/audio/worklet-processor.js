@@ -14,13 +14,13 @@
 const PARAMS = [
   ['masterVolume', 0, 0.75, 0, 1],
   ['osc1On', 1, 1, 0, 1],
-  ['osc1Wave', 2, 2, 0, 5],
+  ['osc1Wave', 2, 2, 0, 7],
   ['osc1Pitch', 3, 0, -48, 48],
   ['osc1Detune', 4, 7, -100, 100],
   ['osc1Level', 5, 0.65, 0, 1],
   ['osc1Pw', 6, 0.5, 0.05, 0.95],
   ['osc2On', 7, 1, 0, 1],
-  ['osc2Wave', 8, 2, 0, 5],
+  ['osc2Wave', 8, 2, 0, 7],
   ['osc2Pitch', 9, 0, -48, 48],
   ['osc2Detune', 10, -6, -100, 100],
   ['osc2Level', 11, 0.55, 0, 1],
@@ -90,6 +90,8 @@ const PARAMS = [
   ['lfoOneshot', 75, 0, 0, 1],
   ['lfo2Retrig', 76, 0, 0, 1],
   ['lfo2Oneshot', 77, 0, 0, 1],
+  // Per-patch loudness trim: presets set it, the UI does not show it.
+  ['patchGain', 78, 1, 0, 8],
 ];
 
 const SPECTRUM_BINS = 36;

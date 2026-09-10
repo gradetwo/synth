@@ -9,6 +9,8 @@
 
 export const Param = {
   MASTER_VOLUME: 0,
+  /** Per-patch output trim: set by presets, not shown in the UI. */
+  PATCH_GAIN: 78,
   OSC1_ON: 1,
   OSC1_WAVE: 2,
   OSC1_PITCH: 3,
@@ -93,6 +95,7 @@ export type ParamId = (typeof Param)[keyof typeof Param];
 /** AudioParam name for every parameter id (used by the worklet + UI). */
 export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.MASTER_VOLUME]: 'masterVolume',
+  [Param.PATCH_GAIN]: 'patchGain',
   [Param.OSC1_ON]: 'osc1On',
   [Param.OSC1_WAVE]: 'osc1Wave',
   [Param.OSC1_PITCH]: 'osc1Pitch',
@@ -306,6 +309,8 @@ export function clamp01(v: number): number {
 /** Default patch, mirroring the reference prototype's "Future Saw Lead". */
 export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.MASTER_VOLUME]: 0.75,
+  // Per-patch loudness trim (presets set it; see `PATCH_TRIM` in state/presets).
+  [Param.PATCH_GAIN]: 1,
   [Param.MASTER_TUNE]: 0,
   [Param.VOICE_MODE]: 0,
   [Param.FX_CHORUS_ON]: 0,

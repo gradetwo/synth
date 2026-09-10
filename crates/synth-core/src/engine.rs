@@ -1449,9 +1449,12 @@ impl Engine {
             }
             let (l1, r1) = (angles[0].cos(), angles[0].sin());
             let (l2, r2) = (angles[1].cos(), angles[1].sin());
+            // The patch's own trim rides on the voice gain, so a preset can be
+            // level-matched without touching the player's master volume.
+            let gain = VOICE_GAIN * params.patch_gain;
             for i in 0..frames {
-                let a = self.voice_buf[i] * VOICE_GAIN;
-                let b = self.voice_buf_r[i] * VOICE_GAIN;
+                let a = self.voice_buf[i] * gain;
+                let b = self.voice_buf_r[i] * gain;
                 self.mix_l[i] += a * l1 + b * l2;
                 self.mix_r[i] += a * r1 + b * r2;
             }
@@ -1466,17 +1469,20 @@ impl Engine {
                 mod_pan.clamp(-1.0, 1.0)
             };
             let angle = (pan + 1.0) * core::f32::consts::FRAC_PI_4;
+            // The patch's own trim rides on the voice gain, so a preset can be
+            // level-matched without touching the player's master volume.
+            let gain = VOICE_GAIN * params.patch_gain;
             let pan_l = angle.cos();
             let pan_r = angle.sin();
             simd::accumulate(
                 &self.voice_buf[..frames],
                 &mut self.mix_l[..frames],
-                VOICE_GAIN * pan_l,
+                gain * pan_l,
             );
             simd::accumulate(
                 &self.voice_buf[..frames],
                 &mut self.mix_r[..frames],
-                VOICE_GAIN * pan_r,
+                gain * pan_r,
             );
         }
 

@@ -92,10 +92,12 @@ pub mod id {
     pub const LFO_ONESHOT: u32 = 75;
     pub const LFO2_RETRIG: u32 = 76;
     pub const LFO2_ONESHOT: u32 = 77;
+    /// Per-patch output trim (presets only; no UI control).
+    pub const PATCH_GAIN: u32 = 78;
 }
 
-/// Highest parameter id + 1 (ids are 0..=77).
-pub const PARAM_COUNT: usize = 78;
+/// Highest parameter id + 1 (ids are 0..=78).
+pub const PARAM_COUNT: usize = 79;
 
 /// Number of keys the tuning table covers (MIDI 0..127).
 pub const TUNING_NOTES: usize = 128;
@@ -452,6 +454,10 @@ pub struct FxParams {
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
     pub master_volume: f32,
+    /// Per-patch output trim, set by presets so switching patches does not jump
+    /// in level. Deliberately not a UI control: it belongs to the patch, not to
+    /// the player's master volume.
+    pub patch_gain: f32,
     pub master_tune: f32,
     /// 0 = poly, 1 = mono (retrigger), 2 = legato.
     pub voice_mode: u32,
@@ -472,6 +478,7 @@ impl Params {
     pub const fn new() -> Self {
         Self {
             master_volume: 0.75,
+            patch_gain: 1.0,
             master_tune: 0.0,
             voice_mode: 0,
             pitch_bend_range: 2.0,
@@ -586,6 +593,7 @@ impl Params {
         let value = if value.is_finite() { value } else { 0.0 };
         match param_id {
             p::MASTER_VOLUME => self.master_volume = clamp01(value),
+            p::PATCH_GAIN => self.patch_gain = value.clamp(0.0, 8.0),
             p::MASTER_TUNE => self.master_tune = value.clamp(-24.0, 24.0),
             p::VOICE_MODE => self.voice_mode = (value as u32).min(2),
             p::PITCH_BEND_RANGE => self.pitch_bend_range = value.clamp(0.0, 24.0),
