@@ -647,6 +647,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Reverb**: Soundpipe’s `reverbsc` (Sean Costello’s eight-delay-line feedback network). `SIZE` maps feedback 0.70–0.97 and a low-pass from 4–14 kHz; `MIX` sets the dry/wet balance.',
           ],
           [
+            '**存档兼容性**：音色、分享链接、工作区、场景、导入的波形与 IR 都带格式版本号。升级后旧数据自动按新格式读取；来自更新版本的存档会被保留副本并回退到初始状态，不会被读坏。',
+            '**Save compatibility**: patches, share links, the workspace, scenes, imported waves and impulse responses all carry a format version. Older data is migrated on load; a document from a newer build is kept aside and the app falls back to its initial state rather than reading it wrong.',
+          ],
+          [
             '**卷积混响（IR）**：混响单元的 `ALGO`/`IR` 切换两种引擎。IR 模式导入一段脉冲响应（WAV/AIFF/FLAC/MP3，建议单声道 ≤2 秒），用真实空间的采样做混响；`TRIM` 调湿声（按能量归一化，不同 IR 之间可比），`✕` 移除。湿声比干声晚约 21 ms，相当于固定预延迟，不会与干声打架；没有导入 IR 时选 IR 会回落到算法混响。',
             '**Convolution (IR)**: the reverb unit switches between two engines with `ALGO`/`IR`. IR mode imports an impulse response (WAV/AIFF/FLAC/MP3, mono and up to 2 s is typical) and reverbs in that real space; `TRIM` sets the wet level (energy-normalised, so responses are comparable) and `✕` removes it. The wet path is ~21 ms behind the dry signal, which acts as a fixed pre-delay rather than a comb; with nothing imported, IR falls back to the algorithmic engine.',
           ],

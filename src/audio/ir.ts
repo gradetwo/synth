@@ -14,6 +14,7 @@
 
 import { WaveImportError, decodeSamples, decodeSamples16, encodeSamples } from './wavefile';
 import { engine } from './engine';
+import { SCHEMA_VERSION } from '@/state/persist';
 
 const KEY = 'gs1:ir:v1';
 /**
@@ -50,8 +51,9 @@ function readStored(): UserIr | null {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { name?: unknown; samples?: unknown };
+    const parsed = JSON.parse(raw) as { schema?: unknown; name?: unknown; samples?: unknown };
     if (typeof parsed.name !== 'string' || typeof parsed.samples !== 'string') return null;
+    if (typeof parsed.schema === 'number' && parsed.schema > SCHEMA_VERSION) return null;
     const samples = decodeSamples16(parsed.samples);
     return samples ? { name: parsed.name, samples } : null;
   } catch {
@@ -61,7 +63,12 @@ function readStored(): UserIr | null {
 
 function persist(ir: UserIr | null) {
   try {
-    if (ir) localStorage.setItem(KEY, JSON.stringify({ name: ir.name, samples: encodeSamples(ir.samples) }));
+    if (ir) {
+      localStorage.setItem(
+        KEY,
+        JSON.stringify({ schema: SCHEMA_VERSION, name: ir.name, samples: encodeSamples(ir.samples) }),
+      );
+    }
     else localStorage.removeItem(KEY);
   } catch {
     // Storage unavailable or full: the response still works this session.

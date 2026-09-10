@@ -53,6 +53,7 @@ import {
 } from './scenes';
 import { decodePatch, downloadText, encodePatch, shareUrl } from './share';
 import { setLang } from '@/i18n';
+import { mergeKnown, unwrap, wrap } from './persist';
 
 const STORAGE_KEY = 'gs1:state:v1';
 const USER_KEY = 'gs1:user-presets:v1';
@@ -117,6 +118,24 @@ function loadJson<T>(key: string): T | null {
   }
 }
 
+/**
+ * Validate stored presets. A preset is user data, so a broken one is dropped
+ * rather than loaded into the drawer, and a preset that predates a field simply
+ * uses the current default for it.
+ */
+function normalizeUserPresets(raw: unknown): Preset[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Preset[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const preset = entry as Partial<Preset>;
+    if (typeof preset.id !== 'string' || !preset.params || typeof preset.params !== 'object') continue;
+    if (out.some((existing) => existing.id === preset.id)) continue;
+    out.push({ ...(entry as Preset) });
+  }
+  return out;
+}
+
 function saveJson(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
@@ -145,11 +164,26 @@ export class SynthStore {
   private snapshot: Snapshot;
 
   constructor() {
-    const persisted = loadJson<SynthState & { presetId?: string }>(STORAGE_KEY);
-    this.state = persisted && persisted.params ? { ...createDefaultState(), ...persisted } : createDefaultState();
-    this.layout = normalizeLayout(loadJson<LayoutState>(LAYOUT_KEY));
+    const rawState = loadJson<unknown>(STORAGE_KEY);
+    const stored = unwrap(rawState);
+    if (!stored && rawState) {
+      // Written by a newer build. Keep the original aside rather than
+      // overwriting it with defaults, so a later version can still recover it.
+      try {
+        localStorage.setItem(`${STORAGE_KEY}.newer`, JSON.stringify(rawState));
+      } catch {
+        /* storage may be unavailable; nothing else to do */
+      }
+    }
+    const persisted = stored ? mergeKnown<SynthState & { presetId?: string }>(
+      { ...createDefaultState(), presetId: '' },
+      stored.data,
+    ) : null;
+    this.state =
+      persisted && persisted.params ? persisted : { ...createDefaultState(), presetId: '' };
+    this.layout = normalizeLayout(unwrap(loadJson<unknown>(LAYOUT_KEY))?.data ?? null);
     setLang(this.layout.lang);
-    this.userPresets = loadJson<Preset[]>(USER_KEY) ?? [];
+    this.userPresets = normalizeUserPresets(unwrap(loadJson<unknown>(USER_KEY))?.data);
     // The patch is restored from storage, so the name shown for it has to be
     // restored too: opening the app used to display the first factory preset
     // while the engine held last session's patch, and playing straight away
@@ -157,7 +191,7 @@ export class SynthStore {
     if (persisted?.presetId && this.allPresets().some((preset) => preset.id === persisted.presetId)) {
       this.currentPresetId = persisted.presetId;
     }
-    this.scenes = normalizeScenes(loadJson<Scene[]>(SCENES_KEY));
+    this.scenes = normalizeScenes(unwrap(loadJson<unknown>(SCENES_KEY))?.data ?? null);
     this.snapshot = this.buildSnapshot();
     // Entry zero is the state the session started from, so the very first
     // action is undoable.
@@ -186,8 +220,8 @@ export class SynthStore {
     this.version += 1;
     this.snapshot = this.buildSnapshot();
     for (const fn of this.listeners) fn();
-    saveJson(STORAGE_KEY, { ...this.state, presetId: this.currentPresetId });
-    saveJson(LAYOUT_KEY, this.layout);
+    saveJson(STORAGE_KEY, wrap({ ...this.state, presetId: this.currentPresetId }));
+    saveJson(LAYOUT_KEY, wrap(this.layout));
   }
 
   subscribe = (fn: () => void): (() => void) => {
@@ -406,7 +440,7 @@ export class SynthStore {
       user: true,
     };
     this.userPresets = [preset, ...this.userPresets];
-    saveJson(USER_KEY, this.userPresets);
+    saveJson(USER_KEY, wrap(this.userPresets));
     this.currentPresetId = preset.id;
     this.mark();
     this.commit();
@@ -415,7 +449,7 @@ export class SynthStore {
 
   deletePreset(id: string) {
     this.userPresets = this.userPresets.filter((p) => p.id !== id);
-    saveJson(USER_KEY, this.userPresets);
+    saveJson(USER_KEY, wrap(this.userPresets));
     if (this.currentPresetId === id) this.currentPresetId = FACTORY_PRESETS[0].id;
     this.mark();
     this.commit();
@@ -475,7 +509,7 @@ export class SynthStore {
     setLang(this.layout.lang);
     this.userPresets = entry.userPresets.map((p) => ({ ...p }));
     this.currentPresetId = entry.currentPresetId;
-    saveJson(USER_KEY, this.userPresets);
+    saveJson(USER_KEY, wrap(this.userPresets));
     saveJson(LAYOUT_KEY, this.layout);
     midiLibrary.restore(entry.clips, entry.currentClipId);
     engine.applyState(this.state, true);
@@ -742,7 +776,7 @@ export class SynthStore {
   saveScene(name: string) {
     const scene = makeScene(`scene-${Date.now()}`, name, this.layout);
     this.scenes = [...this.scenes, scene];
-    saveJson(SCENES_KEY, this.scenes);
+    saveJson(SCENES_KEY, wrap(this.scenes));
     this.mark();
     this.commit();
     return scene;
@@ -760,7 +794,7 @@ export class SynthStore {
 
   deleteScene(id: string) {
     this.scenes = this.scenes.filter((entry) => entry.id !== id);
-    saveJson(SCENES_KEY, this.scenes);
+    saveJson(SCENES_KEY, wrap(this.scenes));
     this.mark();
     this.commit();
   }

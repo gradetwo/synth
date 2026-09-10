@@ -67,6 +67,14 @@ describe('imported waveform storage', () => {
     expect(worst).toBeLessThan(1 / 32000);
   });
 
+  it('refuses a payload written by a newer build', () => {
+    const payload = JSON.parse(encodeUserWave({ name: 'x.wav', cycle: cycleOf() })) as Record<string, unknown>;
+    expect(decodeUserWave(JSON.stringify({ ...payload, schema: 99 }))).toBeNull();
+    // A payload from before versioning still reads.
+    delete payload.schema;
+    expect(decodeUserWave(JSON.stringify(payload))?.name).toBe('x.wav');
+  });
+
   it('returns null for junk instead of throwing', () => {
     expect(decodeUserWave('not json')).toBeNull();
     expect(decodeUserWave('{"name":1}')).toBeNull();

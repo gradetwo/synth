@@ -15,6 +15,7 @@
 
 import { CYCLE_LENGTH, WaveImportError, decodeCycle } from './wavefile';
 import { engine } from './engine';
+import { SCHEMA_VERSION } from '@/state/persist';
 
 const KEY = 'gs1:wt-user:v1';
 
@@ -53,13 +54,15 @@ export function encodeUserWave(wave: { name: string; cycle: Float32Array }): str
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   }
   const encoded = typeof btoa === 'function' ? btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
-  return JSON.stringify({ name: wave.name, samples: encoded });
+  return JSON.stringify({ schema: SCHEMA_VERSION, name: wave.name, samples: encoded });
 }
 
 export function decodeUserWave(raw: string): UserWave | null {
   try {
-    const parsed = JSON.parse(raw) as { name?: unknown; samples?: unknown };
+    const parsed = JSON.parse(raw) as { schema?: unknown; name?: unknown; samples?: unknown };
     if (typeof parsed.name !== 'string' || typeof parsed.samples !== 'string') return null;
+    // A waveform stored by a newer build may mean something else; do not guess.
+    if (typeof parsed.schema === 'number' && parsed.schema > SCHEMA_VERSION) return null;
     const binary =
       typeof atob === 'function' ? atob(parsed.samples) : Buffer.from(parsed.samples, 'base64').toString('binary');
     const bytes = new Uint8Array(binary.length);

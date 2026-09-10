@@ -5,7 +5,8 @@
  * a response that does not survive a reload, or one that is stored at a size the
  * browser refuses.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { encodeSamples } from './wavefile';
 import {
   clearUserIr,
   getUserIr,
@@ -76,6 +77,23 @@ describe('impulse response state', () => {
     expect(getUserIr()).toBeNull();
     expect(localStorage.getItem(KEY)).toBeNull();
     off();
+  });
+
+  it('refuses a payload written by a newer build, and still reads an older one', async () => {
+    const samples = new Float32Array(64).map((_, i) => Math.sin(i / 4) * 0.5);
+    const stored = JSON.stringify({ name: 'hall.wav', samples: encodeSamples(samples) });
+
+    // A response written before versioning existed still loads.
+    localStorage.setItem(KEY, stored);
+    vi.resetModules();
+    const legacy = await import('./ir');
+    expect(legacy.getUserIr()?.name).toBe('hall.wav');
+
+    // One written by a newer build is not guessed at.
+    localStorage.setItem(KEY, JSON.stringify({ schema: 99, name: 'future.wav', samples: encodeSamples(samples) }));
+    vi.resetModules();
+    const future = await import('./ir');
+    expect(future.getUserIr()).toBeNull();
   });
 
   it('refuses a response with no signal in it', async () => {

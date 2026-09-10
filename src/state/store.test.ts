@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { Param } from '@/audio/params';
 import { midiLibrary } from '@/midi/library';
 import { SynthStore, store } from './store';
+import { unwrap } from './persist';
 
 describe('synth store', () => {
   beforeEach(() => {
@@ -59,7 +60,10 @@ describe('synth store', () => {
     store.setParam(Param.FILTER_RES, 0.42);
     const raw = localStorage.getItem('gs1:state:v1');
     expect(raw).toBeTruthy();
-    expect(JSON.parse(raw as string).params[Param.FILTER_RES]).toBe(0.42);
+    // Documents are stored in a schema envelope (`state/persist.ts`), so a test
+    // that reads storage has to read it the same way the loader does.
+    const stored = unwrap(JSON.parse(raw as string));
+    expect((stored?.data as { params: Record<number, number> }).params[Param.FILTER_RES]).toBe(0.42);
   });
 
   it('toggles power without losing the patch', () => {
@@ -142,7 +146,8 @@ describe('synth store', () => {
     store.toggleLang();
     const after = store.getSnapshot().layout.lang;
     expect(after).not.toBe(before);
-    expect(JSON.parse(localStorage.getItem('gs1:layout:v1') as string).lang).toBe(after);
+    const layout = unwrap(JSON.parse(localStorage.getItem('gs1:layout:v1') as string));
+    expect((layout?.data as { lang: string }).lang).toBe(after);
     store.toggleLang();
   });
 

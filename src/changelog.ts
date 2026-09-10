@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.49.0',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '音色存档、分享链接、工作区与场景现在都带**格式版本号**：以后升级时旧数据会自动按新格式读取，不会再出现「某个参数悄悄变回默认」的情况。',
+        'Saved patches, share links, the workspace and scenes now carry a **format version**: when a later release changes the format, older data is migrated on load instead of quietly losing a parameter back to its default.',
+      ],
+      [
+        '如果存档来自**更新的版本**（例如先用了新版又回退），程序不会读出一半参数，而是回退到初始状态并保留原存档副本，方便新版再取回。',
+        'If a document comes from a **newer build** (you tried a newer version and went back), the app no longer half-reads it: it falls back to the initial state and keeps the original document aside so the newer build can still recover it.',
+      ],
+    ],
+  },
+  {
     version: '1.48.0',
     date: '2026-09-10',
     kind: 'sound',

@@ -14,6 +14,7 @@ import {
   type ModRoute,
   type SynthState,
 } from '@/audio/params';
+import { SCHEMA_VERSION } from './persist';
 
 const PREFIX = 'gs1.1.';
 
@@ -48,7 +49,9 @@ export function encodePatch(state: SynthState): string {
     Math.round(r.amount * 1000) / 1000,
     r.enabled ? 1 : 0,
   ]);
-  return PREFIX + base64UrlEncode(JSON.stringify({ v: values, r: routes }));
+  // `s` is the schema: a code from a newer build is refused rather than decoded
+  // positionally into the wrong parameters.
+  return PREFIX + base64UrlEncode(JSON.stringify({ s: SCHEMA_VERSION, v: values, r: routes }));
 }
 
 /** Decode a share code; returns null for anything malformed. */
@@ -56,14 +59,20 @@ export function decodePatch(code: string): PatchPayload | null {
   if (!code.startsWith(PREFIX)) return null;
   const json = base64UrlDecode(code.slice(PREFIX.length));
   if (!json) return null;
-  let parsed: { v?: unknown; r?: unknown };
+  let parsed: { s?: unknown; v?: unknown; r?: unknown };
   try {
     parsed = JSON.parse(json);
   } catch {
     return null;
   }
   if (!Array.isArray(parsed.v)) return null;
+  // Codes written before versioning carry no `s`; they are schema 1.
+  const schema = typeof parsed.s === 'number' ? parsed.s : 1;
+  if (schema > SCHEMA_VERSION) return null;
 
+  // Parameter ids are append-only, and the values are stored in ascending id
+  // order, so a code written before a parameter existed still lines up with the
+  // parameters it did carry.
   const ids = Object.keys(DEFAULT_PARAMS)
     .map(Number)
     .sort((a, b) => a - b);
