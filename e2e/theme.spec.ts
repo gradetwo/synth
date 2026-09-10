@@ -144,6 +144,30 @@ test.describe('colour scheme', () => {
     });
     expect(contrastOf(loopInk, loopBg)).toBeGreaterThan(4.4);
 
+    // The on-screen keyboard must keep its black keys black in light mode
+    // (theme surface variables used to paint them white).
+    await page.getByRole('button', { name: '模块' }).click();
+    await page.waitForTimeout(300);
+    const keyBg = await page
+      .locator('.kbd-dock .bkey')
+      .first()
+      .evaluate((el) => getComputedStyle(el).backgroundImage);
+    const keyStops = [...keyBg.matchAll(/rgb\((\d+), (\d+), (\d+)\)/g)].map(
+      (m) => (Number(m[1]) + Number(m[2]) + Number(m[3])) / 3,
+    );
+    expect(Math.min(...keyStops)).toBeLessThan(90);
+    // …and the white keys stay light.
+    const whiteBg = await page
+      .locator('.kbd-dock .wkey')
+      .first()
+      .evaluate((el) => getComputedStyle(el).backgroundImage);
+    const whiteStops = [...whiteBg.matchAll(/rgb\((\d+), (\d+), (\d+)\)/g)].map(
+      (m) => (Number(m[1]) + Number(m[2]) + Number(m[3])) / 3,
+    );
+    expect(Math.max(...whiteStops)).toBeGreaterThan(220);
+
+    await page.getByRole('button', { name: '信号流' }).click();
+    await page.waitForTimeout(600);
     const badge = page.locator('.flow-badge').first();
     if (await badge.count()) {
       const [badgeInk, badgeBg] = await badge.evaluate((el) => {
