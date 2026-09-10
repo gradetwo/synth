@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { store } from '@/state/store';
 import { checkForUpdate } from '@/pwa/register';
 import { TEMPERAMENTS } from '@/audio/tuning';
+import { VELOCITY_CURVES, velocityCurveLabel } from '@/audio/velocity';
 import { parseScala } from '@/audio/scala';
 import { useSynth } from '@/hooks/useSynth';
 import { PRESET_CATEGORIES, type PresetCategory } from '@/state/presets';
@@ -263,6 +264,23 @@ export function PresetDrawer({
             >
               {t('audio.title')}
             </button>
+            <label className="d-velocity">
+              <span>{t('velocity.title')}</span>
+              <select
+                value={store.getSnapshot().layout.velocityCurve}
+                onChange={(event) => {
+                  haptic();
+                  store.setVelocityCurve(event.target.value);
+                  toast(t('velocity.changed', { name: velocityCurveLabel(event.target.value, lang) }));
+                }}
+              >
+                {VELOCITY_CURVES.map((curve) => (
+                  <option key={curve.id} value={curve.id}>
+                    {velocityCurveLabel(curve.id, lang)}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
               type="button"
               className="d-reset"

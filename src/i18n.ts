@@ -186,6 +186,8 @@ const DICT: Record<string, [string, string]> = {
   'tuning.scala.badInterval': ['音程无法解析', 'unreadable interval'],
   'tuning.scala.badRatio': ['音程比值无效', 'invalid ratio'],
   'tuning.scala.badPeriod': ['周期无效', 'invalid period'],
+  'velocity.title': ['力度曲线', 'Velocity curve'],
+  'velocity.changed': ['力度曲线：{name}', 'Velocity curve: {name}'],
   'tuning.title': ['调律', 'Tuning'],
   'tuning.changed': ['调律已改为 {name}', 'Tuning set to {name}'],
   'midi.mpe': ['MPE 输入', 'MPE input'],

@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.38.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '新增**力度曲线**（预设库里）：线性 / 柔和 / 强硬。触摸屏和 MIDI 键盘常常"轻触太轻、重击又都一样响"，柔和曲线让轻触更容易出声、强硬曲线让力度更可控。只影响**实时演奏**，曲目播放保持原谱力度。',
+        'New **velocity curves** (in the preset drawer): Linear, Soft and Hard. Touchscreens and MIDI keyboards often feel either too quiet at light touches or flat at the top; Soft makes a light touch audible, Hard gives more control. They shape **live playing only** — song playback keeps the dynamics in the file.',
+      ],
+    ],
+  },
+  {
     version: '1.37.0',
     date: '2026-09-10',
     kind: 'sound',

@@ -75,6 +75,8 @@ export interface LayoutState {
   temperament: string;
   /** MIDI CC → parameter bindings (see `audio/ccmap`). */
   ccMap: CcBinding[];
+  /** Live-input velocity curve (see `audio/velocity`). */
+  velocityCurve: string;
   /** Imported Scala scale, when the temperament is set to `custom`. */
   customTuning: { name: string; degrees: number[]; period: number } | null;
   /** MPE input: per-note bend and pressure from a channel-per-note controller. */
@@ -101,6 +103,7 @@ export function defaultLayout(): LayoutState {
     polyphony: 0,
     temperament: 'equal',
     ccMap: [],
+    velocityCurve: 'linear',
     customTuning: null,
     mpe: false,
   };
@@ -166,6 +169,9 @@ export function normalizeLayout(raw: unknown): LayoutState {
     phoneDefaults: input.phoneDefaults === true,
     temperament: typeof input.temperament === 'string' ? input.temperament : 'equal',
     ccMap: normalizeBindings(input.ccMap),
+    velocityCurve: ['linear', 'soft', 'hard'].includes(input.velocityCurve as string)
+      ? (input.velocityCurve as string)
+      : 'linear',
     customTuning: normalizeScale(input.customTuning),
     mpe: input.mpe === true,
     polyphony: [0, 4, 8, 16, 32].includes(input.polyphony as number)

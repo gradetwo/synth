@@ -145,3 +145,23 @@ test.describe('MPE input', () => {
     await expect(page.locator('.audio-settings.open .audio-toggle input')).toBeChecked();
   });
 });
+
+test.describe('velocity curve', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test('switches the live velocity curve and remembers it', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(400);
+    await page.getByRole('button', { name: '预设库' }).click();
+    const select = page.locator('.d-velocity select');
+    await expect(select).toHaveValue('linear');
+    await select.selectOption('soft');
+    await expect(page.locator('.toast')).toContainText('柔和');
+    await page.reload();
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole('button', { name: '预设库' }).click();
+    await expect(page.locator('.d-velocity select')).toHaveValue('soft');
+  });
+});

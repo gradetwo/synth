@@ -983,6 +983,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Export WAV (lossless)**: the same render with no encoder in the path — the way to tell an encoder artefact from a playback-chain one. Export rendering uses the full 32-voice pool (offline has no deadline), so long-release patches are not cut short by voice stealing.',
           ],
           [
+            '**力度曲线**：预设库里的「力度曲线」可选线性 / 柔和 / 强硬，只影响实时演奏（触摸屏、MIDI 键盘）；曲目播放保持原谱力度，不会被改写。',
+            '**Velocity curves**: pick Linear, Soft or Hard under Velocity curve in the preset drawer. They shape live playing only (touchscreen, MIDI keyboard); song playback keeps the dynamics in the file.',
+          ],
+          [
             '**噪声颜色**：波形里的 `PNK`（粉噪，每倍频程 −3 dB）与 `BRN`（棕噪，−6 dB）在合成噪声层（风声、海浪、鼓）时比白噪自然得多；白噪保留在 `NOI`。',
             '**Noise colours**: `PNK` (pink, −3 dB per octave) and `BRN` (brown, −6 dB) are far more natural than white for wind, surf and drum layers; white stays on `NOI`.',
           ],

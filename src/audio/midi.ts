@@ -8,6 +8,7 @@
 import { store } from '@/state/store';
 import { Param, type ParamId } from './params';
 import { ccToParamValue, paramForCc } from './ccmap';
+import { shapeVelocity } from './velocity';
 import { MpeRouter } from './mpe';
 import { engine } from './engine';
 import { noteBus } from './noteBus';
@@ -168,7 +169,10 @@ class MidiManager {
         for (const event of this.mpe.handle(action)) {
           if (event.type === 'bend') engine.noteBend(event.note, event.semitones);
         }
-        noteBus.noteOn(action.note, action.velocity);
+        noteBus.noteOn(
+          action.note,
+          shapeVelocity(action.velocity, store.getSnapshot().layout.velocityCurve as never),
+        );
         break;
       }
       case 'noteOff': {

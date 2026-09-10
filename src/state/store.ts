@@ -724,6 +724,14 @@ export class SynthStore {
     this.commit();
   }
 
+  /** Live-input velocity curve. */
+  setVelocityCurve(id: string) {
+    this.layout = { ...this.layout, velocityCurve: id };
+    saveJson(LAYOUT_KEY, this.layout);
+    this.mark();
+    this.commit();
+  }
+
   /** MPE input mode. */
   setMpe(enabled: boolean) {
     this.layout = { ...this.layout, mpe: enabled };

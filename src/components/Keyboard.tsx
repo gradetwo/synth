@@ -3,7 +3,7 @@ import { noteBus, noteName } from '@/audio/noteBus';
 import { engine } from '@/audio/engine';
 import { store } from '@/state/store';
 import { Param } from '@/audio/params';
-import { velocityFromY } from '@/audio/velocity';
+import { shapeVelocity, velocityFromY } from '@/audio/velocity';
 import { useVelocityMode, useHaptics } from '@/hooks/useSynth';
 import { t } from '@/i18n';
 import { canVibrate, haptic, HAPTIC, useInputMode } from '@/hooks/useInputMode';
@@ -94,7 +94,7 @@ export function Keyboard() {
     void engine.resumeIfSuspended();
     // Haptic strength follows velocity, so touch dynamics are felt as well.
     haptic(Math.round(HAPTIC.light + velocity * HAPTIC.light));
-    noteBus.noteOn(midi, velocity);
+    noteBus.noteOn(midi, shapeVelocity(velocity, store.getSnapshot().layout.velocityCurve as never));
     refresh();
   };
   const endNote = (midi: number) => {
