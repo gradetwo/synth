@@ -18,6 +18,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.34.2',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '**修复"什么都不做时监视器数字还在跳"**：① 引擎里那点 ±1e-15 的防denormal抖动会一直留在输出里，让表头永远有读数——现在 **−120 dBFS 以下一律按静音处理**（表头读到精确的 0）；② 界面原先在静音时显示的是"假的" −60/−120 并且**一位小数的四舍五入**会在边界值上来回跳——现在静音统一显示「— · —」，**读数稳定不再抖动**；③ DSP 负载在 5% 以下不再显示（空转时的 1–4% 只是噪声，显示它就会让整行字变化）。',
+        '**Fixed the monitor readout twitching while nothing plays**: ① the ±1e-15 denormal dither stays in the output, so the meters always had something to read — anything below **−120 dBFS now counts as silence** (they read exactly 0); ② the UI used to show a *fake* −60/−120 in silence, and one-decimal rounding flickered between two strings on a boundary — silence now reads a steady **「— · —」**; ③ the DSP load is hidden below 5% (the 1–4% of an idle engine is noise, and showing it changed the whole line).',
+      ],
+    ],
+  },
+  {
     version: '1.34.1',
     date: '2026-09-10',
     kind: 'fix',

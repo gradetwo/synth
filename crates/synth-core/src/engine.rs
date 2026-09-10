@@ -76,6 +76,9 @@ extern "C" {
 /// spreads the discontinuity over a thousand samples.
 const STEAL_RELEASE: f32 = 0.02;
 /// Per-voice gain before the mix bus.
+/// Below this the meters report exact silence (-120 dBFS).
+const METER_FLOOR: f32 = 1.0e-6;
+
 /// Envelope level below which a voice stops being filtered: -54 dB, far under
 /// anything audible, which is exactly where long release tails spend their time.
 const SILENT_VOICE: f32 = 0.002;
@@ -930,6 +933,16 @@ impl Engine {
         }
         let block_rms = (sum / (2.0 * frames as f32)).sqrt();
         self.rms_avg = self.rms_avg * 0.92 + block_rms * 0.08;
+        // Below -180 dBFS is silence by any measure, and the ±1e-15 dither that
+        // keeps the effect tails out of denormals would otherwise keep the
+        // meters awake forever — a meter that twitches with nothing playing is
+        // a bug report waiting to happen.
+        if self.rms_avg < METER_FLOOR {
+            self.rms_avg = 0.0;
+        }
+        if self.true_peak < METER_FLOOR {
+            self.true_peak = 0.0;
+        }
         self.master_gain = target;
 
         // --- meters + spectrum ----------------------------------------------
@@ -2761,6 +2774,49 @@ mod tests {
             (low_after / low - 1.0).abs() < 0.005,
             "bending another note moved this one: {low:.1} -> {low_after:.1}"
         );
+    }
+
+    /// With nothing playing the meters must report exact silence, not a
+    /// residual floor that twitches.
+    #[test]
+    fn meters_read_silence_when_nothing_plays() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        e.set_param(id::FX_REVERB_ON, 1.0);
+        e.set_param(id::FX_REVERB_MIX, 0.3);
+        e.set_param(id::FX_DELAY_ON, 1.0);
+        e.set_param(id::FX_DELAY_MIX, 0.3);
+        for _ in 0..200 {
+            e.process(128);
+        }
+        assert_eq!(e.true_peak(), 0.0, "true peak should be exactly zero");
+        assert_eq!(e.loudness_rms(), 0.0, "loudness should be exactly zero");
+        // A note, then silence: the meters must fall back to zero rather than
+        // parking on a floor.
+        e.note_on(60, 0.9);
+        for _ in 0..100 {
+            e.process(128);
+        }
+        assert!(e.loudness_rms() > 0.0);
+        e.all_notes_off();
+        // `true_peak` is the maximum since the last take, so clear it while the
+        // tail is still audible, then let the tail fall below the floor, then
+        // check that a *fresh* window reads exact silence instead of parking on
+        // a floor forever.
+        for _ in 0..3000 {
+            e.process(128);
+        }
+        let _ = e.take_true_peak();
+        for _ in 0..4000 {
+            e.process(128);
+        }
+        let decaying = e.take_true_peak();
+        assert!(decaying < 1e-6, "tail should have decayed: {decaying:e}");
+        for _ in 0..200 {
+            e.process(128);
+        }
+        assert_eq!(e.take_true_peak(), 0.0, "tail should settle to exact silence");
+        assert_eq!(e.loudness_rms(), 0.0, "loudness should settle to zero");
     }
 
     /// A quiet signal must pass through the limiter untouched (gain exactly 1)
