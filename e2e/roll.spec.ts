@@ -149,6 +149,35 @@ test.describe('piano roll on desktop', () => {
 test.describe('piano roll editing rules', () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
+  test('selecting a note plays it and dragging never leaves it sounding', async ({ page }) => {
+    await boot(page);
+    await openRollFromBar(page);
+    const note = page.locator('.roll-note').first();
+    await note.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    const label = (await note.getAttribute('aria-label'))!;
+    const pitch = label.split(' · ')[0];
+    const box = (await note.boundingBox())!;
+
+    // A click without movement selects the note *and* auditions its pitch.
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page.locator('.roll-note.sel')).toHaveCount(1);
+    await expect(page.locator('.nd-val')).toHaveText(pitch);
+    // …and the audition releases itself again.
+    await expect(page.locator('.nd-val')).toHaveText('—', { timeout: 3000 });
+
+    // Dragging through several pitches must not strand a note: after the drag
+    // the monitor has to fall back to silence instead of droning on.
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 5; i++) {
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - i * 12, { steps: 2 });
+      await page.waitForTimeout(40);
+    }
+    await page.mouse.up();
+    await expect(page.locator('.nd-val')).toHaveText('—', { timeout: 3000 });
+  });
+
   test('dragging a note vertically auditions the new pitch', async ({ page }) => {
     await boot(page);
     await openRollFromBar(page);

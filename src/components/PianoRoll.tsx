@@ -100,6 +100,8 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   const gridRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const auditionTimer = useRef(0);
+  /** Notes started for an audition, so they can always be released again. */
+  const auditionNotes = useRef<number[]>([]);
   /** The note we are currently auditioning, so step input ignores its echo. */
   const auditionRef = useRef<{ note: number; until: number } | null>(null);
   /** Notes currently held on an input source, waiting for note-off to size them. */
@@ -184,18 +186,32 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
     });
   }, []);
 
-  /** Audition a drawn or dragged note. Goes through the note bus so the
-   *  monitor and VU react, but step input ignores the echo of that pitch. */
-  const audition = useCallback((note: number, vel: number) => {
-
-    auditionRef.current = { note, until: performance.now() + 240 };
-    noteBus.noteOn(note, vel);
+  /** Release every note the editor is auditioning. Safe to call at any time. */
+  const stopAudition = useCallback(() => {
     window.clearTimeout(auditionTimer.current);
-    auditionTimer.current = window.setTimeout(() => {
-      noteBus.noteOff(note);
-      auditionRef.current = null;
-    }, 240);
+    for (const held of auditionNotes.current) noteBus.noteOff(held);
+    auditionNotes.current = [];
+    auditionRef.current = null;
   }, []);
+
+  /** Audition a drawn, selected or dragged note. Goes through the note bus so
+   *  the monitor and VU react, but step input ignores the echo of that pitch. */
+  const audition = useCallback(
+    (note: number, vel: number) => {
+      // Release the previous audition *before* starting the new one: cancelling
+      // its note-off timer alone left every pitch dragged through sounding
+      // forever.
+      stopAudition();
+      auditionNotes.current = [note];
+      auditionRef.current = { note, until: performance.now() + 240 };
+      noteBus.noteOn(note, vel);
+      auditionTimer.current = window.setTimeout(stopAudition, 240);
+    },
+    [stopAudition],
+  );
+
+  // Never leave a note sounding when the editor closes or unmounts.
+  useEffect(() => stopAudition, [stopAudition]);
 
   const undo = useCallback(() => {
     const prev = past.current.pop();
@@ -481,7 +497,15 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       audition(note, velocityRef.current);
       return;
     }
-    if (!g.moved) return;
+    if (!g.moved) {
+      // A plain click on a note selects it and plays its pitch, so you can hear
+      // what you are about to edit.
+      if (g.kind === 'note') {
+        setSelected(g.id);
+        audition(g.orig.note, g.orig.velocity);
+      }
+      return;
+    }
     // The drag always derived from `g.orig`, so that is the pre-drag document.
     past.current.push({
       ...docRef.current,
