@@ -167,6 +167,9 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     this.lastDowngrade = -Infinity;
     this.lastUpgrade = 0;
     this.port.onmessage = (event) => this.handleMessage(event.data);
+    /** Instance B's parameter values, so a restart can restore them. */
+    this.paramsB = opts.paramsB || null;
+    this.instanceRoute = opts.instanceRoute || null;
 
     const bytes = opts.wasmBytes;
     if (!bytes) {
@@ -192,6 +195,24 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
           opts.routes.forEach((r, i) => {
             this.wasm.gs_set_mod_route(i, r.src, r.dst, r.amount, r.enabled ? 1 : 0);
           });
+        }
+        // Instance B: the same parameter ids as instance A, delivered as
+        // messages rather than a second set of AudioParams.
+        if (this.paramsB && typeof this.wasm.gs_set_param_inst === 'function') {
+          for (const [id, value] of Object.entries(this.paramsB)) {
+            this.wasm.gs_set_param_inst(1, Number(id), Number(value));
+          }
+        }
+        if (this.instanceRoute && typeof this.wasm.gs_set_instance_route === 'function') {
+          const r = this.instanceRoute;
+          this.wasm.gs_set_instance_route(
+            r.mode | 0,
+            r.splitNote | 0,
+            Number(r.aLo ?? 0),
+            Number(r.aHi ?? 1),
+            Number(r.bLo ?? 0),
+            Number(r.bHi ?? 1),
+          );
         }
         this.ready = true;
         this.port.postMessage({ type: 'ready', abi: this.wasm.gs_abi_version() });
@@ -318,6 +339,35 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
           reply.code = -1;
         }
         this.port.postMessage(reply);
+        break;
+      }
+      case 'paramB':
+        // One parameter of the second layer. Cheap enough to send per change,
+        // and it avoids a hundred extra AudioParams on the graph.
+        if (typeof this.wasm.gs_set_param_inst === 'function') {
+          this.wasm.gs_set_param_inst(1, Number(data.id) | 0, Number(data.value) || 0);
+        }
+        break;
+      case 'paramsB': {
+        // The whole set at once, for loading a patch or restoring at startup.
+        if (typeof this.wasm.gs_set_param_inst === 'function' && data.values) {
+          for (const [id, value] of Object.entries(data.values)) {
+            this.wasm.gs_set_param_inst(1, Number(id), Number(value));
+          }
+        }
+        break;
+      }
+      case 'instanceRoute': {
+        if (typeof this.wasm.gs_set_instance_route === 'function') {
+          this.wasm.gs_set_instance_route(
+            Number(data.mode) | 0,
+            Number(data.splitNote) | 0,
+            Number(data.aLo ?? 0),
+            Number(data.aHi ?? 1),
+            Number(data.bLo ?? 0),
+            Number(data.bHi ?? 1),
+          );
+        }
         break;
       }
       case 'sample': {

@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.53.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '引擎现在支持**两层音色**（Layer / Split）：同一台合成器里可以有两套完整的振荡器/滤波器/包络/调制设置，共享效果器与总输出。这一版先把两层引擎和按键/力度路由做进核心（下一版接入界面）。',
+        'The engine now supports **two timbres at once** (Layer / Split): two complete oscillator, filter, envelope and modulation setups inside one synth, sharing the effect chain and master output. This release lands the engine and the key/velocity routing; the controls follow in the next one.',
+      ],
+      [
+        '默认仍是单层：没有打开分层时，所有音色与之前完全一致（音色文件、分享链接都不受影响）。',
+        'Single remains the default: with layering off, every patch behaves exactly as before, and saved patches and share links are unaffected.',
+      ],
+    ],
+  },
+  {
     version: '1.52.1',
     date: '2026-09-10',
     kind: 'fix',

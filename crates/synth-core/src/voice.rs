@@ -64,6 +64,9 @@ impl Default for Voice {
 struct Pending {
     note: u8,
     velocity: f32,
+    /// Which instance the note was played for, so a promoted note keeps its
+    /// timbre (layer/split).
+    instance: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -94,7 +97,8 @@ impl VoiceManager {
             counter: 0,
             pending: [Pending {
                 note: 0,
-                velocity: 1.0,
+                velocity: 0.0,
+                instance: 0,
             }; PENDING_CAPACITY],
             pending_len: 0,
         }
@@ -171,6 +175,15 @@ impl VoiceManager {
     }
 
     pub fn note_on(&mut self, note: u8, velocity: f32, freq: f32) -> NoteOnResult {
+        self.note_on_inst(note, velocity, freq, 0)
+    }
+
+    /// As [`VoiceManager::note_on`], for a note played on instance `instance`.
+    ///
+    /// A note is one voice per instance: in layer mode the engine calls this
+    /// twice for the same note, which allocates two voices because voices are
+    /// found by *free slot*, not by note number.
+    pub fn note_on_inst(&mut self, note: u8, velocity: f32, freq: f32, instance: u8) -> NoteOnResult {
         if let Some(index) = self.find_free() {
             return NoteOnResult::Allocated(self.claim(index, note, velocity, freq));
         }
@@ -179,7 +192,7 @@ impl VoiceManager {
             // Retune an already-fading victim so repeated steals do not queue
             // several notes onto the same slot.
             if !self.voices[victim].stealing {
-                self.pending[self.pending_len] = Pending { note, velocity };
+                self.pending[self.pending_len] = Pending { note, velocity, instance };
                 self.pending_len += 1;
                 self.voices[victim].stealing = true;
                 self.voices[victim].gate = false;
@@ -192,7 +205,7 @@ impl VoiceManager {
 
     /// Promote the oldest pending note into a now-idle slot. Returns the slot and
     /// note so the engine can reset the DSP state and retrigger.
-    pub fn flush_pending<F>(&mut self, mut freq_of: F) -> Option<(usize, u8, f32)>
+    pub fn flush_pending<F>(&mut self, mut freq_of: F) -> Option<(usize, u8, f32, u8)>
     where
         F: FnMut(u8) -> f32,
     {
@@ -201,7 +214,7 @@ impl VoiceManager {
         }
         let limit = self.max_polyphony.min(MAX_VOICES);
         let index = (0..limit).find(|&i| !self.voices[i].active)?;
-        let Pending { note, velocity } = self.pending[0];
+        let Pending { note, velocity, instance } = self.pending[0];
         // Shift the queue down (tiny, fixed-size copy).
         for i in 1..self.pending_len {
             self.pending[i - 1] = self.pending[i];
@@ -209,7 +222,7 @@ impl VoiceManager {
         self.pending_len -= 1;
         let freq = freq_of(note);
         self.claim(index, note, velocity, freq);
-        Some((index, note, velocity))
+        Some((index, note, velocity, instance))
     }
 
     pub fn note_off(&mut self, note: u8) {
@@ -359,7 +372,9 @@ mod tests {
         vm.release_slot(slot);
         let promoted = vm.flush_pending(freq);
         assert!(promoted.is_some());
-        let (_, note, _) = promoted.unwrap();
+        let (_, note, _, instance) = promoted.unwrap();
+        // Notes are queued with their instance so a promoted note keeps its timbre.
+        assert_eq!(instance, 0);
         assert_eq!(note, 64);
     }
 

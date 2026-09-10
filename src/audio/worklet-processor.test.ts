@@ -176,6 +176,76 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
     expect(left.some((v) => v !== 0)).toBe(true);
   });
 
+  it('plays a second instance, layered and split', async () => {
+    // Instance A: a sine. Instance B: a square. Layering must put the square's
+    // odd harmonics into the output, and a split must keep them to the high half
+    // of the keyboard.
+    const play = async (mode: number, note: number) => {
+      const proc = instantiate();
+      await waitReady(proc);
+      const params: Record<string, Float32Array> = {};
+      for (const d of descriptors()) params[d.name] = new Float32Array([d.defaultValue]);
+      params.osc1On = new Float32Array([1]);
+      params.osc1Wave = new Float32Array([0]);
+      params.osc1Level = new Float32Array([0.7]);
+      params.osc2On = new Float32Array([0]);
+      params.osc2Level = new Float32Array([0]);
+      params.filterCutoff = new Float32Array([18000]);
+      params.filterEnvAmt = new Float32Array([0]);
+      params.envAttack = new Float32Array([0.001]);
+      params.envSustain = new Float32Array([1]);
+      params.lfoOn = new Float32Array([0]);
+      params.fxReverbOn = new Float32Array([0]);
+      params.fxDelayOn = new Float32Array([0]);
+      params.masterVolume = new Float32Array([1]);
+      params.osc1Detune = new Float32Array([0]);
+      params.masterTune = new Float32Array([0]);
+      // Instance B: the same patch shape, but a square.
+      for (const [id, value] of Object.entries({
+        1: 1, 2: 3, 5: 0.6, 7: 0, 11: 0, 14: 18000, 17: 0, 19: 0.001, 21: 1, 23: 0, 29: 0, 32: 0, 0: 1,
+      })) {
+        proc.port.onmessage?.({ data: { type: 'paramB', id: Number(id), value } });
+      }
+      proc.port.onmessage?.({
+        data: { type: 'instanceRoute', mode, splitNote: 60, aLo: 0, aHi: 1, bLo: 0, bHi: 1 },
+      });
+      for (let i = 0; i < 20; i++) proc.process([], [[new Float32Array(128), new Float32Array(128)]], params);
+      proc.port.onmessage?.({ data: { type: 'noteOn', note, velocity: 1 } });
+      const left = new Float32Array(128);
+      const right = new Float32Array(128);
+      const out: number[] = [];
+      for (let i = 0; i < 120; i++) {
+        proc.process([], [[left, right]], params);
+        if (i >= 20) out.push(...left);
+      }
+      return Float32Array.from(out);
+    };
+
+    const f0 = 440;
+    const single = await play(0, 69);
+    const layered = await play(1, 69);
+    const splitHigh = await play(2, 72);
+    const splitLow = await play(2, 48);
+    const third = (buffer: Float32Array, base: number) => magnitude(buffer, base * 3);
+    const fundamental = (buffer: Float32Array, base: number) => magnitude(buffer, base);
+
+    // Single: a sine, so no third harmonic. Layered: the square's third.
+    // A sine through the filter is never mathematically pure (the ladder's soft
+    // clip leaves a little third harmonic), so the bar is "the layering clearly
+    // adds the square's harmonics", not "the sine is perfect".
+    const singleRatio = third(single, f0) / fundamental(single, f0);
+    const layeredRatio = third(layered, f0) / fundamental(layered, f0);
+    expect(singleRatio).toBeLessThan(0.05);
+    expect(layeredRatio).toBeGreaterThan(singleRatio * 4);
+
+    // Split: the high note is the square, the low one the sine.
+    const highF0 = 440 * Math.pow(2, 3 / 12);
+    const lowThird = third(splitLow, f0) / fundamental(splitLow, f0);
+    const highThird = third(splitHigh, highF0) / fundamental(splitHigh, highF0);
+    expect(lowThird).toBeLessThan(0.05);
+    expect(highThird).toBeGreaterThan(lowThird * 4);
+  });
+
   it('emits periodic analysis frames', async () => {
     messages.length = 0;
     const proc = instantiate();

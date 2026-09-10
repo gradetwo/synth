@@ -12,7 +12,8 @@ use crate::params::{MAX_BLOCK_SIZE, MAX_VOICES, SPECTRUM_BINS};
 /// 3 added the single-cycle wavetable import.
 /// 4 added the impulse-response import.
 /// 5 added the sample import.
-pub const ABI_VERSION: u32 = 5;
+/// 6 added the second instance (parameters + key/velocity routing).
+pub const ABI_VERSION: u32 = 6;
 
 /// Initialise the engine. Returns 1 on success.
 #[no_mangle]
@@ -103,6 +104,37 @@ pub extern "C" fn gs_wavetable_clear() {
 #[no_mangle]
 pub extern "C" fn gs_wavetable_has() -> u32 {
     engine().has_wavetable() as u32
+}
+
+// ---------------------------------------------------------- second instance
+
+/// Set a parameter on instance `instance` (0 = the main patch, 1 = the layer).
+///
+/// The worklet's AudioParams carry instance A; instance B arrives as messages,
+/// which keeps a hundred extra AudioParams out of the graph.
+#[no_mangle]
+pub extern "C" fn gs_set_param_inst(instance: u32, id: u32, value: f32) {
+    engine().set_param_inst(instance, id, value);
+}
+
+/// Route notes between the instances: 0 = single, 1 = layer, 2 = split at
+/// `split_note`. The velocity windows let a split double as a dynamic layer.
+#[no_mangle]
+pub extern "C" fn gs_set_instance_route(
+    mode: u32,
+    split_note: u32,
+    a_lo: f32,
+    a_hi: f32,
+    b_lo: f32,
+    b_hi: f32,
+) {
+    engine().set_instance_routing(mode, split_note, a_lo, a_hi, b_lo, b_hi);
+}
+
+/// Voices currently sounding on `instance` (diagnostics).
+#[no_mangle]
+pub extern "C" fn gs_instance_voices(instance: u32) -> u32 {
+    engine().instance_voices(instance as u8)
 }
 
 // ------------------------------------------------------------ sample import

@@ -55,6 +55,19 @@ const DISCRETE = new Set<number>([
 ]);
 
 /** Verdict from the DSP on an imported single-cycle waveform. */
+/** Layer / split routing between the two instances. */
+export interface InstanceRoute {
+  /** 0 = single (instance A only), 1 = layer, 2 = split. */
+  mode: number;
+  splitNote: number;
+  aLo: number;
+  aHi: number;
+  bLo: number;
+  bHi: number;
+}
+
+export const SINGLE_INSTANCE: InstanceRoute = { mode: 0, splitNote: 60, aLo: 0, aHi: 1, bLo: 0, bHi: 1 };
+
 export interface WavetableResult {
   ok: boolean;
   /** 0 = ok, 1 = too short, 2 = silent, 3 = not finite, -1 = old core. */
@@ -126,6 +139,8 @@ export class AudioEngine {
   private timeBuffer = new Float32Array(1024);
   /** Whether the last core fetch compiled while streaming (diagnostics). */
   private lastCoreStreamed = false;
+  /** The routing in force, sent to every new worklet (and the offline render). */
+  private instanceRoute: InstanceRoute = { ...SINGLE_INSTANCE };
 
   onAnalysis(fn: AnalysisListener): () => void {
     this.listeners.add(fn);
@@ -324,6 +339,9 @@ export class AudioEngine {
               amount: r.amount,
               enabled: r.enabled,
             })),
+            // The routing in force, so a restarted engine comes up layered or
+            // split without waiting for the first message.
+            instanceRoute: this.instanceRoute,
           },
         });
         this.node = node;
@@ -608,6 +626,22 @@ export class AudioEngine {
     this.sendWavetable(cycle, (result) => {
       for (const resolve of waiters) resolve(result);
     });
+  }
+
+  /** Set one parameter of instance B (the layer/split timbre). */
+  setParamB(id: ParamId, value: number) {
+    this.node?.port.postMessage({ type: 'paramB', id, value });
+  }
+
+  /** Send the whole of instance B, for loading a patch or restoring at startup. */
+  setParamsB(values: Record<number, number>) {
+    this.node?.port.postMessage({ type: 'paramsB', values });
+  }
+
+  /** How notes are routed between the two instances. */
+  setInstanceRoute(route: InstanceRoute) {
+    this.instanceRoute = route;
+    this.node?.port.postMessage({ type: 'instanceRoute', ...route });
   }
 
   setRoute(index: number, route: ModRoute) {

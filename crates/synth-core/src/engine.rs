@@ -125,6 +125,76 @@ fn is_env_param(param_id: u32) -> bool {
     )
 }
 
+/// How notes are sent to the two instances (A5.1 / P2 layer-split).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InstanceMode {
+    /// Everything plays instance A. The default, so existing patches are
+    /// untouched.
+    Single,
+    /// Every note plays both instances (a layered sound).
+    Layer,
+    /// Notes at or below `split_note` play A, notes above play B.
+    Split,
+}
+
+impl InstanceMode {
+    pub fn from_u32(value: u32) -> Self {
+        match value {
+            1 => InstanceMode::Layer,
+            2 => InstanceMode::Split,
+            _ => InstanceMode::Single,
+        }
+    }
+}
+
+/// Key/velocity routing between the two instances.
+#[derive(Clone, Copy)]
+pub struct InstanceRouting {
+    pub mode: InstanceMode,
+    pub split_note: u8,
+    /// Velocity window per instance, so a split can also be a dynamic layer
+    /// (soft notes one sound, hard notes another).
+    pub a_lo: f32,
+    pub a_hi: f32,
+    pub b_lo: f32,
+    pub b_hi: f32,
+}
+
+impl InstanceRouting {
+    pub const fn new() -> Self {
+        Self {
+            mode: InstanceMode::Single,
+            split_note: 60,
+            a_lo: 0.0,
+            a_hi: 1.0,
+            b_lo: 0.0,
+            b_hi: 1.0,
+        }
+    }
+
+    /// Whether `instance` plays this note.
+    #[inline]
+    fn wants(&self, instance: u8, note: u8, velocity: f32) -> bool {
+        let (lo, hi) = if instance == 1 { (self.b_lo, self.b_hi) } else { (self.a_lo, self.a_hi) };
+        if velocity < lo || velocity > hi {
+            return false;
+        }
+        match self.mode {
+            // The default: everything plays instance A, so adding a second
+            // instance changed nothing for existing patches.
+            InstanceMode::Single => instance == 0,
+            InstanceMode::Layer => true,
+            InstanceMode::Split => {
+                if instance == 0 {
+                    note <= self.split_note
+                } else {
+                    note > self.split_note
+                }
+            }
+        }
+    }
+}
+
 pub struct Engine {
     pub sample_rate: f32,
     pub params: Params,
@@ -252,6 +322,19 @@ pub struct Engine {
     sample_scratch: Vec<f32>,
     /// Where each voice's sampler is in the sample, and which way it is going.
     smp_state: [[ReadState; 2]; MAX_VOICES],
+    /// Instance B: a second, complete parameter set. Voices remember which
+    /// instance played them, so both timbres can sound at once while the effect
+    /// chain and the master bus stay shared.
+    params_b: Params,
+    /// Which instance each voice belongs to.
+    voice_instance: [u8; MAX_VOICES],
+    /// Key/velocity routing between the instances.
+    pub routing: InstanceRouting,
+    /// Smoothing state for instance B (instance A uses the originals).
+    smooth_target_b: [f32; PARAM_COUNT],
+    smooth_value_b: [f32; PARAM_COUNT],
+    smooth_set_b: [bool; PARAM_COUNT],
+    smooth_ready_b: [bool; PARAM_COUNT],
     initialised: bool,
 }
 
@@ -331,6 +414,13 @@ impl Engine {
             user_sample: Sample::new(),
             sample_scratch: Vec::new(),
             smp_state: [[ReadState::new(); 2]; MAX_VOICES],
+            params_b: Params::new(),
+            voice_instance: [0; MAX_VOICES],
+            routing: InstanceRouting::new(),
+            smooth_target_b: [0.0; PARAM_COUNT],
+            smooth_value_b: [0.0; PARAM_COUNT],
+            smooth_set_b: [false; PARAM_COUNT],
+            smooth_ready_b: [false; PARAM_COUNT],
             initialised: false,
         }
     }
@@ -397,6 +487,75 @@ impl Engine {
         self.env_dirty = true;
         self.delay.reset();
         self.initialised = true;
+    }
+
+    /// The parameter set a voice plays with.
+    #[inline]
+    fn params_for(&self, instance: u8) -> Params {
+        if instance == 1 {
+            self.params_b
+        } else {
+            self.params
+        }
+    }
+
+    /// Set a parameter on instance B (0 sets instance A's, which is what the
+    /// worklet's AudioParams already do).
+    ///
+    /// Smoothed exactly like instance A, so dragging a knob on the second layer
+    /// cannot zipper either.
+    pub fn set_param_inst(&mut self, instance: u32, param_id: u32, value: f32) {
+        if instance == 0 {
+            self.set_param(param_id, value);
+            return;
+        }
+        if (param_id as usize) >= PARAM_COUNT {
+            return;
+        }
+        self.params_b.set(param_id, value);
+        if is_continuous(param_id) {
+            let index = param_id as usize;
+            self.smooth_target_b[index] = if value.is_finite() { value } else { 0.0 };
+            self.smooth_set_b[index] = true;
+        }
+        if is_env_param(param_id) {
+            // Held instance-B voices need the new envelope, not just the next one.
+            self.env_dirty = true;
+        }
+        if param_id == id::VOICE_MODE {
+            self.mono_len = 0;
+        }
+    }
+
+    /// Route notes to the instances.
+    pub fn set_instance_routing(
+        &mut self,
+        mode: u32,
+        split_note: u32,
+        a_lo: f32,
+        a_hi: f32,
+        b_lo: f32,
+        b_hi: f32,
+    ) {
+        self.routing = InstanceRouting {
+            mode: InstanceMode::from_u32(mode),
+            split_note: split_note.min(127) as u8,
+            a_lo: a_lo.clamp(0.0, 1.0),
+            a_hi: a_hi.clamp(0.0, 1.0),
+            b_lo: b_lo.clamp(0.0, 1.0),
+            b_hi: b_hi.clamp(0.0, 1.0),
+        };
+    }
+
+    /// Voices currently sounding on `instance` (diagnostics and tests).
+    pub fn instance_voices(&self, instance: u8) -> u32 {
+        let mut count = 0;
+        for slot in 0..MAX_VOICES {
+            if self.vm.voices[slot].active && self.voice_instance[slot] == instance {
+                count += 1;
+            }
+        }
+        count
     }
 
     pub fn set_param(&mut self, param_id: u32, value: f32) {
@@ -578,6 +737,26 @@ impl Engine {
             self.smooth_value[index] = value;
             self.params.set(param_id, value);
         }
+        // Instance B: the same one-pole, so the second layer cannot zipper
+        // either. Its values only ever arrive from the host's messages.
+        for index in 0..PARAM_COUNT {
+            let param_id = index as u32;
+            if !is_continuous(param_id) || !self.smooth_set_b[index] {
+                continue;
+            }
+            let target = self.smooth_target_b[index];
+            let value = if self.smooth_ready_b[index] {
+                self.smooth_value_b[index] + (target - self.smooth_value_b[index]) * coeff
+            } else {
+                self.smooth_ready_b[index] = true;
+                target
+            };
+            if is_env_param(param_id) && (value - self.smooth_value_b[index]).abs() > 1e-7 {
+                env_changed = true;
+            }
+            self.smooth_value_b[index] = value;
+            self.params_b.set(param_id, value);
+        }
         if env_changed {
             self.env_dirty = true;
         }
@@ -660,16 +839,31 @@ impl Engine {
     }
 
     pub fn note_on(&mut self, note: u8, velocity: f32) {
+        let vel = velocity.clamp(0.0, 1.0);
+        // Mono/legato keeps a single voice, so a layer there would be one note
+        // per instance only by halving the effect; it plays instance A.
         if self.params.voice_mode != 0 {
-            self.mono_note_on(note, velocity);
+            self.mono_note_on(note, vel);
             return;
         }
-        let vel = velocity.clamp(0.0, 1.0);
+        for instance in 0..2u8 {
+            if self.routing.wants(instance, note, vel) {
+                self.start_note(note, vel, instance);
+            }
+        }
+    }
+
+    /// Start one voice for `note` on `instance`.
+    fn start_note(&mut self, note: u8, vel: f32, instance: u8) {
         let freq = self.pitch_hz(note as f32);
-        match self.vm.note_on(note, vel, freq) {
-            NoteOnResult::Allocated(slot) => self.retrigger(slot),
+        match self.vm.note_on_inst(note, vel, freq, instance) {
+            NoteOnResult::Allocated(slot) => {
+                self.voice_instance[slot] = instance;
+                self.retrigger(slot);
+            }
             NoteOnResult::Queued(victim) => {
-                // Smooth steal: short release on the victim, new note queued.
+                // Smooth steal: short release on the victim, new note queued
+                // (with its instance, so the timbre survives the promotion).
                 self.envs[victim].set_release(STEAL_RELEASE);
                 self.envs[victim].gate_off();
             }
@@ -754,12 +948,16 @@ impl Engine {
             self.vm.voices[slot].random = random;
             self.voice_lfos[slot].retrigger();
             self.voice_lfo2s[slot].retrigger();
-            let p = self.params.env;
+            // Mono keeps a single voice, which is instance A's patch (see
+            // `note_on`), but read the parameters of whichever instance the
+            // voice was actually playing.
+            let instance = self.voice_instance[slot];
+            let p = self.params_for(instance).env;
             let env = &mut self.envs[slot];
             env.reset();
             env.set_params(p.attack, p.decay, p.sustain, p.release);
             env.gate_on();
-            let f = self.params.filter_env;
+            let f = self.params_for(instance).filter_env;
             let fenv = &mut self.filter_envs[slot];
             fenv.reset();
             fenv.set_params(f.attack, f.decay, f.sustain, f.release);
@@ -804,12 +1002,13 @@ impl Engine {
         self.vm.voices[slot].random = random;
         self.voice_lfos[slot].retrigger();
         self.voice_lfo2s[slot].retrigger();
-        let p = self.params.env;
+        let instance = self.voice_instance[slot];
+        let p = self.params_for(instance).env;
         let env = &mut self.envs[slot];
         env.reset();
         env.set_params(p.attack, p.decay, p.sustain, p.release);
         env.gate_on();
-        let f = self.params.filter_env;
+        let f = self.params_for(instance).filter_env;
         let fenv = &mut self.filter_envs[slot];
         fenv.reset();
         fenv.set_params(f.attack, f.decay, f.sustain, f.release);
@@ -817,9 +1016,10 @@ impl Engine {
     }
 
     fn apply_env_to_all(&mut self) {
-        let p = self.params.env;
-        let f = self.params.filter_env;
         for slot in 0..MAX_VOICES {
+            let params = self.params_for(self.voice_instance[slot]);
+            let p = params.env;
+            let f = params.filter_env;
             if self.vm.voices[slot].active && !self.vm.voices[slot].stealing {
                 self.envs[slot].set_params(p.attack, p.decay, p.sustain, p.release);
                 self.filter_envs[slot].set_params(f.attack, f.decay, f.sustain, f.release);
@@ -1109,12 +1309,13 @@ impl Engine {
         let sr = self.sample_rate;
         let tune = self.params.master_tune;
         let tuning = self.tuning;
-        let params = self.params.env;
-        let fenv_params = self.params.filter_env;
-        while let Some((slot, _note, _vel)) = self
+        while let Some((slot, _note, _vel, instance)) = self
             .vm
             .flush_pending(|note| pitch_hz_with(note as f32, tune, &tuning))
         {
+            self.voice_instance[slot] = instance;
+            let params = self.params_for(instance).env;
+            let fenv_params = self.params_for(instance).filter_env;
             self.ladders[slot][0].reset();
             self.ladders[slot][1].reset();
             self.noise[slot][0].reset();
@@ -1154,7 +1355,10 @@ impl Engine {
     ) {
         let voice = self.vm.voices[slot];
         let sr = self.sample_rate;
-        let params = self.params;
+        // The voice's own instance: parameters are read live every block, so a
+        // knob still affects a held note — it just affects the layer it belongs
+        // to.
+        let params = self.params_for(self.voice_instance[slot]);
 
         // --- LFOs: global, or per-voice when RETRIG is on -------------------
         // A retriggered LFO restarts with every note, which is what makes
@@ -3834,6 +4038,181 @@ mod tests {
         // And the patch is silent rather than broken.
         let buffer = render_sample_note(&mut e, 69, 0.05);
         assert!(buffer.iter().all(|v| v.is_finite()));
+    }
+
+    // ------------------------------------------------- two instances (B/P2)
+
+    /// A patch on instance B that is easy to tell apart from instance A's.
+    fn set_square_layer(e: &mut Engine, level: f32) {
+        e.set_param_inst(1, id::OSC1_ON, 1.0);
+        e.set_param_inst(1, id::OSC1_WAVE, crate::params::Wave::Square as u32 as f32);
+        e.set_param_inst(1, id::OSC1_LEVEL, level);
+        e.set_param_inst(1, id::OSC2_ON, 0.0);
+        e.set_param_inst(1, id::OSC2_LEVEL, 0.0);
+        e.set_param_inst(1, id::FILTER_CUTOFF, 18000.0);
+        e.set_param_inst(1, id::FILTER_ENV_AMT, 0.0);
+        e.set_param_inst(1, id::ENV_ATTACK, 0.001);
+        e.set_param_inst(1, id::ENV_SUSTAIN, 1.0);
+        e.set_param_inst(1, id::LFO_ON, 0.0);
+        e.set_param_inst(1, id::MASTER_VOLUME, 1.0);
+    }
+
+    /// The default route is one instance: adding a second one must not change
+    /// what an existing patch does.
+    #[test]
+    fn the_default_route_plays_one_instance() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        e.note_on(60, 1.0);
+        assert_eq!(e.instance_voices(0), 1);
+        assert_eq!(e.instance_voices(1), 0);
+    }
+
+    /// A layer sounds both timbres for one key.
+    #[test]
+    fn a_layer_plays_both_instances() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.7);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        for index in 0..crate::params::MOD_ROUTES {
+            e.set_route(index, 0, 0, 0.0, false);
+        }
+        set_square_layer(&mut e, 0.5);
+        e.set_instance_routing(1, 60, 0.0, 1.0, 0.0, 1.0);
+        e.note_on(69, 1.0);
+        assert_eq!(e.instance_voices(0), 1);
+        assert_eq!(e.instance_voices(1), 1);
+
+        let buffer = render_sample_note(&mut e, 69, 0.3);
+        let slice = &buffer[4_800..12_000];
+        let f0 = note_to_hz(69.0);
+        // The square layer puts odd harmonics on top of the sine: without it the
+        // third harmonic would be at the noise floor.
+        let fundamental = bin_mag(slice, f0, 48_000.0);
+        let third = bin_mag(slice, f0 * 3.0, 48_000.0);
+        assert!(fundamental > 0.02, "the layer should sound");
+        assert!(
+            third > fundamental * 0.02,
+            "the square layer should add harmonics: {third} vs {fundamental}"
+        );
+    }
+
+    /// A split sends low notes to A and high notes to B.
+    #[test]
+    fn a_split_routes_by_note() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.7);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        set_square_layer(&mut e, 0.5);
+        e.set_instance_routing(2, 60, 0.0, 1.0, 0.0, 1.0);
+        e.set_param(id::ENV_RELEASE, 0.01);
+        e.set_param_inst(1, id::ENV_RELEASE, 0.01);
+
+        // Below the split: only A.
+        e.note_on(48, 1.0);
+        assert_eq!(e.instance_voices(0), 1);
+        assert_eq!(e.instance_voices(1), 0);
+        let low = render_sample_note(&mut e, 48, 0.2);
+        let low_f0 = note_to_hz(48.0);
+        let low_third = bin_mag(&low[4_800..9_600], low_f0 * 3.0, 48_000.0);
+
+        // Above the split: only B (the square).
+        e.all_notes_off();
+        for _ in 0..200 {
+            e.process(128);
+        }
+        e.note_on(72, 1.0);
+        assert_eq!(e.instance_voices(0), 0);
+        assert_eq!(e.instance_voices(1), 1);
+        let high = render_sample_note(&mut e, 72, 0.2);
+        let high_f0 = note_to_hz(72.0);
+        let high_third = bin_mag(&high[4_800..9_600], high_f0 * 3.0, 48_000.0);
+
+        assert!(
+            high_third > low_third * 4.0,
+            "the high half should be the square layer: {high_third} vs {low_third}"
+        );
+    }
+
+    /// The two instances keep their own parameters: instance B's filter cannot
+    /// darken a note playing on instance A.
+    #[test]
+    fn instance_parameters_do_not_leak_between_instances() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+
+        // Instance B is the same saw, but heavily filtered.
+        e.set_param_inst(1, id::OSC1_ON, 1.0);
+        e.set_param_inst(1, id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param_inst(1, id::OSC1_LEVEL, 0.8);
+        e.set_param_inst(1, id::OSC2_ON, 0.0);
+        e.set_param_inst(1, id::OSC2_LEVEL, 0.0);
+        e.set_param_inst(1, id::FILTER_CUTOFF, 350.0);
+        e.set_param_inst(1, id::FILTER_DRIVE, 0.0);
+        e.set_param_inst(1, id::FILTER_ENV_AMT, 0.0);
+        e.set_param_inst(1, id::ENV_ATTACK, 0.001);
+        e.set_param_inst(1, id::ENV_SUSTAIN, 1.0);
+        e.set_param_inst(1, id::LFO_ON, 0.0);
+        e.set_param_inst(1, id::MASTER_VOLUME, 1.0);
+        e.set_instance_routing(2, 60, 0.0, 1.0, 0.0, 1.0);
+        e.set_param(id::ENV_RELEASE, 0.01);
+        e.set_param_inst(1, id::ENV_RELEASE, 0.01);
+
+        let high_energy = |e: &mut Engine, note: u8| {
+            e.note_on(note, 1.0);
+            let buffer = render_sample_note(e, note, 0.25);
+            let f0 = note_to_hz(note as f32);
+            let slice = &buffer[4_800..12_000];
+            // Energy well above the fundamental: a bright saw has plenty.
+            let mut sum = 0.0f32;
+            for k in 4..14 {
+                sum += bin_mag(slice, f0 * k as f32, 48_000.0);
+            }
+            e.all_notes_off();
+            for _ in 0..200 {
+                e.process(128);
+            }
+            sum
+        };
+        let bright = high_energy(&mut e, 48); // instance A: open filter
+        let dark = high_energy(&mut e, 72); // instance B: closed filter
+        assert!(bright > 0.0 && dark >= 0.0);
+        assert!(
+            bright > dark * 5.0,
+            "instance B's filter should not affect A: A {bright} vs B {dark}"
+        );
     }
 
     /// The noise wave ids must actually reach the coloured-noise filters: white
