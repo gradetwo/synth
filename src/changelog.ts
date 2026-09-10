@@ -18,6 +18,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.32.1',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '**音质门禁升级为时域 + 频域双重检测**（这次刺啦事件的直接产物）：新增「**渲染块边界不得出现咔哒**」（用已知正弦的物理步进上限去卡，并自检"注入咔哒必须被抓到"）与「**正弦必须是正弦**」（Blackman-Harris 窗 FFT：谐波含量 −125 dB、非谐波宽带能量 −97.6 dB）。整曲测试台也新增**频谱平坦度**指标——咔哒会把每个频段填满，平坦度立刻升高。',
+        'The **audio gate now checks both domains**, as a direct result of the crackle: a **block-boundary click scan** (a known sine cannot step past its physical limit; the detector self-tests by injecting a dropout that must be caught) and **sine purity** (Blackman-Harris FFT: harmonics −125 dB, non-harmonic broadband energy −97.6 dB). The song harness gained **spectral flatness** — a click train fills every bin, so flatness jumps.',
+      ],
+      [
+        '门禁立刻抓到并修掉一个真实问题：新低通的输出饱和级对**正常电平也在压缩**（0.5 信号就被压 3%），在正弦上测得 −46 dB 谐波。改为**拐点以下完全线性**的软限幅后，谐波降到 −125 dB，同时自激仍被限制。',
+        'The new gate immediately caught and fixed a real flaw: the new low-pass compressed **ordinary levels** too (a 0.5 signal was already squashed by 3%), measuring −46 dB of harmonics on a sine. With a soft clipper that is exactly linear below its knee, harmonics fell to −125 dB while self-oscillation stays bounded.',
+      ],
+    ],
+  },
+  {
     version: '1.32.0',
     date: '2026-09-10',
     kind: 'feature',

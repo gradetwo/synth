@@ -98,6 +98,79 @@ function binMag(samples, freq) {
   return (Math.hypot(re, im) / n) * 2;
 }
 
+/**
+ * Radix-2 FFT magnitude spectrum, Blackman-Harris windowed.
+ *
+ * The gate needs the frequency domain, not just levels: a filter that drops a
+ * sample at every render-block boundary is a click train, and a click train is
+ * broadband noise — invisible to a peak or RMS check, obvious in a spectrum.
+ *
+ * The window has to be this good: a Hann window's own sidelobes sit around
+ * -46 dB a few bins away from a strong partial, which is indistinguishable from
+ * real broadband junk. Blackman-Harris puts them below -92 dB, so whatever the
+ * "everything that is not a harmonic" number reports is the signal, not the
+ * measurement.
+ */
+function spectrum(samples, n = 8192) {
+  const BH = [0.35875, 0.48829, 0.14128, 0.01168];
+  const re = new Float64Array(n);
+  const im = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const src = samples[i] ?? 0;
+    const t = (2 * Math.PI * i) / n;
+    const win =
+      BH[0] - BH[1] * Math.cos(t) + BH[2] * Math.cos(2 * t) - BH[3] * Math.cos(3 * t);
+    re[i] = src * win;
+  }
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      [re[i], re[j]] = [re[j], re[i]];
+      [im[i], im[j]] = [im[j], im[i]];
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (-2 * Math.PI) / len;
+    for (let i = 0; i < n; i += len) {
+      for (let k = 0; k < len / 2; k++) {
+        const wr = Math.cos(ang * k);
+        const wi = Math.sin(ang * k);
+        const ur = re[i + k];
+        const ui = im[i + k];
+        const vr = re[i + k + len / 2] * wr - im[i + k + len / 2] * wi;
+        const vi = re[i + k + len / 2] * wi + im[i + k + len / 2] * wr;
+        re[i + k] = ur + vr;
+        im[i + k] = ui + vi;
+        re[i + k + len / 2] = ur - vr;
+        im[i + k + len / 2] = ui - vi;
+      }
+    }
+  }
+  const mag = new Float64Array(n / 2);
+  for (let i = 0; i < n / 2; i++) mag[i] = Math.hypot(re[i], im[i]) / n;
+  return mag;
+}
+
+/** Worst sample-to-sample step inside every 128-sample block, and where. */
+function blockSteps(frames) {
+  const worst = [];
+  for (let start = 0; start + BLOCK <= frames.length; start += BLOCK) {
+    let step = 0;
+    let at = start;
+    for (let i = 1; i < BLOCK; i++) {
+      const d = Math.abs(frames[start + i] - frames[start + i - 1]);
+      if (d > step) {
+        step = d;
+        at = start + i;
+      }
+    }
+    worst.push({ start, step, at });
+  }
+  return worst;
+}
+
 // ---------------------------------------------------------------- 1. headroom
 {
   const notes = [36, 40, 43, 47, 52, 55, 56, 59, 60, 63, 64, 66, 68, 71, 75, 78];
@@ -156,7 +229,96 @@ function binMag(samples, freq) {
   check('saw at C7 is band-limited', aliasDb < -55, `aliasing ${aliasDb.toFixed(1)} dB below the signal`);
 }
 
-// ------------------------------------------------------------- 3. distortion
+// ------------------------------------------- 3. block clicks + spectrum purity
+//
+// The regression this exists for: the vendored ladder filter was broken *only*
+// in the wasm build and dropped one sample at the start of every render block —
+// a 375 Hz click train, i.e. audible crackle on an otherwise simple patch. A
+// peak or RMS check cannot see it, because a single sample of a low-level
+// signal barely moves either number. Both domains can:
+//
+//   * time domain  — a sine of known frequency and amplitude cannot step by
+//                    more than 2*pi*f*A/SR; a block-start dropout breaks that;
+//   * frequency    — the click train is broadband, so everything that is not
+//                    the fundamental shows up as harmonic + noise energy.
+{
+  const f0 = 440;
+  engine(
+    [
+      [P.OSC1_ON, 1], [P.OSC1_WAVE, WAVE.sine], [P.OSC1_LEVEL, 0.8],
+      [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0],
+      [P.FILTER_TYPE, 0], [P.FILTER_CUTOFF, 18000], [P.FILTER_RES, 0.05],
+      [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0],
+      [P.ENV_ATTACK, 0.01], [P.ENV_SUSTAIN, 1],
+      [P.LFO_ON, 0], [P.MASTER_VOLUME, 0.75],
+      [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
+      [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0],
+    ],
+    [[69, 1]],
+  );
+  // A clean steady window, far from the attack.
+  const blocks = render(400, 200);
+  const frames = [];
+  for (const [l] of blocks) frames.push(...l);
+  const peak = frames.reduce((m, v) => Math.max(m, v === undefined ? 0 : Math.abs(v)), 0);
+  const idealStep = ((2 * Math.PI * f0) / SR) * peak;
+  const steps = blockSteps(frames);
+  const worst = steps.reduce((a, b) => (b.step > a.step ? b : a));
+  const blocksOver = steps.filter((s) => s.step > idealStep * 2).length;
+  check(
+    'no click at render-block boundaries',
+    blocksOver === 0,
+    `worst step ${worst.step.toExponential(2)} vs physical limit ${idealStep.toExponential(2)}` +
+      ` (block starts at sample ${worst.start}, ${blocksOver}/${steps.length} blocks over)`,
+  );
+  // Prove the detector works: the exact failure mode that motivated it — one
+  // sample dropped at the start of every block — must be reported as a click.
+  // A gate that cannot fail is not a gate.
+  const broken = Float32Array.from(frames);
+  for (let start = 0; start < broken.length; start += BLOCK) broken[start] *= 0.2;
+  const brokenOver = blockSteps(broken).filter((s) => s.step > idealStep * 2).length;
+  check(
+    'the click detector can see a click',
+    brokenOver > 0,
+    `injected block-start dropouts detected in ${brokenOver} blocks`,
+  );
+
+  // Same signal, frequency domain. A pure sine through a linear low-pass has
+  // exactly one partial; everything else is distortion or a click train.
+  const mag = spectrum(frames, 8192);
+  const bin = (f) => Math.max(2, Math.round((f / SR) * 8192));
+  let fundamental = 0;
+  let harmonic = 0;
+  let total = 0;
+  // Blackman-Harris spreads a partial over four bins either side of centre.
+  const guard = bin(f0);
+  for (let i = 3; i < mag.length; i++) {
+    const energy = mag[i] ** 2;
+    total += energy;
+    if (Math.abs(i - guard) <= 4) fundamental += energy;
+    else for (let k = 2; k <= 20; k++) {
+      if (Math.abs(i - bin(f0 * k)) <= 4) {
+        harmonic += energy;
+        break;
+      }
+    }
+  }
+  const noise = Math.max(total - fundamental - harmonic, 1e-30);
+  const harmonicDb = 10 * Math.log10(harmonic / Math.max(fundamental, 1e-30));
+  const noiseDb = 10 * Math.log10(noise / Math.max(fundamental, 1e-30));
+  check(
+    'sine stays a sine (harmonic content)',
+    harmonicDb < -55,
+    `THD+N harmonics ${harmonicDb.toFixed(1)} dB below the fundamental`,
+  );
+  check(
+    'sine leaves no broadband noise',
+    noiseDb < -70,
+    `non-harmonic energy ${noiseDb.toFixed(1)} dB below the fundamental`,
+  );
+}
+
+// ------------------------------------------------------------- 4. distortion
 {
   engine(
     [

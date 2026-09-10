@@ -27,6 +27,63 @@ const KNEE = 0.82;
 /** A 3 kHz sine at 0.5 amplitude steps by ~0.2 between samples. */
 const STEP_LIMIT = 0.35;
 
+/**
+ * Spectral flatness (geometric mean over arithmetic mean) of a window.
+ *
+ * Tonal music is peaky, so the ratio is tiny; a click train fills in every bin
+ * and pushes it up. This is the frequency-domain companion to `maxStep`: the
+ * two together catch both a single discontinuity and sustained broadband junk.
+ */
+function spectralFlatness(samples: Float32Array, at: number, n = 4096): number {
+  if (at + n > samples.length) return 0;
+  const re = new Float64Array(n);
+  const im = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = (2 * Math.PI * i) / n;
+    const win = 0.35875 - 0.48829 * Math.cos(t) + 0.14128 * Math.cos(2 * t) - 0.01168 * Math.cos(3 * t);
+    re[i] = samples[at + i] * win;
+  }
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      [re[i], re[j]] = [re[j], re[i]];
+      [im[i], im[j]] = [im[j], im[i]];
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (-2 * Math.PI) / len;
+    for (let i = 0; i < n; i += len) {
+      for (let k = 0; k < len / 2; k++) {
+        const wr = Math.cos(ang * k);
+        const wi = Math.sin(ang * k);
+        const ur = re[i + k];
+        const ui = im[i + k];
+        const vr = re[i + k + len / 2] * wr - im[i + k + len / 2] * wi;
+        const vi = re[i + k + len / 2] * wi + im[i + k + len / 2] * wr;
+        re[i + k] = ur + vr;
+        im[i + k] = ui + vi;
+        re[i + k + len / 2] = ur - vr;
+        im[i + k + len / 2] = ui - vi;
+      }
+    }
+  }
+  let logSum = 0;
+  let sum = 0;
+  let count = 0;
+  // Skip the bottom bins: a little DC or rumble would drag the mean down and
+  // flatter the measurement.
+  for (let i = 24; i < n / 2; i++) {
+    const mag = Math.hypot(re[i], im[i]) / n + 1e-12;
+    logSum += Math.log(mag);
+    sum += mag;
+    count++;
+  }
+  if (count === 0 || sum <= 0) return 0;
+  return Math.exp(logSum / count) / (sum / count);
+}
+
 interface Report {
   costMean: number;
   costPeak: number;
@@ -44,6 +101,8 @@ interface Report {
   bigSteps: number;
   hfMean: number;
   hfPeak: number;
+  /** Spectral flatness of the loudest window: ~0 tonal, →1 click/noise. */
+  flatness: number;
   nan: number;
   allocs: number;
   seconds: number;
@@ -108,6 +167,10 @@ function renderSong(presetId: string, songId: string, poly = 16, sr = SR): Repor
   let costPeak = 0;
   let hfMean = 0;
   let hfPeak = 0;
+  // Loudest window, kept for the spectrum: flatness is a time-domain-agnostic
+  // way to see clicks, because a click train spreads energy over every bin.
+  let loudestAt = 0;
+  let loudest = -1;
   let blocksMeasured = 0;
   let prev = 0;
   let hf = 0;
@@ -136,6 +199,12 @@ function renderSong(presetId: string, songId: string, poly = 16, sr = SR): Repor
     const hfBlock = Math.sqrt(hfSum / BLOCK);
     hfMean += hfBlock;
     hfPeak = Math.max(hfPeak, hfBlock);
+    let blockSum = 0;
+    for (let i = 0; i < BLOCK; i++) blockSum += chunk[i] * chunk[i];
+    if (blockSum > loudest && b > 200) {
+      loudest = blockSum;
+      loudestAt = b * BLOCK;
+    }
     blocksMeasured++;
     const gain = ex.gs_limit_reduction();
     minGain = Math.min(minGain, gain);
@@ -194,6 +263,7 @@ function renderSong(presetId: string, songId: string, poly = 16, sr = SR): Repor
     bigSteps,
     hfMean: hfMean / Math.max(1, blocksMeasured),
     hfPeak,
+    flatness: spectralFlatness(out, loudestAt),
     nan: ex.gs_nan_events(),
     allocs: ex.gs_alloc_violations(),
     seconds: total / sr,
@@ -207,6 +277,9 @@ function expectClean(report: Report) {
   expect(report.overUnity).toBe(0);
   expect(report.bigSteps).toBe(0);
   expect(report.maxStep).toBeLessThan(STEP_LIMIT);
+  // Tonal material is peaky; anything near a flat spectrum means broadband
+  // junk (a click train, a broken filter) is filling in the gaps.
+  expect(report.flatness).toBeLessThan(0.25);
 }
 
 const fmt = (r: Report) =>
@@ -216,7 +289,7 @@ const fmt = (r: Report) =>
     `>1.0 ${(r.overUnity * 100).toFixed(3)}%`,
     `limiter ${r.minGain.toFixed(3)}/${r.meanGain.toFixed(3)}`,
     `maxStep ${r.maxStep.toFixed(3)} (${r.bigSteps})`,
-    `hf ${r.hfMean.toFixed(4)}/${r.hfPeak.toFixed(4)}`,
+    `hf ${r.hfMean.toFixed(4)}/${r.hfPeak.toFixed(4)} flat ${r.flatness.toFixed(4)}`,
     `voices ${r.meanVoices.toFixed(1)}/${r.maxVoices} full ${(r.fullBlocks * 100).toFixed(0)}% silent ${r.silentBlocks}`,
     `cpu ${((r.costMean / 2667) * 100).toFixed(0)}% avg / ${((r.costPeak / 2667) * 100).toFixed(0)}% peak`,
     `nan ${r.nan}`,

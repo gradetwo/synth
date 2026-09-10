@@ -20,6 +20,26 @@ fn fast_tanh(x: f32) -> f32 {
     (x * (27.0 + x2)) / (27.0 + 9.0 * x2)
 }
 
+/// Bounded output stage: exactly linear below `SOFT_KNEE` and smoothly
+/// saturating above it, reaching at most 1.0.
+///
+/// A plain `tanh(v)` here coloured everything: at a perfectly ordinary 0.5
+/// signal it was already compressing by 3%, which the spectral gate measures as
+/// -46 dB of harmonic content on a sine. A filter should be transparent until
+/// it is actually driven, so the saturation only starts above the knee — which
+/// still bounds self-oscillation, because that is well past it.
+#[inline]
+fn soft_clip(x: f32) -> f32 {
+    const SOFT_KNEE: f32 = 0.7;
+    let magnitude = x.abs();
+    if magnitude <= SOFT_KNEE {
+        return x;
+    }
+    let over = (magnitude - SOFT_KNEE) / (1.0 - SOFT_KNEE);
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    sign * (SOFT_KNEE + (1.0 - SOFT_KNEE) * fast_tanh(over))
+}
+
 /// Output trim. The vendored ladder this replaces ran with a 0.5 passband
 /// gain, so every existing preset was balanced against a low-pass that sat
 /// about 4 dB below unity. Matching that keeps patch levels, headroom and the
@@ -99,8 +119,7 @@ impl LadderFilter {
         // The saturation inside the feedback path is what keeps the self
         // oscillation bounded; without it the loop grows until it is clipped
         // by the master limiter instead.
-        // Bounded output, normalised so small signals pass at unity.
-        fast_tanh(v * 0.6) / 0.6 * PASSBAND_TRIM
+        soft_clip(v) * PASSBAND_TRIM
     }
 
     /// Render a block in place (the block ABI the engine speaks).
@@ -198,5 +217,33 @@ mod tests {
         assert!(out.iter().all(|v| v.is_finite()));
         let peak = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
         assert!(peak < 12.0, "ladder ran away: {peak}");
+    }
+
+    /// The filter must be transparent on ordinary levels: a sine at half scale
+    /// through a wide-open low-pass should come out with nothing added. This is
+    /// the frequency-domain twin of `stays_continuous_on_a_sine`.
+    #[test]
+    fn is_transparent_below_the_knee() {
+        let sr = 48_000.0;
+        let out = render(18_000.0, 0.05, 0.0, 1.0);
+        let n = out.len();
+        let mag = |f: f32| {
+            let w = core::f32::consts::TAU * f / sr;
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (i, v) in out.iter().enumerate().skip(n / 2) {
+                let win = 0.5 - 0.5 * (core::f32::consts::TAU * (i - n / 2) as f32 / (n / 2) as f32).cos();
+                re += (*v * win) as f64 * (w * i as f32).cos() as f64;
+                im -= (*v * win) as f64 * (w * i as f32).sin() as f64;
+            }
+            (re * re + im * im).sqrt() / (n / 2) as f64
+        };
+        let fundamental = mag(440.0);
+        let mut junk = 0.0f64;
+        for k in 2..=12 {
+            junk += mag(440.0 * k as f32).powi(2);
+        }
+        // Everything above the fundamental at least 70 dB down.
+        let ratio = 20.0 * (junk.sqrt() / fundamental).log10();
+        assert!(ratio < -70.0, "filter colours a clean sine: {ratio:.1} dB");
     }
 }
