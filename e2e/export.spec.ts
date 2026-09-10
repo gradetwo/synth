@@ -21,9 +21,16 @@ test.describe('export', () => {
     await page.locator('.player-track', { hasText: '琶音' }).click();
     await page.waitForTimeout(400);
 
+    // Rendering an export must not fight the live transport for the CPU: the
+    // player pauses for the duration and picks up again afterwards.
+    const play = page.locator('.player-play');
+    await play.click();
+    await expect(play).toHaveClass(/on/);
     const download = page.waitForEvent('download', { timeout: 200000 });
     await page.locator('.player-actions .player-btn', { hasText: '导出 MP3' }).click();
+    await expect(play).not.toHaveClass(/on/);
     const file = await download;
+    await expect(play).toHaveClass(/on/);
     expect(file.suggestedFilename()).toMatch(/\.mp3$/);
     const stream = await file.createReadStream();
     let bytes = 0;
@@ -31,5 +38,9 @@ test.describe('export', () => {
     // A one-minute render at 256 kbps is comfortably over a megabyte.
     expect(bytes).toBeGreaterThan(300_000);
     await file.delete();
+    // Leave the transport stopped: the next spec should not compete with a
+    // running render/playback for CPU.
+    await play.click();
+    await expect(play).not.toHaveClass(/on/);
   });
 });

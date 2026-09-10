@@ -18,6 +18,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.31.1',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '**导出音频时自动暂停当前播放**：渲染导出（MP3 / WAV）会离线再跑一遍整首曲子，若同时还在实时播放，两套引擎会抢同一个 CPU，等待期间反而听到卡顿；现在导出前暂停、导出完成后恢复原来的播放状态。',
+        '**Playback pauses while an export renders**: an export renders the song again offline, so leaving the live transport running puts two engines on the same CPU and turns the wait into stutter. Playback now pauses for the duration and returns to whatever it was doing afterwards.',
+      ],
+    ],
+  },
+  {
     version: '1.31.0',
     date: '2026-09-10',
     kind: 'feature',

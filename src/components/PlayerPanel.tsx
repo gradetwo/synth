@@ -15,6 +15,25 @@ const fmtTime = (s: number) => {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 };
 
+/**
+ * Run a rendering export with playback paused.
+ *
+ * An export renders the song again, offline, at 32 voices; leaving the live
+ * transport running means two engines competing for the same CPU, and the
+ * user hears the render they are waiting for as stutter. Playback is restored
+ * afterwards if it was running, so the button behaves like a pause rather than
+ * a stop.
+ */
+async function withPlaybackPaused<T>(run: () => Promise<T>): Promise<T> {
+  const wasPlaying = midiPlayer.getState().playing;
+  if (wasPlaying) midiPlayer.pause();
+  try {
+    return await run();
+  } finally {
+    if (wasPlaying) midiPlayer.play();
+  }
+}
+
 /** Transport + playlist modal, replacing the old DEMO button. */
 export function PlayerPanel({
   open,
@@ -163,7 +182,7 @@ export function PlayerPanel({
               if (!current) return;
               setBusy(true);
               try {
-                await exportSongMp3(current.song, trackTitle(current));
+                await withPlaybackPaused(() => exportSongMp3(current.song, trackTitle(current)));
                 toast(t('player.mp3Saved', { name: trackTitle(current) }));
               } catch (err) {
                 toast(t('player.mp3Failed', { msg: err instanceof Error ? err.message : String(err) }));
@@ -183,7 +202,7 @@ export function PlayerPanel({
               if (!current) return;
               setBusy(true);
               try {
-                await exportSongWav(current.song, trackTitle(current));
+                await withPlaybackPaused(() => exportSongWav(current.song, trackTitle(current)));
                 toast(t('player.wavSaved', { name: trackTitle(current) }));
               } catch (err) {
                 toast(t('player.mp3Failed', { msg: err instanceof Error ? err.message : String(err) }));
