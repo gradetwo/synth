@@ -39,6 +39,7 @@ import {
 } from './presets';
 import { midiLibrary, type Track } from '@/midi/library';
 import { temperamentById, temperamentTable } from '@/audio/tuning';
+import { scalaTable, type ScalaScale } from '@/audio/scala';
 import { bindCc, unbindParam } from '@/audio/ccmap';
 import { decodePatch, downloadText, encodePatch, shareUrl } from './share';
 import { setLang } from '@/i18n';
@@ -710,9 +711,25 @@ class SynthStore {
   setTemperament(id: string) {
     this.layout = { ...this.layout, temperament: id };
     saveJson(LAYOUT_KEY, this.layout);
-    engine.setTuning(temperamentTable(temperamentById(id).cents));
+    engine.setTuning(this.tuningTableFor(id));
     this.mark();
     this.commit();
+  }
+
+  /** Install an imported Scala scale and switch to it. */
+  importTuning(scale: ScalaScale) {
+    this.layout = { ...this.layout, temperament: 'custom', customTuning: scale };
+    saveJson(LAYOUT_KEY, this.layout);
+    engine.setTuning(scalaTable(scale));
+    this.mark();
+    this.commit();
+  }
+
+  /** The cent table a temperament id currently stands for. */
+  tuningTableFor(id: string): Float32Array {
+    const custom = this.layout.customTuning;
+    if (id === 'custom' && custom) return scalaTable(custom);
+    return temperamentTable(temperamentById(id).cents);
   }
 
   setPolyphony(n: number) {

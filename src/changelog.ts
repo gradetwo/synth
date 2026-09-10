@@ -18,6 +18,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.33.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '调律新增「**导入 .scl**」：支持 **Scala 调律文件**（任意音数、比例或音分、含非八度周期），导入后自动切到该调律并记住。例如 19 平均律这类**非 12 音**音阶会按音数逐键展开，不会像 12 音律法那样被折算进半个半音内（那样会把音阶压坏）。',
+        'Tuning gained **Import .scl**: Scala tuning files are supported (any note count, ratios or cents, non-octave periods included), and importing switches to the scale and remembers it. A non-12-note scale such as 19-EDO spreads across the keys by degree rather than being folded into half a semitone, which would collapse it.',
+      ],
+    ],
+  },
+  {
     version: '1.32.2',
     date: '2026-09-10',
     kind: 'fix',

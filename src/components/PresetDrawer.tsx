@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { store } from '@/state/store';
 import { checkForUpdate } from '@/pwa/register';
 import { TEMPERAMENTS } from '@/audio/tuning';
+import { parseScala } from '@/audio/scala';
 import { useSynth } from '@/hooks/useSynth';
 import { PRESET_CATEGORIES, type PresetCategory } from '@/state/presets';
 import { WaveIcon } from './controls';
@@ -36,8 +37,21 @@ export function PresetDrawer({
   const lang = useLang();
   /** Temperament names are bilingual pairs; pick by the current language. */
   const temperamentLabel = (id: string) => {
+    if (id === 'custom') {
+      const scale = store.getSnapshot().layout.customTuning;
+      return scale ? `${lang === 'zh' ? '自定义' : 'Custom'} · ${scale.name}` : 'Custom';
+    }
     const temperament = TEMPERAMENTS.find((x) => x.id === id) ?? TEMPERAMENTS[0];
     return temperament.name[lang === 'zh' ? 0 : 1];
+  };
+  const importScale = async (file: File) => {
+    try {
+      const scale = parseScala(await file.text());
+      store.importTuning(scale);
+      toast(t('tuning.imported', { name: scale.name, notes: String(scale.degrees.length) }));
+    } catch (err) {
+      toast(t('tuning.importFailed', { msg: err instanceof Error ? t(`tuning.${err.message}`) : '' }));
+    }
   };
   const theme = useTheme();
   const contrast = useContrast();
@@ -46,6 +60,7 @@ export function PresetDrawer({
   const [category, setCategory] = useState<PresetCategory>('ALL');
   const [query, setQuery] = useState('');
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const scaleRef = useRef<HTMLInputElement | null>(null);
 
   // `userPresets` is the change signal; `allPresets()` reads the store directly.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -213,8 +228,30 @@ export function PresetDrawer({
                     {temperamentLabel(temperament.id)}
                   </option>
                 ))}
+                {store.getSnapshot().layout.customTuning ? (
+                  <option value="custom">{temperamentLabel('custom')}</option>
+                ) : null}
               </select>
+              <button
+                type="button"
+                className="d-reset"
+                onClick={() => scaleRef.current?.click()}
+                title={t('tuning.importHint')}
+              >
+                {t('tuning.import')}
+              </button>
             </label>
+            <input
+              ref={scaleRef}
+              type="file"
+              accept=".scl,text/plain"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void importScale(file);
+              }}
+            />
             <button
               type="button"
               className="d-reset"

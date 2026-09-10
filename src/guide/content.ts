@@ -983,6 +983,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Export WAV (lossless)**: the same render with no encoder in the path — the way to tell an encoder artefact from a playback-chain one. Export rendering uses the full 32-voice pool (offline has no deadline), so long-release patches are not cut short by voice stealing.',
           ],
           [
+            '**导入 .scl**：支持 Scala 调律文件（任意音数、比例或音分、非八度周期）；导入即切到该调律并记住。非 12 音音阶按音数逐键展开，不做 ±50 音分折算（那样会把 19 平均律这类音阶压坏）。',
+            '**Import .scl**: Scala tuning files are supported (any note count, ratios or cents, non-octave periods); importing switches to the scale and remembers it. Non-12-note scales spread by degree instead of being folded into ±50 cents, which would collapse them.',
+          ],
+          [
             '**MIDI CC 映射**：在「音频设置」里选控件 → 点「学习」→ 转动控制器旋钮即可绑定；对数控件按对数缩放、步进控件取整，映射会记住并可单独清除。CC1/CC64 未映射时仍保留调制轮与延音功能。',
             '**MIDI CC mapping**: in Audio settings pick a control, press Learn, then move a knob on your controller — logarithmic controls scale logarithmically, stepped ones round to whole steps, and mappings are remembered and individually clearable. CC1 and CC64 keep their built-in behaviour while unmapped.',
           ],

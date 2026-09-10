@@ -9,6 +9,7 @@ import type { ParamId } from '@/audio/params';
 import type { Lang } from '@/i18n';
 import { Param } from '@/audio/params';
 import { normalizeBindings, type CcBinding } from '@/audio/ccmap';
+import { normalizeScale } from '@/audio/scala';
 
 export type ModuleId = 'osc1' | 'osc2' | 'filter' | 'env' | 'lfo' | 'matrix' | 'fx' | 'fx2';
 
@@ -74,6 +75,8 @@ export interface LayoutState {
   temperament: string;
   /** MIDI CC → parameter bindings (see `audio/ccmap`). */
   ccMap: CcBinding[];
+  /** Imported Scala scale, when the temperament is set to `custom`. */
+  customTuning: { name: string; degrees: number[]; period: number } | null;
 }
 
 export function defaultLayout(): LayoutState {
@@ -96,6 +99,7 @@ export function defaultLayout(): LayoutState {
     polyphony: 0,
     temperament: 'equal',
     ccMap: [],
+    customTuning: null,
   };
 }
 
@@ -159,6 +163,7 @@ export function normalizeLayout(raw: unknown): LayoutState {
     phoneDefaults: input.phoneDefaults === true,
     temperament: typeof input.temperament === 'string' ? input.temperament : 'equal',
     ccMap: normalizeBindings(input.ccMap),
+    customTuning: normalizeScale(input.customTuning),
     polyphony: [0, 4, 8, 16, 32].includes(input.polyphony as number)
       ? (input.polyphony as number)
       : 0,

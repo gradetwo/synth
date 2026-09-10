@@ -93,3 +93,32 @@ test.describe('MIDI CC mapping', () => {
     await expect(panel).toContainText('尚未映射任何 CC');
   });
 });
+
+test.describe('Scala scale import', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test('imports a .scl file and switches the tuning to it', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(400);
+    await page.getByRole('button', { name: '预设库' }).click();
+    const scala = `! 19-EDO\n19 equal\n19\n${Array.from({ length: 19 }, (_, i) =>
+      ((i + 1) * 1200 / 19).toFixed(6),
+    ).join('\n')}\n`;
+    await page.locator('input[type="file"][accept*=".scl"]').setInputFiles({
+      name: '19edo.scl',
+      mimeType: 'text/plain',
+      buffer: Buffer.from(scala),
+    });
+    await expect(page.locator('.toast')).toContainText('19 equal');
+    await expect(page.locator('.d-temperament select')).toHaveValue('custom');
+    await expect(page.locator('.d-temperament select option:checked')).toContainText('19 equal');
+
+    // The imported scale survives a reload.
+    await page.reload();
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole('button', { name: '预设库' }).click();
+    await expect(page.locator('.d-temperament select')).toHaveValue('custom');
+  });
+});

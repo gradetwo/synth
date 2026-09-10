@@ -23,7 +23,7 @@ import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/reg
 import { setHapticsEnabled } from '@/hooks/useInputMode';
 import { readShareCode } from '@/state/share';
 import { APP_VERSION } from '@/version';
-import { temperamentById, temperamentTable } from '@/audio/tuning';
+
 import { t } from '@/i18n';
 import { toast } from '@/components/Toast';
 import { midiPlayer } from '@/midi/player';
@@ -194,7 +194,7 @@ export default function App() {
       // the first await (Safari requirement).
       const layout = store.getSnapshot().layout;
       await engine.start(layout.polyphony || 16, store.getSnapshot().state.routes);
-      engine.setTuning(temperamentTable(temperamentById(layout.temperament).cents));
+      engine.setTuning(store.tuningTableFor(layout.temperament));
       engine.applyState(store.getSnapshot().state, true);
       engine.setMuted(!store.getSnapshot().state.power);
     } catch (err) {
