@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.38.2',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '补齐文档：用户手册新增 **CC Learn / MPE / 力度曲线 / 调律与 .scl 导入 / 噪声颜色 / 预设响度统一** 的说明，更新音色与曲目数量，并补充故障排查（没声音、静音读数、负载提示、导出音量）。',
+        'Documentation catch-up: the user guide now covers **CC Learn, MPE, velocity curves, tuning and .scl import, noise colours and preset level matching**, with updated counts for presets and songs and a troubleshooting section (no sound, silent readout, load messages, export level).',
+      ],
+    ],
+  },
+  {
     version: '1.38.1',
     date: '2026-09-10',
     kind: 'fix',
