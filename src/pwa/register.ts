@@ -59,6 +59,39 @@ export async function checkForUpdate(): Promise<'updated' | 'current' | 'unsuppo
   return 'current';
 }
 
+/**
+ * Recover from a build that cannot boot.
+ *
+ * Seen in the wild: a service worker (or a CDN) serves an old `index.html`
+ * whose asset hashes the current deployment no longer has, so the worklet and
+ * the WASM core 404 and the synth starts silently. Nothing in the app can fix
+ * that by itself, but it can clear the caches that are lying to it and reload
+ * once. Guarded with session storage so a genuinely offline browser does not
+ * reload in a loop.
+ */
+export async function recoverFromStaleBuild(): Promise<boolean> {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return false;
+  const KEY = 'gs1:recovered';
+  try {
+    if (window.sessionStorage.getItem(KEY) === '1') return false;
+    window.sessionStorage.setItem(KEY, '1');
+  } catch {
+    return false;
+  }
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    await registration?.unregister();
+    const keys = await caches.keys();
+    await Promise.all(keys.map((key) => caches.delete(key)));
+  } catch {
+    /* best effort: the reload below is what matters */
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set('fresh', String(Date.now()));
+  window.location.replace(url.toString());
+  return true;
+}
+
 export async function registerServiceWorker() {
   if (!('serviceWorker' in navigator) || !import.meta.env.PROD) return;
   try {

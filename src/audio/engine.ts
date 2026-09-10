@@ -17,6 +17,7 @@
 import simdWasmUrl from '@/generated/synth_core.wasm?url';
 import scalarWasmUrl from '@/generated/synth_core_scalar.wasm?url';
 import processorUrl from './worklet-processor.js?url';
+import { recoverFromStaleBuild } from '@/pwa/register';
 import { t } from '@/i18n';
 import {
   MAX_ROUTES,
@@ -180,6 +181,12 @@ export class AudioEngine {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.setStatus('error', message);
+      // A boot failure is very likely a stale shell pointing at assets this
+      // deployment no longer has (an old service worker or CDN copy). Clearing
+      // the caches and reloading once is the only way out from inside the page.
+      if (/404|fetch|validate|Failed to fetch|NetworkError/i.test(message)) {
+        void recoverFromStaleBuild();
+      }
       throw err;
     }
   }

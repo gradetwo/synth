@@ -75,8 +75,18 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (request.mode === 'navigate') {
+    // Fetch the shell from a URL that is unique to this build, and never from a
+    // cache. A CDN can hold an old index.html for a while (that is normal), but
+    // the old shell points at asset hashes the new deployment no longer serves,
+    // which leaves the app booting into 404s — "no sound" with no obvious
+    // cause. A versioned, no-store shell cannot be stale, and the cached copy
+    // is still there for the offline case.
     event.respondWith(
-      fetch(request).catch(() => caches.match('./index.html').then((r) => r || Response.error()))
+      fetch('./index.html?v=' + CACHE, { cache: 'no-store' })
+        .then((response) => (response.ok ? response : Promise.reject(new Error('shell'))))
+        .catch(() =>
+          caches.match('./index.html').then((r) => r || fetch(request, { cache: 'no-store' })),
+        )
     );
     return;
   }

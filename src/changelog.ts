@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.35.2',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '修复**更新后偶发"打不开、没有声音"**：若浏览器缓存了旧版页面，会去加载已经不存在的文件；现在启动页面总是取最新版本，遇到这种情况会自动清理缓存并重新加载一次。',
+        'Fixed the **occasional "will not open / no sound" after an update**: a cached older page asked for files the new deployment no longer has. The shell is now always fetched fresh, and if a load fails the app clears its caches and reloads once.',
+      ],
+    ],
+  },
+  {
     version: '1.35.1',
     date: '2026-09-10',
     kind: 'fix',
