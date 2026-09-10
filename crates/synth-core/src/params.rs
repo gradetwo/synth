@@ -205,6 +205,9 @@ pub enum FilterType {
     Notch,
     /// Feedback comb tuned to the cutoff: rings at that pitch.
     Comb,
+    /// Three parallel band-passes tuned to the vowels A-E-I-O-U; the cutoff
+    /// knob morphs between them.
+    Formant,
 }
 
 impl FilterType {
@@ -214,6 +217,7 @@ impl FilterType {
             2 => FilterType::Bp,
             3 => FilterType::Notch,
             4 => FilterType::Comb,
+            5 => FilterType::Formant,
             _ => FilterType::Lp,
         }
     }
@@ -225,6 +229,7 @@ impl FilterType {
             FilterType::Bp => 2,
             FilterType::Notch => 3,
             FilterType::Comb => 4,
+            FilterType::Formant => 5,
         }
     }
 }

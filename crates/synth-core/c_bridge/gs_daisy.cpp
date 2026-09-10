@@ -29,6 +29,9 @@ struct VoiceDsp {
     /// oscillator instead of sharing one mono filter.
     daisysp::LadderFilter ladder[2];
     daisysp::Svf svf[2];
+    /// Three band-passes per side for the vowel formant filter.
+    daisysp::Svf formant[2][3];
+    float formant_gain[2][3];
     daisysp::DcBlock dc[2];
 };
 
@@ -65,6 +68,10 @@ void init_slot(int i, float sample_rate) {
         d.ladder[side].Init(sample_rate);
         d.svf[side].Init(sample_rate);
         d.dc[side].Init(sample_rate);
+        for (int band = 0; band < 3; ++band) {
+            d.formant[side][band].Init(sample_rate);
+            d.formant_gain[side][band] = 0.0f;
+        }
     }
 }
 
@@ -89,6 +96,10 @@ void gs_voice_reset(int v) {
         d.ladder[side].Init(g_sample_rate);
         d.svf[side].Init(g_sample_rate);
         d.dc[side].Init(g_sample_rate);
+        for (int band = 0; band < 3; ++band) {
+            d.formant[side][band].Init(g_sample_rate);
+            d.formant_gain[side][band] = 0.0f;
+        }
     }
 }
 
@@ -167,6 +178,57 @@ void gs_voice_filter_block(int v, int side, int type, const float *in, float *ou
 void gs_voice_dc_block(int v, int side, const float *in, float *out, uint32_t frames) {
     daisysp::DcBlock &dc = voice(v).dc[side ? 1 : 0];
     for (uint32_t i = 0; i < frames; ++i) out[i] = dc.Process(in[i]);
+}
+
+namespace {
+/// Vowel formants: F1/F2/F3 in Hz with their relative levels (A E I O U).
+const float kVowel[5][3] = {
+    {800.0f, 1150.0f, 2900.0f},
+    {400.0f, 1600.0f, 2700.0f},
+    {350.0f, 1700.0f, 2700.0f},
+    {450.0f, 800.0f, 2830.0f},
+    {325.0f, 700.0f, 2530.0f},
+};
+const float kVowelGain[5][3] = {
+    {1.0f, 0.63f, 0.10f},
+    {1.0f, 0.40f, 0.15f},
+    {1.0f, 0.35f, 0.20f},
+    {1.0f, 0.50f, 0.10f},
+    {1.0f, 0.35f, 0.08f},
+};
+} // namespace
+
+void gs_voice_formant_set(int v, int side, float vowel, float res) {
+    VoiceDsp &d = voice(v);
+    const int s = side ? 1 : 0;
+    const float t = (vowel < 0.0f ? 0.0f : (vowel > 1.0f ? 1.0f : vowel)) * 4.0f;
+    const int i0 = static_cast<int>(t);
+    const int i1 = i0 >= 4 ? 4 : i0 + 1;
+    const float f = t - static_cast<float>(i0);
+    // A little Q goes a long way: the bands must stay narrow enough to read as
+    // vowels, and wide enough not to whistle.
+    const float q = 0.72f - (res < 0.0f ? 0.0f : (res > 1.0f ? 1.0f : res)) * 0.32f;
+    for (int band = 0; band < 3; ++band) {
+        const float freq = kVowel[i0][band] + (kVowel[i1][band] - kVowel[i0][band]) * f;
+        const float gain = kVowelGain[i0][band] + (kVowelGain[i1][band] - kVowelGain[i0][band]) * f;
+        d.formant[s][band].SetFreq(freq);
+        d.formant[s][band].SetRes(q);
+        d.formant[s][band].SetDrive(0.0f);
+        d.formant_gain[s][band] = gain;
+    }
+}
+
+void gs_voice_formant_block(int v, int side, const float *in, float *out, uint32_t frames) {
+    VoiceDsp &d = voice(v);
+    const int s = side ? 1 : 0;
+    for (uint32_t i = 0; i < frames; ++i) {
+        float sum = 0.0f;
+        for (int band = 0; band < 3; ++band) {
+            d.formant[s][band].Process(in[i]);
+            sum += d.formant[s][band].Band() * d.formant_gain[s][band];
+        }
+        out[i] = sum;
+    }
 }
 
 int gs_daisy_voice_slots(void) { return GS_MAX_VOICES; }

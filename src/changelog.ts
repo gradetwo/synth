@@ -18,6 +18,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.28.0',
+    date: '2026-09-10',
+    kind: 'sound',
+    items: [
+      [
+        '新增 **FRM 元音共振峰**滤波类型：三组并联带通对应人声元音，**截止频率旋钮在 A–E–I–O–U 之间滑动**（对数映射，80 Hz ≈ A、4 kHz 及以上 ≈ U），共振控制带宽。用它做"说话"的合成器、机器人声、哇音铺垫都很直接。',
+        'New **FRM vowel formant** filter type: three parallel band-passes voice the vowels, with the **cutoff knob morphing A–E–I–O–U** (logarithmic: 80 Hz ≈ A, 4 kHz and up ≈ U) and resonance setting the bandwidth — instant talking-synth, robot-voice and vocal-pad tones.',
+      ],
+      [
+        '与已有的 LP / HP / BP / NT / CMB 并列，共六种滤波类型；共振峰同样支持每个振荡器独立处理（声像拉开时的真立体声）。',
+        'It sits alongside LP / HP / BP / NT / CMB for six filter types, and formants also run per oscillator when the pans are apart.',
+      ],
+    ],
+  },
+  {
     version: '1.27.0',
     date: '2026-09-10',
     kind: 'fix',

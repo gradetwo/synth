@@ -93,6 +93,7 @@ const DICT: Record<string, [string, string]> = {
   'filter.lp': ['低通 · Moog 阶梯', 'Low-pass · Moog ladder'],
   'filter.hp': ['高通', 'High-pass'],
   'filter.bp': ['带通', 'Band-pass'],
+  'filter.formant': ['元音共振峰：截止频率在 A-E-I-O-U 之间滑动，共振控制带宽', 'Vowel formants: the cutoff morphs A-E-I-O-U, resonance sets the bandwidth'],
   'filter.comb': ['梳状谐振器：截止频率决定梳齿音高，共振决定反馈量', 'Comb resonator: cutoff sets the comb pitch, resonance its feedback'],
   'filter.nt': ['陷波', 'Notch'],
   'module.lfoTarget': ['LFO 目标', 'LFO target'],

@@ -559,8 +559,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Keyboard tracking**: the cutoff follows the note in semitone ratio so high and low notes stay equally bright.',
           ],
           [
-            '**滤波类型**：`LP`（24 dB/oct 梯形）、`HP / BP / NT`（12 dB/oct 状态变量）、`CMB`（**梳状谐振器**：截止频率决定梳齿音高、共振决定反馈量，能把噪声变成有音高的声音，适合金属、机器人与拨弦质感）。',
-            '**Filter types**: `LP` (24 dB/oct ladder), `HP / BP / NT` (12 dB/oct state-variable) and `CMB` — a **comb resonator** whose cutoff sets the comb pitch and whose resonance sets the feedback, which turns noise into a pitched tone (metallic, robotic, plucked).',
+            '**滤波类型**：`LP`（24 dB/oct 梯形）、`HP / BP / NT`（12 dB/oct 状态变量）、`CMB`（**梳状谐振器**：截止频率决定梳齿音高、共振决定反馈量，能把噪声变成有音高的声音，适合金属、机器人与拨弦质感）与 `FRM`（**元音共振峰**：三组并联带通，截止频率在 A–E–I–O–U 之间滑动、共振控制带宽，做"人声/说话"类音色）。',
+            '**Filter types**: `LP` (24 dB/oct ladder), `HP / BP / NT` (12 dB/oct state-variable) `CMB` — a **comb resonator** whose cutoff sets the comb pitch and whose resonance the feedback (metallic, robotic, plucked) — and `FRM`, a **vowel formant** bank: three parallel band-passes whose cutoff morphs A–E–I–O–U, which is where talking-synth tones come from.',
           ],
           [
             '**FILTER ENV**：截止频率乘以 `2^(env × amount × 6)`，满量程约 ±6 个八度；LFO 与矩阵分别用 `2^(x × 4)` 调制。',

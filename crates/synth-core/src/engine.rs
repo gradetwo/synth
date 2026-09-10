@@ -37,6 +37,14 @@ extern "C" {
         frames: u32,
     );
     fn gs_voice_dc_block(v: i32, side: i32, input: *const f32, out: *mut f32, frames: u32);
+    fn gs_voice_formant_set(v: i32, side: i32, vowel: f32, res: f32);
+    fn gs_voice_formant_block(
+        v: i32,
+        side: i32,
+        input: *const f32,
+        out: *mut f32,
+        frames: u32,
+    );
     fn gs_sp_init(sample_rate: f32);
     fn gs_fx_init(sample_rate: f32);
     fn gs_fx_chorus_set(depth: f32, freq: f32, delay_ms: f32, feedback: f32);
@@ -1168,6 +1176,47 @@ impl Engine {
             // `voice_buf` (and `voice_buf_r`) and falls through to the makeup
             // gain below.
             self.silent_blocks = self.silent_blocks.saturating_add(1);
+        } else if kind == crate::params::FilterType::Formant {
+            // Vowel formants: cutoff morphs A→E→I→O→U, resonance sets the Q.
+            // Each oscillator side keeps its own three band-passes.
+            // Map the cutoff knob logarithmically onto the five vowels: 80 Hz
+            // is "A", 4 kHz and above is "U", so the useful travel spans the
+            // whole knob instead of cramming every vowel into the top octave.
+            let vowel = ((cutoff / 80.0).log2() / (4000.0f32 / 80.0).log2()).clamp(0.0, 1.0);
+            unsafe {
+                gs_voice_formant_set(slot as i32, 0, vowel, resonance);
+                gs_voice_formant_block(
+                    slot as i32,
+                    0,
+                    self.voice_buf.as_ptr(),
+                    self.osc_a.as_mut_ptr(),
+                    frames as u32,
+                );
+                gs_voice_dc_block(
+                    slot as i32,
+                    0,
+                    self.osc_a.as_ptr(),
+                    self.voice_buf.as_mut_ptr(),
+                    frames as u32,
+                );
+                if stereo {
+                    gs_voice_formant_set(slot as i32, 1, vowel, resonance);
+                    gs_voice_formant_block(
+                        slot as i32,
+                        1,
+                        self.voice_buf_r.as_ptr(),
+                        self.osc_b.as_mut_ptr(),
+                        frames as u32,
+                    );
+                    gs_voice_dc_block(
+                        slot as i32,
+                        1,
+                        self.osc_b.as_ptr(),
+                        self.voice_buf_r.as_mut_ptr(),
+                        frames as u32,
+                    );
+                }
+            }
         } else if kind == crate::params::FilterType::Comb {
             // Rust comb resonator: the cutoff sets the comb pitch and the
             // resonance its feedback. It replaces the ladder/SVF chain here.
@@ -2358,6 +2407,72 @@ mod tests {
 
     #[allow(dead_code)]
     fn unused_run_placeholder() {
+    }
+
+    /// The FORMANTS filter type must place its three peaks on the vowel it is
+    /// tuned to: noise through it should show energy at F1/F2 for "A", and the
+    /// peaks must move when the cutoff morphs to "U".
+    #[test]
+    fn formant_filter_morphs_vowels() {
+        let _guard = lock_engine();
+        let mag_at = |buf: &[f32], freq: f32| -> f32 {
+            let w = core::f32::consts::TAU * freq / 48_000.0;
+            let mut re = 0.0f64;
+            let mut im = 0.0f64;
+            for (i, v) in buf.iter().enumerate() {
+                re += (*v as f64) * (w * i as f32).cos() as f64;
+                im -= (*v as f64) * (w * i as f32).sin() as f64;
+            }
+            ((re * re + im * im).sqrt() / buf.len() as f64) as f32
+        };
+        let render = |cutoff: f32| -> Vec<f32> {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Noise as u32 as f32);
+            e.set_param(id::OSC1_LEVEL, 0.9);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_TYPE, crate::params::FilterType::Formant as u32 as f32);
+            e.set_param(id::FILTER_CUTOFF, cutoff);
+            e.set_param(id::FILTER_RES, 0.4);
+            e.set_param(id::FILTER_ENV_AMT, 0.0);
+            e.set_param(id::FILTER_KBD, 0.0);
+            e.set_param(id::ENV_ATTACK, 0.001);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::LFO_ON, 0.0);
+            e.set_param(id::LFO2_ON, 0.0);
+            for index in 0..crate::params::MOD_ROUTES {
+                e.set_route(index, 0, 0, 0.0, false);
+            }
+            e.note_on(60, 1.0);
+            for _ in 0..80 {
+                e.process(128);
+            }
+            let mut buf = vec![0.0f32; 8192];
+            for chunk in buf.chunks_mut(128) {
+                e.process(128);
+                chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+            }
+            buf
+        };
+
+        // "A": 80 Hz on the knob is the first vowel, with F1 near 800 Hz and
+        // F2 near 1150 Hz.
+        let a = render(80.0);
+        assert!(a.iter().all(|v| v.is_finite()), "formant blew up");
+        let a_f1 = mag_at(&a, 800.0);
+        let a_off = mag_at(&a, 400.0).max(mag_at(&a, 2000.0));
+        assert!(a_f1 > a_off * 1.5, "no formant peak at F1: {a_f1} vs {a_off}");
+        assert!(mag_at(&a, 1150.0) > mag_at(&a, 2000.0) * 1.2, "F2 missing for A");
+
+        // "U" (4 kHz on the knob): the peaks move down to ~325/700 Hz.
+        let u = render(4000.0);
+        let u_low = mag_at(&u, 325.0).max(mag_at(&u, 700.0));
+        let u_high = mag_at(&u, 2700.0);
+        assert!(u_low > u_high * 1.3, "U did not move the peaks: {u_low} vs {u_high}");
+        assert!(
+            mag_at(&u, 325.0) > mag_at(&a, 325.0) * 1.3,
+            "U should have more energy near 325 Hz than A"
+        );
     }
 
     /// A quiet signal must pass through the limiter untouched (gain exactly 1)

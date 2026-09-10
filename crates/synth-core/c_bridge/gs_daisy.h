@@ -70,6 +70,10 @@ void gs_voice_filter_block(int v, int side, int type, const float *in, float *ou
 
 /* --- per-voice DC blocker -------------------------------------------------- */
 void gs_voice_dc_block(int v, int side, const float *in, float *out, uint32_t frames);
+/// Vowel formant filter: three parallel band-passes. `vowel` morphs 0..1 across
+/// A→E→I→O→U, `res` sets the band Q.
+void gs_voice_formant_set(int v, int side, float vowel, float res);
+void gs_voice_formant_block(int v, int side, const float *in, float *out, uint32_t frames);
 
 /* --- global modulation effects (DaisySP) ---------------------------------- */
 void gs_fx_init(float sample_rate);

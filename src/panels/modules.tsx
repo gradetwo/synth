@@ -108,6 +108,7 @@ function FilterModule() {
           { label: 'BP', value: filterToInt('bp'), title: t('filter.bp') },
           { label: 'NT', value: filterToInt('nt'), title: t('filter.nt') },
           { label: 'CMB', value: filterToInt('comb'), title: t('filter.comb') },
+          { label: 'FRM', value: filterToInt('formant'), title: t('filter.formant') },
         ]}
       />
       <div className="filter-grid">
@@ -126,7 +127,9 @@ function FilterModule() {
       <div className="mini-label">
         {type === 'comb'
           ? 'FREQ RESPONSE · COMB RESONATOR'
-          : `FREQ RESPONSE · ${type === 'lp' ? '-24dB/OCT' : '-12dB/OCT'}`}
+          : type === 'formant'
+            ? 'FREQ RESPONSE · VOWEL A–E–I–O–U'
+            : `FREQ RESPONSE · ${type === 'lp' ? '-24dB/OCT' : '-12dB/OCT'}`}
       </div>
     </ModuleShell>
   );
