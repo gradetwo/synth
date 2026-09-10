@@ -22,7 +22,8 @@
 namespace {
 
 struct VoiceDsp {
-    daisysp::Oscillator osc[2];
+    /// [sub-voice][oscillator]; unison stacks up to GS_MAX_UNISON copies.
+    daisysp::Oscillator osc[GS_MAX_UNISON][2];
     daisysp::LadderFilter ladder;
     daisysp::Svf svf;
     daisysp::DcBlock dc;
@@ -53,8 +54,10 @@ inline int clamp_type(int type) {
 void init_slot(int i, float sample_rate) {
     g_slot_init_calls++;
     VoiceDsp &d = g_voice[i];
-    d.osc[0].Init(sample_rate);
-    d.osc[1].Init(sample_rate);
+    for (int s = 0; s < GS_MAX_UNISON; ++s) {
+        d.osc[s][0].Init(sample_rate);
+        d.osc[s][1].Init(sample_rate);
+    }
     d.ladder.Init(sample_rate);
     d.svf.Init(sample_rate);
     d.dc.Init(sample_rate);
@@ -73,8 +76,10 @@ void gs_daisy_init(float sample_rate) {
 
 void gs_voice_reset(int v) {
     VoiceDsp &d = voice(v);
-    d.osc[0].Init(g_sample_rate);
-    d.osc[1].Init(g_sample_rate);
+    for (int s = 0; s < GS_MAX_UNISON; ++s) {
+        d.osc[s][0].Init(g_sample_rate);
+        d.osc[s][1].Init(g_sample_rate);
+    }
     d.ladder.Init(g_sample_rate);
     d.svf.Init(g_sample_rate);
     d.dc.Init(g_sample_rate);
@@ -82,13 +87,19 @@ void gs_voice_reset(int v) {
 
 void gs_voice_phase(int v, float p0, float p1) {
     VoiceDsp &d = voice(v);
-    d.osc[0].Reset(p0 - floorf(p0));
-    d.osc[1].Reset(p1 - floorf(p1));
+    // Sub-voice 0 gets the caller's phases; the rest are spread by the golden
+    // ratio so a unison stack never starts in phase.
+    for (int s = 0; s < GS_MAX_UNISON; ++s) {
+        float spread = static_cast<float>(s) * 0.618034f;
+        d.osc[s][0].Reset(fmodf(p0 + spread, 1.0f));
+        d.osc[s][1].Reset(fmodf(p1 + spread, 1.0f));
+    }
 }
 
-void gs_voice_osc_set(int v, int which, uint32_t wave, float freq, float amp, float pw) {
+void gs_voice_osc_set(int v, int which, int sub, uint32_t wave, float freq, float amp, float pw) {
     VoiceDsp &d = voice(v);
-    daisysp::Oscillator &o = d.osc[which ? 1 : 0];
+    if (sub < 0 || sub >= GS_MAX_UNISON) return;
+    daisysp::Oscillator &o = d.osc[sub][which ? 1 : 0];
     o.SetWaveform(static_cast<uint8_t>(wave));
     o.SetFreq(freq);
     o.SetAmp(amp);
@@ -96,11 +107,15 @@ void gs_voice_osc_set(int v, int which, uint32_t wave, float freq, float amp, fl
 }
 
 void gs_voice_osc_reset(int v, int which, float phase) {
-    voice(v).osc[which ? 1 : 0].Reset(phase);
+    voice(v).osc[0][which ? 1 : 0].Reset(phase);
 }
 
-void gs_voice_osc_block(int v, int which, float *out, uint32_t frames) {
-    daisysp::Oscillator &o = voice(v).osc[which ? 1 : 0];
+void gs_voice_osc_block(int v, int which, int sub, float *out, uint32_t frames) {
+    if (sub < 0 || sub >= GS_MAX_UNISON) {
+        for (uint32_t i = 0; i < frames; ++i) out[i] = 0.0f;
+        return;
+    }
+    daisysp::Oscillator &o = voice(v).osc[sub][which ? 1 : 0];
     for (uint32_t i = 0; i < frames; ++i) out[i] = o.Process();
 }
 

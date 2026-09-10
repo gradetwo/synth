@@ -82,6 +82,10 @@ const PARAMS = [
   ['fxReverbDamp', 67, 0.35, 0, 1],
   ['fxReverbWidth', 68, 0.8, 0, 1],
   ['fxReverbPredelay', 69, 0.012, 0, 0.1],
+  ['osc1Unison', 70, 1, 1, 7],
+  ['osc1Spread', 71, 0.35, 0, 1],
+  ['osc2Unison', 72, 1, 1, 7],
+  ['osc2Spread', 73, 0.35, 0, 1],
 ];
 
 const SPECTRUM_BINS = 36;

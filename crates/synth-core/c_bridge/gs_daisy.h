@@ -54,12 +54,15 @@ void gs_daisy_init(float sample_rate);
 void gs_voice_reset(int v);
 /** Seed the two oscillator phases (0..1) so stacked voices do not start in
     phase, which would make every chord attack peak N times instead of sqrt(N). */
+/// Highest number of unison sub-voices per oscillator (keep in sync with
+/// `MAX_UNISON` in params.rs).
+#define GS_MAX_UNISON 7
 void gs_voice_phase(int v, float p0, float p1);
 
 /* --- per-voice oscillators ------------------------------------------------- */
-void gs_voice_osc_set(int v, int which, uint32_t wave, float freq, float amp, float pw);
+void gs_voice_osc_set(int v, int which, int sub, uint32_t wave, float freq, float amp, float pw);
 void gs_voice_osc_reset(int v, int which, float phase);
-void gs_voice_osc_block(int v, int which, float *out, uint32_t frames);
+void gs_voice_osc_block(int v, int which, int sub, float *out, uint32_t frames);
 
 /* --- per-voice filter ------------------------------------------------------ */
 void gs_voice_filter_set(int v, int type, float freq, float res, float drive);

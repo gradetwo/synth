@@ -108,6 +108,10 @@ impl VoiceManager {
         self.counter = 0;
     }
 
+    pub fn max_polyphony(&self) -> usize {
+        self.max_polyphony
+    }
+
     pub fn set_max_polyphony(&mut self, n: usize) {
         self.max_polyphony = n.clamp(1, MAX_VOICES);
     }

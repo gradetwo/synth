@@ -521,6 +521,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Detune and beating**: `DETUNE` shifts the two oscillators in cents; the frequency difference produces beating and width. 5–15 cents is most natural.',
           ],
           [
+            '**Unison 叠层**：`UNI` 把每个振荡器叠成 1–7 个副本，`SPREAD` 控制失谐散布（最大 ±35 音分）。副本起始相位按黄金比例打散，不会同相叠加；总电平按 `1/√n` 补偿，所以加副本是变厚而不是单纯变响。代价是振荡器数量成倍：引擎会**按叠层数折算复音上限**（16 复音 × 7 层 → 同时只能按 2 个音），保证 CPU 不失控。',
+            '**Unison**: `UNI` stacks 1–7 detuned copies per oscillator and `SPREAD` sets how far apart they are (±35 cents at full). Copies start at golden-ratio phases so they never sum in phase, and the stack is level-compensated by `1/√n` — it gets thicker, not just louder. The voice ceiling is divided by the stack size (16 voices at seven copies means two notes at a time) so the CPU stays in budget.',
+          ],
+          [
             '**脉冲宽度**：`PW` 改变方波的占空比。占空比越小，谐波越偏奇次、越"鼻音"；LFO 或矩阵可以调制它（PWM）。',
             '**Pulse width**: `PW` changes the square’s duty cycle. Narrower duty emphasises odd harmonics and sounds nasal; LFOs or the matrix can modulate it (PWM).',
           ],

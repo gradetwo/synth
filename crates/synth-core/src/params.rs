@@ -9,6 +9,9 @@ pub const MAX_BLOCK_SIZE: usize = 1024;
 pub const SPECTRUM_BINS: usize = 36;
 pub const MOD_ROUTES: usize = 8;
 
+/// Highest unison stack size per oscillator (keep in sync with GS_MAX_UNISON).
+pub const MAX_UNISON: u32 = 7;
+
 /// Numeric parameter identifiers (`gs_set_param` / `gs_set_int_param`).
 pub mod id {
     pub const MASTER_VOLUME: u32 = 0;
@@ -81,10 +84,14 @@ pub mod id {
     pub const FX_REVERB_DAMP: u32 = 67;
     pub const FX_REVERB_WIDTH: u32 = 68;
     pub const FX_REVERB_PREDELAY: u32 = 69;
+    pub const OSC1_UNISON: u32 = 70;
+    pub const OSC1_SPREAD: u32 = 71;
+    pub const OSC2_UNISON: u32 = 72;
+    pub const OSC2_SPREAD: u32 = 73;
 }
 
-/// Highest parameter id + 1 (ids are 0..=69).
-pub const PARAM_COUNT: usize = 70;
+/// Highest parameter id + 1 (ids are 0..=73).
+pub const PARAM_COUNT: usize = 74;
 
 /// Continuous parameters are smoothed across blocks (one-pole, ~20 ms) so the
 /// host can drag a knob without producing zipper noise. Discrete/stepped
@@ -118,6 +125,8 @@ pub fn is_continuous(param_id: u32) -> bool {
             | p::FX_REVERB_DAMP
             | p::FX_REVERB_WIDTH
             | p::FX_REVERB_PREDELAY
+            | p::OSC1_SPREAD
+            | p::OSC2_SPREAD
             | p::FX_DELAY_FB
             | p::FX_DELAY_MIX
             | p::GLIDE
@@ -332,6 +341,10 @@ pub struct OscParams {
     pub level: f32,
     pub pw: f32,
     pub pan: f32,
+    /// Unison stack size, 1..=MAX_UNISON.
+    pub unison: u32,
+    /// Detune spread across the stack, 0..1 (±35 cents at full).
+    pub spread: f32,
 }
 
 impl OscParams {
@@ -344,6 +357,8 @@ impl OscParams {
             level: 0.6,
             pw: 0.5,
             pan: 0.0,
+            unison: 1,
+            spread: 0.35,
         }
     }
 }
@@ -552,6 +567,8 @@ impl Params {
             p::OSC1_LEVEL => self.osc[0].level = clamp01(value),
             p::OSC1_PW => self.osc[0].pw = value.clamp(0.05, 0.95),
             p::OSC1_PAN => self.osc[0].pan = value.clamp(-1.0, 1.0),
+            p::OSC1_UNISON => self.osc[0].unison = (value as u32).clamp(1, MAX_UNISON),
+            p::OSC1_SPREAD => self.osc[0].spread = clamp01(value),
             p::OSC2_ON => self.osc[1].on = value > 0.5,
             p::OSC2_WAVE => self.osc[1].wave = Wave::from_u32(value as u32),
             p::OSC2_PITCH => self.osc[1].pitch = value.clamp(-48.0, 48.0),
@@ -559,6 +576,8 @@ impl Params {
             p::OSC2_LEVEL => self.osc[1].level = clamp01(value),
             p::OSC2_PW => self.osc[1].pw = value.clamp(0.05, 0.95),
             p::OSC2_PAN => self.osc[1].pan = value.clamp(-1.0, 1.0),
+            p::OSC2_UNISON => self.osc[1].unison = (value as u32).clamp(1, MAX_UNISON),
+            p::OSC2_SPREAD => self.osc[1].spread = clamp01(value),
             p::FILTER_TYPE => self.filter.kind = FilterType::from_u32(value as u32),
             p::FILTER_CUTOFF => self.filter.cutoff = value.clamp(20.0, 20000.0),
             p::FILTER_RES => self.filter.res = clamp01(value),

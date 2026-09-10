@@ -13,8 +13,8 @@ use crate::dsp::reverb::{Reverb, ReverbParams};
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_limit, Rng};
 use crate::fft::Spectrum;
 use crate::params::{
-    id, is_continuous, LfoTarget, ModDst, ModSrc, OscParams, Params, MAX_BLOCK_SIZE, MAX_VOICES,
-    PARAM_COUNT,
+    id, is_continuous, LfoTarget, ModDst, ModSrc, OscParams, Params, MAX_BLOCK_SIZE, MAX_UNISON,
+    MAX_VOICES, PARAM_COUNT,
 };
 use crate::voice::{NoteOnResult, VoiceManager};
 
@@ -24,8 +24,8 @@ extern "C" {
     fn gs_daisy_init(sample_rate: f32);
     fn gs_voice_reset(v: i32);
     fn gs_voice_phase(v: i32, p0: f32, p1: f32);
-    fn gs_voice_osc_set(v: i32, which: i32, wave: u32, freq: f32, amp: f32, pw: f32);
-    fn gs_voice_osc_block(v: i32, which: i32, out: *mut f32, frames: u32);
+    fn gs_voice_osc_set(v: i32, which: i32, sub: i32, wave: u32, freq: f32, amp: f32, pw: f32);
+    fn gs_voice_osc_block(v: i32, which: i32, sub: i32, out: *mut f32, frames: u32);
     fn gs_voice_filter_set(v: i32, kind: i32, freq: f32, res: f32, drive: f32);
     fn gs_voice_filter_block(v: i32, kind: i32, input: *const f32, out: *mut f32, frames: u32);
     fn gs_voice_dc_block(v: i32, input: *const f32, out: *mut f32, frames: u32);
@@ -116,6 +116,8 @@ pub struct Engine {
     // Scratch buffers — all statically sized, all reused per voice.
     osc_a: [f32; MAX_BLOCK_SIZE],
     osc_b: [f32; MAX_BLOCK_SIZE],
+    /// Scratch for rendering one unison sub-voice at a time.
+    unison_buf: [f32; MAX_BLOCK_SIZE],
     env_buf: [f32; MAX_BLOCK_SIZE],
     voice_buf: [f32; MAX_BLOCK_SIZE],
     lfo_buf: [f32; MAX_BLOCK_SIZE],
@@ -135,6 +137,8 @@ pub struct Engine {
     phase_seed: u32,
     /// Increments per started voice; drives the per-note RANDOM source.
     random_seed: u32,
+    /// Polyphony asked for by the host, before the unison budget is applied.
+    poly_request: usize,
     reverb: Reverb,
     pitch_bend: f32,
     mod_wheel: f32,
@@ -191,6 +195,7 @@ impl Engine {
             filter_envs: [Adsr::new(); MAX_VOICES],
             osc_a: [0.0; MAX_BLOCK_SIZE],
             osc_b: [0.0; MAX_BLOCK_SIZE],
+            unison_buf: [0.0; MAX_BLOCK_SIZE],
             env_buf: [0.0; MAX_BLOCK_SIZE],
             voice_buf: [0.0; MAX_BLOCK_SIZE],
             lfo_buf: [0.0; MAX_BLOCK_SIZE],
@@ -205,6 +210,7 @@ impl Engine {
             rng: Rng::new(0x51f3_9b1d),
             phase_seed: 0,
             random_seed: 0,
+            poly_request: 16,
             reverb: Reverb::new(),
             pitch_bend: 0.0,
             mod_wheel: 0.0,
@@ -309,6 +315,9 @@ impl Engine {
         ) {
             self.env_dirty = true;
         }
+        if matches!(param_id, id::OSC1_UNISON | id::OSC2_UNISON) {
+            self.apply_polyphony_cap();
+        }
         if mode_changed {
             // Switching polyphony model: release everything cleanly.
             self.mono_len = 0;
@@ -354,7 +363,13 @@ impl Engine {
     }
 
     pub fn set_max_polyphony(&mut self, n: usize) {
-        self.vm.set_max_polyphony(n);
+        self.poly_request = n.clamp(2, MAX_VOICES);
+        self.apply_polyphony_cap();
+    }
+
+    /// Current voice ceiling (see [`Self::update_polyphony_cap`]).
+    pub fn max_polyphony(&self) -> usize {
+        self.vm.max_polyphony()
     }
 
     /// prd.md §7.1 — elastic downgrade with smooth release.
@@ -405,6 +420,15 @@ impl Engine {
     pub fn all_notes_off(&mut self) {
         self.mono_len = 0;
         self.vm.all_notes_off();
+    }
+
+    /// Unison multiplies the oscillator count, so the voice cap shrinks with it:
+    /// the requested polyphony is divided by the stack size (a seven-voice stack
+    /// on a sixteen-voice patch plays two notes, never seven times the work).
+    fn apply_polyphony_cap(&mut self) {
+        let unison = self.params.osc[0].unison.max(self.params.osc[1].unison).max(1) as usize;
+        let cap = (self.poly_request / unison).max(2);
+        self.vm.set_max_polyphony(cap);
     }
 
     /// Deterministic per-note random value for the RANDOM modulation source.
@@ -884,6 +908,9 @@ impl Engine {
         let bend = semitone_ratio(pitch_mod);
 
         // --- oscillators ----------------------------------------------------
+        // Unison renders each sub-voice through this scratch buffer; it is moved
+        // out of `self` first so the loop can still borrow `osc_a`/`osc_b`.
+        let mut scratch: [f32; MAX_BLOCK_SIZE] = self.unison_buf;
         let mut osc_level = [0.0f32; 2];
         for which in 0..2 {
             let o = params.osc[which];
@@ -906,8 +933,19 @@ impl Engine {
             } else {
                 (o.pw + pw_mod).clamp(0.05, 0.95)
             };
-            render_oscillator(slot, which, o, freq, pw, frames, out, &mut self.rng);
+            render_oscillator(
+                slot,
+                which,
+                o,
+                freq,
+                pw,
+                frames,
+                out,
+                &mut self.rng,
+                &mut scratch[..],
+            );
         }
+        self.unison_buf = scratch;
 
         simd::mix2_into(
             &self.osc_a[..frames],
@@ -1139,18 +1177,51 @@ fn render_oscillator(
     frames: usize,
     out: &mut [f32],
     rng: &mut Rng,
+    scratch: &mut [f32],
 ) {
     match params.wave.daisy_id() {
         Some(daisy_wave) => unsafe {
-            gs_voice_osc_set(
-                slot as i32,
-                which as i32,
-                daisy_wave,
-                freq,
-                1.0,
-                pw,
-            );
-            gs_voice_osc_block(slot as i32, which as i32, out.as_mut_ptr(), frames as u32);
+            let unison = (params.unison.max(1) as usize).min(MAX_UNISON as usize);
+            if unison == 1 {
+                gs_voice_osc_set(slot as i32, which as i32, 0, daisy_wave, freq, 1.0, pw);
+                gs_voice_osc_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32);
+                return;
+            }
+            // Unison: stack detuned copies. The detune spread is symmetric
+            // around the nominal pitch and the stack is level-compensated by
+            // 1/sqrt(n) so adding voices does not just make the patch louder.
+            out.fill(0.0);
+            let n = unison as f32;
+            let gain = 1.0 / n.sqrt();
+            let max_cents = params.spread.clamp(0.0, 1.0) * 35.0;
+            for sub in 0..unison {
+                let t = if unison == 1 {
+                    0.0
+                } else {
+                    (sub as f32 / (n - 1.0)) * 2.0 - 1.0
+                };
+                let detune = semitone_ratio(t * max_cents / 100.0);
+                let sub_freq = (freq * detune).clamp(0.25, 24_000.0);
+                gs_voice_osc_set(
+                    slot as i32,
+                    which as i32,
+                    sub as i32,
+                    daisy_wave,
+                    sub_freq,
+                    1.0,
+                    pw,
+                );
+                gs_voice_osc_block(
+                    slot as i32,
+                    which as i32,
+                    sub as i32,
+                    scratch.as_mut_ptr(),
+                    frames as u32,
+                );
+                for i in 0..frames {
+                    out[i] += scratch[i] * gain;
+                }
+            }
         },
         None => {
             // White noise: no oscillator state to preserve.
@@ -1725,6 +1796,63 @@ mod tests {
             second += e.out_l[64].abs() - e.out_r[64].abs();
         }
         assert!((first - second).abs() > 1e-3, "random pan never varied");
+    }
+
+    /// Unison stacks detuned copies: the sum must beat (a wider, moving sound)
+    /// while staying level-compensated, and the voice cap must shrink with it.
+    #[test]
+    fn unison_thickens_without_getting_louder() {
+        let _guard = lock_engine();
+        let render = |unison: u32, spread: f32| -> (f32, f32) {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_CUTOFF, 12000.0);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::OSC1_UNISON, unison as f32);
+            e.set_param(id::OSC1_SPREAD, spread);
+            e.note_on(57, 1.0);
+            for _ in 0..40 {
+                e.process(128);
+            }
+            // One second of audio, measured in 100 ms windows: short windows
+            // track the waveform itself, long ones track the detune beating.
+            let mut buf = vec![0.0f32; 48_000];
+            for chunk in buf.chunks_mut(128) {
+                e.process(128);
+                chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+            }
+            let windows: Vec<f32> = buf
+                .chunks(4_800)
+                .map(|w| (w.iter().map(|v| v * v).sum::<f32>() / w.len() as f32).sqrt())
+                .collect();
+            let mean = windows.iter().sum::<f32>() / windows.len() as f32;
+            let var = windows.iter().map(|r| (r - mean).powi(2)).sum::<f32>()
+                / windows.len() as f32;
+            (mean, var.sqrt() / mean.max(1e-9))
+        };
+        let (single, single_var) = render(1, 0.0);
+        let (stack, stack_var) = render(5, 1.0);
+        // Level compensated: within ~3 dB of the single voice.
+        let ratio = stack / single;
+        assert!(
+            (0.7..=1.4).contains(&ratio),
+            "unison changed the level: {single} -> {stack}"
+        );
+        // Detuned copies beat against each other, so the long-window level moves.
+        assert!(
+            stack_var > single_var * 2.0,
+            "unison did not thicken: {single_var} -> {stack_var}"
+        );
+
+        // Polyphony is capped so a seven-voice stack cannot melt the CPU.
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_UNISON, 7.0);
+        assert!(e.max_polyphony() <= 2, "voice cap not scaled: {}", e.max_polyphony());
+        e.set_param(id::OSC1_UNISON, 1.0);
+        assert!(e.max_polyphony() >= 16, "voice cap did not recover");
     }
 
     /// A quiet signal must pass through the limiter untouched (gain exactly 1)
