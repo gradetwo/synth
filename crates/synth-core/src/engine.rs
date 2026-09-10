@@ -9,6 +9,7 @@ use crate::alloc_arena;
 use crate::dsp::adsr::Adsr;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::simd;
+use crate::dsp::comb::CombFilter;
 use crate::dsp::reverb::{Reverb, ReverbParams};
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_limit, Rng};
 use crate::fft::Spectrum;
@@ -162,6 +163,8 @@ pub struct Engine {
     /// Polyphony asked for by the host, before the unison budget is applied.
     poly_request: usize,
     reverb: Reverb,
+    /// One comb resonator per voice, used by the COMB filter type.
+    combs: [CombFilter; MAX_VOICES],
     pitch_bend: f32,
     mod_wheel: f32,
     /// Channel pressure (0..1) from the controller.
@@ -239,6 +242,7 @@ impl Engine {
             random_seed: 0,
             poly_request: 16,
             reverb: Reverb::new(),
+            combs: [const { CombFilter::new() }; MAX_VOICES],
             pitch_bend: 0.0,
             mod_wheel: 0.0,
             aftertouch: 0.0,
@@ -279,6 +283,9 @@ impl Engine {
             gs_daisy_init(self.sample_rate);
             gs_sp_init(self.sample_rate);
             gs_fx_init(self.sample_rate);
+        }
+        for comb in self.combs.iter_mut() {
+            comb.prepare(self.sample_rate);
         }
         self.reverb.set_sample_rate(self.sample_rate);
         self.reverb.set_params(ReverbParams {
@@ -1044,7 +1051,8 @@ impl Engine {
         // panning them apart actually spreads two different sounds instead of
         // fading one mono voice. Everything else keeps the cheap mono path.
         let levels = osc_level[0] + osc_level[1];
-        let stereo = params.osc[0].on
+        let stereo = params.filter.kind != crate::params::FilterType::Comb
+            && params.osc[0].on
             && params.osc[1].on
             && osc_level[0] > 0.0
             && osc_level[1] > 0.0
@@ -1136,6 +1144,25 @@ impl Engine {
         let kind = params.filter.kind;
         // The matrix can push resonance up to twice the knob value (clamped).
         let resonance = (params.filter.res * (1.0 + mod_res) + mod_res * 0.25).clamp(0.0, 1.0);
+        if kind == crate::params::FilterType::Comb {
+            // Rust comb resonator: the cutoff sets the comb pitch and the
+            // resonance its feedback. It replaces the ladder/SVF chain here.
+            // The comb keeps one delay line per voice, so this filter type runs
+            // the mono path even when the oscillators are panned apart.
+            let mut comb = core::mem::replace(&mut self.combs[slot], CombFilter::new());
+            comb.set(sr, cutoff, resonance);
+            comb.process(&self.voice_buf[..frames], &mut self.osc_a[..frames]);
+            self.combs[slot] = comb;
+            unsafe {
+                gs_voice_dc_block(
+                    slot as i32,
+                    0,
+                    self.osc_a.as_ptr(),
+                    self.voice_buf.as_mut_ptr(),
+                    frames as u32,
+                );
+            }
+        } else {
         unsafe {
             gs_voice_filter_set(
                 slot as i32,
@@ -1185,6 +1212,7 @@ impl Engine {
                     frames as u32,
                 );
             }
+        }
         }
 
         // Make up the trim that kept the filter inside its linear region.
@@ -2169,6 +2197,68 @@ mod tests {
         // now carry different sounds and must decorrelate.
         let wide = correlate(-1.0, 1.0, crate::params::Wave::Saw);
         assert!(wide < 0.8, "per-oscillator panning did not separate: corr {wide}");
+    }
+
+    /// The COMB filter type must turn noise into a pitched signal: the comb
+    /// period shows up as a strong autocorrelation peak that a plain low-pass
+    /// does not produce.
+    #[test]
+    fn comb_filter_type_resonates() {
+        let _guard = lock_engine();
+        let autocorrelation = |kind: crate::params::FilterType, res: f32| -> f32 {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Noise as u32 as f32);
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_TYPE, kind as u32 as f32);
+            e.set_param(id::FILTER_CUTOFF, 200.0);
+            e.set_param(id::FILTER_RES, res);
+            e.set_param(id::FILTER_ENV_AMT, 0.0);
+            e.set_param(id::ENV_ATTACK, 0.001);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            // The default patch sweeps the cutoff with the LFO and the matrix;
+            // a comb has to be measured with its pitch standing still.
+            e.set_param(id::LFO_ON, 0.0);
+            e.set_param(id::LFO2_ON, 0.0);
+            for index in 0..crate::params::MOD_ROUTES {
+                e.set_route(index, 0, 0, 0.0, false);
+            }
+            e.note_on(60, 1.0);
+            for _ in 0..80 {
+                e.process(128);
+            }
+            let mut buf = vec![0.0f32; 24_000];
+            for chunk in buf.chunks_mut(128) {
+                e.process(128);
+                chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+            }
+            assert!(buf.iter().all(|v| v.is_finite()), "comb blew up");
+            // 200 Hz at 48 kHz = a 240-sample period, so the comb lines up with
+            // a 240-sample lag while white noise does not.
+            let lag = 240;
+            let mut num = 0.0f64;
+            let mut den = 0.0f64;
+            for i in 0..buf.len() - lag {
+                num += (buf[i] as f64) * (buf[i + lag] as f64);
+            }
+            for v in buf.iter() {
+                den += (*v as f64) * (*v as f64);
+            }
+            (num / den.max(1e-12)) as f32
+        };
+
+        let comb = autocorrelation(crate::params::FilterType::Comb, 0.9);
+        // Reference: the same noise through a non-resonant low-pass. (A
+        // resonant ladder is a poor reference — it self-oscillates and is
+        // periodic all by itself.)
+        let plain = autocorrelation(crate::params::FilterType::Lp, 0.0);
+
+        assert!(comb > 0.3, "comb did not ring: autocorrelation {comb}");
+        assert!(
+            comb > plain * 3.0,
+            "comb was no more periodic than a low-pass: {comb} vs {plain}"
+        );
     }
 
     /// A quiet signal must pass through the limiter untouched (gain exactly 1)

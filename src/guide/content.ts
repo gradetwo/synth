@@ -559,6 +559,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Keyboard tracking**: the cutoff follows the note in semitone ratio so high and low notes stay equally bright.',
           ],
           [
+            '**滤波类型**：`LP`（24 dB/oct 梯形）、`HP / BP / NT`（12 dB/oct 状态变量）、`CMB`（**梳状谐振器**：截止频率决定梳齿音高、共振决定反馈量，能把噪声变成有音高的声音，适合金属、机器人与拨弦质感）。',
+            '**Filter types**: `LP` (24 dB/oct ladder), `HP / BP / NT` (12 dB/oct state-variable) and `CMB` — a **comb resonator** whose cutoff sets the comb pitch and whose resonance sets the feedback, which turns noise into a pitched tone (metallic, robotic, plucked).',
+          ],
+          [
             '**FILTER ENV**：截止频率乘以 `2^(env × amount × 6)`，满量程约 ±6 个八度；LFO 与矩阵分别用 `2^(x × 4)` 调制。',
             '**FILTER ENV** multiplies the cutoff by `2^(env × amount × 6)`, about ±6 octaves at full range; LFOs and the matrix modulate with `2^(x × 4)`.',
           ],

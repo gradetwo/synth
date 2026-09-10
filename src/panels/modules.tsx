@@ -107,6 +107,7 @@ function FilterModule() {
           { label: 'HP', value: filterToInt('hp'), title: t('filter.hp') },
           { label: 'BP', value: filterToInt('bp'), title: t('filter.bp') },
           { label: 'NT', value: filterToInt('nt'), title: t('filter.nt') },
+          { label: 'CMB', value: filterToInt('comb'), title: t('filter.comb') },
         ]}
       />
       <div className="filter-grid">
@@ -122,7 +123,11 @@ function FilterModule() {
         </div>
       </div>
       <FilterCurve />
-      <div className="mini-label">FREQ RESPONSE · {type === 'lp' ? '-24dB/OCT' : '-12dB/OCT'}</div>
+      <div className="mini-label">
+        {type === 'comb'
+          ? 'FREQ RESPONSE · COMB RESONATOR'
+          : `FREQ RESPONSE · ${type === 'lp' ? '-24dB/OCT' : '-12dB/OCT'}`}
+      </div>
     </ModuleShell>
   );
 }

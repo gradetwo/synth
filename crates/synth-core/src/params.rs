@@ -203,6 +203,8 @@ pub enum FilterType {
     Hp,
     Bp,
     Notch,
+    /// Feedback comb tuned to the cutoff: rings at that pitch.
+    Comb,
 }
 
 impl FilterType {
@@ -211,6 +213,7 @@ impl FilterType {
             1 => FilterType::Hp,
             2 => FilterType::Bp,
             3 => FilterType::Notch,
+            4 => FilterType::Comb,
             _ => FilterType::Lp,
         }
     }
@@ -221,6 +224,7 @@ impl FilterType {
             FilterType::Hp => 1,
             FilterType::Bp => 2,
             FilterType::Notch => 3,
+            FilterType::Comb => 4,
         }
     }
 }

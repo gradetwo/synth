@@ -173,7 +173,7 @@ export const PARAM_NAMES: Record<ParamId, string> = {
 };
 
 export type Wave = 'sine' | 'triangle' | 'saw' | 'square' | 'pulse' | 'noise';
-export type FilterType = 'lp' | 'hp' | 'bp' | 'nt';
+export type FilterType = 'lp' | 'hp' | 'bp' | 'nt' | 'comb';
 export type LfoWave = 'sine' | 'triangle' | 'square' | 'saw';
 export type LfoTarget = 'cutoff' | 'pitch' | 'volume' | 'pwm';
 export type ModSrc =
@@ -197,7 +197,7 @@ export const WAVE_CN: Record<Wave, string> = {
   pulse: '脉冲',
   noise: '噪声',
 };
-export const FILTER_TYPES: FilterType[] = ['lp', 'hp', 'bp', 'nt'];
+export const FILTER_TYPES: FilterType[] = ['lp', 'hp', 'bp', 'nt', 'comb'];
 export const LFO_WAVES: LfoWave[] = ['sine', 'triangle', 'square', 'saw'];
 export const LFO_TARGETS: LfoTarget[] = ['cutoff', 'pitch', 'volume', 'pwm'];
 /** Engine-side modulation slots (must match `MOD_ROUTES` in params.rs). */

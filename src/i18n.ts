@@ -92,6 +92,7 @@ const DICT: Record<string, [string, string]> = {
   'filter.lp': ['低通 · Moog 阶梯', 'Low-pass · Moog ladder'],
   'filter.hp': ['高通', 'High-pass'],
   'filter.bp': ['带通', 'Band-pass'],
+  'filter.comb': ['梳状谐振器：截止频率决定梳齿音高，共振决定反馈量', 'Comb resonator: cutoff sets the comb pitch, resonance its feedback'],
   'filter.nt': ['陷波', 'Notch'],
   'module.lfoTarget': ['LFO 目标', 'LFO target'],
   'module.lfo2Target': ['LFO 2 目标', 'LFO 2 target'],

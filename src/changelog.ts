@@ -18,6 +18,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.22.0',
+    date: '2026-09-10',
+    kind: 'sound',
+    items: [
+      [
+        '新增 **CMB 梳状谐振器**滤波类型：截止频率决定梳齿音高、共振决定反馈量，能把噪声变成有音高的声音（金属 / 机器人 / 拨弦质感）。',
+        'New **CMB comb resonator** filter type: cutoff sets the comb pitch and resonance its feedback, turning noise into a pitched tone (metallic, robotic, plucked).',
+      ],
+    ],
+  },
+  {
     version: '1.21.0',
     date: '2026-09-10',
     kind: 'feature',
