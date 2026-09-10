@@ -130,7 +130,7 @@ impl Table {
             return Err(CycleError::Silent);
         }
 
-        fft(&mut re, &mut im, false);
+    crate::dsp::util::fft(&mut re, &mut im, false);
 
         let mut levels = Vec::with_capacity(LEVELS);
         for level in 0..LEVELS {
@@ -147,7 +147,7 @@ impl Table {
                     *i = 0.0;
                 }
             }
-            fft(&mut level_re, &mut level_im, true);
+            crate::dsp::util::fft(&mut level_re, &mut level_im, true);
 
             let decimate = n / len;
             let mut out: Vec<f32> = (0..len).map(|j| level_re[j * decimate] as f32).collect();
@@ -224,69 +224,6 @@ fn render_level(recipe: Recipe, len: usize) -> Vec<f32> {
         }
     }
     out
-}
-
-/// In-place iterative radix-2 complex transform (forward or inverse).
-///
-/// This is analysis, not synthesis: it runs once when a cycle is imported, off
-/// the audio path, so it can afford `f64` and a straightforward implementation.
-/// The vendored 512-point analyser FFT is fixed-size and windowed, and reusing
-/// it here would mean teaching it a second size for no gain.
-fn fft(re: &mut [f64], im: &mut [f64], inverse: bool) {
-    let n = re.len();
-    debug_assert!(n.is_power_of_two() && im.len() == n);
-    if n < 2 {
-        return;
-    }
-
-    let mut j = 0usize;
-    for i in 1..n {
-        let mut bit = n >> 1;
-        while j & bit != 0 {
-            j ^= bit;
-            bit >>= 1;
-        }
-        j |= bit;
-        if i < j {
-            re.swap(i, j);
-            im.swap(i, j);
-        }
-    }
-
-    let mut half = 1usize;
-    while half < n {
-        let span = half * 2;
-        let angle = core::f64::consts::TAU / span as f64 * if inverse { 1.0 } else { -1.0 };
-        let (tw_re, tw_im) = (angle.cos(), angle.sin());
-        let mut base = 0usize;
-        while base < n {
-            let (mut wr, mut wi) = (1.0f64, 0.0f64);
-            for k in 0..half {
-                let (ar, ai) = (re[base + k], im[base + k]);
-                let (br, bi) = (re[base + k + half], im[base + k + half]);
-                let (vr, vi) = (br * wr - bi * wi, br * wi + bi * wr);
-                re[base + k] = ar + vr;
-                im[base + k] = ai + vi;
-                re[base + k + half] = ar - vr;
-                im[base + k + half] = ai - vi;
-                let next_wr = wr * tw_re - wi * tw_im;
-                wi = wr * tw_im + wi * tw_re;
-                wr = next_wr;
-            }
-            base += span;
-        }
-        half = span;
-    }
-
-    if inverse {
-        let scale = 1.0 / n as f64;
-        for value in re.iter_mut() {
-            *value *= scale;
-        }
-        for value in im.iter_mut() {
-            *value *= scale;
-        }
-    }
 }
 
 #[cfg(test)]

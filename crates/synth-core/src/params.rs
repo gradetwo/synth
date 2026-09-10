@@ -108,6 +108,12 @@ pub mod id {
     pub const FX_CHAIN4: u32 = 85;
     pub const FX_CHAIN5: u32 = 86;
     pub const FX_CHAIN6: u32 = 87;
+    /// Which engine the reverb section runs: 0 = algorithmic, 1 = an imported
+    /// impulse response (A5).
+    pub const FX_REVERB_MODE: u32 = 94;
+    /// Output trim for the impulse-response reverb, whose level depends on the
+    /// response rather than on a `SIZE` control.
+    pub const FX_CONV_TRIM: u32 = 95;
     /// 1 = the effect at that position runs as a *send* (its wet output is added
     /// to the unprocessed signal) instead of an insert.
     pub const FX_PARALLEL1: u32 = 88;
@@ -118,8 +124,8 @@ pub mod id {
     pub const FX_PARALLEL6: u32 = 93;
 }
 
-/// Highest parameter id + 1 (ids are 0..=93).
-pub const PARAM_COUNT: usize = 94;
+/// Highest parameter id + 1 (ids are 0..=95).
+pub const PARAM_COUNT: usize = 96;
 
 /// Positions in the effect chain (A5). Six is one per effect: the chain is a
 /// permutation, so reordering can never lose an effect or double one up.
@@ -494,6 +500,9 @@ pub struct FxParams {
     pub reverb_damp: f32,
     pub reverb_width: f32,
     pub reverb_predelay: f32,
+    /// 0 = algorithmic reverb, 1 = imported impulse response.
+    pub reverb_mode: u32,
+    pub conv_trim: f32,
     pub delay_on: bool,
     pub delay_sync: u32,
     pub delay_fb: f32,
@@ -607,6 +616,8 @@ impl Params {
                 reverb_damp: 0.35,
                 reverb_width: 0.8,
                 reverb_predelay: 0.012,
+                reverb_mode: 0,
+                conv_trim: 1.0,
                 delay_on: false,
                 delay_sync: 2,
                 delay_fb: 0.3,
@@ -728,6 +739,8 @@ impl Params {
             p::FX_REVERB_DAMP => self.fx.reverb_damp = clamp01(value),
             p::FX_REVERB_WIDTH => self.fx.reverb_width = clamp01(value),
             p::FX_REVERB_PREDELAY => self.fx.reverb_predelay = value.clamp(0.0, 0.1),
+            p::FX_REVERB_MODE => self.fx.reverb_mode = if value >= 0.5 { 1 } else { 0 },
+            p::FX_CONV_TRIM => self.fx.conv_trim = value.clamp(0.0, 4.0),
             p::FX_DELAY_ON => self.fx.delay_on = value > 0.5,
             p::FX_DELAY_SYNC => self.fx.delay_sync = (value as u32).min(3),
             p::FX_DELAY_FB => self.fx.delay_fb = value.clamp(0.0, 0.95),

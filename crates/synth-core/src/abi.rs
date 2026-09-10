@@ -10,7 +10,8 @@ use crate::params::{MAX_BLOCK_SIZE, MAX_VOICES, SPECTRUM_BINS};
 
 /// 2 added the true-peak / loudness / limiter meters.
 /// 3 added the single-cycle wavetable import.
-pub const ABI_VERSION: u32 = 3;
+/// 4 added the impulse-response import.
+pub const ABI_VERSION: u32 = 4;
 
 /// Initialise the engine. Returns 1 on success.
 #[no_mangle]
@@ -101,6 +102,39 @@ pub extern "C" fn gs_wavetable_clear() {
 #[no_mangle]
 pub extern "C" fn gs_wavetable_has() -> u32 {
     engine().has_wavetable() as u32
+}
+
+// ----------------------------------------------------- impulse response import
+
+/// Destination for an imported impulse response: the host writes up to
+/// `gs_ir_capacity()` `f32` samples here, then calls `gs_ir_import` with how
+/// many it wrote.
+#[no_mangle]
+pub extern "C" fn gs_ir_import_ptr() -> *mut f32 {
+    engine().ir_scratch_ptr()
+}
+
+#[no_mangle]
+pub extern "C" fn gs_ir_capacity() -> u32 {
+    engine().ir_capacity() as u32
+}
+
+/// Analyse the staged impulse response: 0 = ok, 1 = too short, 2 = silent,
+/// 3 = not finite. Runs on the message path, never inside `process`.
+#[no_mangle]
+pub extern "C" fn gs_ir_import(len: u32) -> i32 {
+    engine().import_ir(len as usize)
+}
+
+#[no_mangle]
+pub extern "C" fn gs_ir_clear() {
+    engine().clear_ir();
+}
+
+/// 1 when an impulse response is loaded.
+#[no_mangle]
+pub extern "C" fn gs_ir_has() -> u32 {
+    engine().has_ir() as u32
 }
 
 // ------------------------------------------------------------------- controls

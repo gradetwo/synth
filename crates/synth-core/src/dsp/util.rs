@@ -82,6 +82,69 @@ pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
+/// In-place iterative radix-2 complex transform (forward or inverse).
+///
+/// Shared by the two places that need a transform away from the render loop:
+/// wavetable import analysis and convolution reverb. `f64` and a straightforward
+/// implementation are fine there — it is not audio-rate code — and `n` must be a
+/// power of two.
+pub fn fft(re: &mut [f64], im: &mut [f64], inverse: bool) {
+    let n = re.len();
+    debug_assert!(n.is_power_of_two() && im.len() == n);
+    if n < 2 {
+        return;
+    }
+
+    let mut j = 0usize;
+    for i in 1..n {
+        let mut bit = n >> 1;
+        while j & bit != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j |= bit;
+        if i < j {
+            re.swap(i, j);
+            im.swap(i, j);
+        }
+    }
+
+    let mut half = 1usize;
+    while half < n {
+        let span = half * 2;
+        let angle = core::f64::consts::TAU / span as f64 * if inverse { 1.0 } else { -1.0 };
+        let (tw_re, tw_im) = (angle.cos(), angle.sin());
+        let mut base = 0usize;
+        while base < n {
+            let (mut wr, mut wi) = (1.0f64, 0.0f64);
+            for k in 0..half {
+                let (ar, ai) = (re[base + k], im[base + k]);
+                let (br, bi) = (re[base + k + half], im[base + k + half]);
+                let (vr, vi) = (br * wr - bi * wi, br * wi + bi * wr);
+                re[base + k] = ar + vr;
+                im[base + k] = ai + vi;
+                re[base + k + half] = ar - vr;
+                im[base + k + half] = ai - vi;
+                let next_wr = wr * tw_re - wi * tw_im;
+                wi = wr * tw_im + wi * tw_re;
+                wr = next_wr;
+            }
+            base += span;
+        }
+        half = span;
+    }
+
+    if inverse {
+        let scale = 1.0 / n as f64;
+        for value in re.iter_mut() {
+            *value *= scale;
+        }
+        for value in im.iter_mut() {
+            *value *= scale;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,6 +171,39 @@ mod tests {
         assert!(soft_limit(f32::INFINITY) <= 1.0);
         for x in [0.9f32, 1.2, 3.0, 1e6] {
             assert!((soft_limit(x) + soft_limit(-x)).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn the_shared_fft_round_trips() {
+        let mut re: Vec<f64> = (0..256).map(|i| ((i * 37) % 11) as f64 - 5.0).collect();
+        let im = vec![0.0f64; 256];
+        let original = re.clone();
+        let mut spectrum_im = im.clone();
+        fft(&mut re, &mut spectrum_im, false);
+        // A DC-heavy real signal must land in bin 0 and its mirror.
+        assert!(re[0].abs() > 1.0);
+        fft(&mut re, &mut spectrum_im, true);
+        for (a, b) in re.iter().zip(original.iter()) {
+            assert!((a - b).abs() < 1e-9, "round trip changed the signal");
+        }
+    }
+
+    #[test]
+    fn the_shared_fft_puts_a_sine_in_one_bin() {
+        // 32 cycles across 256 samples: bins 32 and 224, nothing else.
+        let mut re: Vec<f64> = (0..256)
+            .map(|i| (core::f64::consts::TAU * 32.0 * i as f64 / 256.0).sin())
+            .collect();
+        let mut im = vec![0.0f64; 256];
+        fft(&mut re, &mut im, false);
+        for bin in 1..128 {
+            let power = re[bin].hypot(im[bin]);
+            if bin == 32 {
+                assert!(power > 100.0, "the sine's own bin is empty");
+            } else {
+                assert!(power < 1e-6, "energy leaked into bin {bin}");
+            }
         }
     }
 

@@ -47,8 +47,16 @@ const peak = (ptr, frames) => {
 console.log('[verify] WASM core');
 
 // Bump this together with `ABI_VERSION` in crates/synth-core/src/abi.rs.
-check('ABI version', ex.gs_abi_version() === 3, `v${ex.gs_abi_version()}`);
+check('ABI version', ex.gs_abi_version() === 4, `v${ex.gs_abi_version()}`);
 check('exposes the meter exports', typeof ex.gs_take_true_peak === 'function' && typeof ex.gs_loudness_rms === 'function');
+check(
+  'exposes the impulse-response import',
+  typeof ex.gs_ir_import === 'function' &&
+    typeof ex.gs_ir_import_ptr === 'function' &&
+    typeof ex.gs_ir_clear === 'function' &&
+    typeof ex.gs_ir_has === 'function' &&
+    ex.gs_ir_capacity() > 0,
+);
 check(
   'exposes the wavetable import',
   typeof ex.gs_wavetable_import === 'function' &&

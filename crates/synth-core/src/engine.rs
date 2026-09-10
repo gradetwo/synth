@@ -10,6 +10,7 @@ use crate::dsp::adsr::Adsr;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::simd;
 use crate::dsp::comb::CombFilter;
+use crate::dsp::convolution::{Convolver, IrError};
 use crate::dsp::delay::{Delay, DelayParams};
 use crate::dsp::ladder::LadderFilter;
 use crate::dsp::noise::NoiseGen;
@@ -242,6 +243,10 @@ pub struct Engine {
     env_dirty: bool,
     /// Stereo delay with ping-pong and damping (replaces the vendored one).
     delay: Delay,
+    /// Impulse-response reverb: the second engine behind the reverb section.
+    convolver: Convolver,
+    /// Where an imported impulse response is staged before analysis.
+    ir_scratch: Vec<f32>,
     initialised: bool,
 }
 
@@ -316,6 +321,8 @@ impl Engine {
             spectrum_counter: 0,
             env_dirty: true,
             delay: Delay::new(),
+            convolver: Convolver::new(),
+            ir_scratch: Vec::new(),
             initialised: false,
         }
     }
@@ -340,6 +347,8 @@ impl Engine {
         }
         self.reverb.set_sample_rate(self.sample_rate);
         self.delay.setup(self.sample_rate);
+        self.convolver.prepare();
+        self.ir_scratch = vec![0.0; Convolver::max_ir_samples()];
         self.reverb.set_params(ReverbParams {
             size: self.params.fx.reverb_size,
             damp: self.params.fx.reverb_damp,
@@ -446,6 +455,36 @@ impl Engine {
     /// banks themselves, so this cannot leave a silent patch behind.
     pub fn clear_wavetable(&mut self) {
         self.user_table = None;
+    }
+
+    /// Where the host stages an impulse response, then calls [`Engine::import_ir`].
+    pub fn ir_scratch_ptr(&mut self) -> *mut f32 {
+        self.ir_scratch.as_mut_ptr()
+    }
+
+    /// How many samples of impulse response the core can hold.
+    pub fn ir_capacity(&self) -> usize {
+        self.ir_scratch.len()
+    }
+
+    /// Analyse a staged impulse response. Returns 0 on success, or the numeric
+    /// [`IrError`] code (1 = too short, 2 = silent, 3 = not finite).
+    pub fn import_ir(&mut self, len: usize) -> i32 {
+        let len = len.min(self.ir_scratch.len());
+        match self.convolver.set_ir(&self.ir_scratch[..len]) {
+            Ok(()) => 0,
+            Err(IrError::TooShort) => 1,
+            Err(IrError::Silent) => 2,
+            Err(IrError::NotFinite) => 3,
+        }
+    }
+
+    pub fn clear_ir(&mut self) {
+        self.convolver.clear();
+    }
+
+    pub fn has_ir(&self) -> bool {
+        self.convolver.has_ir()
     }
 
     pub fn has_wavetable(&self) -> bool {
@@ -1572,17 +1611,29 @@ impl Engine {
                     );
                 }
                 FxKind::Reverb => {
-                    // Damped, modulated and with a pre-delay, which the old
-                    // Soundpipe `revsc` could not do.
-                    self.reverb.set_params(ReverbParams {
-                        size: if fx.reverb_on { fx.reverb_size } else { 0.0 },
-                        damp: fx.reverb_damp,
-                        mix: if fx.reverb_on { fx.reverb_mix } else { 0.0 },
-                        width: fx.reverb_width,
-                        predelay: fx.reverb_predelay,
-                    });
-                    self.reverb
-                        .process(&mut self.fx_l[..frames], &mut self.fx_r[..frames]);
+                    let mix = if fx.reverb_on { fx.reverb_mix } else { 0.0 };
+                    if fx.reverb_mode == 1 && self.convolver.has_ir() {
+                        // The imported response, trimmed so its level sits where
+                        // the patch expects the reverb to sit.
+                        self.convolver.process(
+                            &mut self.fx_l[..frames],
+                            &mut self.fx_r[..frames],
+                            frames,
+                            mix * fx.conv_trim,
+                        );
+                    } else {
+                        // Damped, modulated and with a pre-delay, which the old
+                        // Soundpipe `revsc` could not do.
+                        self.reverb.set_params(ReverbParams {
+                            size: if fx.reverb_on { fx.reverb_size } else { 0.0 },
+                            damp: fx.reverb_damp,
+                            mix,
+                            width: fx.reverb_width,
+                            predelay: fx.reverb_predelay,
+                        });
+                        self.reverb
+                            .process(&mut self.fx_l[..frames], &mut self.fx_r[..frames]);
+                    }
                 }
                 FxKind::Chorus if fx.chorus_on && fx.chorus_mix > 0.0 => {
                     unsafe {
@@ -3455,6 +3506,105 @@ mod tests {
             parallel > serial * 1.25,
             "a send should keep the dry note in the mix: {parallel} vs {serial}"
         );
+    }
+
+    // --------------------------------------- impulse-response reverb (A5)
+
+    /// A response that rings at one frequency, as an imported IR would.
+    fn resonant_ir(freq: f32, decay: f32, len: usize) -> Vec<f32> {
+        (0..len)
+            .map(|i| {
+                let t = i as f32 / 48_000.0;
+                (core::f32::consts::TAU * freq * t).sin() * (-t * decay).exp()
+            })
+            .collect()
+    }
+
+    /// Stage an IR the way the worklet does and analyse it.
+    fn import_ir(e: &mut Engine, ir: &[f32]) -> i32 {
+        let ptr = e.ir_scratch_ptr();
+        let len = ir.len().min(e.ir_capacity());
+        unsafe {
+            core::ptr::copy_nonoverlapping(ir.as_ptr(), ptr, len);
+        }
+        e.import_ir(len)
+    }
+
+    /// The reverb section has two engines. An imported response that rings at
+    /// 3 kHz must make the tail ring there; the algorithmic reverb, which has no
+    /// idea about that frequency, must not.
+    #[test]
+    fn an_imported_response_replaces_the_algorithmic_reverb() {
+        let _guard = lock_engine();
+        // A long, slowly decaying ring, so the tail outlives the source burst.
+        let ir = resonant_ir(3000.0, 1.2, 96_000);
+        let tail_ratio = |mode: f32, import: bool| {
+            let (left, _) = render_fx(|e| {
+                if import {
+                    assert_eq!(import_ir(e, &ir), 0, "the response should be accepted");
+                }
+                // A noise burst, not a tone: the tail's spectrum then *is* the
+                // response, which is what makes the measurement mean something.
+                e.set_param(id::OSC1_WAVE, crate::params::Wave::Noise as u32 as f32);
+                e.set_param(id::ENV_DECAY, 0.25);
+                e.set_param(id::ENV_SUSTAIN, 0.0);
+                e.set_param(id::ENV_RELEASE, 0.15);
+                e.set_param(id::FX_REVERB_ON, 1.0);
+                e.set_param(id::FX_REVERB_MIX, 1.0);
+                e.set_param(id::FX_REVERB_MODE, mode);
+                e.set_param(id::FX_CONV_TRIM, 4.0);
+                e.set_param(id::FX_REVERB_SIZE, 0.6);
+                set_chain(e, &[2, 0, 0, 0, 0, 0]);
+            });
+            // 0.6–0.9 s: the burst is over, so this is the response alone.
+            let slice = &left[28_800..43_200];
+            let on_resonance = bin_mag(slice, 3000.0, 48_000.0);
+            let off_resonance = bin_mag(slice, 2600.0, 48_000.0).max(1e-9);
+            on_resonance / off_resonance
+        };
+
+        let impulse = tail_ratio(1.0, true);
+        let algorithmic = tail_ratio(0.0, false);
+        assert!(
+            impulse > algorithmic * 3.0,
+            "the imported response should colour the tail: {impulse} vs algorithmic {algorithmic}"
+        );
+        assert!(impulse > 2.0, "the tail should actually ring at the response's frequency: {impulse}");
+    }
+
+    /// A patch that asks for the impulse engine on a machine with no response
+    /// loaded must keep its algorithmic reverb, not fall silent.
+    #[test]
+    fn the_impulse_engine_without_a_response_falls_back() {
+        let _guard = lock_engine();
+        let render = |mode: f32, import: bool| {
+            render_fx(|e| {
+                if import {
+                    assert_eq!(import_ir(e, &resonant_ir(3000.0, 3.0, 9600)), 0);
+                }
+                e.set_param(id::FX_REVERB_ON, 1.0);
+                e.set_param(id::FX_REVERB_MIX, 0.5);
+                e.set_param(id::FX_REVERB_MODE, mode);
+                set_chain(e, &[2, 0, 0, 0, 0, 0]);
+            })
+            .0
+        };
+        let no_response = rms(&render(1.0, false), 0, 20_000);
+        let algorithmic = rms(&render(0.0, false), 0, 20_000);
+        assert!(
+            (no_response - algorithmic).abs() < algorithmic * 0.01,
+            "without a response the section should run the algorithmic reverb: {no_response} vs {algorithmic}"
+        );
+        let with_response = rms(&render(1.0, true), 0, 20_000);
+        assert!(with_response > 0.0, "a loaded response must produce a tail");
+
+        // And clearing it puts the algorithmic engine back.
+        let mut e = new_engine(16);
+        assert_eq!(import_ir(&mut e, &resonant_ir(3000.0, 3.0, 9600)), 0);
+        assert!(e.has_ir());
+        e.clear_ir();
+        assert!(!e.has_ir());
+        assert_eq!(e.import_ir(0), 1, "an empty response is refused");
     }
 
     /// The noise wave ids must actually reach the coloured-noise filters: white

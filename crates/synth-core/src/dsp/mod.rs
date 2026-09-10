@@ -2,6 +2,7 @@
 
 pub mod adsr;
 pub mod comb;
+pub mod convolution;
 pub mod delay;
 pub mod ladder;
 pub mod noise;
