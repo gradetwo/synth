@@ -34,6 +34,31 @@ export function applyUpdate() {
   waiting.postMessage({ type: 'SKIP_WAITING' });
 }
 
+/**
+ * Ask the browser for a fresh build right now.
+ *
+ * Returns what happened so the UI can say something useful: an offline-first
+ * app can otherwise keep running a cached build for a long time, which is
+ * exactly how a fixed bug appears to survive an update.
+ */
+export async function checkForUpdate(): Promise<'updated' | 'current' | 'unsupported'> {
+  if (!('serviceWorker' in navigator) || !import.meta.env.PROD) return 'unsupported';
+  const registration = await navigator.serviceWorker.getRegistration();
+  if (!registration) return 'unsupported';
+  const before = registration.waiting?.state ?? null;
+  await registration.update().catch(() => undefined);
+  // The browser needs a moment to move a new worker into `waiting`.
+  for (let i = 0; i < 10; i++) {
+    if (registration.waiting?.state !== before && registration.waiting) {
+      pending = registration;
+      updateListener?.(registration);
+      return 'updated';
+    }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return 'current';
+}
+
 export async function registerServiceWorker() {
   if (!('serviceWorker' in navigator) || !import.meta.env.PROD) return;
   try {

@@ -18,6 +18,25 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.25.0',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '当引擎因负载过高自动减少复音数时，现在会**弹出提示**告诉你降到了多少，并可到监视器查看 **DSP 负载%**——"破音是不是性能问题"从此可判断。',
+        'When the engine sheds voices because the device is overloaded it now **says so**, and the monitor shows the **DSP load** — so "is this distortion a performance problem?" has an answer.',
+      ],
+      [
+        '预设库新增「**检查更新**」按钮：离线优先的应用可能长时间运行旧缓存版本，现在可以手动强制检查并立即更新。',
+        'The preset drawer gained a **Check for updates** button: an offline-first app can keep running a cached build for a long time, so you can now force a check and update immediately.',
+      ],
+      [
+        '诊断用：电钢 + 致爱丽丝的渲染经离线频谱（噪声底 −54 dB，10 kHz 以上仅占 0.21%）、浏览器实时抓取（最大样本跳变 0.035）与整曲峰值扫描三重验证，**引擎输出本身无失真**；负载也已从 24–27% 降到 11%。',
+        'Diagnostics: the electric-piano + Für Elise render was verified three ways — offline spectrum (noise floor −54 dB, only 0.21% of energy above 10 kHz), a live browser capture (largest sample step 0.035) and a whole-song peak scan — the **engine output itself is clean**, and the load already dropped from 24–27% to 11%.',
+      ],
+    ],
+  },
+  {
     version: '1.24.0',
     date: '2026-09-10',
     kind: 'feature',

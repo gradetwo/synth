@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { store } from '@/state/store';
+import { checkForUpdate } from '@/pwa/register';
 import { useSynth } from '@/hooks/useSynth';
 import { PRESET_CATEGORIES, type PresetCategory } from '@/state/presets';
 import { WaveIcon } from './controls';
@@ -188,6 +189,22 @@ export function PresetDrawer({
               title={t('changelog.sub')}
             >
               {t('drawer.changelog')}
+            </button>
+            <button
+              type="button"
+              className="d-reset"
+              title={t('drawer.checkUpdate')}
+              onClick={async () => {
+                haptic();
+                const result = await checkForUpdate();
+                toast(t(result === 'updated'
+                  ? 'drawer.updateFound'
+                  : result === 'current'
+                    ? 'drawer.updateCurrent'
+                    : 'drawer.updateUnsupported'));
+              }}
+            >
+              {t('drawer.checkUpdate')}
             </button>
             <button
               type="button"

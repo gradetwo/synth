@@ -200,6 +200,18 @@ export default function App() {
     return () => document.removeEventListener('contextmenu', onContextMenu);
   }, []);
 
+  // Tell the user when the engine had to shed voices: from their side the
+  // symptom is "the synth crackles", and the fix is knowing it is a load
+  // problem (the monitor shows the DSP load).
+  useEffect(
+    () =>
+      engine.onPolyphony((value, reason) => {
+        if (reason !== 'overload') return;
+        toast(t('app.overload').replace('{n}', String(value)));
+      }),
+    [],
+  );
+
   // Undo / redo shortcuts.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

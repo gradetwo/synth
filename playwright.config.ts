@@ -17,5 +17,11 @@ export default defineConfig({
     reuseExistingServer: true,
     timeout: 60_000,
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  // All three engines can be run with `--project=<name>`; the default suite is
+  // Chromium so a normal `npm run e2e` stays fast.
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] }, testIgnore: /e2e\/(performance|devices)\.spec\.ts/ },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] }, testIgnore: /e2e\/(performance|devices)\.spec\.ts/ },
+  ],
 });

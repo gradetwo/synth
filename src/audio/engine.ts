@@ -90,7 +90,7 @@ export class AudioEngine {
   private loadPromise: Promise<void> | null = null;
   private listeners = new Set<AnalysisListener>();
   private statusListeners = new Set<() => void>();
-  private polyphonyListeners = new Set<(value: number) => void>();
+  private polyphonyListeners = new Set<(value: number, reason: string) => void>();
   private timeBuffer = new Float32Array(1024);
 
   onAnalysis(fn: AnalysisListener): () => void {
@@ -103,7 +103,7 @@ export class AudioEngine {
     return () => this.statusListeners.delete(fn);
   }
 
-  onPolyphony(fn: (value: number) => void): () => void {
+  onPolyphony(fn: (value: number, reason: string) => void): () => void {
     this.polyphonyListeners.add(fn);
     return () => this.polyphonyListeners.delete(fn);
   }
@@ -272,7 +272,9 @@ export class AudioEngine {
             for (const fn of this.listeners) fn(frame);
           } else if (data.type === 'polyphony') {
             this.polyphony = Number(data.value) || this.polyphony;
-            for (const fn of this.polyphonyListeners) fn(this.polyphony);
+            for (const fn of this.polyphonyListeners) {
+              fn(this.polyphony, String(data.reason ?? ''));
+            }
           } else if (data.type === 'error') {
             this.setStatus('error', String(data.message));
           }
