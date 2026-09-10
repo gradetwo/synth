@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.57.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '导入的**多轨 MIDI 现在会保留轨道分层**：格式 1 文件里的每条音轨（含轨道名）都会被记下来，钢琴卷帘仍显示合并后的音符。这是「多轨播放 / 分轨导出 / 时间线」的第一步。',
+        'Imported **multi-track MIDI now keeps its layers**: every track of a format-1 file (with its name) is remembered, while the piano roll still edits the merged note list. This is the groundwork for multi-track playback, per-track export and the timeline.',
+      ],
+    ],
+  },
+  {
     version: '1.56.0',
     date: '2026-09-10',
     kind: 'feature',

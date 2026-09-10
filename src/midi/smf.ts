@@ -23,7 +23,19 @@ export interface MidiSong {
   bpm: number;
   /** Total length in seconds. */
   duration: number;
+  /** Every note, in time order — what the piano roll edits. */
   notes: MidiNote[];
+  /**
+   * The same notes split by file track, in file order. A format-1 file keeps its
+   * layers here; a format-0 file (or a demo song) has exactly one. Optional so
+   * hand-built songs (a recording, a demo, a test fixture) stay valid.
+   */
+  tracks?: MidiTrack[];
+}
+
+/** The layers of a song, with the single-layer fallback for hand-built songs. */
+export function songTracks(song: MidiSong): MidiTrack[] {
+  return song.tracks && song.tracks.length ? song.tracks : [{ name: 'Track 1', notes: song.notes }];
 }
 
 const DEFAULT_TEMPO = 500_000; // 120 BPM in µs per quarter note
@@ -83,6 +95,14 @@ interface RawNote {
   note: number;
   velocity: number;
   on: boolean;
+  /** Which MTrk chunk it came from, so a format-1 file keeps its layers. */
+  track: number;
+}
+
+/** One track of a multi-track file, as it will be played or exported. */
+export interface MidiTrack {
+  name: string;
+  notes: MidiNote[];
 }
 
 interface TempoEvent {
@@ -119,6 +139,7 @@ export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
 
   const rawNotes: RawNote[] = [];
   const tempos: TempoEvent[] = [];
+  const trackNames: string[] = [];
   let title = '';
 
   for (let track = 0; track < trackCount && reader.remaining >= 8; track++) {
@@ -144,8 +165,11 @@ export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
         const size = reader.vlq();
         if (type === 0x51 && size === 3) {
           tempos.push({ tick, usPerQuarter: (reader.u8() << 16) | (reader.u8() << 8) | reader.u8() });
-        } else if (type === 0x03 && !title) {
-          title = reader.ascii(size).trim();
+        } else if (type === 0x03) {
+          // A track name is a layer name; the file title is the first one.
+          const text = reader.ascii(size).trim();
+          if (!title) title = text;
+          if (!trackNames[track]) trackNames[track] = text;
         } else if (type === 0x2f) {
           reader.skip(size);
           break;
@@ -164,7 +188,7 @@ export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
         const note = reader.u8();
         const velocity = reader.u8();
         const on = kind === 0x90 && velocity > 0;
-        rawNotes.push({ tick, note, velocity: velocity / 127, on });
+        rawNotes.push({ tick, note, velocity: velocity / 127, on, track });
       } else if (kind === 0xc0 || kind === 0xd0) {
         reader.u8();
       } else {
@@ -178,6 +202,7 @@ export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
   const toSeconds = makeTickClock(tempos, division || 480);
   const open = new Map<number, { start: number; velocity: number }>();
   const notes: MidiNote[] = [];
+  const layered: MidiNote[][] = Array.from({ length: Math.max(1, trackCount) }, () => []);
   let duration = 0;
 
   for (const raw of rawNotes) {
@@ -189,22 +214,36 @@ export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
       if (!held) continue;
       open.delete(raw.note);
       const length = Math.max(0.02, time - held.start);
-      notes.push({ note: raw.note, velocity: held.velocity, start: held.start, duration: length });
+      const played = { note: raw.note, velocity: held.velocity, start: held.start, duration: length };
+      notes.push(played);
+      (layered[raw.track] ??= []).push(played);
       duration = Math.max(duration, held.start + length);
     }
   }
   for (const [note, held] of open) {
-    notes.push({ note, velocity: held.velocity, start: held.start, duration: 0.5 });
+    const played = { note, velocity: held.velocity, start: held.start, duration: 0.5 };
+    notes.push(played);
+    // The leftover note has no track tag beyond the map it came from; it lands
+    // in the first layer, which is where a single-track file belongs anyway.
+    layered[0].push(played);
     duration = Math.max(duration, held.start + 0.5);
   }
 
   notes.sort((a, b) => a.start - b.start || a.note - b.note);
   const firstTempo = tempos.find((t) => t.tick === 0)?.usPerQuarter ?? DEFAULT_TEMPO;
+  // Layers, in file order, without the empty ones (a format-1 file usually has
+  // a conductor track that holds only tempo and names).
+  const tracks: MidiTrack[] = layered
+    .map((list, index) => ({ name: trackNames[index] ?? '', notes: list }))
+    .filter((layer) => layer.notes.length > 0)
+    .map((layer, index) => ({ name: layer.name || `Track ${index + 1}`, notes: layer.notes }));
+
   return {
     name: title || name,
     bpm: Math.round(60_000_000 / firstTempo),
     duration: Math.max(duration, 0.5),
     notes,
+    tracks: tracks.length ? tracks : [{ name: 'Track 1', notes }],
   };
 }
 

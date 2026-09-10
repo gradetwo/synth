@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { notesDuration, parseMidi, writeMidi, type MidiNote } from './smf';
+import { notesDuration, parseMidi, songTracks, writeMidi, type MidiNote } from './smf';
 
 function buildMidi(): Uint8Array {
   const track = [
@@ -69,3 +69,60 @@ describe('SMF writer', () => {
     expect(song.notes[0].velocity).toBe(1);
   });
 });
+
+describe('multi-track files', () => {
+  /** A format-1 file: a conductor track plus two named note tracks. */
+  function format1(): Uint8Array {
+    const track = (bytes: number[]) =>
+      [0x4d, 0x54, 0x72, 0x6b, (bytes.length >> 24) & 255, (bytes.length >> 16) & 255, (bytes.length >> 8) & 255, bytes.length & 255, ...bytes];
+    const name = (text: string) => [0x00, 0xff, 0x03, text.length, ...Array.from(text).map((c) => c.charCodeAt(0))];
+    const conductor = [
+      ...name('Conductor'),
+      0x00, 0xff, 0x51, 0x03, 0x07, 0xa1, 0x20, // 120 BPM
+      0x00, 0xff, 0x2f, 0x00,
+    ];
+    const bass = [
+      ...name('Bass'),
+      0x00, 0x90, 0x30, 0x64,
+      0x83, 0x60, 0x80, 0x30, 0x40,
+      0x00, 0xff, 0x2f, 0x00,
+    ];
+    const lead = [
+      ...name('Lead'),
+      0x00, 0x90, 0x3c, 0x50,
+      0x83, 0x60, 0x80, 0x3c, 0x40,
+      0x00, 0x90, 0x40, 0x50,
+      0x83, 0x60, 0x80, 0x40, 0x40,
+      0x00, 0xff, 0x2f, 0x00,
+    ];
+    const header = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, 0, 3, 0x01, 0xe0];
+    return Uint8Array.from([...header, ...track(conductor), ...track(bass), ...track(lead)]);
+  }
+
+  it('keeps each file track as a layer, in order, with its notes', () => {
+    const song = parseMidi(format1(), 'two-tracks');
+    expect(song.tracks).toBeDefined();
+    const layers = songTracks(song);
+    // The conductor track carries no notes, so it is not a layer.
+    expect(layers.map((layer) => layer.name)).toEqual(['Bass', 'Lead']);
+    expect(layers[0].notes.map((note) => note.note)).toEqual([48]);
+    expect(layers[1].notes.map((note) => note.note)).toEqual([60, 64]);
+    // The merged list is still there for the piano roll, and holds everything.
+    expect(song.notes).toHaveLength(3);
+    expect(song.notes.map((note) => note.note)).toEqual([48, 60, 64]);
+  });
+
+  it('gives a hand-built song exactly one layer', () => {
+    const song = parseMidi(singleTrackFile(), 'one');
+    expect(songTracks(song)).toHaveLength(1);
+    expect(songTracks(song)[0].notes).toEqual(song.notes);
+  });
+});
+
+/** The smallest format-0 file: one note. */
+function singleTrackFile(): Uint8Array {
+  const track = [0x00, 0x90, 0x3c, 0x64, 0x83, 0x60, 0x80, 0x3c, 0x40, 0x00, 0xff, 0x2f, 0x00];
+  const header = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0];
+  const chunk = [0x4d, 0x54, 0x72, 0x6b, 0, 0, 0, track.length, ...track];
+  return Uint8Array.from([...header, ...chunk]);
+}
