@@ -24,9 +24,12 @@ namespace {
 struct VoiceDsp {
     /// [sub-voice][oscillator]; unison stacks up to GS_MAX_UNISON copies.
     daisysp::Oscillator osc[GS_MAX_UNISON][2];
-    daisysp::LadderFilter ladder;
-    daisysp::Svf svf;
-    daisysp::DcBlock dc;
+    /// One filter chain per oscillator (side 0 = OSC 1, side 1 = OSC 2) so a
+    /// patch that pans its oscillators apart is filtered independently per
+    /// oscillator instead of sharing one mono filter.
+    daisysp::LadderFilter ladder[2];
+    daisysp::Svf svf[2];
+    daisysp::DcBlock dc[2];
 };
 
 VoiceDsp g_voice[GS_MAX_VOICES];
@@ -58,9 +61,11 @@ void init_slot(int i, float sample_rate) {
         d.osc[s][0].Init(sample_rate);
         d.osc[s][1].Init(sample_rate);
     }
-    d.ladder.Init(sample_rate);
-    d.svf.Init(sample_rate);
-    d.dc.Init(sample_rate);
+    for (int side = 0; side < 2; ++side) {
+        d.ladder[side].Init(sample_rate);
+        d.svf[side].Init(sample_rate);
+        d.dc[side].Init(sample_rate);
+    }
 }
 
 } // namespace
@@ -80,9 +85,11 @@ void gs_voice_reset(int v) {
         d.osc[s][0].Init(g_sample_rate);
         d.osc[s][1].Init(g_sample_rate);
     }
-    d.ladder.Init(g_sample_rate);
-    d.svf.Init(g_sample_rate);
-    d.dc.Init(g_sample_rate);
+    for (int side = 0; side < 2; ++side) {
+        d.ladder[side].Init(g_sample_rate);
+        d.svf[side].Init(g_sample_rate);
+        d.dc[side].Init(g_sample_rate);
+    }
 }
 
 void gs_voice_phase(int v, float p0, float p1) {
@@ -119,44 +126,46 @@ void gs_voice_osc_block(int v, int which, int sub, float *out, uint32_t frames) 
     for (uint32_t i = 0; i < frames; ++i) out[i] = o.Process();
 }
 
-void gs_voice_filter_set(int v, int type, float freq, float res, float drive) {
+void gs_voice_filter_set(int v, int side, int type, float freq, float res, float drive) {
     VoiceDsp &d = voice(v);
+    const int s = side ? 1 : 0;
     type = clamp_type(type);
     if (type == GS_FILTER_LP) {
-        d.ladder.SetFilterMode(daisysp::LadderFilter::FilterMode::LP24);
-        d.ladder.SetFreq(freq);
-        d.ladder.SetRes(res * 1.7f);
+        d.ladder[s].SetFilterMode(daisysp::LadderFilter::FilterMode::LP24);
+        d.ladder[s].SetFreq(freq);
+        d.ladder[s].SetRes(res * 1.7f);
         // DaisySP scales the input by the drive value, so 0 would be silence.
         // UI drive 0..1 maps to unity..2.5x into the tanh stage.
-        d.ladder.SetInputDrive(1.0f + drive * 1.5f);
-        d.ladder.SetPassbandGain(0.5f);
+        d.ladder[s].SetInputDrive(1.0f + drive * 1.5f);
+        d.ladder[s].SetPassbandGain(0.5f);
     } else {
-        d.svf.SetFreq(freq);
-        d.svf.SetRes(res * 0.97f);
-        d.svf.SetDrive(drive);
+        d.svf[s].SetFreq(freq);
+        d.svf[s].SetRes(res * 0.97f);
+        d.svf[s].SetDrive(drive);
     }
 }
 
-void gs_voice_filter_block(int v, int type, const float *in, float *out, uint32_t frames) {
+void gs_voice_filter_block(int v, int side, int type, const float *in, float *out, uint32_t frames) {
     VoiceDsp &d = voice(v);
+    const int s = side ? 1 : 0;
     type = clamp_type(type);
     if (type == GS_FILTER_LP) {
-        for (uint32_t i = 0; i < frames; ++i) out[i] = d.ladder.Process(in[i]);
+        for (uint32_t i = 0; i < frames; ++i) out[i] = d.ladder[s].Process(in[i]);
         return;
     }
     for (uint32_t i = 0; i < frames; ++i) {
-        d.svf.Process(in[i]);
+        d.svf[s].Process(in[i]);
         switch (type) {
-            case GS_FILTER_HP:    out[i] = d.svf.High();  break;
-            case GS_FILTER_BP:    out[i] = d.svf.Band();  break;
-            case GS_FILTER_NOTCH: out[i] = d.svf.Notch(); break;
-            default:              out[i] = d.svf.Low();   break;
+            case GS_FILTER_HP:    out[i] = d.svf[s].High();  break;
+            case GS_FILTER_BP:    out[i] = d.svf[s].Band();  break;
+            case GS_FILTER_NOTCH: out[i] = d.svf[s].Notch(); break;
+            default:              out[i] = d.svf[s].Low();   break;
         }
     }
 }
 
-void gs_voice_dc_block(int v, const float *in, float *out, uint32_t frames) {
-    daisysp::DcBlock &dc = voice(v).dc;
+void gs_voice_dc_block(int v, int side, const float *in, float *out, uint32_t frames) {
+    daisysp::DcBlock &dc = voice(v).dc[side ? 1 : 0];
     for (uint32_t i = 0; i < frames; ++i) out[i] = dc.Process(in[i]);
 }
 

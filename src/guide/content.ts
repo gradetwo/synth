@@ -673,8 +673,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Glide**: an exponential one-pole approach from the current frequency to the target, with a time constant of about `glide × 0.5`.',
           ],
           [
-            '**力度**乘到音量，也可以通过矩阵调制音色；**声像**把两个振荡器的 PAN 按电平加权成一个声部位置，再用等功率 `cos/sin` 分配到左右声道。',
-            '**Velocity** multiplies the level and can modulate timbre through the matrix; **pan** combines the two oscillator PANs into one level-weighted voice position, then uses equal-power `cos/sin` to place it in the stereo field.',
+            '**力度**乘到音量，也可以通过矩阵调制音色；**声像**分两种情况：两个振荡器 PAN 相同时合并成一个声部位置（共用一套滤波器，最省 CPU）；**PAN 拉开时自动切换成每个振荡器独立的滤波与等功率声像**，此时左右声道是两把不同的声音，而不是同一个声音的两档音量。',
+            '**Velocity** multiplies the level and can modulate timbre through the matrix; **pan** has two modes: with both oscillator PANs equal they collapse into one voice position sharing a single filter (cheapest), and once they differ the voice switches to **per-oscillator filtering with equal-power panning**, so the channels carry two different sounds instead of one sound at two levels.',
           ],
         ],
       },

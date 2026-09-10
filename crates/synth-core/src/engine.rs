@@ -26,9 +26,16 @@ extern "C" {
     fn gs_voice_phase(v: i32, p0: f32, p1: f32);
     fn gs_voice_osc_set(v: i32, which: i32, sub: i32, wave: u32, freq: f32, amp: f32, pw: f32);
     fn gs_voice_osc_block(v: i32, which: i32, sub: i32, out: *mut f32, frames: u32);
-    fn gs_voice_filter_set(v: i32, kind: i32, freq: f32, res: f32, drive: f32);
-    fn gs_voice_filter_block(v: i32, kind: i32, input: *const f32, out: *mut f32, frames: u32);
-    fn gs_voice_dc_block(v: i32, input: *const f32, out: *mut f32, frames: u32);
+    fn gs_voice_filter_set(v: i32, side: i32, kind: i32, freq: f32, res: f32, drive: f32);
+    fn gs_voice_filter_block(
+        v: i32,
+        side: i32,
+        kind: i32,
+        input: *const f32,
+        out: *mut f32,
+        frames: u32,
+    );
+    fn gs_voice_dc_block(v: i32, side: i32, input: *const f32, out: *mut f32, frames: u32);
     fn gs_sp_init(sample_rate: f32);
     fn gs_fx_init(sample_rate: f32);
     fn gs_fx_chorus_set(depth: f32, freq: f32, delay_ms: f32, feedback: f32);
@@ -125,6 +132,8 @@ pub struct Engine {
     osc_b: [f32; MAX_BLOCK_SIZE],
     /// Scratch for rendering one unison sub-voice at a time.
     unison_buf: [f32; MAX_BLOCK_SIZE],
+    /// Filtered OSC 2 signal when the oscillators are panned apart.
+    voice_buf_r: [f32; MAX_BLOCK_SIZE],
     /// Per-voice LFO state, used when a patch retriggers the LFO per note.
     voice_lfos: [Lfo; MAX_VOICES],
     voice_lfo2s: [Lfo; MAX_VOICES],
@@ -209,6 +218,7 @@ impl Engine {
             osc_a: [0.0; MAX_BLOCK_SIZE],
             osc_b: [0.0; MAX_BLOCK_SIZE],
             unison_buf: [0.0; MAX_BLOCK_SIZE],
+            voice_buf_r: [0.0; MAX_BLOCK_SIZE],
             voice_lfos: [Lfo::new(); MAX_VOICES],
             voice_lfo2s: [Lfo::new(); MAX_VOICES],
             lfo_scratch: [0.0; MAX_BLOCK_SIZE],
@@ -1029,13 +1039,32 @@ impl Engine {
         }
         self.unison_buf = scratch;
 
-        simd::mix2_into(
-            &self.osc_a[..frames],
-            &self.osc_b[..frames],
-            &mut self.voice_buf[..frames],
-            osc_level[0] * FILTER_TRIM,
-            osc_level[1] * FILTER_TRIM,
-        );
+        // Per-oscillator stereo: when the two oscillators sit at different pan
+        // positions they keep separate signal paths (and separate filters), so
+        // panning them apart actually spreads two different sounds instead of
+        // fading one mono voice. Everything else keeps the cheap mono path.
+        let levels = osc_level[0] + osc_level[1];
+        let stereo = params.osc[0].on
+            && params.osc[1].on
+            && osc_level[0] > 0.0
+            && osc_level[1] > 0.0
+            && (params.osc[0].pan - params.osc[1].pan).abs() > 0.02;
+
+        if stereo {
+            let trim = FILTER_TRIM;
+            for i in 0..frames {
+                self.voice_buf[i] = self.osc_a[i] * osc_level[0] * trim;
+                self.voice_buf_r[i] = self.osc_b[i] * osc_level[1] * trim;
+            }
+        } else {
+            simd::mix2_into(
+                &self.osc_a[..frames],
+                &self.osc_b[..frames],
+                &mut self.voice_buf[..frames],
+                osc_level[0] * FILTER_TRIM,
+                osc_level[1] * FILTER_TRIM,
+            );
+        }
 
         // --- amplitude envelope ---------------------------------------------
         let gate = voice.gate;
@@ -1059,7 +1088,11 @@ impl Engine {
 
         let velocity = voice.velocity;
         for i in 0..frames {
-            self.voice_buf[i] *= self.env_buf[i] * velocity;
+            let gain = self.env_buf[i] * velocity;
+            self.voice_buf[i] *= gain;
+            if stereo {
+                self.voice_buf_r[i] *= gain;
+            }
         }
 
         // --- tremolo / volume modulation ------------------------------------
@@ -1075,7 +1108,11 @@ impl Engine {
                 };
                 let mut g = 1.0 - vol_depth * (0.5 - 0.5 * l) - vol_depth2 * (0.5 - 0.5 * l2);
                 g += mod_volume * (0.5 + 0.5 * l);
-                self.voice_buf[i] *= g.clamp(0.0, 4.0);
+                let g = g.clamp(0.0, 4.0);
+                self.voice_buf[i] *= g;
+                if stereo {
+                    self.voice_buf_r[i] *= g;
+                }
             }
         }
 
@@ -1102,6 +1139,7 @@ impl Engine {
         unsafe {
             gs_voice_filter_set(
                 slot as i32,
+                0,
                 kind.to_u32() as i32,
                 cutoff,
                 resonance,
@@ -1109,6 +1147,7 @@ impl Engine {
             );
             gs_voice_filter_block(
                 slot as i32,
+                0,
                 kind.to_u32() as i32,
                 self.voice_buf.as_ptr(),
                 self.osc_a.as_mut_ptr(),
@@ -1116,10 +1155,36 @@ impl Engine {
             );
             gs_voice_dc_block(
                 slot as i32,
+                0,
                 self.osc_a.as_ptr(),
                 self.voice_buf.as_mut_ptr(),
                 frames as u32,
             );
+            if stereo {
+                gs_voice_filter_set(
+                    slot as i32,
+                    1,
+                    kind.to_u32() as i32,
+                    cutoff,
+                    resonance,
+                    params.filter.drive,
+                );
+                gs_voice_filter_block(
+                    slot as i32,
+                    1,
+                    kind.to_u32() as i32,
+                    self.voice_buf_r.as_ptr(),
+                    self.osc_b.as_mut_ptr(),
+                    frames as u32,
+                );
+                gs_voice_dc_block(
+                    slot as i32,
+                    1,
+                    self.osc_b.as_ptr(),
+                    self.voice_buf_r.as_mut_ptr(),
+                    frames as u32,
+                );
+            }
         }
 
         // Make up the trim that kept the filter inside its linear region.
@@ -1127,24 +1192,53 @@ impl Engine {
         for sample in self.voice_buf[..frames].iter_mut() {
             *sample *= makeup;
         }
+        if stereo {
+            for sample in self.voice_buf_r[..frames].iter_mut() {
+                *sample *= makeup;
+            }
+        }
 
         // --- pan + accumulate into the stereo mix bus -----------------------
-        // The per-voice filter is mono, so the two oscillator PAN controls are
-        // combined into a level-weighted voice position and applied with an
-        // equal-power law after the filter.
-        let levels = osc_level[0] + osc_level[1];
-        let pan = if levels > 1e-4 {
-            ((osc_level[0] * params.osc[0].pan + osc_level[1] * params.osc[1].pan) / levels
-                + mod_pan)
-                .clamp(-1.0, 1.0)
+        if stereo {
+            // Each oscillator has its own position (the matrix PAN offset is
+            // applied to both), with an equal-power law per oscillator.
+            let mut angles = [0.0f32; 2];
+            for which in 0..2 {
+                let pan = (params.osc[which].pan + mod_pan).clamp(-1.0, 1.0);
+                angles[which] = (pan + 1.0) * core::f32::consts::FRAC_PI_4;
+            }
+            let (l1, r1) = (angles[0].cos(), angles[0].sin());
+            let (l2, r2) = (angles[1].cos(), angles[1].sin());
+            for i in 0..frames {
+                let a = self.voice_buf[i] * VOICE_GAIN;
+                let b = self.voice_buf_r[i] * VOICE_GAIN;
+                self.mix_l[i] += a * l1 + b * l2;
+                self.mix_r[i] += a * r1 + b * r2;
+            }
         } else {
-            mod_pan.clamp(-1.0, 1.0)
-        };
-        let angle = (pan + 1.0) * core::f32::consts::FRAC_PI_4;
-        let pan_l = angle.cos();
-        let pan_r = angle.sin();
-        simd::accumulate(&self.voice_buf[..frames], &mut self.mix_l[..frames], VOICE_GAIN * pan_l);
-        simd::accumulate(&self.voice_buf[..frames], &mut self.mix_r[..frames], VOICE_GAIN * pan_r);
+            // Mono voice: the two PAN controls collapse into one level-weighted
+            // position, applied after the shared filter.
+            let pan = if levels > 1e-4 {
+                ((osc_level[0] * params.osc[0].pan + osc_level[1] * params.osc[1].pan) / levels
+                    + mod_pan)
+                    .clamp(-1.0, 1.0)
+            } else {
+                mod_pan.clamp(-1.0, 1.0)
+            };
+            let angle = (pan + 1.0) * core::f32::consts::FRAC_PI_4;
+            let pan_l = angle.cos();
+            let pan_r = angle.sin();
+            simd::accumulate(
+                &self.voice_buf[..frames],
+                &mut self.mix_l[..frames],
+                VOICE_GAIN * pan_l,
+            );
+            simd::accumulate(
+                &self.voice_buf[..frames],
+                &mut self.mix_r[..frames],
+                VOICE_GAIN * pan_r,
+            );
+        }
 
         // --- retire finished voices -----------------------------------------
         if !voice.gate && !self.envs[slot].is_active() {
@@ -2023,6 +2117,58 @@ mod tests {
         let late = measure(true, 900);
         let ratio = (early / late).max(late / early);
         assert!(ratio < 1.05, "retriggered LFO drifted with time: {early} vs {late}");
+    }
+
+    /// Panning the two oscillators apart must give two *different* signals in
+    /// the two channels, not one mono voice at two gains.
+    #[test]
+    fn per_oscillator_panning_separates_the_channels() {
+        let _guard = lock_engine();
+        // Correlation between the channels over a rendered buffer.
+        let correlate = |pan1: f32, pan2: f32, kind: crate::params::Wave| -> f32 {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+            e.set_param(id::OSC1_LEVEL, 0.7);
+            e.set_param(id::OSC1_PAN, pan1);
+            e.set_param(id::OSC2_ON, 1.0);
+            e.set_param(id::OSC2_WAVE, kind as u32 as f32);
+            e.set_param(id::OSC2_PITCH, 12.0);
+            e.set_param(id::OSC2_LEVEL, 0.7);
+            e.set_param(id::OSC2_PAN, pan2);
+            e.set_param(id::FILTER_CUTOFF, 16000.0);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.note_on(57, 1.0);
+            for _ in 0..40 {
+                e.process(128);
+            }
+            let mut buf_l = vec![0.0f32; 8192];
+            let mut buf_r = vec![0.0f32; 8192];
+            for chunk in 0..64 {
+                e.process(128);
+                for i in 0..128 {
+                    buf_l[chunk * 128 + i] = e.out_l[i];
+                    buf_r[chunk * 128 + i] = e.out_r[i];
+                }
+            }
+            let mut num = 0.0f64;
+            let mut dl = 0.0f64;
+            let mut dr = 0.0f64;
+            for i in 0..buf_l.len() {
+                num += (buf_l[i] as f64) * (buf_r[i] as f64);
+                dl += (buf_l[i] as f64).powi(2);
+                dr += (buf_r[i] as f64).powi(2);
+            }
+            (num / (dl.sqrt() * dr.sqrt()).max(1e-12)) as f32
+        };
+
+        // Centred: both channels carry the same waveform, so they correlate.
+        let mono = correlate(0.0, 0.0, crate::params::Wave::Sine);
+        assert!(mono > 0.99, "centred patch should be mono, corr {mono}");
+
+        // OSC 1 sine hard left, OSC 2 saw an octave up hard right: the channels
+        // now carry different sounds and must decorrelate.
+        let wide = correlate(-1.0, 1.0, crate::params::Wave::Saw);
+        assert!(wide < 0.8, "per-oscillator panning did not separate: corr {wide}");
     }
 
     /// A quiet signal must pass through the limiter untouched (gain exactly 1)

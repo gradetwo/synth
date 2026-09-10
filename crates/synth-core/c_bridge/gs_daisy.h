@@ -65,11 +65,11 @@ void gs_voice_osc_reset(int v, int which, float phase);
 void gs_voice_osc_block(int v, int which, int sub, float *out, uint32_t frames);
 
 /* --- per-voice filter ------------------------------------------------------ */
-void gs_voice_filter_set(int v, int type, float freq, float res, float drive);
-void gs_voice_filter_block(int v, int type, const float *in, float *out, uint32_t frames);
+void gs_voice_filter_set(int v, int side, int type, float freq, float res, float drive);
+void gs_voice_filter_block(int v, int side, int type, const float *in, float *out, uint32_t frames);
 
 /* --- per-voice DC blocker -------------------------------------------------- */
-void gs_voice_dc_block(int v, const float *in, float *out, uint32_t frames);
+void gs_voice_dc_block(int v, int side, const float *in, float *out, uint32_t frames);
 
 /* --- global modulation effects (DaisySP) ---------------------------------- */
 void gs_fx_init(float sample_rate);
