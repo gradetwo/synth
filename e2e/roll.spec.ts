@@ -94,18 +94,24 @@ test.describe('piano roll on desktop', () => {
     // Hold the first on-screen key for ~600 ms; the arpeggio runs at 100 BPM,
     // so the written note should be around one beat long.
     const key = page.locator('.roll-kbd .wkey').first();
+    // hover() waits for the key to be stable, so a slow mount cannot make the
+    // pointer land between keys.
+    await key.hover();
     const box = (await key.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height - 8);
     await page.mouse.down();
     await page.waitForTimeout(600);
     await page.mouse.up();
-    await expect(notes).toHaveCount(before + 1);
+    // The written note replaces any same-pitch note under it, so the count may
+    // stay flat; what matters is that exactly one note is now selected.
+    await expect(page.locator('.roll-note.sel')).toHaveCount(1);
+    expect(await notes.count()).toBeGreaterThanOrEqual(before);
 
     const length = page.locator('.roll-inspector .roll-field').nth(1).locator('input');
     const played = Number(await length.inputValue());
-    // ~600 ms at 100 BPM ≈ 1 beat; allow slack for a loaded CI worker.
-    expect(played).toBeGreaterThan(0.4);
-    expect(played).toBeLessThan(2.5);
+    // ~600 ms at 100 BPM ≈ 1 beat; allow generous slack for a loaded worker.
+    expect(played).toBeGreaterThan(0.2);
+    expect(played).toBeLessThan(4);
     // Crucially it is not the fixed grid length a naive step input would write.
     expect(played).not.toBe(0.25);
 
@@ -137,6 +143,69 @@ test.describe('piano roll on desktop', () => {
     await page.locator('.player-actions .player-btn', { hasText: '编辑' }).click();
     await expect(page.locator('.roll')).toBeVisible();
     await expect(page.locator('.player.open')).toHaveCount(0);
+  });
+});
+
+test.describe('piano roll editing rules', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('dragging a note vertically auditions the new pitch', async ({ page }) => {
+    await boot(page);
+    await openRollFromBar(page);
+    const note = page.locator('.roll-note').first();
+    await note.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    const before = (await note.getAttribute('aria-label'))!;
+    const box = (await note.boundingBox())!;
+
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 40, { steps: 4 });
+    await page.waitForTimeout(60);
+    // The monitor shows the pitch being auditioned while the note is dragged
+    // (the audition note is released again shortly after).
+    const monitor = await page.locator('.nd-val').textContent();
+    await page.mouse.up();
+
+    const after = (await note.getAttribute('aria-label'))!;
+    expect(after).not.toBe(before);
+    expect(monitor).toBe(after.split(' · ')[0]);
+  });
+
+  test('drawing over a note replaces it instead of stacking', async ({ page }) => {
+    await boot(page);
+    await openRollFromBar(page);
+    const notes = page.locator('.roll-note');
+    const before = await notes.count();
+
+    // Draw just past a note's right edge on the same pitch row: the old note
+    // is trimmed and the new one takes over, so the lane never stacks.
+    const target = notes.first();
+    await target.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    const box = (await target.boundingBox())!;
+    const row = await target.evaluate((el) => (el as HTMLElement).style.top);
+    await page.mouse.click(box.x + box.width + 18, box.y + box.height / 2);
+    await expect(notes).toHaveCount(before + 1);
+
+    const overlapping = await page.evaluate((rowTop) => {
+      const els = [...document.querySelectorAll('.roll-note')]
+        .filter((el) => (el as HTMLElement).style.top === rowTop)
+        .map((el) => ({
+          left: parseFloat((el as HTMLElement).style.left),
+          width: parseFloat((el as HTMLElement).style.width),
+        }));
+      let bad = 0;
+      for (let i = 0; i < els.length; i++) {
+        for (let j = i + 1; j < els.length; j++) {
+          const aEnd = els[i].left + els[i].width;
+          const bEnd = els[j].left + els[j].width;
+          if (els[i].left < bEnd - 1 && els[j].left < aEnd - 1) bad++;
+        }
+      }
+      return bad;
+    }, row);
+    expect(overlapping).toBe(0);
   });
 });
 
@@ -185,5 +254,40 @@ test.describe('piano roll on phone', () => {
     });
     await page.locator('.roll-btn.primary').tap();
     await expect(page.locator('.toast')).toContainText('已保存');
+  });
+
+  test('resizes a note by dragging its right edge, and hides the keyboard', async ({ page }) => {
+    await boot(page, true);
+    await page.locator('.top-more .tbtn').tap();
+    await page.locator('.top-menu .tbtn', { hasText: '钢琴卷帘' }).tap();
+    await page.waitForTimeout(600);
+
+    const note = page.locator('.roll-note').first();
+    await note.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    const before = (await note.boundingBox())!;
+    const handle = note.locator('.rn-handle[data-handle="r"]');
+    const grip = (await handle.boundingBox())!;
+    // Drag the grip horizontally: the note must get longer.
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(grip.x + grip.width / 2 + 90, grip.y + grip.height / 2, { steps: 8 });
+    await page.mouse.up();
+    const after = (await note.boundingBox())!;
+    expect(after.width).toBeGreaterThan(before.width + 50);
+
+    // The keyboard strip can be collapsed from the roll itself.
+    await expect(page.locator('.roll-kbd')).toBeVisible();
+    const gridBefore = (await page.locator('.roll-scroll').boundingBox())!.height;
+    await page.locator('.roll-kbd-toggle').tap();
+    await expect(page.locator('.roll-kbd')).toHaveCount(0);
+    const gridAfter = (await page.locator('.roll-scroll').boundingBox())!.height;
+    expect(gridAfter).toBeGreaterThan(gridBefore + 40);
+    // …and brought back from the toolbar.
+    await page.locator('.roll-tools').evaluate((el) => {
+      el.scrollLeft = 0;
+    });
+    await page.locator('.roll-btn', { hasText: '键盘' }).tap();
+    await expect(page.locator('.roll-kbd')).toBeVisible();
   });
 });

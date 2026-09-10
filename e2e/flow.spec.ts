@@ -255,24 +255,27 @@ test.describe('flow detail card layout', () => {
     await expect(panel).toBeVisible();
     await page.waitForTimeout(300);
 
-    const m = await panel.evaluate((el) => {
-      const r = el.getBoundingClientRect();
-      const mod = el.querySelector('.module')!.getBoundingClientRect();
-      return {
-        cx: Math.round(r.x + r.width / 2),
-        cy: Math.round(r.y + r.height / 2),
-        vw: window.innerWidth,
-        vh: window.innerHeight,
-        moduleW: Math.round(mod.width),
-        hasHead: !!el.querySelector('.module-head'),
-        grip: el.querySelectorAll('.module-grip').length,
-        collapse: el.querySelectorAll('.module-collapse').length,
-      };
-    });
-    // Centred both ways, and it really is the module card (frame + head, no
-    // grid-only drag/collapse chrome).
-    expect(Math.abs(m.cx - m.vw / 2)).toBeLessThan(3);
-    expect(Math.abs(m.cy - m.vh / 2)).toBeLessThan(3);
+    // The card fades in with a short scale animation, so poll until it settles.
+    await expect
+      .poll(
+        () =>
+          panel.evaluate((el) => {
+            const r = el.getBoundingClientRect();
+            return Math.max(
+              Math.abs(r.x + r.width / 2 - window.innerWidth / 2),
+              Math.abs(r.y + r.height / 2 - window.innerHeight / 2),
+            );
+          }),
+        { timeout: 4000 },
+      )
+      .toBeLessThan(3);
+
+    const m = await panel.evaluate((el) => ({
+      hasHead: !!el.querySelector('.module-head'),
+      grip: el.querySelectorAll('.module-grip').length,
+      collapse: el.querySelectorAll('.module-collapse').length,
+    }));
+    // It really is the module card: frame + head, no grid-only chrome.
     expect(m.hasHead).toBe(true);
     expect(m.grip).toBe(0);
     expect(m.collapse).toBe(0);
@@ -292,17 +295,19 @@ test.describe('flow detail card on phone', () => {
     await expect(page.locator('.kbd-dock.open')).toHaveCount(0);
     await page.waitForTimeout(300);
 
-    const m = await panel.evaluate((el) => {
-      const r = el.getBoundingClientRect();
-      return {
-        cx: Math.round(r.x + r.width / 2),
-        cy: Math.round(r.y + r.height / 2),
-        vw: window.innerWidth,
-        vh: window.innerHeight,
-      };
-    });
-    expect(Math.abs(m.cx - m.vw / 2)).toBeLessThan(3);
-    expect(Math.abs(m.cy - m.vh / 2)).toBeLessThan(3);
+    await expect
+      .poll(
+        () =>
+          panel.evaluate((el) => {
+            const r = el.getBoundingClientRect();
+            return Math.max(
+              Math.abs(r.x + r.width / 2 - window.innerWidth / 2),
+              Math.abs(r.y + r.height / 2 - window.innerHeight / 2),
+            );
+          }),
+        { timeout: 4000 },
+      )
+      .toBeLessThan(3);
 
     await page.locator('.flow-params-mask').tap({ position: { x: 8, y: 8 } });
     await expect(panel).toHaveCount(0);

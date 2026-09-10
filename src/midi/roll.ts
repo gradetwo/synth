@@ -169,6 +169,45 @@ export function updateNote(
   return { ...doc, notes, beats: Math.max(doc.beats, fitBeats(notes)) };
 }
 
+/**
+ * Keep one note per pitch lane: `winnerId` keeps its span and any same-pitch
+ * note it overlaps is trimmed (or removed when fully covered). Drawing or
+ * dragging a note over another therefore replaces the overlap instead of
+ * stacking two notes on the same key.
+ */
+export function resolveOverlaps(doc: RollDoc, winnerId: string): RollDoc {
+  const winner = doc.notes.find((n) => n.id === winnerId);
+  if (!winner) return doc;
+  const wStart = winner.start;
+  const wEnd = winner.start + winner.length;
+  const notes: RollNote[] = [];
+  let changed = false;
+  for (const note of doc.notes) {
+    if (note.id === winner.id || note.note !== winner.note) {
+      notes.push(note);
+      continue;
+    }
+    const start = note.start;
+    const end = note.start + note.length;
+    if (end <= wStart + 1e-6 || start >= wEnd - 1e-6) {
+      notes.push(note);
+      continue;
+    }
+    changed = true;
+    // Keep the part before the winner…
+    if (start < wStart - 1e-6) {
+      const length = wStart - start;
+      if (length >= MIN_LENGTH) notes.push({ ...note, length: tidy(length) });
+    }
+    // …and the part after it.
+    if (end > wEnd + 1e-6) {
+      const length = end - wEnd;
+      if (length >= MIN_LENGTH) notes.push({ ...note, start: tidy(wEnd), length: tidy(length) });
+    }
+  }
+  return changed ? { ...doc, notes } : doc;
+}
+
 export function removeNote(doc: RollDoc, id: string): RollDoc {
   const notes = doc.notes.filter((n) => n.id !== id);
   if (notes.length === doc.notes.length) return doc;

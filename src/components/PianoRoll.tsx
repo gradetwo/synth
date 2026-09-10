@@ -15,7 +15,6 @@ import { haptic, HAPTIC, useInputMode } from '@/hooks/useInputMode';
 import { midiPlayer, type PlayerState } from '@/midi/player';
 import { midi } from '@/audio/midi';
 import { noteBus, noteName } from '@/audio/noteBus';
-import { engine } from '@/audio/engine';
 import { midiLibrary, trackTitle, type Track } from '@/midi/library';
 import { useResolvedTheme } from '@/state/theme';
 import { exportSongMidi } from '@/midi/export';
@@ -28,6 +27,7 @@ import {
   pitchRange,
   quantizeDoc,
   removeNote,
+  resolveOverlaps,
   rollToSong,
   secondsPerBeat,
   setBpm,
@@ -86,6 +86,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   const [midiState, setMidiState] = useState(midi.snapshot());
   const [history, setHistory] = useState({ undo: false, redo: false });
   const [pending, setPending] = useState<{ note: number; start: number } | null>(null);
+  const [keysOpen, setKeysOpen] = useState(true);
 
   const docRef = useRef(doc);
   const snapRef = useRef(snap);
@@ -93,11 +94,14 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   const velocityRef = useRef(velocity);
   const selectedRef = useRef<string | null>(null);
   const gesture = useRef<Gesture | null>(null);
+  const lastPitch = useRef<number | null>(null);
   const past = useRef<RollDoc[]>([]);
   const future = useRef<RollDoc[]>([]);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const auditionTimer = useRef(0);
+  /** The note we are currently auditioning, so step input ignores its echo. */
+  const auditionRef = useRef<{ note: number; until: number } | null>(null);
   /** Notes currently held on an input source, waiting for note-off to size them. */
   const heldInput = useRef(new Map<number, { start: number; velocity: number; wall: number }>());
 
@@ -180,13 +184,17 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
     });
   }, []);
 
-  /** Audition a drawn note. Goes straight to the engine so the step-input
-   *  capture (which listens on the note bus) never echoes it back. */
+  /** Audition a drawn or dragged note. Goes through the note bus so the
+   *  monitor and VU react, but step input ignores the echo of that pitch. */
   const audition = useCallback((note: number, vel: number) => {
-    void engine.resumeIfSuspended();
-    engine.noteOn(note, vel);
+
+    auditionRef.current = { note, until: performance.now() + 240 };
+    noteBus.noteOn(note, vel);
     window.clearTimeout(auditionTimer.current);
-    auditionTimer.current = window.setTimeout(() => engine.noteOff(note), 240);
+    auditionTimer.current = window.setTimeout(() => {
+      noteBus.noteOff(note);
+      auditionRef.current = null;
+    }, 240);
   }, []);
 
   const undo = useCallback(() => {
@@ -334,6 +342,9 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
     const held = heldInput.current;
     const off = noteBus.subscribeEvents((event) => {
       if (midiPlayer.getState().playing) return;
+      // Ignore the audition echo from a note the editor just played.
+      const auditioned = auditionRef.current;
+      if (event.on && auditioned?.note === event.note && performance.now() < auditioned.until) return;
       const bpm = docRef.current.bpm;
       if (event.on) {
         const beats = midiPlayer.getState().time / secondsPerBeat(bpm);
@@ -348,7 +359,9 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       setPending(null);
       const heldBeats = (performance.now() - open_.wall) / 1000 / secondsPerBeat(bpm);
       const length = Math.max(MIN_LENGTH, heldBeats);
-      const { doc: next, id } = addNote(docRef.current, event.note, open_.start, length, open_.velocity);
+      const added = addNote(docRef.current, event.note, open_.start, length, open_.velocity);
+      const next = resolveOverlaps(added.doc, added.id);
+      const id = added.id;
       commit(next);
       setSelected(id);
       revealNote(event.note, open_.start);
@@ -382,6 +395,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       if (!orig) return;
       const handle = (event.target as HTMLElement).dataset.handle;
       setSelected(orig.id);
+      lastPitch.current = orig.note;
       gesture.current = {
         kind: handle ? 'resize' : 'note',
         edge: handle === 'l' ? 'l' : 'r',
@@ -408,25 +422,41 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
     if (g.kind === 'note') {
       // Values always derive from the pre-drag snapshot, so a long drag never
       // accumulates rounding error.
+      const pitch = g.orig.note - Math.round(dy / ROW_H);
+      if (pitch !== lastPitch.current) {
+        lastPitch.current = pitch;
+        audition(pitch, g.orig.velocity);
+      }
       commitLive(
-        updateNote(docRef.current, g.id, {
-          start: snapBeat(g.orig.start + dx / zoom, snap),
-          note: g.orig.note - Math.round(dy / ROW_H),
-        }),
+        resolveOverlaps(
+          updateNote(docRef.current, g.id, {
+            start: snapBeat(g.orig.start + dx / zoom, snap),
+            note: pitch,
+          }),
+          g.id,
+        ),
       );
     } else if (g.edge === 'l') {
       // Dragging the left edge moves the start and keeps the end put.
       const latest = Math.max(0, g.orig.start + g.orig.length - MIN_LENGTH);
       const start = Math.min(latest, snapBeat(g.orig.start + dx / zoom, snap));
       commitLive(
-        updateNote(docRef.current, g.id, {
-          start,
-          length: g.orig.length + (g.orig.start - start),
-        }),
+        resolveOverlaps(
+          updateNote(docRef.current, g.id, {
+            start,
+            length: g.orig.length + (g.orig.start - start),
+          }),
+          g.id,
+        ),
       );
     } else {
       const snapped = snapBeat(g.orig.length + dx / zoom, snap);
-      commitLive(updateNote(docRef.current, g.id, { length: Math.max(MIN_LENGTH, snapped) }));
+      commitLive(
+        resolveOverlaps(
+          updateNote(docRef.current, g.id, { length: Math.max(MIN_LENGTH, snapped) }),
+          g.id,
+        ),
+      );
     }
   };
 
@@ -442,7 +472,9 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       }
       const start = snapBeat(beatAt(event.clientX), snap);
       const note = pitchAt(event.clientY);
-      const { doc: next, id } = addNote(docRef.current, note, start, snap, velocityRef.current);
+      const added = addNote(docRef.current, note, start, snap, velocityRef.current);
+      const next = resolveOverlaps(added.doc, added.id);
+      const id = added.id;
       commit(next);
       setSelected(id);
       revealNote(note, start);
@@ -638,6 +670,19 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
             }}
           >
             ● {t('roll.input')}
+          </button>
+
+          <button
+            type="button"
+            className={`roll-btn wide${keysOpen ? ' on' : ''}`}
+            aria-pressed={keysOpen}
+            title={keysOpen ? t('top.keyboardHide') : t('top.keyboardShow')}
+            onClick={() => {
+              haptic();
+              setKeysOpen((v) => !v);
+            }}
+          >
+            ⌨ {t('roll.keyboard')}
           </button>
 
           {!midiState.supported ? (
@@ -899,10 +944,10 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                     }}
                     title={`${noteName(note.note)} · ${note.length.toFixed(2)} ${t('roll.beats')}`}
                   >
-                    {width >= (touch ? 46 : 30) ? (
+                    {width >= (touch ? 44 : 30) ? (
                       <span className="rn-handle left" data-handle="l" />
                     ) : null}
-                    {width >= (touch ? 30 : 18) ? <span className="rn-handle" data-handle="r" /> : null}
+                    <span className="rn-handle" data-handle="r" />
                   </div>
                 );
               })}
@@ -927,9 +972,25 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
           </div>
         </div>
 
-        {open ? (
+        {open && keysOpen ? (
           <div className="roll-kbd">
-            <span className="roll-kbd-label">{t('roll.keyboard')}</span>
+            <div className="roll-kbd-head">
+              <span className="roll-kbd-label">{t('roll.keyboard')}</span>
+              <button
+                type="button"
+                className="roll-kbd-toggle"
+                aria-label={t('top.keyboardHide')}
+                title={t('top.keyboardHide')}
+                onClick={() => {
+                  haptic();
+                  setKeysOpen(false);
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 12 12" aria-hidden="true">
+                  <path d="M2 4.5 L6 8.5 L10 4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
             <Keyboard />
           </div>
         ) : null}

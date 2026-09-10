@@ -8,6 +8,7 @@ import {
   pitchRange,
   quantizeDoc,
   removeNote,
+  resolveOverlaps,
   rollToSong,
   setBpm,
   setLengthBeats,
@@ -136,6 +137,38 @@ describe('piano-roll model', () => {
     expect(setLengthBeats(long, 12.3).beats).toBe(24);
     expect(clearNotes(long).notes).toHaveLength(0);
     expect(fitBeats([])).toBe(4);
+  });
+
+  it('keeps one note per pitch lane, trimming what it covers', () => {
+    const base: RollDoc = {
+      name: 'o',
+      bpm: 120,
+      beats: 8,
+      notes: [
+        { id: 'a', note: 60, start: 0, length: 4, velocity: 0.8 },
+        { id: 'b', note: 62, start: 0, length: 4, velocity: 0.8 },
+      ],
+    };
+    // A new note inside the first one splits it in two.
+    const split = resolveOverlaps(
+      { ...base, notes: [...base.notes, { id: 'c', note: 60, start: 1, length: 1, velocity: 0.8 }] },
+      'c',
+    );
+    const lane = split.notes.filter((n) => n.note === 60);
+    expect(lane.map((n) => [n.start, n.length])).toEqual([
+      [0, 1],
+      [2, 2],
+      [1, 1],
+    ]);
+    // A note that covers the whole of another removes it.
+    const covered = resolveOverlaps(
+      { ...base, notes: [...base.notes, { id: 'd', note: 60, start: 0, length: 6, velocity: 0.8 }] },
+      'd',
+    );
+    expect(covered.notes.filter((n) => n.note === 60)).toHaveLength(1);
+    // Other pitches are untouched, and a clear winner is a no-op.
+    expect(covered.notes.filter((n) => n.note === 62)).toHaveLength(1);
+    expect(resolveOverlaps(base, 'missing')).toBe(base);
   });
 
   it('reports a padded pitch window and the black-key pattern', () => {

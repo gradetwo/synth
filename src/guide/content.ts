@@ -1013,8 +1013,12 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             'Toolbar: BPM, grid (1/32–1/4), length, quantize, transpose ±12, velocity, undo/redo, clear, export MIDI, save.',
           ],
           [
-            '**输入**开关打开后，点网格或弹底部键盘都能写入音符；外部 MIDI 键盘点「连接 MIDI」授权后同样可用。步进输入：停止状态下弹奏时，**按住琴键的时长就是音符长度**，松开后写入并前进到音符末尾。',
-            'With **Input** armed, tapping the grid or playing the keyboard strip writes notes; an external MIDI keyboard works after “Connect MIDI”. Step input: while stopped, **how long you hold the key becomes the note length**, and the playhead advances to the end of the note.',
+            '**输入**开关打开后，点网格或弹底部键盘都能写入音符；外部 MIDI 键盘点「连接 MIDI」授权后同样可用。步进输入：停止状态下弹奏时，**按住琴键的时长就是音符长度**，松开后写入并前进到音符末尾。底部键盘条右上角可以收起，横屏时更省空间。',
+            'With **Input** armed, tapping the grid or playing the keyboard strip writes notes; an external MIDI keyboard works after “Connect MIDI”. Step input: while stopped, **how long you hold the key becomes the note length**, and the playhead advances to the end of the note. The keyboard strip collapses from its top-right chevron when you need the grid space.',
+          ],
+          [
+            '**拖拉改长度**：拖音符右缘横向拖动即可改长度（触屏也支持）；拖动音符改变音高时会试听新音高；在已有音符上再画/拖过去会自动替换重叠部分，同一音高不会叠加。',
+            '**Drag to resize**: drag a note’s right edge horizontally to change its length (works on touch too); dragging a note auditions the new pitch; drawing or dragging over another note replaces the overlap, so one pitch lane never stacks two notes.',
           ],
           [
             '内置曲目保存时会另存为新片段，导入文件与录制片段则原地更新。',
