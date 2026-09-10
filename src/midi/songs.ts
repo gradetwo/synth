@@ -663,6 +663,50 @@ export const DEMO_SONGS: SongSpec[] = [
     { per: 4, pattern: 'broken', passes: 4 },
   ),
   jasmine(),
+  // ------------------------------------------------- well-known, fun, public domain
+  withAccompaniment(
+    'tetris',
+    ['俄罗斯方块（主题）', 'Tetris (Korobeiniki)'],
+    'Russian folk',
+    138,
+    'e5/0.5 b4/0.25 c5/0.25 d5/0.5 c5/0.25 b4/0.25 a4/0.5 a4/0.25 c5/0.25 e5/0.5 d5/0.25 c5/0.25 ' +
+      'b4/0.75 c5/0.25 d5/0.5 e5/0.5 c5/0.5 a4/0.5 a4/0.5 ' +
+      'd5/0.5 f5/0.25 a5/0.25 g5/0.5 f5/0.25 e5/0.25 c5/0.75 e5/0.25 d5/0.5 c5/0.5 b4/0.5 a4/1',
+    ['Em', 'Em', 'Am', 'Em', 'Em', 'Am', 'B7', 'Em'],
+    { per: 2, pattern: 'pulse', passes: 5 },
+  ),
+  withAccompaniment(
+    'joy',
+    ['欢乐颂', 'Ode to Joy'],
+    'Beethoven',
+    112,
+    'e4/1 e4/1 f4/1 g4/1 g4/1 f4/1 e4/1 d4/1 c4/1 c4/1 d4/1 e4/1 e4/1.5 d4/0.5 d4/2 ' +
+      'e4/1 e4/1 f4/1 g4/1 g4/1 f4/1 e4/1 d4/1 c4/1 c4/1 d4/1 e4/1 d4/1.5 c4/0.5 c4/2',
+    ['C', 'C', 'G', 'C', 'F', 'C', 'G', 'C'],
+    { per: 2, pattern: 'block', passes: 5 },
+  ),
+  withAccompaniment(
+    'greensleeves',
+    ['绿袖子', 'Greensleeves'],
+    'Traditional English',
+    96,
+    'a4/1 c5/2 d5/1 e5/1.5 f5/0.5 e5/1 d5/2 b4/1 g4/1.5 a4/0.5 b4/1 c5/2 a4/1 a4/1.5 g#4/0.5 a4/1 b4/2 g#4/1 e4/2 ' +
+      'a4/1 c5/2 d5/1 e5/1.5 f5/0.5 e5/1 d5/2 b4/1 g4/1.5 a4/0.5 b4/1 c5/1.5 b4/0.5 a4/1 g#4/1.5 a4/0.5 b4/1 g#4/1 e4/2',
+    ['Am', 'Am', 'C', 'G', 'Am', 'E7', 'Am', 'Am'],
+    { per: 3, pattern: 'broken', passes: 6 },
+  ),
+  withAccompaniment(
+    'furelise-rock',
+    ['致爱丽丝（八位机版）', 'Für Elise (8-bit)'],
+    'Beethoven',
+    140,
+    'e5/0.5 d#5/0.5 e5/0.5 d#5/0.5 e5/0.5 b4/0.5 d5/0.5 c5/0.5 a4/1 ' +
+      'c4/0.5 e4/0.5 a4/0.5 b4/1 e4/0.5 g#4/0.5 b4/0.5 c5/1 e4/1 ' +
+      'e5/0.5 d#5/0.5 e5/0.5 d#5/0.5 e5/0.5 b4/0.5 d5/0.5 c5/0.5 a4/1 ' +
+      'c4/0.5 e4/0.5 a4/0.5 b4/1 e4/0.5 c5/0.5 b4/0.5 a4/2',
+    ['Am', 'E7', 'Am', 'E7', 'Am', 'E7', 'Am', 'Am'],
+    { per: 2, pattern: 'pulse', passes: 5 },
+  ),
   arpeggioExercise(),
   scaleExercise(),
 ];

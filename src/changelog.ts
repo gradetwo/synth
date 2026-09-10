@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.37.0',
+    date: '2026-09-10',
+    kind: 'sound',
+    items: [
+      [
+        '新增 **10 个现代/好玩的音色**：超流行主音、未来和弦、合成器波浪贝斯、暗黑牛铃、钻头 808、氛围绽放、机器人声、芯片主音、水晶玻璃、摇摆低音——都已纳入响度校准，切换时音量一致。',
+        'Ten new **modern / fun presets**: Hyperpop Lead, Future Chord, Synthwave Bass, Phonk Cowbell, Drill 808, Ambient Bloom, Robot Voice, Chiptune Lead, Crystal Glass and Wobble Bass. All are level-matched, so switching patch does not change the volume.',
+      ],
+      [
+        '曲库新增 **4 首**：俄罗斯方块主题、欢乐颂、绿袖子、致爱丽丝（八位机版）——前两首适合试主音，后两首适合试拨弦与延迟。',
+        'Four new songs: **Tetris (Korobeiniki)**, **Ode to Joy**, **Greensleeves** and **Für Elise (8-bit)** — the first two suit leads, the last two show off plucks and delay.',
+      ],
+    ],
+  },
+  {
     version: '1.36.0',
     date: '2026-09-10',
     kind: 'sound',

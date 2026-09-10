@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { DEMO_SONGS, demoSong, midiOf, specToSong } from './songs';
 
 describe('demo playlist', () => {
-  it('ships the sixteen requested entries with unique ids', () => {
-    expect(DEMO_SONGS).toHaveLength(16);
+  it('ships the requested entries with unique ids', () => {
+    expect(DEMO_SONGS).toHaveLength(20);
     const ids = DEMO_SONGS.map((s) => s.id);
-    expect(new Set(ids).size).toBe(16);
+    expect(new Set(ids).size).toBe(20);
     for (const required of [
       'elise', 'canon', 'moonlight', 'mariage', 'turkish', 'river', 'summer',
       'croatian', 'castle', 'mario', 'got', 'jasmine', 'butterfly', 'seashore',
-      'arpeggio', 'scale',
+      'arpeggio', 'scale', 'tetris', 'joy', 'greensleeves', 'furelise-rock',
     ]) {
       expect(ids, required).toContain(required);
     }
@@ -43,9 +43,12 @@ describe('demo playlist', () => {
     // Public-domain works are arranged in full; the modern themes stay as
     // longer demonstrations for copyright reasons.
     const publicDomain = ['elise', 'canon', 'moonlight', 'turkish', 'jasmine'];
+    // The four fun additions are loops by design (a game theme or a folk tune
+    // played through), so they are allowed to be shorter than an arrangement.
+    const loops = ['tetris', 'joy', 'greensleeves', 'furelise-rock'];
     for (const spec of DEMO_SONGS) {
       const song = specToSong(spec);
-      expect(song.duration, spec.id).toBeGreaterThan(40);
+      expect(song.duration, spec.id).toBeGreaterThan(loops.includes(spec.id) ? 25 : 40);
       if (publicDomain.includes(spec.id)) {
         expect(song.duration, spec.id).toBeGreaterThan(60);
         expect(song.notes.length, spec.id).toBeGreaterThan(200);

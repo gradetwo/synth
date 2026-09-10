@@ -15,7 +15,7 @@ test.describe('player', () => {
 
     const tracks = page.locator('.player-track');
     expect(await tracks.count()).toBeGreaterThanOrEqual(16);
-    await expect(page.locator('.player-track', { hasText: '致爱丽丝' })).toHaveCount(1);
+    await expect(page.locator('.player-track', { hasText: '致爱丽丝', hasNotText: '八位机' })).toHaveCount(1);
     await expect(page.locator('.player-track', { hasText: '茉莉花' })).toHaveCount(1);
     await expect(page.locator('.player-track', { hasText: '音阶' })).toHaveCount(1);
 
@@ -25,7 +25,7 @@ test.describe('player', () => {
     await expect(page.locator('.player-transport .player-btn svg')).toHaveCount(4);
 
     // Selecting a track auto-plays it.
-    await page.locator('.player-track', { hasText: '致爱丽丝' }).click();
+    await page.locator('.player-track', { hasText: '致爱丽丝', hasNotText: '八位机' }).click();
     await expect(page.locator('.player-track.current')).toHaveCount(1);
     const play = page.locator('.player-play');
     await expect(play).toHaveClass(/\bon\b/);
@@ -45,7 +45,7 @@ test.describe('player', () => {
   test('loops an A/B region and clicks the metronome', async ({ page }) => {
     await boot(page);
     await page.locator('.player-open').click();
-    await page.locator('.player-track', { hasText: '致爱丽丝' }).click();
+    await page.locator('.player-track', { hasText: '致爱丽丝', hasNotText: '八位机' }).click();
     await expect(page.locator('.player-play')).toHaveClass(/\bon\b/);
 
     // Metronome on, which also reveals the count-in switch.
