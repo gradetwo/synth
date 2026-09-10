@@ -29,6 +29,7 @@ import { Knob, Led, ParamLed, Segment, WaveSelect } from '@/components/controls'
 import { FilterCurve, LfoRateLabel, MiniWave } from '@/components/canvas';
 import { AdsrEditor } from '@/components/AdsrEditor';
 import { ModuleShell } from '@/components/Module';
+import { UserWavePicker } from '@/components/UserWavePicker';
 import { t } from '@/i18n';
 
 function ParamWaveSelect({ id, waves }: { id: number; waves: Wave[] }) {
@@ -97,6 +98,7 @@ function OscModule({ which }: { which: 1 | 2 }) {
         <Knob spec={unison} />
         <Knob spec={spread} />
       </div>
+      {wave === 'wavetable' && <UserWavePicker which={which} />}
       <MiniWave which={which} color={color} />
       <div className="mini-label">WAVE PREVIEW</div>
     </ModuleShell>

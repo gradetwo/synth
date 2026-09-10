@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.45.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '波表振荡器现在可以**导入你自己的单周期波形**：在振荡器上选 `WT`，点「导入波形」选一个音频文件（WAV/AIFF/FLAC/MP3）。文件里超过一个周期时会自动找出周期并取平均；导入后「使用」开关自动打开，同时在波表预览里画出你的波形。',
+        'The wavetable oscillator can now **import a single cycle of your own**: choose `WT` on an oscillator and hit Import wave (WAV/AIFF/FLAC/MP3). A file holding more than one cycle has its period found and averaged, the Use switch follows the import, and the wave preview draws what you loaded.',
+      ],
+      [
+        '导入的波形保存在本机，重开页面仍在，并会随离线导出一并渲染；不想用了点「✕」即可移除，原有五张内置表不受影响。',
+        'The imported waveform is kept on the device and survives a reload, and offline exports render it too. Remove it with ✕ at any time; the five built-in tables are untouched.',
+      ],
+    ],
+  },
+  {
     version: '1.44.2',
     date: '2026-09-10',
     kind: 'fix',

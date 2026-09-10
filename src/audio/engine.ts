@@ -47,7 +47,14 @@ export interface AnalysisFrame {
 type AnalysisListener = (frame: AnalysisFrame) => void;
 
 /** Parameters that are stepped, not ramped (enums / switches). */
-const DISCRETE = new Set<number>([1, 2, 7, 8, 13, 18, 23, 24, 27, 28, 29, 32, 33, 42, 43, 47, 51, 55, 62, 63, 66]);
+const DISCRETE = new Set<number>([1, 2, 7, 8, 13, 18, 23, 24, 27, 28, 29, 32, 33, 42, 43, 47, 51, 55, 62, 63, 66, 79]);
+
+/** Verdict from the DSP on an imported single-cycle waveform. */
+export interface WavetableResult {
+  ok: boolean;
+  /** 0 = ok, 1 = too short, 2 = silent, 3 = not finite, -1 = old core. */
+  code: number;
+}
 
 /** Minimal module that uses a v128 op — the canonical SIMD feature probe. */
 const SIMD_PROBE = new Uint8Array([
@@ -75,6 +82,14 @@ export interface EngineDiagnostics {
 }
 
 export class AudioEngine {
+  /** Set once the worklet has answered `ready`; messages sent earlier are lost. */
+  private wasmReady = false;
+  /** The cycle to (re)send as soon as the core is ready. */
+  private pendingCycle: Float32Array | null = null;
+  private deferredImports: ((result: WavetableResult) => void)[] = [];
+  private importWaiters = new Map<number, (result: WavetableResult) => void>();
+  private importSeq = 0;
+
   ctx: AudioContext | null = null;
   node: AudioWorkletNode | null = null;
   analyser: AnalyserNode | null = null;
@@ -322,6 +337,18 @@ export class AudioEngine {
               load: (data.load as number) ?? 0,
             };
             for (const fn of this.listeners) fn(frame);
+          } else if (data.type === 'ready') {
+            // A cycle imported before the core finished instantiating would have
+            // been dropped: send it now instead of losing the player's waveform.
+            this.wasmReady = true;
+            this.flushWavetable();
+          } else if (data.type === 'wavetable') {
+            const request = Number(data.request);
+            const resolve = this.importWaiters.get(request);
+            if (resolve) {
+              this.importWaiters.delete(request);
+              resolve({ ok: Number(data.code) === 0 && Boolean(data.has), code: Number(data.code) || 0 });
+            }
           } else if (data.type === 'polyphony') {
             this.polyphony = Number(data.value) || this.polyphony;
             for (const fn of this.polyphonyListeners) {
@@ -386,6 +413,11 @@ export class AudioEngine {
     this.analyser = null;
     this.masterGain = null;
     this.loadPromise = null;
+    this.wasmReady = false;
+    const waiters = this.deferredImports;
+    this.deferredImports = [];
+    for (const resolve of waiters) resolve({ ok: false, code: -2 });
+    this.importWaiters.clear();
     this.setStatus('idle');
   }
 
@@ -415,6 +447,52 @@ export class AudioEngine {
     for (let index = state.routes.length; index < MAX_ROUTES; index++) {
       this.setRoute(index, { src: 'lfo', dst: 'cutoff', amount: 0, enabled: false });
     }
+  }
+
+  /**
+   * Install one cycle as the imported wavetable. Resolves with the core's
+   * verdict; the analysis happens on the render thread's message path, never
+   * inside an audio block.
+   */
+  importWavetable(cycle: Float32Array): Promise<WavetableResult> {
+    this.pendingCycle = cycle;
+    if (!this.ctx) {
+      // No core yet. Keep the cycle for the next start, but do not make the
+      // caller wait for a promise nothing is going to answer.
+      return Promise.resolve({ ok: false, code: -2 });
+    }
+    return new Promise((resolve) => {
+      if (!this.node || !this.wasmReady) {
+        this.deferredImports.push(resolve);
+        return;
+      }
+      this.sendWavetable(cycle, resolve);
+    });
+  }
+
+  /** Forget the imported cycle; patches asking for it fall back to the banks. */
+  clearWavetable() {
+    this.pendingCycle = null;
+    this.node?.port.postMessage({ type: 'wavetableClear', request: ++this.importSeq });
+  }
+
+  private sendWavetable(cycle: Float32Array, resolve: (result: WavetableResult) => void) {
+    const request = ++this.importSeq;
+    this.importWaiters.set(request, resolve);
+    this.node?.port.postMessage({ type: 'wavetable', request, samples: cycle });
+  }
+
+  private flushWavetable() {
+    const cycle = this.pendingCycle;
+    const waiters = this.deferredImports;
+    this.deferredImports = [];
+    if (!cycle || !this.node) {
+      for (const resolve of waiters) resolve({ ok: false, code: -2 });
+      return;
+    }
+    this.sendWavetable(cycle, (result) => {
+      for (const resolve of waiters) resolve(result);
+    });
   }
 
   setRoute(index: number, route: ModRoute) {

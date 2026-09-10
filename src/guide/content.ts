@@ -1003,6 +1003,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Noise colours**: `PNK` (pink, −3 dB per octave) and `BRN` (brown, −6 dB) are far more natural than white for wind, surf and drum layers; white stays on `NOI`.',
           ],
           [
+            '**导入单周期波形**：选 `WT` 后出现「导入波形 / 使用 / ✕」。任何音频文件都可以：只有一个周期的直接用，多个周期的会自动找周期并平均。导入的波形用「使用」开关和内置五张表切换，保存在本机，重开仍在，导出音频时一并渲染。',
+            '**Import a single cycle**: pick `WT` and the Import wave / Use / ✕ row appears. Any audio file works: a single-cycle file is used as it is, and a longer one has its period found and averaged. The Use switch swaps between your cycle and the five built-in tables. It is kept on the device, survives a reload, and is rendered by audio export too.',
+          ],
+          [
             '**MPE 输入**：在「音频设置」开启后，每个音拥有独立弯音——控制器每音一通道时，通道弯音只作用于该音；关闭时所有弯音立即复位。通道压力仍作用于整体（每音压力需要每声部调制源，属后续项）。',
             '**MPE input**: with it on (Audio settings) every note bends on its own — a bend on a note\'s channel moves only that note, and switching MPE off releases them all. Channel pressure still applies globally (per-note pressure needs a per-voice modulation source, which is a later item).',
           ],

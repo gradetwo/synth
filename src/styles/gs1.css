@@ -218,6 +218,11 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
   background:var(--bg-socket);border:1px solid var(--line-soft-2);border-radius:7px}
 .mini-label{font:600 7.5px/1 var(--mono);letter-spacing:.18em;color:var(--txt-dim);
   margin-top:5px;text-align:right}
+/* Imported single-cycle waveform row, under the wave selector. */
+.wt-row{display:flex;align-items:center;gap:6px;margin-top:10px;flex-wrap:wrap}
+.wt-row .roll-btn{min-height:26px;padding:0 8px;font-size:9.5px;letter-spacing:.04em}
+.wt-name{font:600 9px/1.2 var(--mono);color:var(--txt-dim);letter-spacing:.03em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 
 .filter-grid{display:grid;grid-template-columns:auto 1fr;gap:10px 14px;align-items:center}
 .filter-side{display:grid;grid-template-columns:1fr 1fr;gap:8px 6px;justify-items:center}

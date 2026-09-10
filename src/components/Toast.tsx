@@ -2,9 +2,19 @@ import { useEffect, useState } from 'react';
 
 let push: ((html: string) => void) | null = null;
 
+/**
+ * Toasts interpolate names that come from outside the app — an imported file's
+ * name, a patch name, a song title — into strings that already carry `<b>`
+ * markup. Only that one tag is allowed through, so a file called
+ * `<img onerror=…>.wav` is shown as text instead of being executed.
+ */
+export function sanitiseToast(html: string): string {
+  return html.replace(/<(?!\/?b>)[^>]*>/g, '');
+}
+
 /** Imperative toast helper usable from anywhere (store, drawers, …). */
 export function toast(html: string) {
-  push?.(html);
+  push?.(sanitiseToast(html));
 }
 
 export function ToastHost() {

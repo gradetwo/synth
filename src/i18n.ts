@@ -365,6 +365,21 @@ const DICT: Record<string, [string, string]> = {
   'wave.pink': ['粉噪', 'Pink'],
   'wave.brown': ['棕噪', 'Brown'],
   'wave.wavetable': ['波表（PW 选表）', 'Wavetable (PW picks it)'],
+  // --- imported single-cycle wavetable (A6.2) ------------------------------
+  'wt.import': ['导入波形', 'Import wave'],
+  'wt.use': ['使用', 'Use'],
+  'wt.none': ['未导入', 'none'],
+  'wt.hint': [
+    '导入一个单周期波形（WAV/AIFF/FLAC/MP3）。超过一周期会自动找出周期并取平均',
+    'Import one cycle (WAV/AIFF/FLAC/MP3). A longer file has its period found and averaged',
+  ],
+  'wt.clearHint': ['移除导入的波形', 'Remove the imported waveform'],
+  'wt.loaded': ['已导入波形 {name}', 'Imported {name}'],
+  'wt.cleared': ['已移除导入波形', 'Imported waveform removed'],
+  'wt.err.short': ['波形太短，无法作为波表', 'That waveform is too short to be a table'],
+  'wt.err.silent': ['文件里没有声音', 'That file is silent'],
+  'wt.err.notFinite': ['文件含有无效采样', 'That file contains invalid samples'],
+  'wt.err.decode': ['无法解码这个文件（格式不支持或文件损坏）', 'That file could not be decoded (unsupported or damaged)'],
 
   // --- errors / diagnostics ------------------------------------------------
   'err.wasmFetch': ['WASM 下载失败 (HTTP {status})', 'WASM download failed (HTTP {status})'],

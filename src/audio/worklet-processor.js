@@ -92,6 +92,7 @@ const PARAMS = [
   ['lfo2Oneshot', 77, 0, 0, 1],
   // Per-patch loudness trim: presets set it, the UI does not show it.
   ['patchGain', 78, 1, 0, 8],
+  ['wtUser', 79, 0, 0, 1],
 ];
 
 const SPECTRUM_BINS = 36;
@@ -246,6 +247,36 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
       }
       case 'downgrade':
         this.wasm.gs_trigger_smooth_downgrade();
+        break;
+      case 'wavetable': {
+        // Single-cycle import (A6.2): the analysis runs here on the message
+        // path, never inside `process`, so a slow import cannot cause a dropout.
+        const samples = data.samples;
+        const reply = { type: 'wavetable', request: data.request, has: false, code: 0 };
+        if (typeof this.wasm.gs_wavetable_import === 'function') {
+          const capacity = this.wasm.gs_wavetable_capacity();
+          const count = Math.min(samples ? samples.length : 0, capacity);
+          if (count > 0) {
+            const scratch = new Float32Array(
+              this.memory.buffer,
+              this.wasm.gs_wavetable_import_ptr(),
+              capacity,
+            );
+            scratch.set(samples.subarray(0, count));
+            reply.code = this.wasm.gs_wavetable_import(count);
+          } else {
+            reply.code = 1;
+          }
+          reply.has = this.wasm.gs_wavetable_has() === 1;
+        } else {
+          reply.code = -1;
+        }
+        this.port.postMessage(reply);
+        break;
+      }
+      case 'wavetableClear':
+        if (this.wasm.gs_wavetable_clear) this.wasm.gs_wavetable_clear();
+        this.port.postMessage({ type: 'wavetable', request: data.request, has: false, code: 0 });
         break;
       case 'mute':
         this.muted = !!data.value;

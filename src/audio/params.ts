@@ -88,6 +88,8 @@ export const Param = {
   LFO_ONESHOT: 75,
   LFO2_RETRIG: 76,
   LFO2_ONESHOT: 77,
+  /** Play the imported single-cycle wavetable (A6.2) instead of a factory bank. */
+  WT_USER: 79,
 } as const;
 
 export type ParamId = (typeof Param)[keyof typeof Param];
@@ -96,6 +98,7 @@ export type ParamId = (typeof Param)[keyof typeof Param];
 export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.MASTER_VOLUME]: 'masterVolume',
   [Param.PATCH_GAIN]: 'patchGain',
+  [Param.WT_USER]: 'wtUser',
   [Param.OSC1_ON]: 'osc1On',
   [Param.OSC1_WAVE]: 'osc1Wave',
   [Param.OSC1_PITCH]: 'osc1Pitch',
@@ -332,6 +335,8 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.MASTER_VOLUME]: 0.75,
   // Per-patch loudness trim (presets set it; see `PATCH_TRIM` in state/presets).
   [Param.PATCH_GAIN]: 1,
+  // Factory banks by default; the player flips this after importing a cycle.
+  [Param.WT_USER]: 0,
   [Param.MASTER_TUNE]: 0,
   [Param.VOICE_MODE]: 0,
   [Param.FX_CHORUS_ON]: 0,

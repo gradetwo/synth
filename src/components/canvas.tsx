@@ -8,6 +8,7 @@ import { intToFilter, intToWave, intToLfoWave, type ParamId, type Wave } from '@
 import { meterCaption, meterIsHot, scopeGain, spectrumDisplay, vuDisplay } from '@/audio/meter';
 import { t } from '@/i18n';
 import { canvasInk } from '@/state/theme';
+import { getUserWave } from '@/audio/userWave';
 
 const TAU = Math.PI * 2;
 
@@ -77,6 +78,23 @@ export function waveShape(type: Wave, p: number): number {
     default:
       return 0;
   }
+}
+
+/**
+ * The imported cycle at `p`, or null when there is none to show. The preview has
+ * to draw the same waveform the oscillator plays, otherwise it lies about the
+ * one thing the player just imported.
+ */
+function userWaveShape(p: number): number | null {
+  if (store.getParam(79 as ParamId) <= 0.5) return null;
+  const cycle = getUserWave()?.cycle;
+  if (!cycle || cycle.length === 0) return null;
+  const t = ((p % 1) + 1) % 1;
+  const position = t * cycle.length;
+  const first = Math.floor(position) % cycle.length;
+  const second = (first + 1) % cycle.length;
+  const fraction = position - Math.floor(position);
+  return cycle[first] * (1 - fraction) + cycle[second] * fraction;
 }
 
 function lfoShape(type: ReturnType<typeof intToLfoWave>, p: number): number {
@@ -208,7 +226,10 @@ export function MiniWave({
     }
     ctx.beginPath();
     for (let x = 0; x <= w; x += 1.5) {
-      const v = lfo ? lfoShape(wave as never, (x / w) * 2.2) : waveShape(wave as Wave, (x / w) * 2.2);
+      const phase = (x / w) * 2.2;
+      const imported = lfo ? null : userWaveShape(phase);
+      const v =
+        imported ?? (lfo ? lfoShape(wave as never, phase) : waveShape(wave as Wave, phase));
       const y = h / 2 - v * h * 0.36;
       if (x === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
