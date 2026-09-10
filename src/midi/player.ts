@@ -8,6 +8,7 @@
  */
 
 import { engine } from '@/audio/engine';
+import { metronome } from '@/audio/metronome';
 import { noteBus } from '@/audio/noteBus';
 import type { MidiSong } from './smf';
 
@@ -28,6 +29,13 @@ export interface PlayerState {
   rate: number;
   /** Semitone transposition applied at playback. */
   transpose: number;
+  /** A/B loop region in seconds; both null when the whole song loops. */
+  loopStart: number | null;
+  loopEnd: number | null;
+  /** Metronome click on every beat. */
+  metronome: boolean;
+  /** One bar of clicks before the song starts. */
+  countIn: boolean;
 }
 
 function buildEvents(song: MidiSong | null): TimedEvent[] {
@@ -49,7 +57,20 @@ export class MidiPlayer {
   private resumeElapsed = 0;
   private resumeWall = 0;
   private listeners = new Set<(s: PlayerState) => void>();
-  private state: PlayerState = { playing: false, time: 0, duration: 0, loop: false, rate: 1, transpose: 0 };
+  private state: PlayerState = {
+    playing: false,
+    time: 0,
+    duration: 0,
+    loop: false,
+    rate: 1,
+    transpose: 0,
+    loopStart: null,
+    loopEnd: null,
+    metronome: false,
+    countIn: false,
+  };
+  /** Song tempo, used by the metronome. */
+  private bpm = 120;
 
   /** Called when a non-looping song reaches its end. */
   onEnded: (() => void) | null = null;
@@ -58,7 +79,15 @@ export class MidiPlayer {
     this.stop();
     this.events = buildEvents(song);
     this.cursor = 0;
-    this.state = { ...this.state, time: 0, duration: song?.duration ?? 0 };
+    this.bpm = song?.bpm ?? 120;
+    // A new song invalidates any loop region from the previous one.
+    this.state = {
+      ...this.state,
+      time: 0,
+      duration: song?.duration ?? 0,
+      loopStart: null,
+      loopEnd: null,
+    };
     this.emit();
   }
 
@@ -79,6 +108,13 @@ export class MidiPlayer {
     void engine.resumeIfSuspended();
     this.resumeElapsed = this.state.time;
     this.resumeWall = performance.now();
+    if (this.state.metronome) {
+      const beats = metronome.beatsPerBar > 0 ? metronome.beatsPerBar : 4;
+      const bar = (60 / Math.max(20, this.bpm)) * beats;
+      const from = this.state.countIn ? -bar : this.state.time;
+      if (this.state.countIn) this.resumeWall += (bar * 1000) / this.state.rate;
+      metronome.arm(from, this.bpm);
+    }
     this.state = { ...this.state, playing: true };
     this.emit();
     this.raf = requestAnimationFrame(this.tick);
@@ -88,6 +124,7 @@ export class MidiPlayer {
     if (!this.state.playing) return;
     cancelAnimationFrame(this.raf);
     this.raf = 0;
+    metronome.stop();
     this.resumeElapsed = this.state.time;
     this.releaseAll();
     this.state = { ...this.state, playing: false };
@@ -97,6 +134,7 @@ export class MidiPlayer {
   stop(): void {
     cancelAnimationFrame(this.raf);
     this.raf = 0;
+    metronome.stop();
     this.releaseAll();
     this.cursor = 0;
     this.resumeElapsed = 0;
@@ -107,6 +145,7 @@ export class MidiPlayer {
   seek(seconds: number): void {
     const time = Math.max(0, Math.min(this.state.duration, seconds));
     this.releaseAll();
+    if (this.state.metronome) metronome.arm(time, this.bpm);
     this.resumeElapsed = time;
     this.resumeWall = performance.now();
     this.cursor = 0;
@@ -117,6 +156,49 @@ export class MidiPlayer {
 
   setLoop(loop: boolean): void {
     this.state = { ...this.state, loop };
+    this.emit();
+  }
+
+  /**
+   * A/B loop region. Either point can be set on its own (the transport has one
+   * button per point); the region only takes effect once both exist, and
+   * `setLoopRegion(null, null)` clears it.
+   */
+  setLoopRegion(start: number | null, end: number | null): void {
+    if (start == null && end == null) {
+      this.state = { ...this.state, loopStart: null, loopEnd: null };
+      this.emit();
+      return;
+    }
+    const clamp = (v: number) => Math.max(0, Math.min(this.state.duration, v));
+    // One argument at a time: the other keeps whatever it already had, so the
+    // A and B buttons can be pressed in any order.
+    let s = start == null ? this.state.loopStart : clamp(start);
+    let e = end == null ? this.state.loopEnd : clamp(end);
+    if (s != null && e != null && e - s < 0.1) {
+      s = null;
+      e = null;
+    }
+    this.state = { ...this.state, loopStart: s, loopEnd: e };
+    if (s != null && e != null) this.state.loop = true;
+    // Jump into the region when the playhead is outside it.
+    const { loopStart, loopEnd } = this.state;
+    if (loopStart != null && loopEnd != null && this.state.playing) {
+      if (this.state.time < loopStart || this.state.time > loopEnd) this.seek(loopStart);
+    }
+    this.emit();
+  }
+
+  setMetronome(on: boolean): void {
+    this.state = { ...this.state, metronome: on };
+    metronome.enabled = on;
+    if (on && this.state.playing) metronome.arm(this.state.time, this.bpm);
+    else if (!on) metronome.stop();
+    this.emit();
+  }
+
+  setCountIn(on: boolean): void {
+    this.state = { ...this.state, countIn: on };
     this.emit();
   }
 
@@ -139,22 +221,35 @@ export class MidiPlayer {
     if (!this.state.playing) return;
     const now = performance.now();
     const target = this.resumeElapsed + ((now - this.resumeWall) / 1000) * this.state.rate;
-    const duration = this.state.duration;
+    const { loopStart, loopEnd } = this.state;
+    const region = loopStart != null && loopEnd != null;
+    const endPoint = this.state.loop && region ? Math.min(loopEnd, this.state.duration) : this.state.duration;
 
-    if (target >= duration) {
-      this.fireUpTo(duration);
+    if (this.state.metronome) {
+      const ctx = engine.ctx;
+      if (ctx) metronome.schedule(target, this.state.rate, this.bpm, ctx.currentTime);
+    }
+
+    if (target >= endPoint) {
+      this.fireUpTo(endPoint);
       if (this.state.loop) {
+        const back = region ? Math.min(loopStart, endPoint) : 0;
         this.releaseAll();
         this.cursor = 0;
-        this.resumeElapsed = 0;
-        this.resumeWall = now;
-        this.state = { ...this.state, time: 0 };
+        while (this.cursor < this.events.length && this.events[this.cursor].t < back) this.cursor++;
+        // Carry the overshoot so the loop does not drift late.
+        const overshoot = (target - endPoint) / Math.max(0.05, this.state.rate);
+        this.resumeElapsed = back;
+        this.resumeWall = now - Math.min(overshoot, 0.25) * 1000;
+        if (this.state.metronome) metronome.arm(back, this.bpm);
+        this.state = { ...this.state, time: back };
         this.emit();
         this.raf = requestAnimationFrame(this.tick);
         return;
       }
-      this.state = { ...this.state, playing: false, time: duration };
+      this.state = { ...this.state, playing: false, time: endPoint };
       this.emit();
+      metronome.stop();
       this.onEnded?.();
       return;
     }

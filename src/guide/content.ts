@@ -951,6 +951,14 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Transport**: play/pause, stop, loop, seek, rate 0.5–1.5× and transpose ±12 semitones. Playback uses the current patch, so changing presets while it plays re-orchestrates the same melody live.',
           ],
           [
+            '**A/B 循环**：播放到想反复的段落，点 **A** 记下起点、点 **B** 记下终点，进度条上会亮出这一段并自动开始循环（**AB** 清除）。练难点片段很方便；换曲目会自动清除。',
+            '**A/B loop**: while playing, press **A** to mark the start and **B** the end of the passage to drill. The region lights up on the seek bar and playback loops inside it automatically; **AB** clears it and loading another song resets it.',
+          ],
+          [
+            '**节拍器**：点节拍器图标开启，每拍一响、每小节第一拍重音。它走独立音频通道，不经过音色、不会被录进片段、也不会出现在导出里。开启后旁边会出现 **1·2** 按钮，可先数一小节预备拍。',
+            '**Metronome**: the metronome icon clicks on every beat with an accent on the first beat of the bar. It runs on its own audio path, so it never colours the patch, the recording or an export. Once it is on, a **1·2** button appears for a one-bar count-in.',
+          ],
+          [
             '**录制**：点 ● 录制后用屏幕键盘、电脑键盘或 MIDI 控制器演奏，再点 ■ 结束；录制会忽略播放器自身的输出，只记录你弹的内容。',
             '**Recording**: hit ● and play on the screen keyboard, computer keyboard or a MIDI controller, then ■ to stop. The player’s own output is ignored, so only your playing is captured.',
           ],

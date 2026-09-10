@@ -1,5 +1,9 @@
 /** Stroke-based transport icons shared by the player panel and the piano roll. */
-export function TransportIcon({ name }: { name: 'play' | 'pause' | 'stop' | 'loop' | 'record' }) {
+export function TransportIcon({
+  name,
+}: {
+  name: 'play' | 'pause' | 'stop' | 'loop' | 'record' | 'metronome';
+}) {
   const stroke = {
     viewBox: '0 0 24 24',
     width: 15,
@@ -36,6 +40,15 @@ export function TransportIcon({ name }: { name: 'play' | 'pause' | 'stop' | 'loo
       return (
         <svg {...filled}>
           <circle cx="12" cy="12" r="5.8" />
+        </svg>
+      );
+    case 'metronome':
+      // A metronome: tapered body, pendulum, weight.
+      return (
+        <svg {...stroke} strokeWidth={1.9}>
+          <path d="M9.4 4.4h5.2l3.1 15.2H6.3z" />
+          <path d="M12 18.6 16.4 8.2" />
+          <path d="M14 12.2h3.4" />
         </svg>
       );
     case 'loop':

@@ -1629,3 +1629,18 @@ input,textarea,[contenteditable='true']{
   height:5px;border-radius:3px;background:var(--accent)}
 :where(input[type='range']:not(.mod-range):not(.player-seek))::-moz-range-thumb{
   width:13px;height:13px;border-radius:50%;background:var(--accent);border:0}
+
+/* A/B loop points in the transport: two small letter buttons plus a band on
+   the seek track showing the active region. */
+.player-btn.ab{font:700 9.5px/1 var(--mono);letter-spacing:.06em;min-width:26px;padding:0 5px}
+.player-seek{--lo:0%;--hi:100%}
+.player-seek::-webkit-slider-runnable-track{
+  background:linear-gradient(90deg,
+    var(--bg-inset) 0 var(--lo),
+    var(--accent-dim) var(--lo) var(--hi),
+    var(--bg-inset) var(--hi) 100%)}
+.player-seek::-moz-range-track{
+  background:linear-gradient(90deg,
+    var(--bg-inset) 0 var(--lo),
+    var(--accent-dim) var(--lo) var(--hi),
+    var(--bg-inset) var(--hi) 100%)}

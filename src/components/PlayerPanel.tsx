@@ -293,6 +293,58 @@ export function Transport({
       >
         <TransportIcon name={rec.recording ? 'stop' : 'record'} />
       </button>
+      <button
+        type="button"
+        className={`player-btn${player.metronome ? ' on' : ''}`}
+        onClick={() => { haptic(); midiPlayer.setMetronome(!player.metronome); }}
+        aria-label={t('player.metronome')}
+        aria-pressed={player.metronome}
+      >
+        <TransportIcon name="metronome" />
+      </button>
+      {!compact && player.metronome ? (
+        <button
+          type="button"
+          className={`player-btn ab${player.countIn ? ' on' : ''}`}
+          onClick={() => { haptic(); midiPlayer.setCountIn(!player.countIn); }}
+          aria-label={t('player.countIn')}
+          aria-pressed={player.countIn}
+          title={t('player.countIn')}
+        >
+          1·2
+        </button>
+      ) : null}
+      {!compact ? (
+        <>
+          <button
+            type="button"
+            className={`player-btn ab${player.loopStart != null ? ' on' : ''}`}
+            onClick={() => { haptic(); midiPlayer.setLoopRegion(player.time, player.loopEnd); }}
+            aria-label={t('player.setA')}
+            title={t('player.setA')}
+          >
+            A
+          </button>
+          <button
+            type="button"
+            className={`player-btn ab${player.loopEnd != null ? ' on' : ''}`}
+            onClick={() => { haptic(); midiPlayer.setLoopRegion(player.loopStart, player.time); }}
+            aria-label={t('player.setB')}
+            title={t('player.setB')}
+          >
+            B
+          </button>
+          <button
+            type="button"
+            className={`player-btn ab${player.loopStart != null && player.loopEnd != null ? ' on' : ''}`}
+            onClick={() => { haptic(); midiPlayer.setLoopRegion(null, null); }}
+            aria-label={t('player.clearAB')}
+            title={t('player.clearAB')}
+          >
+            AB
+          </button>
+        </>
+      ) : null}
       <input
         className="player-seek"
         type="range"
@@ -300,6 +352,12 @@ export function Transport({
         max={Math.max(0.1, player.duration)}
         step={0.01}
         value={Math.min(player.time, player.duration)}
+        style={
+          {
+            ['--lo' as string]: `${((player.loopStart ?? 0) / Math.max(0.1, player.duration)) * 100}%`,
+            ['--hi' as string]: `${((player.loopEnd ?? player.duration) / Math.max(0.1, player.duration)) * 100}%`,
+          } as React.CSSProperties
+        }
         onChange={(event) => midiPlayer.seek(Number(event.target.value))}
         aria-label={t('player.seek')}
       />

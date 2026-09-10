@@ -21,7 +21,8 @@ test.describe('player', () => {
 
     // Transport uses SVG icons, not platform-dependent font glyphs.
     await expect(page.locator('.player-play svg')).toHaveCount(1);
-    await expect(page.locator('.player-transport .player-btn svg')).toHaveCount(3);
+    // stop, loop, record, metronome
+    await expect(page.locator('.player-transport .player-btn svg')).toHaveCount(4);
 
     // Selecting a track auto-plays it.
     await page.locator('.player-track', { hasText: '致爱丽丝' }).click();
@@ -39,6 +40,65 @@ test.describe('player', () => {
     await expect(play).toHaveClass(/\bon\b/);
     await current.dblclick();
     await expect(play).not.toHaveClass(/\bon\b/);
+  });
+
+  test('loops an A/B region and clicks the metronome', async ({ page }) => {
+    await boot(page);
+    await page.locator('.player-open').click();
+    await page.locator('.player-track', { hasText: '致爱丽丝' }).click();
+    await expect(page.locator('.player-play')).toHaveClass(/\bon\b/);
+
+    // Metronome on, which also reveals the count-in switch.
+    const metro = page.locator('.player-transport .player-btn[aria-label="节拍器"]');
+    await metro.click();
+    await expect(metro).toHaveAttribute('aria-pressed', 'true');
+    const countIn = page.locator('.player-transport .player-btn[aria-label="预备拍"]');
+    await expect(countIn).toBeVisible();
+    await countIn.click();
+    await expect(countIn).toHaveAttribute('aria-pressed', 'true');
+    await countIn.click();
+
+    // Mark A and B around the current playhead.
+    await page.waitForTimeout(1200);
+    await page.locator('.player-transport .player-btn[aria-label^="把 A 点"]').click();
+    await page.waitForTimeout(1500);
+    await page.locator('.player-transport .player-btn[aria-label^="把 B 点"]').click();
+
+    const region = await page.locator('.player-seek').evaluate((el) => {
+      const cs = getComputedStyle(el as HTMLElement);
+      return {
+        lo: parseFloat(cs.getPropertyValue('--lo')),
+        hi: parseFloat(cs.getPropertyValue('--hi')),
+      };
+    });
+    expect(region.hi).toBeGreaterThan(region.lo + 1);
+    // Setting both points switches looping on by itself.
+    await expect(page.locator('.player-transport .player-btn[aria-label="循环"]')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    // Playback must stay inside the region instead of running past it.
+    const readTime = async () => {
+      const text = (await page.locator('.player-time').textContent()) ?? '';
+      const [mm, ss] = (text.split('/')[0] ?? '0:00').trim().split(':').map(Number);
+      return mm * 60 + ss;
+    };
+    await page.waitForTimeout(4000);
+    const now = await readTime();
+    const duration = await page.locator('.player-seek').evaluate((el) => Number((el as HTMLInputElement).max));
+    const lo = (region.lo / 100) * duration;
+    const hi = (region.hi / 100) * duration;
+    expect(now).toBeGreaterThanOrEqual(Math.floor(lo) - 1);
+    expect(now).toBeLessThanOrEqual(Math.ceil(hi) + 1);
+
+    // Clearing the region drops the band.
+    await page.locator('.player-transport .player-btn[aria-label^="清除"]').click();
+    const cleared = await page.locator('.player-seek').evaluate((el) =>
+      getComputedStyle(el as HTMLElement).getPropertyValue('--hi').trim(),
+    );
+    expect(cleared).toBe('100%');
+    await page.locator('.player-play').click();
   });
 
   test('shows a chord name for three held notes, visually distinct', async ({ page }) => {
