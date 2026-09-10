@@ -52,6 +52,9 @@ void gs_daisy_init(float sample_rate);
 
 /* Clear the DSP state of one voice slot (called when a slot is reallocated). */
 void gs_voice_reset(int v);
+/** Seed the two oscillator phases (0..1) so stacked voices do not start in
+    phase, which would make every chord attack peak N times instead of sqrt(N). */
+void gs_voice_phase(int v, float p0, float p1);
 
 /* --- per-voice oscillators ------------------------------------------------- */
 void gs_voice_osc_set(int v, int which, uint32_t wave, float freq, float amp, float pw);

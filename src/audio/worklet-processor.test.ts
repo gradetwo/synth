@@ -94,11 +94,13 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
 
     const left = new Float32Array(128);
     const right = new Float32Array(128);
+    // Track the peak across every rendered block: the level moves with the
+    // envelope, so sampling only the last one is not a level check.
+    let peak = 0;
     for (let i = 0; i < 24; i++) {
       proc.process([], [[left, right]], params);
+      for (const v of left) peak = Math.max(peak, Math.abs(v));
     }
-    let peak = 0;
-    for (const v of left) peak = Math.max(peak, Math.abs(v));
     expect(peak).toBeGreaterThan(0.05);
     expect(left.some((v) => v !== 0)).toBe(true);
   });

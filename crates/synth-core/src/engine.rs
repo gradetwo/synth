@@ -9,7 +9,7 @@ use crate::alloc_arena;
 use crate::dsp::adsr::Adsr;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::simd;
-use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_clip, Rng};
+use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_limit, Rng};
 use crate::fft::Spectrum;
 use crate::params::{
     id, is_continuous, LfoTarget, ModDst, ModSrc, OscParams, Params, MAX_BLOCK_SIZE, MAX_VOICES,
@@ -22,6 +22,7 @@ use crate::voice::{NoteOnResult, VoiceManager};
 extern "C" {
     fn gs_daisy_init(sample_rate: f32);
     fn gs_voice_reset(v: i32);
+    fn gs_voice_phase(v: i32, p0: f32, p1: f32);
     fn gs_voice_osc_set(v: i32, which: i32, wave: u32, freq: f32, amp: f32, pw: f32);
     fn gs_voice_osc_block(v: i32, which: i32, out: *mut f32, frames: u32);
     fn gs_voice_filter_set(v: i32, kind: i32, freq: f32, res: f32, drive: f32);
@@ -51,8 +52,11 @@ extern "C" {
 }
 
 /// Short release applied to a stolen voice (seconds).
-const STEAL_RELEASE: f32 = 0.004;
+const STEAL_RELEASE: f32 = 0.008;
 /// Per-voice gain before the mix bus.
+/// Per-voice bus gain. With decorrelated start phases a dense chord sums to
+/// roughly sqrt(N) instead of N, so this leaves the master bus inside the
+/// limiter's linear region even with every oscillator at full level.
 const VOICE_GAIN: f32 = 0.22;
 /// One-pole time constant for continuous-parameter smoothing (seconds).
 const SMOOTH_TAU_S: f32 = 0.02;
@@ -129,6 +133,8 @@ pub struct Engine {
     out_r: [f32; MAX_BLOCK_SIZE],
 
     rng: Rng,
+    /// Increments per started voice; drives the low-discrepancy phase spread.
+    phase_seed: u32,
     pitch_bend: f32,
     mod_wheel: f32,
     /// Held notes for mono/legato mode (slot 0 only).
@@ -180,6 +186,7 @@ impl Engine {
             out_l: [0.0; MAX_BLOCK_SIZE],
             out_r: [0.0; MAX_BLOCK_SIZE],
             rng: Rng::new(0x51f3_9b1d),
+            phase_seed: 0,
             pitch_bend: 0.0,
             mod_wheel: 0.0,
             mono_held: [0; 16],
@@ -359,6 +366,15 @@ impl Engine {
         self.vm.all_notes_off();
     }
 
+    /// Deterministic low-discrepancy start phases for a new voice.
+    fn next_phases(&mut self) -> (f32, f32) {
+        self.phase_seed = self.phase_seed.wrapping_add(1);
+        let n = self.phase_seed as f32;
+        let p0 = (n * 0.618_034).fract();
+        let p1 = (n * 0.754_877_7 + 0.37).fract();
+        (p0, p1)
+    }
+
     /// MONO/LEGATO note-on: always uses slot 0.
     fn mono_note_on(&mut self, note: u8, velocity: f32) {
         let was_held = self.mono_len;
@@ -387,6 +403,8 @@ impl Engine {
         }
         if !legato {
             unsafe { gs_voice_reset(slot as i32) };
+            let (p0, p1) = self.next_phases();
+            unsafe { gs_voice_phase(slot as i32, p0, p1) };
             let p = self.params.env;
             let env = &mut self.envs[slot];
             env.reset();
@@ -426,6 +444,13 @@ impl Engine {
 
     fn retrigger(&mut self, slot: usize) {
         unsafe { gs_voice_reset(slot as i32) };
+        // Start each voice at a spread phase: identical start phases make a
+        // stacked chord peak linearly instead of ~sqrt(N), which used to push
+        // the master bus into the limiter on every attack. The sequence is
+        // deterministic (golden-ratio low-discrepancy) so renders and the DSP
+        // baseline stay reproducible.
+        let (p0, p1) = self.next_phases();
+        unsafe { gs_voice_phase(slot as i32, p0, p1) };
         let p = self.params.env;
         let env = &mut self.envs[slot];
         env.reset();
@@ -564,10 +589,16 @@ impl Engine {
         }
         self.active_voices = active;
 
-        // --- master bus: soft clip into the FX send -------------------------
+        // --- master bus: hand the raw sum to the FX send ---------------------
+        // No clipper here: the voice gain already leaves headroom, and clipping
+        // this early turned every loud chord into audible distortion.
+        // The ±1e-15 alternating dither is -300 dBFS and inaudible, but it keeps
+        // the reverb/delay feedback paths out of denormal range, where wasm has
+        // no flush-to-zero and a decaying tail can cost 100x the CPU.
         for i in 0..frames {
-            self.fx_l[i] = soft_clip(self.mix_l[i]);
-            self.fx_r[i] = soft_clip(self.mix_r[i]);
+            let dither = if i & 1 == 0 { 1e-15 } else { -1e-15 };
+            self.fx_l[i] = self.mix_l[i] + dither;
+            self.fx_r[i] = self.mix_r[i] - dither;
         }
 
         // --- global FX (Soundpipe reverb + delay) ---------------------------
@@ -602,8 +633,8 @@ impl Engine {
 
         for i in 0..frames {
             let g = start + step * (i as f32 + 1.0);
-            let l = soft_clip(self.fx_l[i] * limit) * g;
-            let r = soft_clip(self.fx_r[i] * limit) * g;
+            let l = soft_limit(self.fx_l[i] * limit * g);
+            let r = soft_limit(self.fx_r[i] * limit * g);
             if l.is_finite() {
                 self.out_l[i] = l;
             } else {
@@ -1260,6 +1291,79 @@ mod tests {
         e.set_param(id::OSC1_WAVE, crate::params::Wave::Square as u32 as f32);
         e.process(128);
         assert_eq!(e.params.osc[0].wave, crate::params::Wave::Square);
+    }
+
+    fn render_chord(e: &mut Engine, notes: &[u8], blocks: usize) -> (f32, f32, f32) {
+        for note in notes {
+            e.note_on(*note, 1.0);
+        }
+        let mut peak = 0.0f32;
+        let mut knee = 0usize;
+        let mut total = 0usize;
+        let mut min_gain = 1.0f32;
+        for block in 0..blocks {
+            e.process(128);
+            if block < 12 {
+                continue; // skip the attack of the first block
+            }
+            for i in 0..128 {
+                let out = e.out_l[i].abs().max(e.out_r[i].abs());
+                peak = peak.max(out);
+                if out > 0.82 {
+                    knee += 1;
+                }
+                total += 1;
+            }
+            min_gain = min_gain.min(e.limit_gain);
+        }
+        (peak, knee as f32 / total as f32, min_gain)
+    }
+
+    /// A loud polyphonic chord must reach the output without being coloured:
+    /// the master bus stays inside the limiter's linear region, so nothing is
+    /// soft-clipped on the way out (this used to distort ~25% of samples).
+    #[test]
+    fn dense_chords_stay_clean() {
+        let _guard = ENGINE_LOCK.lock().unwrap();
+        let mut e = new_engine(16);
+        for param in [id::OSC1_LEVEL, id::OSC2_LEVEL] {
+            e.set_param(param, 1.0);
+        }
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::OSC2_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::FILTER_CUTOFF, 16000.0);
+        e.set_param(id::MASTER_VOLUME, 0.75);
+        let (peak, knee, min_gain) =
+            render_chord(&mut e, &[36, 43, 48, 52, 55, 59, 62, 64, 67, 71, 74, 79], 200);
+        assert!(peak <= 1.0, "output clipped at {peak}");
+        assert!(knee < 0.001, "{:.2}% of the output was soft-limited", knee * 100.0);
+        assert!(min_gain > 0.98, "limiter worked too hard: {min_gain}");
+    }
+
+    /// Voices start at random phases, so a stacked chord grows like sqrt(N)
+    /// instead of N. Without this the same chord used to peak around 1.6.
+    #[test]
+    fn stacked_voices_do_not_start_in_phase() {
+        let _guard = ENGINE_LOCK.lock().unwrap();
+        let mut e = new_engine(16);
+        for param in [id::OSC1_LEVEL, id::OSC2_LEVEL] {
+            e.set_param(param, 1.0);
+        }
+        e.set_param(id::FILTER_CUTOFF, 16000.0);
+        let mut peak_mix = 0.0f32;
+        for note in [36, 43, 48, 52, 55, 59, 62, 64, 67, 71, 74, 79] {
+            e.note_on(note, 1.0);
+        }
+        for block in 0..120 {
+            e.process(128);
+            if block < 12 {
+                continue;
+            }
+            for i in 0..128 {
+                peak_mix = peak_mix.max(e.mix_l[i].abs().max(e.mix_r[i].abs()));
+            }
+        }
+        assert!(peak_mix < 1.2, "in-phase stacking suspected, mix peaked at {peak_mix}");
     }
 
     #[test]

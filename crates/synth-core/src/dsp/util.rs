@@ -18,18 +18,26 @@ pub fn exp2(x: f32) -> f32 {
     x.exp2()
 }
 
-/// Padé approximation of tanh — used as the master soft clipper.
-/// Accurate to ~1e-4 over [-4, 4] and monotonic beyond, with no libm call.
+/// Soft limiter with a linear region.
+///
+/// `soft_clip` colours everything above ~0.3, which is audible on a loud
+/// polyphonic bus; this one is bit-transparent below `KNEE` and only bends the
+/// last few dB before the hard ceiling, so normal playing stays clean and
+/// transients are caught without crackle.
 #[inline]
-pub fn soft_clip(x: f32) -> f32 {
-    if x <= -3.0 {
-        return -1.0;
+pub fn soft_limit(x: f32) -> f32 {
+    const KNEE: f32 = 0.82;
+    let a = x.abs();
+    if a <= KNEE {
+        return x;
     }
-    if x >= 3.0 {
-        return 1.0;
+    let over = (a - KNEE) / (1.0 - KNEE);
+    let shaped = KNEE + (1.0 - KNEE) * (1.0 - (-over).exp());
+    if shaped >= 1.0 {
+        x.signum()
+    } else {
+        shaped.copysign(x)
     }
-    let x2 = x * x;
-    x * (27.0 + x2) / (27.0 + 9.0 * x2)
 }
 
 /// xorshift32 — allocation free, deterministic across runs.
@@ -60,6 +68,12 @@ impl Rng {
     pub fn next_bipolar(&mut self) -> f32 {
         (self.next_u32() as f32 / u32::MAX as f32) * 2.0 - 1.0
     }
+
+    /// Uniform in [0, 1).
+    #[inline]
+    pub fn next_unit(&mut self) -> f32 {
+        self.next_u32() as f32 / u32::MAX as f32
+    }
 }
 
 /// Linear interpolation, used for glide between note frequencies.
@@ -80,13 +94,21 @@ mod tests {
     }
 
     #[test]
-    fn soft_clip_is_bounded_and_odd() {
-        assert!(soft_clip(10.0) <= 1.0);
-        assert!(soft_clip(-10.0) >= -1.0);
-        for x in [0.1f32, 0.5, 1.0, 2.0] {
-            assert!((soft_clip(x) + soft_clip(-x)).abs() < 1e-6);
+    fn soft_limit_is_transparent_then_bounded() {
+        // Bit-transparent inside the linear region…
+        for x in [0.0f32, 0.1, 0.5, 0.82, -0.7] {
+            assert_eq!(soft_limit(x), x);
         }
-        assert!((soft_clip(0.0)).abs() < 1e-9);
+        // …then compresses smoothly, monotonically, and never exceeds unity.
+        assert!(soft_limit(0.9) > 0.82 && soft_limit(0.9) < 0.9);
+        assert!(soft_limit(0.9) < soft_limit(0.95));
+        assert!(soft_limit(0.95) < soft_limit(1.0));
+        assert!(soft_limit(1.0) < soft_limit(2.0));
+        assert!(soft_limit(10.0) <= 1.0 && soft_limit(-10.0) >= -1.0);
+        assert!(soft_limit(f32::INFINITY) <= 1.0);
+        for x in [0.9f32, 1.2, 3.0, 1e6] {
+            assert!((soft_limit(x) + soft_limit(-x)).abs() < 1e-6);
+        }
     }
 
     #[test]

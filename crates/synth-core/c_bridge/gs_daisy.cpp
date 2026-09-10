@@ -80,6 +80,12 @@ void gs_voice_reset(int v) {
     d.dc.Init(g_sample_rate);
 }
 
+void gs_voice_phase(int v, float p0, float p1) {
+    VoiceDsp &d = voice(v);
+    d.osc[0].Reset(p0 - floorf(p0));
+    d.osc[1].Reset(p1 - floorf(p1));
+}
+
 void gs_voice_osc_set(int v, int which, uint32_t wave, float freq, float amp, float pw) {
     VoiceDsp &d = voice(v);
     daisysp::Oscillator &o = d.osc[which ? 1 : 0];
