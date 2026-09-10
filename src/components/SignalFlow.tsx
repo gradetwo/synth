@@ -778,7 +778,8 @@ export function SignalFlow() {
           composer: t('player.recordedBy'),
           song: clip,
           group: 'clip',
-        });
+        })
+      store.mark();
         toast(t('player.clipSaved', { n: clip.notes.length }));
       }
       return;

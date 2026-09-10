@@ -18,6 +18,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.24.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '**撤销/重做覆盖整个工作区**：除音色参数外，模块折叠与展开、视图切换、信号流节点位置与「重置画布」、删除用户预设、删除录制/导入片段都可撤销（`⌘/Ctrl+Z`、`⇧⌘/Ctrl+Shift+Z` 或 `Ctrl+Y`）。',
+        '**Undo/redo now covers the whole workspace**: besides patch parameters, it restores module collapse/expand, view switches, signal-flow node positions and canvas resets, deleted user presets, and removed recordings/imports (`⌘/Ctrl+Z`, `⇧⌘/Ctrl+Shift+Z` or `Ctrl+Y`).',
+      ],
+      [
+        '会话开始时的状态会作为第 0 步记录下来，因此**打开应用后的第一个操作也能撤销**；拖动节点位置与旋钮扫动一样会合并成一步，不会产生几十条历史。',
+        'The state the session started from is recorded as step zero, so the **very first action after opening the app can be undone**; dragging a node coalesces into one step, exactly like a knob sweep.',
+      ],
+    ],
+  },
+  {
     version: '1.23.0',
     date: '2026-09-10',
     kind: 'fix',

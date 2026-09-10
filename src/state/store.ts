@@ -37,6 +37,7 @@ import {
   type Preset,
   type PresetCategory,
 } from './presets';
+import { midiLibrary, type Track } from '@/midi/library';
 import { decodePatch, downloadText, encodePatch, shareUrl } from './share';
 import { setLang } from '@/i18n';
 
@@ -64,6 +65,32 @@ function cloneState(state: SynthState): SynthState {
   };
 }
 
+function cloneLayout(layout: LayoutState): LayoutState {
+  return {
+    ...layout,
+    order: [...layout.order],
+    collapsed: { ...layout.collapsed },
+    autoCollapsed: [...layout.autoCollapsed],
+    flowPos: Object.fromEntries(Object.entries(layout.flowPos).map(([k, v]) => [k, [...v] as [number, number]])),
+    flowHidden: [...layout.flowHidden],
+  };
+}
+
+/**
+ * One undoable step. It covers everything that makes up the *document*: the
+ * patch, the workspace layout, the user's presets and their recorded/imported
+ * tracks — not preferences such as language or theme, which are handled by the
+ * layout mutators but are intentionally not part of undo.
+ */
+interface HistoryEntry {
+  state: SynthState;
+  layout: LayoutState;
+  userPresets: Preset[];
+  currentPresetId: string;
+  clips: Track[];
+  currentClipId: string;
+}
+
 function loadJson<T>(key: string): T | null {
   try {
     const raw = localStorage.getItem(key);
@@ -87,7 +114,7 @@ class SynthStore {
   private userPresets: Preset[];
   private currentPresetId = FACTORY_PRESETS[0].id;
   private transientPreset: Preset | null = null;
-  private history: SynthState[] = [];
+  private history: HistoryEntry[] = [];
   private historyIndex = -1;
   private historyTimer: number | undefined;
   private slots: { a: SynthState | null; b: SynthState | null } = { a: null, b: null };
@@ -104,6 +131,9 @@ class SynthStore {
     setLang(this.layout.lang);
     this.userPresets = loadJson<Preset[]>(USER_KEY) ?? [];
     this.snapshot = this.buildSnapshot();
+    // Entry zero is the state the session started from, so the very first
+    // action is undoable.
+    this.recordHistory();
   }
 
   private buildSnapshot(): Snapshot {
@@ -348,6 +378,7 @@ class SynthStore {
     this.userPresets = [preset, ...this.userPresets];
     saveJson(USER_KEY, this.userPresets);
     this.currentPresetId = preset.id;
+    this.mark();
     this.commit();
     return preset;
   }
@@ -356,6 +387,7 @@ class SynthStore {
     this.userPresets = this.userPresets.filter((p) => p.id !== id);
     saveJson(USER_KEY, this.userPresets);
     if (this.currentPresetId === id) this.currentPresetId = FACTORY_PRESETS[0].id;
+    this.mark();
     this.commit();
   }
 
@@ -365,9 +397,26 @@ class SynthStore {
 
   // ---------------------------------------------------------- undo / redo
 
+  private captureEntry(): HistoryEntry {
+    const library = midiLibrary.snapshot();
+    return {
+      state: cloneState(this.state),
+      layout: cloneLayout(this.layout),
+      userPresets: this.userPresets.map((p) => ({ ...p })),
+      currentPresetId: this.currentPresetId,
+      clips: library.clips,
+      currentClipId: library.currentId,
+    };
+  }
+
+  /** Record the current document as an undo step. */
+  mark() {
+    this.recordHistory();
+  }
+
   private recordHistory() {
     this.history = this.history.slice(0, this.historyIndex + 1);
-    this.history.push(cloneState(this.state));
+    this.history.push(this.captureEntry());
     if (this.history.length > 60) this.history.shift();
     this.historyIndex = this.history.length - 1;
   }
@@ -382,8 +431,23 @@ class SynthStore {
     this.historyTimer = window.setTimeout(() => this.recordHistory(), 700);
   }
 
+  /** Patch-only restore, used by the A/B slots. */
   private restore(state: SynthState) {
     this.state = cloneState(state);
+    engine.applyState(this.state, true);
+    this.commit();
+  }
+
+  /** Full document restore, used by undo/redo. */
+  private restoreEntry(entry: HistoryEntry) {
+    this.state = cloneState(entry.state);
+    this.layout = cloneLayout(entry.layout);
+    setLang(this.layout.lang);
+    this.userPresets = entry.userPresets.map((p) => ({ ...p }));
+    this.currentPresetId = entry.currentPresetId;
+    saveJson(USER_KEY, this.userPresets);
+    saveJson(LAYOUT_KEY, this.layout);
+    midiLibrary.restore(entry.clips, entry.currentClipId);
     engine.applyState(this.state, true);
     this.commit();
   }
@@ -392,7 +456,7 @@ class SynthStore {
     window.clearTimeout(this.historyTimer);
     if (this.historyIndex <= 0) return false;
     this.historyIndex -= 1;
-    this.restore(this.history[this.historyIndex]);
+    this.restoreEntry(this.history[this.historyIndex]);
     return true;
   }
 
@@ -400,7 +464,7 @@ class SynthStore {
     window.clearTimeout(this.historyTimer);
     if (this.historyIndex >= this.history.length - 1) return false;
     this.historyIndex += 1;
-    this.restore(this.history[this.historyIndex]);
+    this.restoreEntry(this.history[this.historyIndex]);
     return true;
   }
 
@@ -440,6 +504,7 @@ class SynthStore {
       // A manual toggle is the user's choice, so it stops being automatic.
       autoCollapsed: this.layout.autoCollapsed.filter((m) => m !== id),
     };
+    this.mark();
     this.commit();
   }
 
@@ -531,10 +596,13 @@ class SynthStore {
   setView(view: ViewMode) {
     if (this.layout.view === view) return;
     this.layout = { ...this.layout, view };
+    this.mark();
     this.commit();
   }
 
   setFlowPosition(id: string, pos: [number, number]) {
+    // Dragging a node fires continuously: coalesce like a knob sweep.
+    this.scheduleHistory();
     this.layout = { ...this.layout, flowPos: { ...this.layout.flowPos, [id]: pos } };
     this.commit();
   }
@@ -544,16 +612,19 @@ class SynthStore {
       ? this.layout.flowHidden.filter((x) => x !== id)
       : [...this.layout.flowHidden, id];
     this.layout = { ...this.layout, flowHidden: hidden };
+    this.mark();
     this.commit();
   }
 
   resetFlow() {
     this.layout = { ...this.layout, flowPos: {}, flowHidden: [] };
+    this.mark();
     this.commit();
   }
 
   setDisplayExpanded(expanded: boolean | null) {
     this.layout = { ...this.layout, displayExpanded: expanded };
+    this.mark();
     this.commit();
   }
 

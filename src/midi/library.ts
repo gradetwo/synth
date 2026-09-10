@@ -87,6 +87,28 @@ class MidiLibrary {
     this.emit();
   }
 
+  /**
+   * Non-built-in tracks plus the selection, for the store's undo history.
+   * Songs are treated as immutable values (the roll always saves a fresh one),
+   * so sharing the references is safe and keeps snapshots cheap.
+   */
+  snapshot(): { clips: Track[]; currentId: string } {
+    return {
+      clips: this.tracks.filter((track) => !track.id.startsWith('demo:')).map((t) => ({ ...t })),
+      currentId: this.currentId,
+    };
+  }
+
+  /** Put the user's tracks back exactly as they were (undo/redo). */
+  restore(clips: Track[], currentId: string): void {
+    const builtins = this.tracks.filter((track) => track.id.startsWith('demo:'));
+    this.tracks = [...builtins, ...clips.map((t) => ({ ...t }))];
+    const next = this.tracks.find((track) => track.id === currentId) ?? this.tracks[0] ?? null;
+    this.currentId = next?.id ?? '';
+    midiPlayer.load(next?.song ?? null);
+    this.emit();
+  }
+
   /** Remove a track; the built-ins cannot be removed. */
   remove(id: string): void {
     if (id.startsWith('demo:')) return;

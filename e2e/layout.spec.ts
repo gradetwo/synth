@@ -101,3 +101,34 @@ test.describe('touch velocity', () => {
     expect(hard).toBeGreaterThan(soft);
   });
 });
+
+test.describe('undo covers the workspace', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('collapsing a module can be undone from the keyboard', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    const module = page.locator('.module[data-module-id="filter"]');
+    await expect(module).toBeVisible();
+    const bodyBefore = await module.locator('.module-body').count();
+
+    await module.locator('.module-collapse').click();
+    await expect
+      .poll(async () => module.locator('.module-body').count())
+      .not.toBe(bodyBefore);
+
+    // Ctrl/Cmd+Z restores the layout, not just the patch.
+    await page.keyboard.press('Control+z');
+    await expect.poll(async () => module.locator('.module-body').count()).toBe(bodyBefore);
+  });
+
+  test('switching views can be undone', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await expect(page.locator('.app')).toHaveAttribute('data-view', 'modules');
+    await page.getByRole('button', { name: '信号流' }).click();
+    await expect(page.locator('.app')).toHaveAttribute('data-view', 'flow');
+    await page.keyboard.press('Control+z');
+    await expect(page.locator('.app')).toHaveAttribute('data-view', 'modules');
+  });
+});

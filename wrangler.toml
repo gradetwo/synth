@@ -1,0 +1,6 @@
+name = "shiny-sky-9ea0"
+compatibility_date = "2024-09-23"
+workers_dev = false
+
+[assets]
+directory = "./dist"

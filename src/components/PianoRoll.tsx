@@ -16,6 +16,7 @@ import { midiPlayer, type PlayerState } from '@/midi/player';
 import { midi } from '@/audio/midi';
 import { noteBus, noteName } from '@/audio/noteBus';
 import { midiLibrary, trackTitle, type Track } from '@/midi/library';
+import { store } from '@/state/store';
 import { useResolvedTheme } from '@/state/theme';
 import { exportSongMidi } from '@/midi/export';
 import {
@@ -268,7 +269,8 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       composer: builtin ? t('player.recordedBy') : track.composer,
       song,
       group: 'clip',
-    });
+    })
+      store.mark();
     setTrack(midiLibrary.getCurrent());
     toast(t('roll.saved', { name, n: song.notes.length }));
     haptic(HAPTIC.medium);

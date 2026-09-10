@@ -6,6 +6,7 @@ import { midiPlayer, type PlayerState } from '@/midi/player';
 import { recorder, type RecorderState } from '@/midi/recorder';
 import { parseMidi } from '@/midi/smf';
 import { midiLibrary, trackTitle, type TrackGroup } from '@/midi/library';
+import { store } from '@/state/store';
 import { exportSongMidi, exportSongMp3 } from '@/midi/export';
 import { TransportIcon } from './TransportIcon';
 
@@ -77,7 +78,8 @@ export function PlayerPanel({
         composer: t('player.importedBy'),
         song,
         group: 'imported',
-      });
+      })
+      store.mark();
       toast(t('player.imported', { name: title, n: song.notes.length }));
     } catch (err) {
       toast(t('player.importFailed', { msg: err instanceof Error ? err.message : String(err) }));
@@ -95,7 +97,8 @@ export function PlayerPanel({
           composer: t('player.recordedBy'),
           song: clip,
           group: 'clip',
-        });
+        })
+      store.mark();
         toast(t('player.clipSaved', { n: clip.notes.length }));
       }
       return;

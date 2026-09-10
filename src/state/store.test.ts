@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { Param } from '@/audio/params';
+import { midiLibrary } from '@/midi/library';
 import { store } from './store';
 
 describe('synth store', () => {
@@ -151,5 +152,59 @@ describe('synth store', () => {
     expect(store.getSnapshot().state.routes.length).toBe(before + 1);
     store.removeRoute(0);
     expect(store.getSnapshot().state.routes.length).toBe(before);
+  });
+});
+
+describe('undo covers the whole document', () => {
+  it('undoes a module collapse', () => {
+    store.applyPresetById('init');
+    const before = store.getSnapshot().layout.collapsed.filter;
+    store.toggleCollapsed('filter' as never);
+    expect(store.getSnapshot().layout.collapsed.filter).not.toBe(before);
+    expect(store.undo()).toBe(true);
+    expect(store.getSnapshot().layout.collapsed.filter).toBe(before);
+    expect(store.redo()).toBe(true);
+    expect(store.getSnapshot().layout.collapsed.filter).not.toBe(before);
+    store.undo();
+  });
+
+  it('undoes a view change', () => {
+    store.setView('modules');
+    store.setView('flow');
+    expect(store.getSnapshot().layout.view).toBe('flow');
+    store.undo();
+    expect(store.getSnapshot().layout.view).toBe('modules');
+  });
+
+  it('undoes a deleted user preset', () => {
+    const preset = store.savePreset('UNDO ME · 撤销测试');
+    const count = store.getSnapshot().userPresets.length;
+    store.deletePreset(preset.id);
+    expect(store.getSnapshot().userPresets.length).toBe(count - 1);
+    expect(store.undo()).toBe(true);
+    expect(store.getSnapshot().userPresets.length).toBe(count);
+    expect(store.getSnapshot().userPresets.some((p) => p.id === preset.id)).toBe(true);
+    // Clean up so the next test starts from the same place.
+    store.deletePreset(preset.id);
+  });
+
+  it('undoes removing a recorded clip', () => {
+    midiLibrary.put({
+      id: 'clip:undo-test',
+      title: ['撤销测试', 'undo test'],
+      composer: 'test',
+      group: 'clip',
+      song: { name: 'undo test', bpm: 120, duration: 1, notes: [{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }] },
+    });
+    store.mark();
+    const tracks = midiLibrary.getTracks().length;
+    midiLibrary.remove('clip:undo-test');
+    expect(midiLibrary.getTracks().length).toBe(tracks - 1);
+    // The clip came back through the history, not by luck.
+    store.mark();
+    midiLibrary.remove('clip:undo-test');
+    expect(store.undo()).toBe(true);
+    expect(midiLibrary.getTracks().some((t) => t.id === 'clip:undo-test')).toBe(true);
+    midiLibrary.remove('clip:undo-test');
   });
 });
