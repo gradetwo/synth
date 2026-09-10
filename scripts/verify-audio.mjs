@@ -459,6 +459,19 @@ function blockSteps(frames) {
   check('clearing removes the table', ex.gs_wavetable_has() === 0, 'has = 0');
 }
 
+// ------------------------------------------------ 6. restarts do not leak
+{
+  // Every scenario above re-initialises the core, which is also what happens
+  // when the host restarts the audio engine. Anything allocated per init and not
+  // freed shrinks the arena until a later start fails outright.
+  const before = ex.gs_arena_free_bytes();
+  for (let i = 0; i < 4; i++) ex.gs_init(SR, 16);
+  const after = ex.gs_arena_free_bytes();
+  const lost = (before - after) / 1024;
+  check('re-initialising the core does not leak the arena', lost < 64, `${lost.toFixed(0)} KB lost over 4 restarts`);
+  check('the arena still has room after the restarts', after > 512 * 1024, `${(after / 1024).toFixed(0)} KB free`);
+}
+
 console.log('[audio] quality gate');
 for (const line of report) console.log(line);
 if (failures.length) {

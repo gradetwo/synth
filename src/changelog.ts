@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.48.0',
+    date: '2026-09-10',
+    kind: 'sound',
+    items: [
+      [
+        '混响新增第二种引擎：**卷积混响（IR）**。在混响单元里把 ALGO 切到 IR，即可导入一段脉冲响应文件（WAV/AIFF/FLAC/MP3），用真实空间的采样做混响；`TRIM` 调湿声大小，文件超过 2 秒会截断，响度按能量自动归一化，所以不同 IR 的干湿比例是可比的。',
+        'The reverb has a second engine: **convolution (IR)**. Switch ALGO to IR in the reverb unit and import an impulse response (WAV/AIFF/FLAC/MP3) to reverb in a real space; `TRIM` sets the wet level, files longer than 2 s are truncated, and the level is energy-normalised so the mix knob means the same thing for every response.',
+      ],
+      [
+        '导入的 IR 保存在本机、重开还在，切回 ALGO 或用 `✕` 移除都不会影响原有算法混响；导出的音频会一并渲染。',
+        'The imported response is kept on the device and survives a reload; switching back to ALGO or removing it with `✕` leaves the algorithmic reverb untouched, and audio export renders it too.',
+      ],
+    ],
+  },
+  {
     version: '1.47.0',
     date: '2026-09-10',
     kind: 'feature',

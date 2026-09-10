@@ -647,6 +647,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Reverb**: Soundpipe’s `reverbsc` (Sean Costello’s eight-delay-line feedback network). `SIZE` maps feedback 0.70–0.97 and a low-pass from 4–14 kHz; `MIX` sets the dry/wet balance.',
           ],
           [
+            '**卷积混响（IR）**：混响单元的 `ALGO`/`IR` 切换两种引擎。IR 模式导入一段脉冲响应（WAV/AIFF/FLAC/MP3，建议单声道 ≤2 秒），用真实空间的采样做混响；`TRIM` 调湿声（按能量归一化，不同 IR 之间可比），`✕` 移除。湿声比干声晚约 21 ms，相当于固定预延迟，不会与干声打架；没有导入 IR 时选 IR 会回落到算法混响。',
+            '**Convolution (IR)**: the reverb unit switches between two engines with `ALGO`/`IR`. IR mode imports an impulse response (WAV/AIFF/FLAC/MP3, mono and up to 2 s is typical) and reverbs in that real space; `TRIM` sets the wet level (energy-normalised, so responses are comparable) and `✕` removes it. The wet path is ~21 ms behind the dry signal, which acts as a fixed pre-delay rather than a comb; with nothing imported, IR falls back to the algorithmic engine.',
+          ],
+          [
             '**信号链**：FX 模块顶部的顺序就是处理顺序，用 `‹` `›` 调换相邻两位（六种效果的一个排列，不会丢也不会重复），`∥` 把插入式效果（合唱/镶边/移相/过载）改成**并联送出**——干声保留，效果叠加。默认顺序与历史一致，旧音色不变。',
             '**Chain**: the order of the six effects in the FX module is the processing order; `‹` `›` swap neighbours (a permutation, so nothing is lost or doubled) and `∥` turns an insert effect (chorus, flanger, phaser, drive) into a **parallel send** that leaves the dry signal intact. The default order matches what the synth always did, so existing patches are unchanged.',
           ],

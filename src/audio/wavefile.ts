@@ -231,11 +231,11 @@ export function parseWav(bytes: ArrayBuffer): DecodedWave | null {
   return { sampleRate, samples: loudestChannel(out) };
 }
 
-/** One cycle from any file the browser can decode, WAV or not. */
-export async function decodeCycle(file: Blob): Promise<Float32Array> {
+/** Mono samples of any file the browser can decode, without cycle analysis. */
+export async function decodeSamples(file: Blob): Promise<Float32Array> {
   const bytes = await file.arrayBuffer();
   const wav = parseWav(bytes.slice(0));
-  if (wav) return extractCycle(wav.samples);
+  if (wav) return wav.samples;
 
   const Offline =
     (globalThis as { OfflineAudioContext?: typeof OfflineAudioContext }).OfflineAudioContext ??
@@ -253,5 +253,41 @@ export async function decodeCycle(file: Blob): Promise<Float32Array> {
     channels.push(buffer.getChannelData(channel));
   }
   if (channels.length === 0) throw new WaveImportError('decode', 'the file has no audio');
-  return extractCycle(loudestChannel(channels));
+  return loudestChannel(channels);
+}
+
+/** One cycle from any file the browser can decode, WAV or not. */
+export async function decodeCycle(file: Blob): Promise<Float32Array> {
+  return extractCycle(await decodeSamples(file));
+}
+
+/** 16-bit samples as base64, for storing a waveform in `localStorage`. */
+export function encodeSamples(samples: Float32Array): string {
+  const bytes = new Uint8Array(samples.length * 2);
+  const view = new DataView(bytes.buffer);
+  for (let i = 0; i < samples.length; i++) {
+    const clamped = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(i * 2, Math.round(clamped * 32767), true);
+  }
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return typeof btoa === 'function' ? btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
+}
+
+export function decodeSamples16(text: string): Float32Array | null {
+  try {
+    const binary =
+      typeof atob === 'function' ? atob(text) : Buffer.from(text, 'base64').toString('binary');
+    if (binary.length < 2) return null;
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const view = new DataView(bytes.buffer);
+    const out = new Float32Array(bytes.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = view.getInt16(i * 2, true) / 32767;
+    return out;
+  } catch {
+    return null;
+  }
 }

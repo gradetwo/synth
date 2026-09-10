@@ -101,6 +101,10 @@ export const Param = {
   FX_CHAIN4: 85,
   FX_CHAIN5: 86,
   FX_CHAIN6: 87,
+  /** Which engine the reverb section runs: 0 = algorithmic, 1 = impulse response (A5). */
+  FX_REVERB_MODE: 94,
+  /** Output trim for the impulse-response reverb. */
+  FX_CONV_TRIM: 95,
   /** 1 = that position is a send (parallel) instead of an insert (A5). */
   FX_PARALLEL1: 88,
   FX_PARALLEL2: 89,
@@ -180,6 +184,8 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.WT_USER]: 'wtUser',
   [Param.FX_DELAY_DAMP]: 'fxDelayDamp',
   [Param.FX_DELAY_PINGPONG]: 'fxDelayPingpong',
+  [Param.FX_REVERB_MODE]: 'fxReverbMode',
+  [Param.FX_CONV_TRIM]: 'fxConvTrim',
   [Param.FX_CHAIN1]: 'fxChain1',
   [Param.FX_CHAIN2]: 'fxChain2',
   [Param.FX_CHAIN3]: 'fxChain3',
@@ -432,6 +438,8 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.WT_USER]: 0,
   [Param.FX_DELAY_DAMP]: 0.35,
   [Param.FX_DELAY_PINGPONG]: 0,
+  [Param.FX_REVERB_MODE]: 0,
+  [Param.FX_CONV_TRIM]: 1,
   // The order effects have always run in, so every existing patch keeps its sound.
   [Param.FX_CHAIN1]: 1,
   [Param.FX_CHAIN2]: 2,
@@ -639,6 +647,7 @@ export const PARAM_SPECS: ParamSpec[] = [
   spec(Param.FX_REVERB_DAMP, 'DAMP', 0, 1, 0.35, fmt.pct),
   spec(Param.FX_REVERB_WIDTH, 'WIDTH', 0, 1, 0.8, fmt.pct),
   spec(Param.FX_REVERB_PREDELAY, 'PRE', 0, 0.1, 0.012, (v) => `${Math.round(v * 1000)} ms`),
+  spec(Param.FX_CONV_TRIM, 'TRIM', 0, 4, 1, (v) => `${v.toFixed(2)}×`),
   spec(Param.FX_DELAY_FB, 'FDBK', 0, 0.9, 0.35, fmt.pct),
   spec(Param.FX_DELAY_MIX, 'MIX', 0, 1, 0.22, fmt.pct),
   spec(Param.FX_DELAY_DAMP, 'DAMP', 0, 1, 0.35, fmt.pct),

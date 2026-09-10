@@ -51,7 +51,6 @@ extern "C" {
         out: *mut f32,
         frames: u32,
     );
-    fn gs_sp_init(sample_rate: f32);
     fn gs_fx_init(sample_rate: f32);
     fn gs_fx_chorus_set(depth: f32, freq: f32, delay_ms: f32, feedback: f32);
     fn gs_fx_chorus_block(in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
@@ -61,8 +60,6 @@ extern "C" {
     fn gs_fx_phaser_block(in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
     fn gs_fx_overdrive_set(drive: f32);
     fn gs_fx_overdrive_block(in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
-    #[cfg(test)]
-    fn gs_sp_alloc_events() -> u32;
 }
 
 /// Short release applied to a stolen voice (seconds).
@@ -339,7 +336,6 @@ impl Engine {
             .collect();
         unsafe {
             gs_daisy_init(self.sample_rate);
-            gs_sp_init(self.sample_rate);
             gs_fx_init(self.sample_rate);
         }
         for comb in self.combs.iter_mut() {
@@ -348,7 +344,14 @@ impl Engine {
         self.reverb.set_sample_rate(self.sample_rate);
         self.delay.setup(self.sample_rate);
         self.convolver.prepare();
-        self.ir_scratch = vec![0.0; Convolver::max_ir_samples()];
+        // `resize`, not a fresh `vec!`: the host may re-init the engine, and the
+        // arena never grows. Allocating a second 384 KB response buffer before
+        // the old one is freed fragments the free list until a later init fails.
+        let capacity = Convolver::max_ir_samples();
+        if self.ir_scratch.len() != capacity {
+            self.ir_scratch.clear();
+            self.ir_scratch.resize(capacity, 0.0);
+        }
         self.reverb.set_params(ReverbParams {
             size: self.params.fx.reverb_size,
             damp: self.params.fx.reverb_damp,
@@ -459,12 +462,18 @@ impl Engine {
 
     /// Where the host stages an impulse response, then calls [`Engine::import_ir`].
     pub fn ir_scratch_ptr(&mut self) -> *mut f32 {
+        // Allocated in `init`; the host may ask before that (or in a test), so
+        // make sure the buffer exists rather than handing out a null pointer.
+        if self.ir_scratch.is_empty() {
+            self.ir_scratch.resize(Convolver::max_ir_samples(), 0.0);
+        }
         self.ir_scratch.as_mut_ptr()
     }
 
-    /// How many samples of impulse response the core can hold.
+    /// How many samples of impulse response the core can hold. A compile-time
+    /// ceiling, so it is answerable before anything is allocated.
     pub fn ir_capacity(&self) -> usize {
-        self.ir_scratch.len()
+        Convolver::max_ir_samples()
     }
 
     /// Analyse a staged impulse response. Returns 0 on success, or the numeric
@@ -1904,15 +1913,9 @@ mod tests {
         e.set_param(id::FX_DELAY_ON, 1.0);
         e.note_on(60, 1.0);
         let before_arena = alloc_arena::alloc_count();
-        let before_sp = unsafe { gs_sp_alloc_events() };
         for _ in 0..200 {
             e.process(128);
         }
-        assert_eq!(
-            unsafe { gs_sp_alloc_events() },
-            before_sp,
-            "C DSP must not allocate during process"
-        );
         assert_eq!(
             alloc_arena::alloc_count(),
             before_arena,

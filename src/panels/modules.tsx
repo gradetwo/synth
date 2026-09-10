@@ -1,5 +1,9 @@
+import { useRef, useSyncExternalStore } from 'react';
 import { store } from '@/state/store';
 import { useLang, useParam, useRoutes } from '@/hooks/useSynth';
+import { WaveImportError } from '@/audio/wavefile';
+import { clearUserIr, getUserIr, importUserIr, subscribeUserIr } from '@/audio/ir';
+import { toast } from '@/components/Toast';
 import {
   DELAY_SYNCS,
   FX_KIND_LABELS,
@@ -411,6 +415,31 @@ function ChainChip({
 function FxModule() {
   const sync = intToDelaySync(useParam(Param.FX_DELAY_SYNC));
   const pingPong = useParam(Param.FX_DELAY_PINGPONG) >= 0.5;
+  const impulse = useParam(Param.FX_REVERB_MODE) >= 0.5;
+  const ir = useSyncExternalStore(subscribeUserIr, getUserIr, getUserIr);
+  const irFile = useRef<HTMLInputElement>(null);
+
+  const pickIr = async (file: File) => {
+    try {
+      const loaded = await importUserIr(file);
+      store.setParam(Param.FX_REVERB_MODE, 1, { immediate: true });
+      if (store.getParam(Param.FX_REVERB_ON) < 0.5) {
+        store.setParam(Param.FX_REVERB_ON, 1, { immediate: true });
+      }
+      toast(t('ir.loaded', { name: loaded.name }));
+    } catch (error) {
+      const code = error instanceof WaveImportError ? error.code : 'decode';
+      toast(
+        code === 'short'
+          ? t('ir.err.short')
+          : code === 'silent'
+            ? t('ir.err.silent')
+            : code === 'notFinite'
+              ? t('ir.err.notFinite')
+              : t('ir.err.decode'),
+      );
+    }
+  };
   return (
     <ModuleShell id="fx">
       <FxChain />
@@ -420,13 +449,72 @@ function FxModule() {
             <ParamLed id={Param.FX_REVERB_ON} label={t('module.reverbOn')} />
             REVERB
           </div>
-          <div className="knob-row">
-            <Knob spec={SPEC_BY_ID[Param.FX_REVERB_SIZE]} />
-            <Knob spec={SPEC_BY_ID[Param.FX_REVERB_MIX]} />
-            <Knob spec={SPEC_BY_ID[Param.FX_REVERB_DAMP]} />
-            <Knob spec={SPEC_BY_ID[Param.FX_REVERB_WIDTH]} />
-            <Knob spec={SPEC_BY_ID[Param.FX_REVERB_PREDELAY]} />
+          <div className="seg reverb-mode">
+            {[
+              { label: t('ir.algo'), value: 0 },
+              { label: t('ir.ir'), value: 1 },
+            ].map((option) => (
+              <button
+                key={option.label}
+                type="button"
+                className={option.value === (impulse ? 1 : 0) ? 'active' : ''}
+                data-setting={`reverbMode${option.value}`}
+                onClick={() => store.setParam(Param.FX_REVERB_MODE, option.value, { immediate: true })}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
+          {impulse ? (
+            <div className="wt-row" data-unit="ir">
+              <button
+                type="button"
+                className="roll-btn"
+                data-act="import"
+                title={t('ir.hint')}
+                onClick={() => irFile.current?.click()}
+              >
+                {t('ir.import')}
+              </button>
+              <Knob spec={SPEC_BY_ID[Param.FX_CONV_TRIM]} />
+              {ir && (
+                <button
+                  type="button"
+                  className="roll-btn"
+                  data-act="clear"
+                  title={t('ir.clearHint')}
+                  onClick={() => {
+                    clearUserIr();
+                    toast(t('ir.cleared'));
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+              <span className="wt-name" data-act="name">
+                {ir ? ir.name : t('ir.none')}
+              </span>
+              <input
+                ref={irFile}
+                type="file"
+                accept="audio/*,.wav,.wave,.aif,.aiff,.flac,.ogg,.mp3"
+                hidden
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = '';
+                  if (file) void pickIr(file);
+                }}
+              />
+            </div>
+          ) : (
+            <div className="knob-row">
+              <Knob spec={SPEC_BY_ID[Param.FX_REVERB_SIZE]} />
+              <Knob spec={SPEC_BY_ID[Param.FX_REVERB_MIX]} />
+              <Knob spec={SPEC_BY_ID[Param.FX_REVERB_DAMP]} />
+              <Knob spec={SPEC_BY_ID[Param.FX_REVERB_WIDTH]} />
+              <Knob spec={SPEC_BY_ID[Param.FX_REVERB_PREDELAY]} />
+            </div>
+          )}
         </div>
         <div className="fx-sep" />
         <div className="fx-unit" data-unit="delay">

@@ -50,7 +50,7 @@ type AnalysisListener = (frame: AnalysisFrame) => void;
 const DISCRETE = new Set<number>([
   1, 2, 7, 8, 13, 18, 23, 24, 27, 28, 29, 32, 33, 42, 43, 47, 51, 55, 62, 63, 66, 79, 81,
   // The effect chain is a permutation of stepped positions, not a ramp.
-  82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
+  82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
 ]);
 
 /** Verdict from the DSP on an imported single-cycle waveform. */
@@ -93,6 +93,9 @@ export class AudioEngine {
   private deferredImports: ((result: WavetableResult) => void)[] = [];
   private importWaiters = new Map<number, (result: WavetableResult) => void>();
   private importSeq = 0;
+  /** Same deferred-send dance as the wavetable, for the impulse response. */
+  private pendingIr: Float32Array | null = null;
+  private deferredIrs: ((result: WavetableResult) => void)[] = [];
 
   ctx: AudioContext | null = null;
   node: AudioWorkletNode | null = null;
@@ -346,7 +349,15 @@ export class AudioEngine {
             // been dropped: send it now instead of losing the player's waveform.
             this.wasmReady = true;
             this.flushWavetable();
+            this.flushIr();
           } else if (data.type === 'wavetable') {
+            const request = Number(data.request);
+            const resolve = this.importWaiters.get(request);
+            if (resolve) {
+              this.importWaiters.delete(request);
+              resolve({ ok: Number(data.code) === 0 && Boolean(data.has), code: Number(data.code) || 0 });
+            }
+          } else if (data.type === 'ir') {
             const request = Number(data.request);
             const resolve = this.importWaiters.get(request);
             if (resolve) {
@@ -421,6 +432,9 @@ export class AudioEngine {
     const waiters = this.deferredImports;
     this.deferredImports = [];
     for (const resolve of waiters) resolve({ ok: false, code: -2 });
+    const irWaiters = this.deferredIrs;
+    this.deferredIrs = [];
+    for (const resolve of irWaiters) resolve({ ok: false, code: -2 });
     this.importWaiters.clear();
     this.setStatus('idle');
   }
@@ -484,6 +498,43 @@ export class AudioEngine {
     const request = ++this.importSeq;
     this.importWaiters.set(request, resolve);
     this.node?.port.postMessage({ type: 'wavetable', request, samples: cycle });
+  }
+
+  /** Install an impulse response for the reverb section. */
+  importIR(samples: Float32Array): Promise<WavetableResult> {
+    this.pendingIr = samples;
+    if (!this.ctx) return Promise.resolve({ ok: false, code: -2 });
+    return new Promise((resolve) => {
+      if (!this.node || !this.wasmReady) {
+        this.deferredIrs.push(resolve);
+        return;
+      }
+      this.sendIr(samples, resolve);
+    });
+  }
+
+  clearIR() {
+    this.pendingIr = null;
+    this.node?.port.postMessage({ type: 'irClear', request: ++this.importSeq });
+  }
+
+  private sendIr(samples: Float32Array, resolve: (result: WavetableResult) => void) {
+    const request = ++this.importSeq;
+    this.importWaiters.set(request, resolve);
+    this.node?.port.postMessage({ type: 'ir', request, samples });
+  }
+
+  private flushIr() {
+    const samples = this.pendingIr;
+    const waiters = this.deferredIrs;
+    this.deferredIrs = [];
+    if (!samples || !this.node) {
+      for (const resolve of waiters) resolve({ ok: false, code: -2 });
+      return;
+    }
+    this.sendIr(samples, (result) => {
+      for (const resolve of waiters) resolve(result);
+    });
   }
 
   private flushWavetable() {

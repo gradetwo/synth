@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { engine } from '@/audio/engine';
 import { installUserWave } from '@/audio/userWave';
+import { installUserIr } from '@/audio/ir';
 import { store } from '@/state/store';
 import { useContrast, useLayout, usePower, useTheme, useView } from '@/hooks/useSynth';
 import { useViewport } from '@/hooks/useViewport';
@@ -198,9 +199,11 @@ export default function App() {
       engine.setTuning(store.tuningTableFor(layout.temperament));
       engine.applyState(store.getSnapshot().state, true);
       engine.setMuted(!store.getSnapshot().state.power);
-      // The core's memory does not survive a reload: give it back the cycle the
-      // player imported last time (queued until the worklet is ready).
+      // The core's memory does not survive a reload: give it back the waveform
+      // and the impulse response the player imported last time (both are queued
+      // until the worklet is ready).
       void installUserWave();
+      void installUserIr();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

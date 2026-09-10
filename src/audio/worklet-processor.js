@@ -95,6 +95,8 @@ const PARAMS = [
   ['wtUser', 79, 0, 0, 1],
   ['fxDelayDamp', 80, 0.35, 0, 1],
   ['fxDelayPingpong', 81, 0, 0, 1],
+  ['fxReverbMode', 94, 0, 0, 1],
+  ['fxConvTrim', 95, 1, 0, 4],
   ['fxChain1', 82, 1, 0, 6],
   ['fxChain2', 83, 2, 0, 6],
   ['fxChain3', 84, 3, 0, 6],
@@ -288,6 +290,36 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
         this.port.postMessage(reply);
         break;
       }
+      case 'ir': {
+        // Impulse response import (A5). Same contract as the wavetable import:
+        // analysis on the message path, never inside an audio block.
+        const samples = data.samples;
+        const reply = { type: 'ir', request: data.request, has: false, code: 0 };
+        if (typeof this.wasm.gs_ir_import === 'function') {
+          const capacity = this.wasm.gs_ir_capacity();
+          const count = Math.min(samples ? samples.length : 0, capacity);
+          if (count > 0) {
+            const scratch = new Float32Array(
+              this.memory.buffer,
+              this.wasm.gs_ir_import_ptr(),
+              capacity,
+            );
+            scratch.set(samples.subarray(0, count));
+            reply.code = this.wasm.gs_ir_import(count);
+          } else {
+            reply.code = 1;
+          }
+          reply.has = this.wasm.gs_ir_has() === 1;
+        } else {
+          reply.code = -1;
+        }
+        this.port.postMessage(reply);
+        break;
+      }
+      case 'irClear':
+        if (this.wasm.gs_ir_clear) this.wasm.gs_ir_clear();
+        this.port.postMessage({ type: 'ir', request: data.request, has: false, code: 0 });
+        break;
       case 'wavetableClear':
         if (this.wasm.gs_wavetable_clear) this.wasm.gs_wavetable_clear();
         this.port.postMessage({ type: 'wavetable', request: data.request, has: false, code: 0 });

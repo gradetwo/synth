@@ -365,6 +365,22 @@ const DICT: Record<string, [string, string]> = {
   'wave.pink': ['粉噪', 'Pink'],
   'wave.brown': ['棕噪', 'Brown'],
   'wave.wavetable': ['波表（PW 选表）', 'Wavetable (PW picks it)'],
+  // --- impulse response reverb (A5) ---------------------------------------
+  'ir.algo': ['算法', 'Algo'],
+  'ir.ir': ['IR', 'IR'],
+  'ir.import': ['导入 IR', 'Import IR'],
+  'ir.none': ['未导入', 'none'],
+  'ir.hint': [
+    '导入一段脉冲响应（WAV/AIFF/FLAC/MP3，建议单声道、≤2 秒）作为卷积混响；超过 2 秒会被截断，音量按能量归一化',
+    'Import an impulse response (WAV/AIFF/FLAC/MP3, mono and up to 2 s is typical) as a convolution reverb; longer files are truncated and the level is energy-normalised',
+  ],
+  'ir.clearHint': ['移除导入的脉冲响应', 'Remove the imported response'],
+  'ir.loaded': ['已导入 IR {name}', 'Imported IR {name}'],
+  'ir.cleared': ['已移除 IR', 'Impulse response removed'],
+  'ir.err.short': ['这段 IR 太短，无法作为混响', 'That response is too short to be a reverb'],
+  'ir.err.silent': ['这段 IR 里没有声音', 'That response is silent'],
+  'ir.err.notFinite': ['IR 含有无效采样', 'That response contains invalid samples'],
+  'ir.err.decode': ['无法解码这个文件（格式不支持或文件损坏）', 'That file could not be decoded (unsupported or damaged)'],
   // --- effect chain (A5) ---------------------------------------------------
   'fx.chain': ['信号链', 'CHAIN'],
   'fx.chainHint': [

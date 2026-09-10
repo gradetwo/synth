@@ -11,6 +11,7 @@ import scalarWasmUrl from '@/generated/synth_core_scalar.wasm?url';
 import processorUrl from './worklet-processor.js?url';
 import { detectSimd } from './engine';
 import { getUserWave } from './userWave';
+import { getUserIr } from './ir';
 import { t } from '@/i18n';
 import { PARAM_NAMES, type SynthState } from './params';
 
@@ -87,6 +88,20 @@ export async function renderPatchToBuffer(
 
   // The imported cycle is instrument state, not part of the patch, so an export
   // has to hand it over as well or it would render a factory bank instead.
+  const ir = getUserIr()?.samples;
+  if (ir) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 3000);
+      node.port.onmessage = (event) => {
+        if (event.data?.type === 'ir') {
+          clearTimeout(timer);
+          resolve();
+        }
+      };
+      node.port.postMessage({ type: 'ir', request: 2, samples: ir });
+    });
+  }
+
   const cycle = getUserWave()?.cycle;
   if (cycle) {
     await new Promise<void>((resolve) => {
