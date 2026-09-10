@@ -8,7 +8,8 @@ use crate::alloc_arena;
 use crate::engine::engine;
 use crate::params::{MAX_BLOCK_SIZE, MAX_VOICES, SPECTRUM_BINS};
 
-pub const ABI_VERSION: u32 = 1;
+/// 2 added the true-peak / loudness / limiter meters.
+pub const ABI_VERSION: u32 = 2;
 
 /// Initialise the engine. Returns 1 on success.
 #[no_mangle]
@@ -136,6 +137,24 @@ pub extern "C" fn gs_peak_l() -> f32 {
 #[no_mangle]
 pub extern "C" fn gs_peak_r() -> f32 {
     engine().peak_r()
+}
+
+/// True-peak estimate since the previous call (dBFS-ready linear amplitude).
+#[no_mangle]
+pub extern "C" fn gs_take_true_peak() -> f32 {
+    engine().take_true_peak()
+}
+
+/// Short-term output RMS as a linear amplitude (for the loudness readout).
+#[no_mangle]
+pub extern "C" fn gs_loudness_rms() -> f32 {
+    engine().loudness_rms()
+}
+
+/// Limiter gain reduction, 1.0 = none.
+#[no_mangle]
+pub extern "C" fn gs_limit_reduction() -> f32 {
+    engine().limit_reduction()
 }
 
 #[no_mangle]

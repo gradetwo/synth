@@ -1,9 +1,11 @@
 //! Stereo reverb — Freeverb topology with the controls a synth patch needs.
 //!
 //! Eight damped comb filters and four allpass diffusers per channel, with the
-//! classic stereo spread, plus three things the previous Soundpipe reverb did
-//! not offer: high-frequency **damping**, a **pre-delay**, and slow **delay
-//! modulation** that breaks up the metallic ringing a static comb bank has.
+//! classic stereo spread, plus the controls the previous Soundpipe reverb did
+//! not offer: high-frequency **damping**, a **pre-delay** and a stereo
+//! **width**. The delay lines are deliberately static — a moving tap inside a
+//! feedback loop adds energy whenever the delay shortens, which pumps the tail
+//! instead of decaying it.
 //!
 //! The delay lines are allocated once from the shared arena (on wasm) when the
 //! sample rate is set, so the render loop itself never allocates.
@@ -18,6 +20,10 @@ const COMB_MAX: usize = 4096;
 const ALLPASS_MAX: usize = 1536;
 /// Pre-delay buffer: 100 ms at 96 kHz.
 const PREDELAY_MAX: usize = 9600;
+/// Output trim for the wet path. The comb bank plus four allpass diffusers has
+/// a large resonant gain (up to ~25x at a comb resonance), so the raw sum is far
+/// hotter than the dry signal; this brings full-wet back to roughly unity.
+const WET_GAIN: f32 = 0.4;
 /// Scale factor from the 44.1 kHz tunings to the highest supported rate.
 const SR_SCALE_MAX: f32 = 96_000.0 / 44_100.0;
 
@@ -30,9 +36,6 @@ struct Comb {
     store: f32,
     damp: f32,
     feedback: f32,
-    lfo_phase: f32,
-    lfo_inc: f32,
-    mod_depth: f32,
 }
 
 impl Comb {
@@ -44,13 +47,10 @@ impl Comb {
             store: 0.0,
             damp: 0.2,
             feedback: 0.84,
-            lfo_phase: 0.0,
-            lfo_inc: 0.0,
-            mod_depth: 0.0,
         }
     }
 
-    fn setup(&mut self, base_len: usize, sr_scale: f32, lfo_inc: f32, phase: f32) {
+    fn setup(&mut self, base_len: usize, sr_scale: f32) {
         let scaled = (base_len as f32 * sr_scale) as usize;
         self.len = scaled.clamp(64, COMB_MAX - 8);
         if self.buf.len() != self.len {
@@ -60,33 +60,11 @@ impl Comb {
         }
         self.index = 0;
         self.store = 0.0;
-        self.lfo_inc = lfo_inc;
-        self.lfo_phase = phase;
     }
 
     #[inline]
     fn process(&mut self, input: f32) -> f32 {
-        // Modulated read position: a couple of samples of slow drift is enough
-        // to stop the combs from ringing on a fixed pitch.
-        self.lfo_phase += self.lfo_inc;
-        if self.lfo_phase >= 1.0 {
-            self.lfo_phase -= 1.0;
-        }
-        let offset = if self.mod_depth > 0.0 {
-            (self.lfo_phase * core::f32::consts::TAU).sin() * self.mod_depth
-        } else {
-            0.0
-        };
-        let read_pos = self.index as f32 - offset;
-        let wrapped = if read_pos < 0.0 {
-            read_pos + self.len as f32
-        } else {
-            read_pos
-        };
-        let i0 = wrapped as usize % self.len;
-        let i1 = (i0 + 1) % self.len;
-        let frac = wrapped - i0 as f32;
-        let out = self.buf[i0] * (1.0 - frac) + self.buf[i1] * frac;
+        let out = self.buf[self.index];
 
         // One-pole damping inside the feedback path.
         self.store = out * (1.0 - self.damp) + self.store * self.damp;
@@ -161,8 +139,6 @@ pub struct Reverb {
     pre: [Vec<f32>; 2],
     pre_len: usize,
     pre_index: usize,
-    /// Slow modulation shared by every comb, with per-comb phase offsets.
-    lfo_inc: f32,
     sr_scale: f32,
     params: ReverbParams,
     configured: bool,
@@ -201,7 +177,6 @@ impl Reverb {
             pre: [Vec::new(), Vec::new()],
             pre_len: 1,
             pre_index: 0,
-            lfo_inc: 0.0,
             sr_scale: 1.0,
             params: ReverbParams {
                 size: 0.45,
@@ -217,8 +192,6 @@ impl Reverb {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         let sr = sample_rate.max(8000.0);
         self.sr_scale = (sr / 44_100.0).clamp(0.5, SR_SCALE_MAX);
-        // One modulation cycle every ~6 seconds.
-        self.lfo_inc = 1.0 / (6.0 * sr);
         self.pre_len = ((self.params.predelay * sr) as usize).clamp(1, PREDELAY_MAX - 1);
         if self.pre[0].len() != PREDELAY_MAX {
             self.pre = [vec![0.0; PREDELAY_MAX], vec![0.0; PREDELAY_MAX]];
@@ -230,7 +203,7 @@ impl Reverb {
         for channel in 0..2 {
             for (i, comb) in self.combs[channel].iter_mut().enumerate() {
                 let spread = if channel == 1 { STEREO_SPREAD } else { 0 };
-                comb.setup(COMB_TUNING[i] + spread, self.sr_scale, self.lfo_inc, i as f32 / 8.0);
+                comb.setup(COMB_TUNING[i] + spread, self.sr_scale);
             }
             for (i, ap) in self.allpass[channel].iter_mut().enumerate() {
                 let spread = if channel == 1 { STEREO_SPREAD } else { 0 };
@@ -242,16 +215,14 @@ impl Reverb {
 
     pub fn set_params(&mut self, params: ReverbParams) {
         self.params = params;
-        let feedback = 0.72 + params.size.clamp(0.0, 1.0) * 0.265;
-        // Damping 0…0.75 keeps the tail bright when open and dark when closed.
-        let damp = params.damp.clamp(0.0, 1.0) * 0.75;
-        // Under 3 kHz the comb bank rings too much, over it the tail dies.
-        let mod_depth = 1.0 + params.size.clamp(0.0, 1.0) * 3.0;
+        // 0.96 is the stability limit for a modulated reverb; the damping floor
+        // keeps the loop lossy even at DAMP 0.
+        let feedback = 0.70 + params.size.clamp(0.0, 1.0) * 0.24;
+        let damp = 0.05 + params.damp.clamp(0.0, 1.0) * 0.72;
         for channel in 0..2 {
             for comb in self.combs[channel].iter_mut() {
                 comb.feedback = feedback;
                 comb.damp = damp;
-                comb.mod_depth = mod_depth;
             }
         }
         if self.configured {
@@ -312,8 +283,8 @@ impl Reverb {
             }
 
             // Width: 0 collapses to mono, 1 keeps the tanks fully separate.
-            let mid = (wet_l + wet_r) * 0.5;
-            let side = (wet_l - wet_r) * 0.5 * width;
+            let mid = (wet_l + wet_r) * 0.5 * WET_GAIN;
+            let side = (wet_l - wet_r) * 0.5 * width * WET_GAIN;
             let out_l = mid + side;
             let out_r = mid - side;
 
@@ -413,6 +384,41 @@ mod tests {
                 .unwrap_or(f32::MAX)
         };
         assert!(first_ms(&late) > first_ms(&early) + 20.0);
+    }
+
+    #[test]
+    fn sustained_tones_do_not_blow_up() {
+        // A steady sine at any frequency must not pump the comb bank: modulated
+        // feedback delays are the classic place where this goes wrong.
+        for freq in [55.0f32, 110.0, 220.0, 440.0, 880.0, 1760.0, 3520.0] {
+            let mut verb = Reverb::new();
+            verb.set_sample_rate(48_000.0);
+            verb.set_params(ReverbParams {
+                mix: 1.0,
+                size: 1.0,
+                damp: 0.0,
+                width: 1.0,
+                predelay: 0.012,
+            });
+            let n = 48_000 * 4;
+            let mut l = vec![0.0f32; n];
+            let mut r = vec![0.0f32; n];
+            for i in 0..n {
+                let v = (core::f32::consts::TAU * freq * i as f32 / 48_000.0).sin() * 0.5;
+                l[i] = v;
+                r[i] = v;
+            }
+            verb.process(&mut l, &mut r);
+            let peak = l.iter().chain(r.iter()).fold(0.0f32, |m, v| m.max(v.abs()));
+            let sec = 48_000;
+            let head = rms(&l[sec..sec * 2]);
+            let tail = rms(&l[sec * 3..]);
+            assert!(peak.is_finite(), "{freq} Hz produced non-finite output");
+            assert!(peak < 8.0, "{freq} Hz spiked to {peak}");
+            // A sustained tone settles into a steady state, so the tail may sit
+            // at the same level as the head; it must never keep growing.
+            assert!(tail < head * 1.25, "{freq} Hz does not settle: {head} -> {tail}");
+        }
     }
 
     #[test]

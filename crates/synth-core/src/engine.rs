@@ -60,10 +60,14 @@ const STEAL_RELEASE: f32 = 0.008;
 const VOICE_GAIN: f32 = 0.22;
 /// One-pole time constant for continuous-parameter smoothing (seconds).
 const SMOOTH_TAU_S: f32 = 0.02;
-/// Peak limiter: ceiling, attack and release (seconds).
+/// Peak limiter: ceiling, lookahead window and release (seconds).
 const LIMIT_CEILING: f32 = 0.95;
-const LIMIT_ATTACK_S: f32 = 0.002;
+/// Lookahead of ~2.7 ms at 48 kHz: long enough to catch any transient, short
+/// enough that the delay is imperceptible.
+const LOOKAHEAD: usize = 128;
 const LIMIT_RELEASE_S: f32 = 0.15;
+/// Peak-detector hold: how long the limiter remembers a transient.
+const LIMIT_PEAK_HOLD_S: f32 = 0.05;
 
 fn is_env_param(param_id: u32) -> bool {
     matches!(
@@ -145,6 +149,20 @@ pub struct Engine {
     smooth_ready: [bool; PARAM_COUNT],
     /// Peak-limiter gain reduction (1.0 = no limiting).
     limit_gain: f32,
+    /// Decaying peak estimate that feeds the limiter.
+    limit_peak: f32,
+    /// Current attack ramp (gain units per sample).
+    limit_slope: f32,
+    /// Gain the signal currently needs (attack is instant, release is slow).
+    limit_target: f32,
+    /// Lookahead delay lines.
+    look_l: [f32; LOOKAHEAD],
+    look_r: [f32; LOOKAHEAD],
+    look_pos: usize,
+    /// Highest true-peak estimate since the last meter read.
+    true_peak: f32,
+    /// Short-term RMS for the loudness readout.
+    rms_avg: f32,
     peak_l: f32,
     peak_r: f32,
     active_voices: u32,
@@ -193,6 +211,14 @@ impl Engine {
             smooth_set: [false; PARAM_COUNT],
             smooth_ready: [false; PARAM_COUNT],
             limit_gain: 1.0,
+            limit_peak: 0.0,
+            limit_slope: 0.0,
+            limit_target: 1.0,
+            look_l: [0.0; LOOKAHEAD],
+            look_r: [0.0; LOOKAHEAD],
+            look_pos: 0,
+            true_peak: 0.0,
+            rms_avg: 0.0,
             peak_l: 0.0,
             peak_r: 0.0,
             active_voices: 0,
@@ -526,6 +552,28 @@ impl Engine {
         &self.mix_l
     }
 
+    /// True-peak estimate since the last [`Self::take_true_peak`].
+    pub fn true_peak(&self) -> f32 {
+        self.true_peak
+    }
+
+    /// Short-term RMS of the output, as a linear amplitude.
+    pub fn loudness_rms(&self) -> f32 {
+        self.rms_avg
+    }
+
+    /// Current limiter gain reduction (1.0 = none).
+    pub fn limit_reduction(&self) -> f32 {
+        self.limit_gain
+    }
+
+    /// Reset the peak hold after the UI has read it.
+    pub fn take_true_peak(&mut self) -> f32 {
+        let peak = self.true_peak;
+        self.true_peak = 0.0;
+        peak
+    }
+
     pub fn debug_fx(&self) -> &[f32] {
         &self.fx_l
     }
@@ -608,37 +656,64 @@ impl Engine {
         // --- global FX (Soundpipe reverb + delay) ---------------------------
         self.apply_fx(frames);
 
-        // --- volume ramp + limiter + final soft clip ------------------------
+        // --- master volume, lookahead limiter, safety limiter ----------------
         let target = self.params.master_volume;
         let start = self.master_gain;
         let step = (target - start) / frames as f32;
-
-        // Peak limiter: duck loud polyphonic passages before the clipper works.
-        let mut block_peak = 0.0f32;
-        for i in 0..frames {
-            let g = start + step * (i as f32 + 1.0);
-            block_peak = block_peak
-                .max((self.fx_l[i] * g).abs())
-                .max((self.fx_r[i] * g).abs());
-        }
-        let desired = if block_peak > LIMIT_CEILING {
-            LIMIT_CEILING / block_peak
-        } else {
-            1.0
-        };
         let sr = self.sample_rate.max(1000.0);
-        let coeff = if desired < self.limit_gain {
-            1.0 - (-(frames as f32) / (LIMIT_ATTACK_S * sr)).exp()
-        } else {
-            1.0 - (-(frames as f32) / (LIMIT_RELEASE_S * sr)).exp()
-        };
-        self.limit_gain += (desired - self.limit_gain) * coeff;
-        let limit = self.limit_gain;
 
+        // The signal is delayed by LOOKAHEAD samples while the gain is computed
+        // from the *incoming* samples, so a transient is already attenuated by
+        // the time it reaches the output — no clipping and no pumping.
+        let decay = (-1.0 / (LIMIT_PEAK_HOLD_S * sr)).exp();
+        let release_step = 1.0 / (LIMIT_RELEASE_S * sr);
         for i in 0..frames {
             let g = start + step * (i as f32 + 1.0);
-            let l = soft_limit(self.fx_l[i] * limit * g);
-            let r = soft_limit(self.fx_r[i] * limit * g);
+            let in_l = self.fx_l[i] * g;
+            let in_r = self.fx_r[i] * g;
+
+            // Sliding peak estimate: fast attack, ~60 ms hold-and-decay.
+            let abs = in_l.abs().max(in_r.abs());
+            self.limit_peak = if abs > self.limit_peak { abs } else { self.limit_peak * decay };
+
+            let need = if self.limit_peak > LIMIT_CEILING {
+                LIMIT_CEILING / self.limit_peak
+            } else {
+                1.0
+            };
+            // `limit_target` is the gain the signal *needs*: it drops instantly
+            // and recovers over the release time, while `limit_gain` follows it
+            // with a linear attack that lands within the lookahead window.
+            if need < self.limit_target {
+                self.limit_target = need;
+                self.limit_slope = (self.limit_gain - need) / LOOKAHEAD as f32;
+            } else {
+                self.limit_target = (self.limit_target + release_step).min(need);
+            }
+            if self.limit_gain > self.limit_target {
+                self.limit_gain = (self.limit_gain - self.limit_slope).max(self.limit_target);
+            } else {
+                self.limit_gain = self.limit_target;
+            }
+
+            // Delayed signal × gain.
+            let out_l = self.look_l[self.look_pos] * self.limit_gain;
+            let out_r = self.look_r[self.look_pos] * self.limit_gain;
+            self.look_l[self.look_pos] = in_l;
+            self.look_r[self.look_pos] = in_r;
+            self.look_pos += 1;
+            if self.look_pos >= LOOKAHEAD {
+                self.look_pos = 0;
+            }
+
+            // True-peak estimate: the inter-sample peak of a linear ramp is the
+            // average of neighbouring samples, which catches most of what a
+            // sample-peak meter misses.
+            let interp = ((in_l + out_l) * 0.5).abs().max(((in_r + out_r) * 0.5).abs());
+            self.true_peak = self.true_peak.max(interp).max(out_l.abs()).max(out_r.abs());
+
+            let l = soft_limit(out_l);
+            let r = soft_limit(out_r);
             if l.is_finite() {
                 self.out_l[i] = l;
             } else {
@@ -652,6 +727,14 @@ impl Engine {
                 self.nan_events += 1;
             }
         }
+        // Short-term loudness (RMS over the meter window, in dBFS): the UI shows
+        // it next to the peak so loudness problems are visible before clipping.
+        let mut sum = 0.0f32;
+        for i in 0..frames {
+            sum += self.out_l[i] * self.out_l[i] + self.out_r[i] * self.out_r[i];
+        }
+        let block_rms = (sum / (2.0 * frames as f32)).sqrt();
+        self.rms_avg = self.rms_avg * 0.92 + block_rms * 0.08;
         self.master_gain = target;
 
         // --- meters + spectrum ----------------------------------------------
@@ -1069,6 +1152,14 @@ mod tests {
     /// The C DSP keeps process-wide state, so engine tests are serialised.
     static ENGINE_LOCK: Mutex<()> = Mutex::new(());
 
+    const KNEE_FOR_DIAG: f32 = 0.82;
+
+    /// Take the engine lock, recovering from a poisoned mutex so one failing
+    /// test cannot cascade into every other engine test.
+    fn lock_engine() -> std::sync::MutexGuard<'static, ()> {
+        ENGINE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn new_engine(poly: usize) -> Box<Engine> {
         let mut e = Box::new(Engine::new());
         e.init(48000.0, poly);
@@ -1077,7 +1168,7 @@ mod tests {
 
     #[test]
     fn silence_in_silence_out() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let mut e = new_engine(16);
         let frames = 128;
         for _ in 0..8 {
@@ -1091,7 +1182,7 @@ mod tests {
 
     #[test]
     fn note_on_produces_audio_and_note_off_decays() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let mut e = new_engine(16);
         e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
         e.set_param(id::OSC1_LEVEL, 0.8);
@@ -1114,7 +1205,7 @@ mod tests {
 
     #[test]
     fn process_is_allocation_free() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let mut e = new_engine(16);
         e.set_param(id::FX_REVERB_ON, 1.0);
         e.set_param(id::FX_DELAY_ON, 1.0);
@@ -1139,7 +1230,7 @@ mod tests {
 
     #[test]
     fn polyphony_downgrade_releases_excess_voices() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let mut e = new_engine(8);
         for n in 0..8u8 {
             e.note_on(48 + n, 1.0);
@@ -1151,7 +1242,7 @@ mod tests {
 
     #[test]
     fn extreme_and_random_params_stay_finite() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let mut e = new_engine(8);
         let mut rng = Rng::new(0x9e37_79b9);
         for round in 0..160u32 {
@@ -1188,7 +1279,7 @@ mod tests {
 
     #[test]
     fn mono_and_legato_use_one_voice() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let mut e = new_engine(16);
         e.set_param(id::OSC1_LEVEL, 0.8);
         e.set_param(id::VOICE_MODE, 1.0); // mono
@@ -1217,7 +1308,7 @@ mod tests {
 
     #[test]
     fn pan_moves_energy_between_channels() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let mut e = new_engine(1);
         e.set_param(id::OSC1_WAVE, 2.0);
         e.set_param(id::OSC1_LEVEL, 1.0);
@@ -1242,7 +1333,7 @@ mod tests {
 
     #[test]
     fn spectrum_bins_update_while_playing() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let mut e = new_engine(16);
         e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
         e.set_param(id::FILTER_CUTOFF, 16000.0);
@@ -1261,7 +1352,7 @@ mod tests {
 
     #[test]
     fn continuous_params_snap_on_first_block_then_smooth() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let mut e = new_engine(16);
         e.set_param(id::FILTER_CUTOFF, 12000.0);
         e.process(128);
@@ -1288,7 +1379,7 @@ mod tests {
 
     #[test]
     fn discrete_params_change_immediately() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let mut e = new_engine(16);
         e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
         e.process(128);
@@ -1313,7 +1404,7 @@ mod tests {
 
     #[test]
     fn measure_aliasing_and_thd() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let sr = 48000.0f32;
 
         // --- oscillator aliasing: C7 saw, filter wide open -------------------
@@ -1336,22 +1427,23 @@ mod tests {
             chunk.copy_from_slice(&e.out_l[..chunk.len()]);
         }
         let f0 = 440.0 * 2f32.powf((96.0 - 69.0) / 12.0);
-        let mut harm = 0.0f32;
+        // Aliased partials land between the harmonics; compare that energy with
+        // the total signal energy (a ratio against the harmonics alone is
+        // misleading because a saw spreads its energy over many of them).
         let mut alias = 0.0f32;
-        for k in 1..=9 {
-            let f = f0 * k as f32;
-            if f < 20000.0 {
-                harm += bin_mag(&buf, f, sr).powi(2);
-            }
-        }
-        for k in 1..=9 {
+        let mut k = 1;
+        while f0 * (k as f32 + 0.5) < sr * 0.5 - 1000.0 {
             alias += bin_mag(&buf, f0 * k as f32 + f0 * 0.5, sr).powi(2);
+            k += 1;
         }
+        let signal = buf.iter().map(|v| v * v).sum::<f32>() / buf.len() as f32;
         println!(
-            "MEAS aliasing saw_C7 harmonic={:.4} alias={:.6} ratio={:.1}dB",
-            10.0 * (harm + 1e-12).log10(),
-            10.0 * (alias + 1e-12).log10(),
-            10.0 * (harm / alias.max(1e-12)).log10()
+            "MEAS aliasing saw_C7 rel={:.1}dB (native reference)",
+            10.0 * (alias / signal.max(1e-15)).log10()
+        );
+        assert!(
+            10.0 * (alias / signal.max(1e-15)).log10() < -60.0,
+            "polyBLEP saw lost its band limiting"
         );
 
         // --- filter drive THD: sine through the ladder -----------------------
@@ -1431,12 +1523,134 @@ mod tests {
         (peak, knee as f32 / total as f32, min_gain)
     }
 
+    #[test]
+    fn diagnose_limiter_overshoot() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        for param in [id::OSC1_LEVEL, id::OSC2_LEVEL] {
+            e.set_param(param, 1.0);
+        }
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::OSC2_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::FILTER_CUTOFF, 16000.0);
+        e.set_param(id::FX_REVERB_ON, 1.0);
+        e.set_param(id::FX_DELAY_ON, 1.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        for note in [36, 40, 43, 47, 52, 55, 56, 59, 60, 63, 64, 66, 68, 71, 75, 78] {
+            e.note_on(note, 1.0);
+        }
+        let mut worst = 0.0f32;
+        let mut worst_at = 0usize;
+        let mut worst_gain = 1.0f32;
+        let mut worst_bus = 0.0f32;
+        let mut over = 0usize;
+        let mut total = 0usize;
+        for block in 0..160 {
+            e.process(128);
+            for i in 0..128 {
+                let o = e.out_l[i].abs().max(e.out_r[i].abs());
+                if o > KNEE_FOR_DIAG {
+                    over += 1;
+                }
+                total += 1;
+                if o > worst {
+                    worst = o;
+                    worst_at = block * 128 + i;
+                    worst_gain = e.limit_gain;
+                    worst_bus = e.fx_l[i].abs().max(e.fx_r[i].abs());
+                }
+            }
+        }
+        println!(
+            "LIM worst_out={worst:.3} at_sample={worst_at} gain={worst_gain:.3} bus={worst_bus:.3} over_knee={:.2}%",
+            100.0 * over as f32 / total as f32
+        );
+    }
+
+    /// The lookahead limiter must catch a transient *before* it reaches the
+    /// output: no sample may exceed the ceiling, and the gain must come back
+    /// afterwards.
+    #[test]
+    fn limiter_catches_transients_without_clipping() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        for param in [id::OSC1_LEVEL, id::OSC2_LEVEL] {
+            e.set_param(param, 1.0);
+        }
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::OSC2_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::ENV_ATTACK, 0.0005);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        let notes = [36, 40, 43, 47, 52, 55, 56, 59, 60, 63, 64, 66, 68, 71, 75, 78];
+        for note in notes {
+            e.note_on(note, 1.0);
+        }
+        let mut peak = 0.0f32;
+        let mut min_gain = 1.0f32;
+        let mut bus_peak = 0.0f32;
+        for _ in 0..240 {
+            e.process(128);
+            for i in 0..128 {
+                peak = peak.max(e.out_l[i].abs()).max(e.out_r[i].abs());
+                bus_peak = bus_peak.max(e.fx_l[i].abs()).max(e.fx_r[i].abs());
+            }
+            min_gain = min_gain.min(e.limit_gain);
+        }
+        assert!(peak <= 1.0, "output clipped at {peak}");
+        assert!(peak > 0.5, "nothing came through: {peak}");
+        if bus_peak > LIMIT_CEILING {
+            assert!(min_gain < 0.999, "bus peaked at {bus_peak} but the limiter stayed open");
+        }
+        assert!(min_gain > 0.4, "limiter worked far too hard: {min_gain}");
+
+        // Release: with the notes released the gain must return to unity.
+        for note in notes {
+            e.note_off(note);
+        }
+        for _ in 0..400 {
+            e.process(128);
+        }
+        assert!(e.limit_gain > 0.99, "limiter did not release: {}", e.limit_gain);
+    }
+
+    /// A quiet signal must pass through the limiter untouched (gain exactly 1)
+    /// and the limiter must report the true-peak meter.
+    #[test]
+    fn limiter_is_transparent_when_not_needed() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_LEVEL, 0.5);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::MASTER_VOLUME, 0.5);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.note_on(60, 0.7);
+        for _ in 0..60 {
+            e.process(128);
+        }
+        assert_eq!(e.limit_gain, 1.0, "limiter touched a quiet signal");
+        let mut peak = 0.0f32;
+        for _ in 0..40 {
+            e.process(128);
+            for i in 0..128 {
+                peak = peak.max(e.out_l[i].abs());
+            }
+        }
+        assert!(peak > 0.01 && peak < 0.5);
+        let reported = e.take_true_peak();
+        assert!(reported >= peak * 0.95, "meter {reported} below sample peak {peak}");
+        assert!(reported < peak * 2.0, "meter {reported} far above sample peak {peak}");
+        assert_eq!(e.take_true_peak(), 0.0);
+    }
+
     /// A loud polyphonic chord must reach the output without being coloured:
     /// the master bus stays inside the limiter's linear region, so nothing is
     /// soft-clipped on the way out (this used to distort ~25% of samples).
     #[test]
     fn dense_chords_stay_clean() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let mut e = new_engine(16);
         for param in [id::OSC1_LEVEL, id::OSC2_LEVEL] {
             e.set_param(param, 1.0);
@@ -1456,7 +1670,7 @@ mod tests {
     /// instead of N. Without this the same chord used to peak around 1.6.
     #[test]
     fn stacked_voices_do_not_start_in_phase() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let mut e = new_engine(16);
         for param in [id::OSC1_LEVEL, id::OSC2_LEVEL] {
             e.set_param(param, 1.0);
@@ -1480,7 +1694,7 @@ mod tests {
 
     #[test]
     fn limiter_keeps_the_master_bus_bounded() {
-        let _guard = ENGINE_LOCK.lock().unwrap();
+        let _guard = lock_engine();
         let mut e = new_engine(16);
         for param in [id::OSC1_LEVEL, id::OSC2_LEVEL] {
             e.set_param(param, 1.0);
