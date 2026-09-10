@@ -101,7 +101,10 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
       proc.process([], [[left, right]], params);
       for (const v of left) peak = Math.max(peak, Math.abs(v));
     }
-    expect(peak).toBeGreaterThan(0.05);
+    // A plain note through the default patch: the low-pass now has a unity
+    // passband (the vendored ladder it replaced ran a little hot), so anything
+    // clearly above the noise floor counts as "audio came out".
+    expect(peak).toBeGreaterThan(0.02);
     expect(left.some((v) => v !== 0)).toBe(true);
   });
 

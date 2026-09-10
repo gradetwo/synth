@@ -79,6 +79,8 @@ void init_slot(int i, float sample_rate) {
 
 extern "C" {
 
+
+
 void gs_daisy_init(float sample_rate) {
     g_init_calls++;
     if (sample_rate < 1000.0f) sample_rate = 48000.0f;

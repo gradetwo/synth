@@ -2,6 +2,7 @@
 
 pub mod adsr;
 pub mod comb;
+pub mod ladder;
 pub mod fmath;
 pub mod lfo;
 pub mod reverb;

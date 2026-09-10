@@ -10,6 +10,7 @@ use crate::dsp::adsr::Adsr;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::simd;
 use crate::dsp::comb::CombFilter;
+use crate::dsp::ladder::LadderFilter;
 use crate::dsp::reverb::{Reverb, ReverbParams};
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_limit, Rng};
 use crate::fft::Spectrum;
@@ -37,6 +38,7 @@ extern "C" {
         frames: u32,
     );
     fn gs_voice_dc_block(v: i32, side: i32, input: *const f32, out: *mut f32, frames: u32);
+    fn gs_init(sample_rate: f32, max_polyphony: u32) -> u32;
     fn gs_voice_formant_set(v: i32, side: i32, vowel: f32, res: f32);
     fn gs_voice_formant_block(
         v: i32,
@@ -180,6 +182,8 @@ pub struct Engine {
     poly_request: usize,
     /// Blocks a voice spent in its silent release tail (filter skipped).
     silent_blocks: u32,
+    /// One four-pole low-pass per voice per oscillator side.
+    ladders: [[LadderFilter; 2]; MAX_VOICES],
     reverb: Reverb,
     /// One comb resonator per voice, used by the COMB filter type.
     combs: [CombFilter; MAX_VOICES],
@@ -260,6 +264,7 @@ impl Engine {
             random_seed: 0,
             poly_request: 16,
             silent_blocks: 0,
+            ladders: [[LadderFilter::new(); 2]; MAX_VOICES],
             reverb: Reverb::new(),
             combs: [const { CombFilter::new() }; MAX_VOICES],
             pitch_bend: 0.0,
@@ -538,6 +543,8 @@ impl Engine {
             }
         }
         if !legato {
+            self.ladders[slot][0].reset();
+            self.ladders[slot][1].reset();
             unsafe { gs_voice_reset(slot as i32) };
             let (p0, p1) = self.next_phases();
             unsafe { gs_voice_phase(slot as i32, p0, p1) };
@@ -895,6 +902,8 @@ impl Engine {
             .vm
             .flush_pending(|note| note_to_hz(note as f32 + tune))
         {
+            self.ladders[slot][0].reset();
+            self.ladders[slot][1].reset();
             unsafe { gs_voice_reset(slot as i32) };
             let (p0, p1) = self.next_phases();
             unsafe { gs_voice_phase(slot as i32, p0, p1) };
@@ -1239,6 +1248,46 @@ impl Engine {
                     frames as u32,
                 );
             }
+        } else if kind == crate::params::FilterType::Lp {
+            // 24 dB/oct low-pass. This is our own ladder rather than the
+            // vendored one: measured with a pure sine, the wasm build of that
+            // C++ filter dropped a sample at every render-block boundary, which
+            // is audible crackle on an otherwise simple patch. One instance per
+            // oscillator side, so it still takes part in the stereo path.
+            let mut side0 = self.ladders[slot][0];
+            side0.set(sr, cutoff, resonance, params.filter.drive);
+            for sample in self.voice_buf[..frames].iter_mut() {
+                *sample = side0.process(*sample);
+            }
+            self.ladders[slot][0] = side0;
+            unsafe {
+                gs_voice_dc_block(
+                    slot as i32,
+                    0,
+                    self.voice_buf.as_ptr(),
+                    self.osc_a.as_mut_ptr(),
+                    frames as u32,
+                );
+            }
+            self.voice_buf[..frames].copy_from_slice(&self.osc_a[..frames]);
+            if stereo {
+                let mut side1 = self.ladders[slot][1];
+                side1.set(sr, cutoff, resonance, params.filter.drive);
+                for sample in self.voice_buf_r[..frames].iter_mut() {
+                    *sample = side1.process(*sample);
+                }
+                self.ladders[slot][1] = side1;
+                unsafe {
+                    gs_voice_dc_block(
+                        slot as i32,
+                        1,
+                        self.voice_buf_r.as_ptr(),
+                        self.osc_b.as_mut_ptr(),
+                        frames as u32,
+                    );
+                }
+                self.voice_buf_r[..frames].copy_from_slice(&self.osc_b[..frames]);
+            }
         } else {
         unsafe {
             gs_voice_filter_set(
@@ -1264,6 +1313,7 @@ impl Engine {
                 self.voice_buf.as_mut_ptr(),
                 frames as u32,
             );
+
             if stereo {
                 gs_voice_filter_set(
                     slot as i32,
@@ -2084,6 +2134,11 @@ mod tests {
         let mut e = new_engine(16);
         base(&mut e);
         e.set_route(0, ModSrc::Aftertouch as u32, ModDst::Cutoff as u32, 1.0, true);
+        // The shared base patch opens the filter to 18 kHz, which leaves no room
+        // to brighten; aftertouch->cutoff has to be measured where the filter is
+        // actually working.
+        e.set_param(id::FILTER_CUTOFF, 700.0);
+        e.set_param(id::FILTER_RES, 0.2);
         e.note_on(60, 0.8);
         let quiet = brightness(&mut e);
         e.aftertouch(1.0);
@@ -2479,6 +2534,60 @@ mod tests {
         );
     }
 
+    /// A single pure sine note must not glitch at render-block boundaries.
+    ///
+    /// This is the regression for the click that made plain patches crackle:
+    /// the vendored ladder filter dropped a sample at every 128-sample block
+    /// boundary in the wasm build, which shows up here as a sample step far
+    /// larger than a sine of that amplitude and frequency can produce. The
+    /// native build was clean, which is why it took a wasm measurement to find.
+    #[test]
+    fn single_sine_note_has_no_block_boundary_glitch() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_TYPE, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_RES, 0.05);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::LFO_ON, 0.0);
+        for index in 0..crate::params::MOD_ROUTES {
+            e.set_route(index, 0, 0, 0.0, false);
+        }
+        e.note_on(69, 1.0);
+        let n = 96_000;
+        let mut out = vec![0.0f32; n];
+        for chunk in out.chunks_mut(128) {
+            e.process(128);
+            chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+        }
+        let (mut peak, mut worst) = (0.0f32, (0.0f32, 0usize));
+        for i in 24_000..n {
+            peak = peak.max(out[i].abs());
+            let d = (out[i] - out[i - 1]).abs();
+            if d > worst.0 {
+                worst = (d, i);
+            }
+        }
+        let ideal = (core::f32::consts::TAU * 440.0 / 48_000.0) * peak;
+        println!(
+            "SINE native peak {peak:.4} maxStep {:.5} (ideal {ideal:.5}, x{:.1}) @{}",
+            worst.0,
+            worst.0 / ideal,
+            worst.1
+        );
+        assert!(
+            worst.0 < ideal * 2.0,
+            "single sine note glitches: step {:.5} vs ideal {ideal:.5} at sample {}",
+            worst.0,
+            worst.1
+        );
+    }
+
     /// A quiet signal must pass through the limiter untouched (gain exactly 1)
     /// and the limiter must report the true-peak meter.
     #[test]
@@ -2496,14 +2605,18 @@ mod tests {
         }
         assert_eq!(e.limit_gain, 1.0, "limiter touched a quiet signal");
         let mut peak = 0.0f32;
+        // Read the meter the way the UI does — once per render block — and keep
+        // the largest reading: the meter accumulates between takes, so this is
+        // exactly what it must not under-report.
+        let mut reported = 0.0f32;
         for _ in 0..40 {
             e.process(128);
             for i in 0..128 {
                 peak = peak.max(e.out_l[i].abs());
             }
+            reported = reported.max(e.take_true_peak());
         }
         assert!(peak > 0.01 && peak < 0.5);
-        let reported = e.take_true_peak();
         assert!(reported >= peak * 0.95, "meter {reported} below sample peak {peak}");
         assert!(reported < peak * 2.0, "meter {reported} far above sample peak {peak}");
         assert_eq!(e.take_true_peak(), 0.0);

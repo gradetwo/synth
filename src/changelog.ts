@@ -18,6 +18,25 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.30.0',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '**修复"纯正弦主音"等简单音色弹单音时的刺啦声**（根因找到）：LP 低通滤波器在 **WebAssembly 构建下每 128 采样丢一个样本**（等于每秒 375 次的咔哒声，听感就是刺啦），而同一份 C++ 编译成原生代码是干净的。已用 Rust 自己实现的 **24 dB/oct 梯形低通（零延迟反馈 + tanh 饱和）** 替换，跨平台行为一致。',
+        '**Fixed the crackle on simple patches** such as Pure Sine Lead, with the root cause identified: the low-pass filter **dropped one sample at every 128-sample block boundary in the WebAssembly build** (375 clicks per second — exactly the "crackle" reported), while the same C++ compiled natively was clean. It is replaced by our own **24 dB/oct ladder low-pass in Rust** (zero-delay feedback with tanh saturation), so every target behaves the same.',
+      ],
+      [
+        '顺带的三项实测改善：同一段音频的**最大样本跳变从 0.055–0.111 降到 0.012**（波形干净得多）、**锯齿波混叠从 −57.7 dB 降到 −130.2 dB**（原来那些咔哒声就是宽带噪声）、**电钢+致爱丽丝的实时负载从约 19% 降到 8%**。',
+        'Three measured side effects: the worst sample-to-sample step in a song fell from 0.055–0.111 to **0.012**, saw-wave aliasing improved from −57.7 dB to **−130.2 dB** (those clicks were broadband noise), and the electric-piano + Für Elise CPU load dropped from about 19% to **8%**.',
+      ],
+      [
+        '低通现在是标准的单位通带响应，因此部分音色会比原来**低 1–3 dB**（导出仍会自动归一化到 −1 dBFS，不受影响）。',
+        'The low-pass now has a standard unity passband, so some patches sit **1–3 dB lower** than before (exports are still normalised to −1 dBFS, so files are unaffected).',
+      ],
+    ],
+  },
+  {
     version: '1.29.0',
     date: '2026-09-10',
     kind: 'fix',
