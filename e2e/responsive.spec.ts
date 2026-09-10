@@ -62,7 +62,7 @@ for (const device of DEVICES) {
       const box = (await panel.boundingBox())!;
       expect(box.width).toBeLessThanOrEqual(device.width + 1);
       // Every section is there, and nothing inside pushes the drawer sideways.
-      await expect(panel.locator('.settings-section')).toHaveCount(4);
+      await expect(panel.locator('.settings-section')).toHaveCount(5);
       expect(await overflow(page), 'no sideways scrolling with the drawer open').toBeLessThanOrEqual(1);
 
       await panel.locator('.d-close').click();

@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.55.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '**第二层音色可以用了**：设置 →「第二层音色」里选 `1` / `2` 决定面板正在编辑哪一层（所有旋钮、波形、包络、调制的改动都作用在该层，切回去第一层原样不变），并选按键分配：**只用第 1 层 / 叠加两层 / 按音高分区**（分区时可选分界音）。',
+        '**The second timbre is playable**: in Settings → Second timbre, `1` / `2` picks which layer the panels are editing — every knob, wave, envelope and modulation change applies to that layer, and switching back leaves the first exactly as it was — and Key routing chooses Instance 1 only, Layer both, or Split by key (with a split note).',
+      ],
+      [
+        '第二层的参数存在音色里（重开、场景、撤销重做都会带上），按键分配跟着工作区保存；默认仍是「只用第 1 层」，旧音色与分享链接不受影响。',
+        'The second layer is stored with the patch (it survives a reload, scenes and undo/redo) and the key routing is saved with the workspace. The default is still Instance 1 only, so existing patches and share links are unaffected.',
+      ],
+    ],
+  },
+  {
     version: '1.54.0',
     date: '2026-09-10',
     kind: 'feature',

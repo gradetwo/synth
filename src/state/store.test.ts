@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { Param } from '@/audio/params';
+import { DEFAULT_PARAMS, Param } from '@/audio/params';
 import { midiLibrary } from '@/midi/library';
 import { SynthStore, store } from './store';
 import { unwrap } from './persist';
@@ -228,5 +228,47 @@ describe('the session starts consistent', () => {
     const reloaded = new SynthStore();
     expect(reloaded.getSnapshot().currentPresetId).toBe(id);
     expect(reloaded.getParam(Param.FILTER_CUTOFF)).toBeCloseTo(params[Param.FILTER_CUTOFF], 6);
+  });
+});
+
+describe('two instances', () => {
+  it('edits the active instance and leaves the other alone', () => {
+    const s = new SynthStore();
+    s.setActiveInstance(1);
+    s.setParam(Param.FILTER_CUTOFF, 1234);
+    expect(s.getSnapshot().state.params[Param.FILTER_CUTOFF]).toBeCloseTo(1234, 6);
+
+    s.setActiveInstance(2);
+    expect(s.getParam(Param.FILTER_CUTOFF)).not.toBeCloseTo(1234, 1);
+    s.setParam(Param.FILTER_CUTOFF, 4321);
+    expect(s.getSnapshot().state.params2[Param.FILTER_CUTOFF]).toBeCloseTo(4321, 6);
+    // Instance 1 still has its own value: the panels are per instance.
+    expect(s.getSnapshot().state.params[Param.FILTER_CUTOFF]).toBeCloseTo(1234, 6);
+
+    s.setActiveInstance(1);
+    expect(s.getParam(Param.FILTER_CUTOFF)).toBeCloseTo(1234, 6);
+  });
+
+  it('starts instance 2 from a usable patch and keeps it across a reload', () => {
+    const s = new SynthStore();
+    const second = s.getSnapshot().state.params2;
+    expect(second[Param.OSC1_ON]).toBe(DEFAULT_PARAMS[Param.OSC1_ON]);
+
+    s.setActiveInstance(2);
+    s.setParam(Param.OSC1_LEVEL, 0.123);
+    // A fresh store reads the persisted document, like a page reload.
+    const reloaded = new SynthStore();
+    expect(reloaded.getSnapshot().state.params2[Param.OSC1_LEVEL]).toBeCloseTo(0.123, 6);
+    expect(reloaded.getSnapshot().layout.activeInstance).toBe(2);
+  });
+
+  it('remembers the layer/split routing', () => {
+    const s = new SynthStore();
+    s.setInstanceRouting({ mode: 'split', splitNote: 64 });
+    const reloaded = new SynthStore();
+    expect(reloaded.getSnapshot().layout.instanceMode).toBe('split');
+    expect(reloaded.getSnapshot().layout.splitNote).toBe(64);
+    s.setInstanceRouting({ mode: 'single' });
+    expect(s.getSnapshot().layout.instanceMode).toBe('single');
   });
 });

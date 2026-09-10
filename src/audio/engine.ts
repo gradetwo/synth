@@ -509,6 +509,8 @@ export class AudioEngine {
     for (const [id, value] of Object.entries(state.params)) {
       this.setParam(Number(id) as ParamId, value, immediate);
     }
+    // The second instance travels the message path, not the AudioParams.
+    if (state.params2) this.setParamsB(state.params2);
     state.routes.forEach((route, index) => this.setRoute(index, route));
     // Patches may carry fewer routes than the engine has slots: clear the rest
     // so a previous patch cannot leave a stray modulation running.

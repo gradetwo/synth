@@ -78,6 +78,7 @@ interface Snapshot {
 function cloneState(state: SynthState): SynthState {
   return {
     params: { ...state.params },
+    params2: { ...state.params2 },
     routes: state.routes.map((r) => ({ ...r })),
     power: state.power,
   };
@@ -233,16 +234,62 @@ export class SynthStore {
 
   // ------------------------------------------------------------- parameters
 
+  /** The instance the panels are editing. */
+  get activeInstance(): 1 | 2 {
+    return this.layout.activeInstance;
+  }
+
+  /**
+   * Parameters are read and written for the *active* instance, which is what
+   * makes the whole panel instance-aware without a single component knowing
+   * about instances: a knob reads this and gets whichever layer the player is
+   * editing.
+   */
   getParam(id: ParamId): number {
-    return this.state.params[id] ?? DEFAULT_PARAMS[id] ?? 0;
+    const set = this.activeInstance === 2 ? this.state.params2 : this.state.params;
+    return set[id] ?? DEFAULT_PARAMS[id] ?? 0;
   }
 
   setParam(id: ParamId, value: number, opts: { immediate?: boolean } = {}) {
-    if (this.state.params[id] === value) return;
-    this.state = { ...this.state, params: { ...this.state.params, [id]: value } };
-    engine.setParam(id, value, opts.immediate);
+    const key = this.activeInstance === 2 ? 'params2' : 'params';
+    const set = this.state[key];
+    if (set[id] === value) return;
+    this.state = { ...this.state, [key]: { ...set, [id]: value } };
+    if (this.activeInstance === 2) engine.setParamB(id, value);
+    else engine.setParam(id, value, opts.immediate);
     this.scheduleHistory();
     this.commit();
+  }
+
+  /** Switch which instance the panels edit. */
+  setActiveInstance(instance: 1 | 2) {
+    if (this.layout.activeInstance === instance) return;
+    this.layout = { ...this.layout, activeInstance: instance };
+    this.commit();
+  }
+
+  /** Layer / split routing for the two instances. */
+  setInstanceRouting(patch: { mode?: 'single' | 'layer' | 'split'; splitNote?: number }) {
+    const next = {
+      instanceMode: patch.mode ?? this.layout.instanceMode,
+      splitNote: patch.splitNote ?? this.layout.splitNote,
+    };
+    if (next.instanceMode === this.layout.instanceMode && next.splitNote === this.layout.splitNote) return;
+    this.layout = { ...this.layout, ...next };
+    this.syncInstanceRouting();
+    this.commit();
+  }
+
+  /** Push the routing to the engine (start-up and after every change). */
+  syncInstanceRouting() {
+    engine.setInstanceRoute({
+      mode: this.layout.instanceMode === 'layer' ? 1 : this.layout.instanceMode === 'split' ? 2 : 0,
+      splitNote: this.layout.splitNote,
+      aLo: 0,
+      aHi: 1,
+      bLo: 0,
+      bHi: 1,
+    });
   }
 
   setRoute(index: number, patch: Partial<ModRoute>) {
@@ -287,7 +334,9 @@ export class SynthStore {
     if (preset.id !== this.transientPreset?.id) this.transientPreset = null;
     const params = presetParams(preset);
     const routes = presetRoutes(preset);
-    this.state = { params, routes, power: this.state.power };
+    // A preset describes instance 1. The second layer is left alone: it is the
+    // player's own second timbre, not part of somebody else's patch.
+    this.state = { params, params2: this.state.params2, routes, power: this.state.power };
     this.currentPresetId = preset.id;
     engine.applyState(this.state, opts.immediate ?? true);
     this.recordHistory();

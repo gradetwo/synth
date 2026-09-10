@@ -204,6 +204,9 @@ export default function App() {
       const layout = store.getSnapshot().layout;
       await engine.start(layout.polyphony || 16, store.getSnapshot().state.routes);
       engine.setTuning(store.tuningTableFor(layout.temperament));
+      // Layer/split routing lives in the workspace, so a restarted engine has to
+      // be told about it (the params arrive with `applyState`).
+      store.syncInstanceRouting();
       engine.applyState(store.getSnapshot().state, true);
       engine.setMuted(!store.getSnapshot().state.power);
       // The core's memory does not survive a reload: give it back the waveform

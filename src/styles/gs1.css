@@ -806,6 +806,10 @@ body.module-dragging .module-grip{cursor:grabbing}
   color:var(--txt-1);font:600 10px/1 var(--mono);padding:7px 8px;outline:none;
   width:auto;min-width:104px;max-width:190px;flex:0 1 auto}
 .settings-row .roll-btn{min-height:28px}
+.settings-note{font:500 9px/1.3 var(--mono);color:var(--txt-dim);flex:1 1 140px;min-width:0}
+.settings-inline{display:inline-flex;align-items:center;gap:6px;
+  font:600 9px/1 var(--mono);letter-spacing:.06em;color:var(--txt-dim)}
+.settings-inline select{min-width:76px}
 .settings-row .d-theme{padding:0;border:none;background:none;gap:6px;flex-wrap:wrap}
 .d-foot-actions.preset-actions{grid-template-columns:repeat(3,minmax(0,1fr))}
 

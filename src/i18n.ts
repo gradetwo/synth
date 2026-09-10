@@ -370,7 +370,16 @@ const DICT: Record<string, [string, string]> = {
   // --- settings drawer -----------------------------------------------------
   'settings.title': ['设置', 'Settings'],
   'settings.workspace': ['工作区', 'Workspace'],
+  'settings.instances': ['第二层音色', 'Second timbre'],
   'settings.performance': ['演奏', 'Playing'],
+  // --- two instances -------------------------------------------------------
+  'inst.pick': ['正在编辑', 'Editing'],
+  'inst.hint': ['1 = 主音色，2 = 第二层（面板显示正在编辑的那一层）', '1 = main patch, 2 = second layer (the panels show the one being edited)'],
+  'inst.route': ['按键分配', 'Key routing'],
+  'inst.single': ['只用第 1 层', 'Instance 1 only'],
+  'inst.layer': ['叠加两层', 'Layer both'],
+  'inst.split': ['按音高分区', 'Split by key'],
+  'inst.splitAt': ['分界音', 'Split at'],
   'settings.appearance': ['界面', 'Appearance'],
   'settings.behaviour': ['交互', 'Interaction'],
   'settings.about': ['关于与文档', 'About & docs'],

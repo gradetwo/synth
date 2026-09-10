@@ -387,8 +387,14 @@ export interface ModRoute {
 }
 
 export interface SynthState {
-  /** Every DSP parameter, keyed by `Param`. */
+  /** Every DSP parameter of instance 1 (the main patch), keyed by `Param`. */
   params: Record<number, number>;
+  /**
+   * The same for instance 2, the layer/split timbre. Kept with the patch so a
+   * layered sound survives a reload and a scene; it starts as a copy of the
+   * default patch, so switching to it gives something that makes a sound.
+   */
+  params2: Record<number, number>;
   routes: ModRoute[];
   /** UI-only: master power. */
   power: boolean;
@@ -574,6 +580,7 @@ export const DEFAULT_ROUTES: ModRoute[] = [
 export function createDefaultState(): SynthState {
   return {
     params: { ...DEFAULT_PARAMS },
+    params2: { ...DEFAULT_PARAMS },
     routes: DEFAULT_ROUTES.map((r) => ({ ...r })),
     power: true,
   };

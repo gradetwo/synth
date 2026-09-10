@@ -37,7 +37,7 @@ test.describe('drawers', () => {
     await page.locator('[data-act="settings"]').click();
     const panel = page.locator('.settings-drawer.open');
     await expect(panel).toBeVisible();
-    await expect(panel.locator('.settings-section')).toHaveCount(4);
+    await expect(panel.locator('.settings-section')).toHaveCount(5);
     await expect(panel).toContainText('工作区');
     await expect(panel).toContainText('演奏');
     await expect(panel).toContainText('界面');
@@ -52,5 +52,36 @@ test.describe('drawers', () => {
     // And they still work: the audio panel opens from here.
     await panel.getByRole('button', { name: '打开音频设置' }).click();
     await expect(page.locator('.audio-settings.open')).toBeVisible();
+  });
+});
+
+test.describe('two instances', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test('switches which timbre the panels edit, and remembers it', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(400);
+    await page.locator('[data-act="settings"]').click();
+    const panel = page.locator('.settings-drawer.open');
+    const instances = panel.locator('[data-section="instances"]');
+    await expect(instances).toBeVisible();
+    // Instance 1 is what the panels edit by default.
+    await expect(instances.locator('[data-instance="1"]')).toHaveAttribute('aria-pressed', 'true');
+
+    await instances.locator('[data-instance="2"]').click();
+    await expect(instances.locator('[data-instance="2"]')).toHaveAttribute('aria-pressed', 'true');
+    await panel.locator('[data-setting="route"] select').selectOption('layer');
+    await expect(panel.locator('[data-setting="route"] select')).toHaveValue('layer');
+    await panel.locator('.d-close').click();
+    await expect(panel).not.toBeVisible();
+
+    // Both are workspace state, so a reload brings them back.
+    await page.reload();
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(400);
+    await page.locator('[data-act="settings"]').click();
+    await expect(page.locator('[data-setting="route"] select')).toHaveValue('layer');
+    await expect(page.locator('[data-instance="2"]')).toHaveAttribute('aria-pressed', 'true');
   });
 });

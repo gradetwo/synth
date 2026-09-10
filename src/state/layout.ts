@@ -71,6 +71,12 @@ export interface LayoutState {
   autoCollapsed: ModuleId[];
   /** User-pinned polyphony ceiling; 0 = let the load monitor decide. */
   polyphony: number;
+  /** Which instance the panels are editing (1 = main, 2 = layer). */
+  activeInstance: 1 | 2;
+  /** How notes reach the two instances. */
+  instanceMode: 'single' | 'layer' | 'split';
+  /** Highest note that still plays instance 1 in `split` mode. */
+  splitNote: number;
   /** Microtuning temperament id (see `audio/tuning`). */
   temperament: string;
   /** MIDI CC → parameter bindings (see `audio/ccmap`). */
@@ -107,6 +113,9 @@ export function defaultLayout(): LayoutState {
     phoneDefaults: false,
     autoCollapsed: [],
     polyphony: 0,
+    activeInstance: 1,
+    instanceMode: 'single',
+    splitNote: 60,
     temperament: 'equal',
     ccMap: [],
     velocityCurve: 'linear',
@@ -190,6 +199,13 @@ export function normalizeLayout(raw: unknown): LayoutState {
     mpe: input.mpe === true,
     polyphony: [0, 4, 8, 16, 32].includes(input.polyphony as number)
       ? (input.polyphony as number)
+      : base.polyphony,
+    activeInstance: input.activeInstance === 2 ? 2 : 1,
+    instanceMode:
+      input.instanceMode === 'layer' || input.instanceMode === 'split' ? input.instanceMode : 'single',
+    splitNote:
+      typeof input.splitNote === 'number' && input.splitNote >= 0 && input.splitNote <= 127
+        ? Math.round(input.splitNote)
       : 0,
     autoCollapsed: Array.isArray(input.autoCollapsed)
       ? input.autoCollapsed.filter(

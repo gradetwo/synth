@@ -135,6 +135,69 @@ export function SettingsDrawer({
               </div>
             </section>
 
+            <section className="settings-section" data-section="instances">
+              <h3>{t('settings.instances')}</h3>
+              <div className="settings-row" data-setting="instance">
+                <span className="settings-label">{t('inst.pick')}</span>
+                <div className="seg">
+                  {([1, 2] as const).map((instance) => (
+                    <button
+                      key={instance}
+                      type="button"
+                      className={store.getSnapshot().layout.activeInstance === instance ? 'active' : ''}
+                      aria-pressed={store.getSnapshot().layout.activeInstance === instance}
+                      data-instance={instance}
+                      onClick={() => {
+                        haptic();
+                        store.setActiveInstance(instance);
+                        bump((n) => n + 1);
+                      }}
+                    >
+                      {instance}
+                    </button>
+                  ))}
+                </div>
+                <span className="settings-note">{t('inst.hint')}</span>
+              </div>
+              <div className="settings-row" data-setting="route">
+                <span className="settings-label">{t('inst.route')}</span>
+                <select
+                  aria-label={t('inst.route')}
+                  value={store.getSnapshot().layout.instanceMode}
+                  onChange={(event) => {
+                    haptic();
+                    store.setInstanceRouting({ mode: event.target.value as 'single' | 'layer' | 'split' });
+                    bump((n) => n + 1);
+                  }}
+                >
+                  <option value="single">{t('inst.single')}</option>
+                  <option value="layer">{t('inst.layer')}</option>
+                  <option value="split">{t('inst.split')}</option>
+                </select>
+                {store.getSnapshot().layout.instanceMode === 'split' ? (
+                  <label className="settings-inline">
+                    <span>{t('inst.splitAt')}</span>
+                    <select
+                      aria-label={t('inst.splitAt')}
+                      value={store.getSnapshot().layout.splitNote}
+                      onChange={(event) => {
+                        haptic();
+                        store.setInstanceRouting({ splitNote: Number(event.target.value) });
+                        bump((n) => n + 1);
+                      }}
+                    >
+                      {Array.from({ length: 11 }, (_, i) => 36 + i * 4).map((note) => (
+                        <option key={note} value={note}>
+                          {['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][note % 12]}
+                          {Math.floor(note / 12) - 1}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
+            </section>
+
             <section className="settings-section" data-section="performance">
               <h3>{t('settings.performance')}</h3>
               <div className="settings-row" data-setting="temperament">
