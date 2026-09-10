@@ -18,6 +18,25 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.29.0',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '新增「**导出 WAV（无损）**」：完全不过编码器，用来判断"底噪/刺啦"到底来自 MP3 编码还是别处——如果 WAV 干净而 MP3 不干净，就是编码器；两个都干净则问题在播放设备。',
+        'New **Export WAV (lossless)**: no encoder at all, so it settles whether a fizzy sound comes from the MP3 stage or from somewhere else.',
+      ],
+      [
+        'MP3 码率提升到 **320 kbps**（MPEG-1 上限），并把导出渲染的复音数从 16 提到 **32**（离线渲染没有实时截止时间，长释放音色不再被偷声切断；实测 77 秒曲目渲染 19.5 秒）。',
+        'MP3 exports now use **320 kbps** (the MPEG-1 ceiling), and export rendering gets the full **32-voice** pool instead of 16 — offline rendering has no deadline, so long-release patches are no longer cut short by voice stealing (a 77 s song renders in 19.5 s).',
+      ],
+      [
+        '偷声淡出从 8 ms 延长到 **20 ms**：密集曲目里被抢占的尾音不再有细微的"咔"感。',
+        'The voice-steal fade is now **20 ms** instead of 8 ms, so a tail that has to be cut on dense material no longer produces a faint tick.',
+      ],
+    ],
+  },
+  {
     version: '1.28.0',
     date: '2026-09-10',
     kind: 'sound',

@@ -68,7 +68,11 @@ extern "C" {
 }
 
 /// Short release applied to a stolen voice (seconds).
-const STEAL_RELEASE: f32 = 0.008;
+/// Fade applied to a voice that is being stolen. Long-release patches steal
+/// constantly on dense material, and every cut is a tiny broadband click, so
+/// the fade is deliberately gentle: 20 ms is inaudible as a note ending but
+/// spreads the discontinuity over a thousand samples.
+const STEAL_RELEASE: f32 = 0.02;
 /// Per-voice gain before the mix bus.
 /// Envelope level below which a voice stops being filtered: -54 dB, far under
 /// anything audible, which is exactly where long release tails spend their time.

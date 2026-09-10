@@ -979,6 +979,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Export MP3**: renders the whole track offline with the current patch and encodes it to 192 kbps MP3. A recorded take can be re-exported after changing the patch for a different timbre.',
           ],
           [
+            '**导出 WAV（无损）**：同一套渲染，但完全不过编码器——怀疑"导出有底噪"时用它对比：WAV 干净而 MP3 不干净就是编码器的问题，两者都干净则问题在播放设备或音量链。导出渲染使用 32 复音（离线没有实时限制），长释放音色不会被偷声切断。',
+            '**Export WAV (lossless)**: the same render with no encoder in the path — the way to tell an encoder artefact from a playback-chain one. Export rendering uses the full 32-voice pool (offline has no deadline), so long-release patches are not cut short by voice stealing.',
+          ],
+          [
             '**更新记录**：预设库面板里的「更新记录」列出当前版本与历史版本的改动（音质 / 新功能 / 修复三类），随应用离线保存，不需要联网。',
             '**Changelog**: the “Changelog” button in the preset drawer lists what changed in the running build and in earlier ones (tagged sound / feature / fix). It ships with the app and works offline.',
           ],

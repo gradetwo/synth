@@ -7,7 +7,7 @@ import { recorder, type RecorderState } from '@/midi/recorder';
 import { parseMidi } from '@/midi/smf';
 import { midiLibrary, trackTitle, type TrackGroup } from '@/midi/library';
 import { store } from '@/state/store';
-import { exportSongMidi, exportSongMp3 } from '@/midi/export';
+import { exportSongMidi, exportSongMp3, exportSongWav } from '@/midi/export';
 import { TransportIcon } from './TransportIcon';
 
 const fmtTime = (s: number) => {
@@ -173,6 +173,26 @@ export function PlayerPanel({
             }}
           >
             {busy ? t('player.rendering') : t('player.exportMp3')}
+          </button>
+          <button
+            type="button"
+            className="player-btn wide"
+            disabled={!current || busy}
+            title={t('player.wavHint')}
+            onClick={async () => {
+              if (!current) return;
+              setBusy(true);
+              try {
+                await exportSongWav(current.song, trackTitle(current));
+                toast(t('player.wavSaved', { name: trackTitle(current) }));
+              } catch (err) {
+                toast(t('player.mp3Failed', { msg: err instanceof Error ? err.message : String(err) }));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {t('player.exportWav')}
           </button>
         </div>
         <input

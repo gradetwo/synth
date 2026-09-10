@@ -64,7 +64,10 @@ export async function renderPatchToBuffer(
     processorOptions: {
       wasmBytes: bytes,
       sampleRate,
-      maxPolyphony: 16,
+      // Offline rendering has no deadline: the file gets the full 32-voice
+      // pool, so a long-release patch on a dense song is not cut short by
+      // stealing the way live playback (16 voices) has to be.
+      maxPolyphony: 32,
       routes: state.routes.map((r) => ({ src: r.src, dst: r.dst, amount: r.amount, enabled: r.enabled })),
     },
   });
