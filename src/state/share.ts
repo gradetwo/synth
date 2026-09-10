@@ -34,6 +34,8 @@ function base64UrlDecode(code: string): string | null {
 
 export interface PatchPayload {
   params: Record<number, number>;
+  /** The second layer, when the code carries one that differs from the default. */
+  params2: Record<number, number> | null;
   routes: ModRoute[];
 }
 
@@ -49,9 +51,20 @@ export function encodePatch(state: SynthState): string {
     Math.round(r.amount * 1000) / 1000,
     r.enabled ? 1 : 0,
   ]);
+  // The second layer only goes into the code when it is actually used: most
+  // patches have no layer, and an extra hundred numbers would double the link
+  // for nothing.
+  const layered = ids.some(
+    (id) => Math.round((state.params2[id] ?? DEFAULT_PARAMS[id]) * 10000) / 10000 !== values[ids.indexOf(id)],
+  );
+  const second = layered
+    ? ids.map((id) => Math.round((state.params2[id] ?? DEFAULT_PARAMS[id]) * 10000) / 10000)
+    : undefined;
   // `s` is the schema: a code from a newer build is refused rather than decoded
   // positionally into the wrong parameters.
-  return PREFIX + base64UrlEncode(JSON.stringify({ s: SCHEMA_VERSION, v: values, r: routes }));
+  return PREFIX + base64UrlEncode(
+    JSON.stringify({ s: SCHEMA_VERSION, v: values, r: routes, ...(second ? { p2: second } : {}) }),
+  );
 }
 
 /** Decode a share code; returns null for anything malformed. */
@@ -59,7 +72,7 @@ export function decodePatch(code: string): PatchPayload | null {
   if (!code.startsWith(PREFIX)) return null;
   const json = base64UrlDecode(code.slice(PREFIX.length));
   if (!json) return null;
-  let parsed: { s?: unknown; v?: unknown; r?: unknown };
+  let parsed: { s?: unknown; v?: unknown; r?: unknown; p2?: unknown };
   try {
     parsed = JSON.parse(json);
   } catch {
@@ -81,6 +94,17 @@ export function decodePatch(code: string): PatchPayload | null {
     if (typeof value === 'number' && Number.isFinite(value)) params[ids[index]] = value;
   });
 
+  // The second layer travels positionally just like the first; a code without
+  // one leaves the receiver's own layer alone (null), which is the difference
+  // between "this patch has no layer" and "this patch has the default layer".
+  let params2: Record<number, number> | null = null;
+  if (Array.isArray(parsed.p2)) {
+    params2 = { ...DEFAULT_PARAMS };
+    parsed.p2.forEach((value, index) => {
+      if (typeof value === 'number' && Number.isFinite(value)) params2![ids[index]] = value;
+    });
+  }
+
   const routes: ModRoute[] = [];
   if (Array.isArray(parsed.r)) {
     for (const entry of parsed.r) {
@@ -93,7 +117,7 @@ export function decodePatch(code: string): PatchPayload | null {
       });
     }
   }
-  return { params, routes };
+  return { params, params2, routes };
 }
 
 /** Full share URL for the current page. */

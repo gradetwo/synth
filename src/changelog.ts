@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.56.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '**分享链接现在也带第二层音色**：如果这个音色用了第二层，链接里会一并带上（对方打开就是完整的两层）；如果没用第二层，链接长度不变，而且**不会**把对方的第二层覆盖掉。',
+        '**Share links now carry the second timbre too**: if the patch uses a second layer, the link includes it, so the recipient hears the whole sound. A patch without a layer produces the same short link as before, and does not overwrite the recipient\'s own layer.',
+      ],
+    ],
+  },
+  {
     version: '1.55.0',
     date: '2026-09-10',
     kind: 'feature',

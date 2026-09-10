@@ -3,6 +3,21 @@ import { createDefaultState, Param } from '@/audio/params';
 import { decodePatch, encodePatch } from './share';
 
 describe('patch share codec', () => {
+  it('carries the second layer only when a patch actually uses one', () => {
+    const plain = encodePatch(createDefaultState());
+    expect(decodePatch(plain)!.params2).toBeNull();
+    // A code with no layer must not be longer than it needs to be either.
+    expect(plain.length).toBeLessThan(1200);
+
+    const layered = createDefaultState();
+    layered.params2 = { ...layered.params2, [Param.OSC1_WAVE]: 3, [Param.FILTER_CUTOFF]: 700 };
+    const decoded = decodePatch(encodePatch(layered))!;
+    expect(decoded.params2?.[Param.OSC1_WAVE]).toBe(3);
+    expect(decoded.params2?.[Param.FILTER_CUTOFF]).toBeCloseTo(700, 3);
+    // Instance 1 is untouched by the layer's values.
+    expect(decoded.params[Param.OSC1_WAVE]).toBe(layered.params[Param.OSC1_WAVE]);
+  });
+
   it('round-trips every parameter and route', () => {
     const state = createDefaultState();
     state.params[Param.FILTER_CUTOFF] = 1234.5;

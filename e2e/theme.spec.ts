@@ -108,6 +108,10 @@ test.describe('colour scheme', () => {
     await page.emulateMedia({ colorScheme: 'light' });
     await boot(page);
 
+    // Colours cross-fade (`.15s` transitions), so a computed style read while
+    // the theme is still animating is an interpolated colour: let it settle.
+    await page.waitForTimeout(300);
+
     // WCAG relative luminance + contrast ratio, straight from the spec.
     const contrastOf = (fg: string, bg: string) => {
       const parse = (c: string) => {
