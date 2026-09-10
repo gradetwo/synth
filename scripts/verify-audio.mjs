@@ -39,9 +39,13 @@ const P = {
   FILTER_ENV_AMT: 17, ENV_ATTACK: 19, ENV_DECAY: 20, ENV_SUSTAIN: 21, ENV_RELEASE: 22,
   LFO_ON: 23, FX_REVERB_ON: 29, FX_DELAY_ON: 32, FX_CHORUS_ON: 43, FX_FLANGER_ON: 47,
   FX_PHASER_ON: 51, FX_DRIVE_ON: 55, VOICE_MODE: 42, OSC1_PW: 6, WT_USER: 79,
+  FX_DELAY_FB: 34, FX_DELAY_MIX: 35, FX_DELAY_SYNC: 33, FX_DRIVE_AMT: 56, FX_DRIVE_MIX: 57,
+  FX_REVERB_MIX: 31, FX_REVERB_MODE: 94, FX_CONV_TRIM: 95,
+  FX_CHAIN1: 82, FX_CHAIN2: 83, FX_CHAIN3: 84, FX_CHAIN4: 85, FX_CHAIN5: 86, FX_CHAIN6: 87,
+  SMP_ROOT: 96, SMP_MODE: 97, TEMPO: 37,
 };
 
-const WAVE = { sine: 0, triangle: 1, saw: 2, square: 3, pulse: 4, noise: 5, wavetable: 8 };
+const WAVE = { sine: 0, triangle: 1, saw: 2, square: 3, pulse: 4, noise: 5, wavetable: 8, sample: 9 };
 
 const failures = [];
 const report = [];
@@ -61,7 +65,13 @@ function engine(params, notes = []) {
   ex.gs_set_param(P.FX_DELAY_ON, 0);
   ex.gs_all_notes_off();
   for (let i = 0; i < 80; i++) ex.gs_process(BLOCK);
-  for (const [id, value] of params) ex.gs_set_param(id, value);
+  for (const [id, value] of params) {
+    // A mistyped id would land on parameter 0 and quietly change the master
+    // volume instead of failing, which is exactly the kind of gate bug that
+    // hides for months.
+    if (!Number.isInteger(id)) throw new Error(`bad parameter id in the gate: ${id}`);
+    ex.gs_set_param(id, value);
+  }
   for (const [note, velocity] of notes) ex.gs_note_on(note, velocity);
   return ex;
 }
@@ -470,6 +480,131 @@ function blockSteps(frames) {
   const lost = (before - after) / 1024;
   check('re-initialising the core does not leak the arena', lost < 64, `${lost.toFixed(0)} KB lost over 4 restarts`);
   check('the arena still has room after the restarts', after > 512 * 1024, `${(after / 1024).toFixed(0)} KB free`);
+}
+
+// ------------------------------------------------ 6. sampler and response (A/A5)
+{
+  const importSample = (samples, rate) => {
+    const capacity = ex.gs_sample_capacity();
+    const scratch = new Float32Array(ex.memory.buffer, ex.gs_sample_import_ptr(), capacity);
+    const count = Math.min(samples.length, capacity);
+    scratch.set(samples.subarray(0, count));
+    return ex.gs_sample_import(count, rate);
+  };
+  const tone = Float32Array.from({ length: 24_000 }, (_, i) => Math.sin((2 * Math.PI * 440 * i) / 48_000) * 0.8);
+  check('a sample imports', importSample(tone, 48_000) === 0, 'code 0');
+  check('the core reports the sample', ex.gs_sample_has() === 1, 'has = 1');
+  check('a silent sample is refused', importSample(new Float32Array(48_000), 48_000) === 2, 'code 2');
+  importSample(tone, 48_000);
+
+  // Play it: the sample was recorded at 440 Hz and the patch says so, so A4 has
+  // to come back out at 440 Hz.
+  engine(
+    [
+      [P.OSC1_ON, 1], [P.OSC1_WAVE, WAVE.sample], [P.OSC1_LEVEL, 0.9],
+      [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0], [P.FILTER_CUTOFF, 18000], [P.FILTER_DRIVE, 0],
+      [P.FILTER_ENV_AMT, 0], [P.ENV_ATTACK, 0.001], [P.ENV_SUSTAIN, 1], [P.LFO_ON, 0],
+      [P.MASTER_VOLUME, 1], [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.SMP_ROOT, 69],
+      [P.SMP_MODE, 1],
+    ],
+    [[69, 1]],
+  );
+  {
+    const buf = [];
+    for (const [l] of render(60)) buf.push(...l);
+    let best = { freq: 0, level: 0 };
+    for (let freq = 300; freq <= 700; freq += 5) {
+      const level = binMag(buf, freq);
+      if (level > best.level) best = { freq, level };
+    }
+    check(
+      'the sampler plays the sample at its recorded pitch',
+      Math.abs(best.freq - 440) <= 10 && best.level > 0.02,
+      `${best.freq} Hz at ${best.level.toFixed(3)}`,
+    );
+  }
+
+  const importIr = (ir) => {
+    const capacity = ex.gs_ir_capacity();
+    const scratch = new Float32Array(ex.memory.buffer, ex.gs_ir_import_ptr(), capacity);
+    const count = Math.min(ir.length, capacity);
+    scratch.set(ir.subarray(0, count));
+    return ex.gs_ir_import(count);
+  };
+  // A unit-energy response: the core normalises it, so the wet level of a noise
+  // source should land within a few dB of the dry signal.
+  const response = Float32Array.from({ length: 24_000 }, (_, i) => (Math.random() * 2 - 1) * Math.exp(-i / 6_000));
+  check('an impulse response imports', importIr(response) === 0, 'code 0');
+  check('the core reports the response', ex.gs_ir_has() === 1, 'has = 1');
+  check('a short response is refused', importIr(new Float32Array(8)) === 1, 'code 1');
+  importIr(response);
+
+  const noisePatch = (mix) => [
+    [P.OSC1_ON, 1], [P.OSC1_WAVE, WAVE.noise], [P.OSC1_LEVEL, 0.6],
+    [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0], [P.FILTER_CUTOFF, 18000], [P.FILTER_DRIVE, 0],
+    [P.FILTER_ENV_AMT, 0], [P.ENV_ATTACK, 0.01], [P.ENV_DECAY, 2], [P.ENV_SUSTAIN, 1],
+    [P.LFO_ON, 0], [P.MASTER_VOLUME, 1], [P.FX_DELAY_ON, 0], [P.FX_REVERB_ON, 1],
+    [P.FX_REVERB_MODE, 1], [P.FX_CONV_TRIM, 1], [P.FX_REVERB_MIX, mix],
+  ];
+  const levelOf = (mix) => {
+    engine(noisePatch(mix), [[60, 1]]);
+    const buf = [];
+    for (const [l] of render(80)) buf.push(...l);
+    return Math.sqrt(buf.reduce((sum, v) => sum + v * v, 0) / buf.length);
+  };
+  {
+    const dry = levelOf(0);
+    const wet = levelOf(1);
+    const delta = 20 * Math.log10(wet / Math.max(dry, 1e-9));
+    // A unit-energy response adds roughly as much as it passes: about +3 dB,
+    // never +20 (which would mean the response was not normalised at all).
+    check('the response is energy-normalised', delta > -1 && delta < 9, `${delta.toFixed(1)} dB versus dry`);
+  }
+}
+
+// ------------------------------------------------------ 7. effect chain order
+{
+  const patch = (order, on) => [
+    [P.OSC1_ON, 1], [P.OSC1_WAVE, WAVE.saw], [P.OSC1_LEVEL, 0.8],
+    [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0], [P.FILTER_CUTOFF, 18000], [P.FILTER_DRIVE, 0],
+    [P.FILTER_ENV_AMT, 0], [P.ENV_ATTACK, 0.002], [P.ENV_DECAY, 0.4], [P.ENV_SUSTAIN, 0.5],
+    [P.ENV_RELEASE, 0.1], [P.LFO_ON, 0], [P.MASTER_VOLUME, 1], [P.TEMPO, 120],
+    [P.FX_REVERB_ON, 0],
+    [P.FX_DELAY_ON, on ? 1 : 0], [P.FX_DELAY_SYNC, 3], [P.FX_DELAY_FB, 0.6], [P.FX_DELAY_MIX, 0.8],
+    [P.FX_DRIVE_ON, on ? 1 : 0], [P.FX_DRIVE_AMT, 0.9], [P.FX_DRIVE_MIX, 1],
+    [P.FX_CHAIN1, order[0]], [P.FX_CHAIN2, order[1]], [P.FX_CHAIN3, order[2]],
+    [P.FX_CHAIN4, order[3]], [P.FX_CHAIN5, order[4]], [P.FX_CHAIN6, order[5]],
+  ];
+  const renderPatch = (params) => {
+    engine(params, [[69, 1]]);
+    const buf = [];
+    for (const [l] of render(120, 10)) buf.push(...l);
+    return buf;
+  };
+  const rms = (buf) => Math.sqrt(buf.reduce((sum, v) => sum + v * v, 0) / buf.length);
+
+  const delayThenDrive = renderPatch(patch([1, 6, 0, 0, 0, 0], true));
+  const driveThenDelay = renderPatch(patch([6, 1, 0, 0, 0, 0], true));
+  const reference = rms(delayThenDrive);
+  const difference = Math.sqrt(
+    delayThenDrive.reduce((sum, v, i) => sum + (v - driveThenDelay[i]) ** 2, 0) / delayThenDrive.length,
+  );
+  check('the chain renders the effects at all', reference > 0.01, `rms ${reference.toFixed(3)}`);
+  check(
+    'reordering the chain changes the sound',
+    difference > reference * 0.15,
+    `${(20 * Math.log10(difference / reference)).toFixed(1)} dB difference`,
+  );
+
+  // Positions left empty run nothing, and an effect that is switched off is a
+  // pass-through: both renders must match the patch with no effects at all.
+  const emptyChain = renderPatch(patch([0, 0, 0, 0, 0, 0], true));
+  const noEffects = renderPatch(patch([0, 0, 0, 0, 0, 0], false));
+  check(
+    'an empty chain with the effects switched on is a clean pass-through',
+    Math.abs(rms(emptyChain) - rms(noEffects)) < rms(noEffects) * 0.01,
+    `${rms(emptyChain).toFixed(5)} vs ${rms(noEffects).toFixed(5)}`,
+  );
 }
 
 console.log('[audio] quality gate');
