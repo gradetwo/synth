@@ -1,5 +1,5 @@
 import { store } from '@/state/store';
-import { useParam, useRoutes } from '@/hooks/useSynth';
+import { useLang, useParam, useRoutes } from '@/hooks/useSynth';
 import {
   DELAY_SYNCS,
   LFO_TARGETS,
@@ -21,7 +21,9 @@ import {
   type ParamId,
   type ParamSpec,
   type Wave,
+  intToWave,
 } from '@/audio/params';
+import { wavetableName, wavetableValueToRecipe } from '@/audio/wavetable';
 import type { ModuleId } from '@/state/layout';
 import { Knob, Led, ParamLed, Segment, WaveSelect } from '@/components/controls';
 import { FilterCurve, LfoRateLabel, MiniWave } from '@/components/canvas';
@@ -67,6 +69,7 @@ function ParamSegment({
 
 function OscModule({ which }: { which: 1 | 2 }) {
   const color = which === 1 ? '#4da3ff' : '#35d0c5';
+  const lang = useLang();
   const pitch = SPEC_BY_ID[which === 1 ? Param.OSC1_PITCH : Param.OSC2_PITCH];
   const detune = SPEC_BY_ID[which === 1 ? Param.OSC1_DETUNE : Param.OSC2_DETUNE];
   const level = SPEC_BY_ID[which === 1 ? Param.OSC1_LEVEL : Param.OSC2_LEVEL];
@@ -74,6 +77,14 @@ function OscModule({ which }: { which: 1 | 2 }) {
   const pan = SPEC_BY_ID[which === 1 ? Param.OSC1_PAN : Param.OSC2_PAN];
   const unison = SPEC_BY_ID[which === 1 ? Param.OSC1_UNISON : Param.OSC2_UNISON];
   const spread = SPEC_BY_ID[which === 1 ? Param.OSC1_SPREAD : Param.OSC2_SPREAD];
+  // With the wavetable wave the PW knob picks the harmonic table, so say which
+  // one it is rather than leaving the player to discover it.
+  const wave = intToWave(useParam(which === 1 ? Param.OSC1_WAVE : Param.OSC2_WAVE));
+  const pwValue = useParam(pw.id);
+  const pwSpec =
+    wave === 'wavetable'
+      ? { ...pw, label: `WT ${wavetableName(wavetableValueToRecipe(pwValue), lang)}` }
+      : pw;
   return (
     <ModuleShell id={which === 1 ? 'osc1' : 'osc2'}>
       <ParamWaveSelect id={which === 1 ? Param.OSC1_WAVE : Param.OSC2_WAVE} waves={WAVES} />
@@ -81,7 +92,7 @@ function OscModule({ which }: { which: 1 | 2 }) {
         <Knob spec={pitch} />
         <Knob spec={detune} />
         <Knob spec={level} />
-        <Knob spec={pw} />
+        <Knob spec={pwSpec} />
         <Knob spec={pan} />
         <Knob spec={unison} />
         <Knob spec={spread} />

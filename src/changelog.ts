@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.44.2',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '选了波表波形后，`PW` 旋钮的标签会**直接显示当前是哪张表**（如 `WT 玻璃`），不再需要靠听来猜它在做什么。',
+        'With the wavetable wave selected, the `PW` knob now **labels which table it is on** (for example `WT Glass`), instead of leaving you to work it out by ear.',
+      ],
+    ],
+  },
+  {
     version: '1.44.1',
     date: '2026-09-10',
     kind: 'fix',
