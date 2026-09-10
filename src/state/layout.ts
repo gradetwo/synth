@@ -67,6 +67,8 @@ export interface LayoutState {
   phoneDefaults: boolean;
   /** Modules collapsed automatically by the phone defaults, not by the user. */
   autoCollapsed: ModuleId[];
+  /** User-pinned polyphony ceiling; 0 = let the load monitor decide. */
+  polyphony: number;
 }
 
 export function defaultLayout(): LayoutState {
@@ -86,6 +88,7 @@ export function defaultLayout(): LayoutState {
     displayExpanded: null,
     phoneDefaults: false,
     autoCollapsed: [],
+    polyphony: 0,
   };
 }
 
@@ -147,6 +150,9 @@ export function normalizeLayout(raw: unknown): LayoutState {
     displayExpanded:
       typeof input.displayExpanded === 'boolean' ? input.displayExpanded : null,
     phoneDefaults: input.phoneDefaults === true,
+    polyphony: [0, 4, 8, 16, 32].includes(input.polyphony as number)
+      ? (input.polyphony as number)
+      : 0,
     autoCollapsed: Array.isArray(input.autoCollapsed)
       ? input.autoCollapsed.filter(
           (id, index, list): id is ModuleId =>

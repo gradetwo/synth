@@ -18,6 +18,29 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.26.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '新增「**音频设置**」面板（预设库里的入口）：显示**引擎状态、采样率、输出延迟、DSP 内核（simd/scalar）、输出峰值与实时 DSP 负载%**，并可直接**固定复音数**（4/8/16/32，会记住）。负载长期偏高时，把复音数钉在 8 或 4 是最有效的降载手段。',
+        'New **Audio settings** panel (from the preset drawer): engine state, sample rate, output latency, DSP core (simd/scalar), output peak and live **DSP load**, plus a **polyphony ceiling** (4/8/16/32, remembered). Pinning it at 8 or 4 is the most effective way to cut load when a device struggles.',
+      ],
+      [
+        '手动的复音上限**会被负载监控尊重**：监控仍可在过载时继续下调，但不会再把上限顶回去（之前点了 8 也会被自动恢复成 16）。',
+        'A pinned polyphony ceiling is now **respected by the load monitor**: it may still drop lower under overload, but it never climbs back over your setting (previously choosing 8 was silently restored to 16).',
+      ],
+      [
+        '**首屏更小**：使用指南、更新记录、音频设置三个面板改为**按需加载**，首屏 JS 从 150 KB 降到 **110 KB**（gzip），打开应用更快。',
+        '**Smaller first load**: the guide, changelog and audio-settings panels are now **loaded on demand**, cutting the entry JS from 150 KB to **110 KB** gzipped.',
+      ],
+      [
+        '**启动更快**：页面加载时就在后台预热音频路径（注册 AudioWorklet、预取并校验 DSP 内核），点「启动音频引擎」时只剩恢复上下文与建图，不再在静音里等下载与编译；内核只会下载一次。',
+        '**Faster start**: the audio path is warmed in the background on page load (worklet module registered, DSP core fetched and validated), so tapping Start only has to resume the context and build the graph instead of waiting in silence — and the core is downloaded exactly once.',
+      ],
+    ],
+  },
+  {
     version: '1.25.0',
     date: '2026-09-10',
     kind: 'fix',

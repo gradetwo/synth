@@ -23,11 +23,13 @@ export function PresetDrawer({
   onClose,
   onOpenGuide,
   onOpenChangelog,
+  onOpenAudio,
 }: {
   open: boolean;
   onClose: () => void;
   onOpenGuide: () => void;
   onOpenChangelog: () => void;
+  onOpenAudio: () => void;
 }) {
   const { userPresets, currentPresetId } = useSynth();
   const lang = useLang();
@@ -189,6 +191,17 @@ export function PresetDrawer({
               title={t('changelog.sub')}
             >
               {t('drawer.changelog')}
+            </button>
+            <button
+              type="button"
+              className="d-reset"
+              onClick={() => {
+                haptic();
+                onOpenAudio();
+              }}
+              title={t('audio.sub')}
+            >
+              {t('audio.title')}
             </button>
             <button
               type="button"

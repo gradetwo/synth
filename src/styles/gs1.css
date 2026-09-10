@@ -1667,3 +1667,20 @@ input,textarea,[contenteditable='true']{
 .release-date{font:600 9.5px/1 var(--mono);color:var(--txt-dim);margin-left:auto}
 .release .guide-ul{margin:0}
 .release .guide-ul li{font-size:12.5px;line-height:1.65}
+
+/* Audio settings: a readout panel, same shell as the changelog. */
+.audio-settings .guide-body{grid-template-columns:1fr}
+.audio-settings .guide{max-width:560px}
+.audio-body{overflow-y:auto;padding:18px 22px 40px;display:flex;flex-direction:column;gap:2px}
+.audio-row{display:grid;grid-template-columns:120px 1fr;gap:4px 12px;align-items:baseline;
+  padding:9px 0;border-bottom:1px solid var(--line-soft)}
+.audio-label{font:600 10px/1.2 var(--mono);letter-spacing:.08em;color:var(--txt-dim);
+  text-transform:uppercase}
+.audio-value{font:700 12.5px/1.2 var(--grot);color:var(--txt-1);font-variant-numeric:tabular-nums}
+.audio-load.hot{color:#ff6b6b}
+.audio-hint-text{grid-column:2;font:500 10.5px/1.4 var(--grot);color:var(--txt-dim)}
+.audio-poly{padding:14px 0 4px;display:flex;flex-direction:column;gap:8px}
+.audio-poly .seg{width:100%}
+.audio-poly-seg .seg-btn{flex:1}
+.audio-note{margin:0;font:500 10.5px/1.5 var(--grot);color:var(--txt-dim)}
+.audio-resume{align-self:flex-start;margin-top:12px}

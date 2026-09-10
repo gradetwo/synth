@@ -126,6 +126,8 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     this.pendingSpectrum = new Float32Array(SPECTRUM_BINS);
     this.maxPoly = opts.maxPolyphony || 16;
     this.currentPoly = this.maxPoly;
+    // 0 = the load monitor decides; otherwise a ceiling the user pinned.
+    this.manualPoly = 0;
     this.costAvg = 0;
     this.lastDowngrade = 0;
     this.lastUpgrade = 0;
@@ -203,9 +205,18 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
       case 'modRoute':
         this.wasm.gs_set_mod_route(data.index, data.src, data.dst, data.amount, data.enabled ? 1 : 0);
         break;
-      case 'setPolyphony':
-        this.wasm.gs_set_max_polyphony(data.value);
+      case 'setPolyphony': {
+        // A host request (the audio-settings panel) becomes the ceiling the
+        // load monitor may fall below but never climb back over, and it is
+        // echoed so the UI can show the value actually in force.
+        const value = Math.max(2, Math.min(this.maxPoly, Number(data.value) || this.maxPoly));
+        this.manualPoly = value;
+        this.currentPoly = value;
+        this.wasm.gs_set_max_polyphony(value);
+        this.wasm.gs_force_release_excess();
+        this.port.postMessage({ type: 'polyphony', value, reason: 'manual' });
         break;
+      }
       case 'downgrade':
         this.wasm.gs_trigger_smooth_downgrade();
         break;
@@ -248,7 +259,8 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
       this.currentPoly < this.maxPoly &&
       now - this.lastUpgrade > 8000
     ) {
-      this.currentPoly = Math.min(this.maxPoly, this.currentPoly + 4);
+      // Never climb back over a ceiling the user pinned.
+      this.currentPoly = Math.min(this.manualPoly || this.maxPoly, this.currentPoly + 4);
       this.wasm.gs_set_max_polyphony(this.currentPoly);
       this.lastUpgrade = now;
       this.costAvg = 0;

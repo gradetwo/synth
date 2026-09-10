@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { engine } from '@/audio/engine';
 import { store } from '@/state/store';
 import { useContrast, useLayout, usePower, useTheme, useView } from '@/hooks/useSynth';
@@ -9,8 +9,13 @@ import { PianoRoll } from '@/components/PianoRoll';
 import { ModuleFor } from '@/panels/modules';
 import { ModulesGrid } from '@/components/Module';
 import { PresetDrawer } from '@/components/PresetDrawer';
-import { Changelog } from '@/components/Changelog';
-import { Guide } from '@/components/Guide';
+// The three dialogs carry a lot of copy (the guide alone is tens of KB) and
+// ship as their own chunks: the synth itself should not wait for a manual.
+const Guide = lazy(() => import('@/components/Guide').then((m) => ({ default: m.Guide })));
+const Changelog = lazy(() => import('@/components/Changelog').then((m) => ({ default: m.Changelog })));
+const AudioSettings = lazy(() =>
+  import('@/components/AudioSettings').then((m) => ({ default: m.AudioSettings })),
+);
 import { PlayerPanel } from '@/components/PlayerPanel';
 import { SignalFlow } from '@/components/SignalFlow';
 import { ToastHost } from '@/components/Toast';
@@ -86,6 +91,7 @@ export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [changelogOpen, setChangelogOpen] = useState(false);
+  const [audioOpen, setAudioOpen] = useState(false);
   const [playerOpen, setPlayerOpen] = useState(false);
   const [rollOpen, setRollOpen] = useState(false);
   const [status, setStatus] = useState(engine.getState());
@@ -179,7 +185,8 @@ export default function App() {
     try {
       // Must run inside the gesture: creates + resumes the AudioContext before
       // the first await (Safari requirement).
-      await engine.start(16, store.getSnapshot().state.routes);
+      const pinned = store.getSnapshot().layout.polyphony;
+      await engine.start(pinned || 16, store.getSnapshot().state.routes);
       engine.applyState(store.getSnapshot().state, true);
       engine.setMuted(!store.getSnapshot().state.power);
     } catch (err) {
@@ -228,6 +235,12 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Warm the audio path while the user reads the start gate: the worklet can be
+  // registered on a suspended context and the core fetched without a gesture.
+  useEffect(() => {
+    void engine.preload();
   }, []);
 
   // Any gesture may (re)start or resume audio. iOS suspends the context when
@@ -316,9 +329,26 @@ export default function App() {
           setDrawerOpen(false);
           setChangelogOpen(true);
         }}
+        onOpenAudio={() => {
+          setDrawerOpen(false);
+          setAudioOpen(true);
+        }}
       />
-      <Guide open={guideOpen} onClose={() => setGuideOpen(false)} />
-      <Changelog open={changelogOpen} onClose={() => setChangelogOpen(false)} />
+      {guideOpen ? (
+        <Suspense fallback={null}>
+          <Guide open onClose={() => setGuideOpen(false)} />
+        </Suspense>
+      ) : null}
+      {changelogOpen ? (
+        <Suspense fallback={null}>
+          <Changelog open onClose={() => setChangelogOpen(false)} />
+        </Suspense>
+      ) : null}
+      {audioOpen ? (
+        <Suspense fallback={null}>
+          <AudioSettings open onClose={() => setAudioOpen(false)} />
+        </Suspense>
+      ) : null}
       <PlayerPanel
         open={playerOpen}
         onClose={() => setPlayerOpen(false)}

@@ -670,6 +670,8 @@ class SynthStore {
   }
 
   setPolyphony(n: number) {
+    this.layout = { ...this.layout, polyphony: n };
+    saveJson(LAYOUT_KEY, this.layout);
     engine.setPolyphony(n);
   }
 

@@ -91,6 +91,9 @@ export class AudioEngine {
   private listeners = new Set<AnalysisListener>();
   private statusListeners = new Set<() => void>();
   private polyphonyListeners = new Set<(value: number, reason: string) => void>();
+  private preloadPromise: Promise<void> | null = null;
+  private preloaded: { variant: 'simd' | 'scalar'; bytes: ArrayBuffer } | null = null;
+  private workletRegistered = false;
   private timeBuffer = new Float32Array(1024);
 
   onAnalysis(fn: AnalysisListener): () => void {
@@ -186,6 +189,40 @@ export class AudioEngine {
     await this.load(this.ensureContext(), maxPolyphony, routes);
   }
 
+  /**
+   * Warm everything the start gesture needs, in the background: the worklet
+   * module can be registered on a suspended context, and the core can be
+   * fetched and validated without a gesture. The first tap then only has to
+   * resume the context and build the node, instead of paying for a download
+   * and a compile in silence.
+   */
+  async preload(): Promise<void> {
+    if (this.node || this.preloadPromise) {
+      await this.preloadPromise;
+      return;
+    }
+    this.preloadPromise = (async () => {
+      const ctx = this.ensureContext();
+      await ctx.audioWorklet.addModule(processorUrl);
+      const simd = this.simdSupported;
+      this.preloaded = await this.fetchCore(simd ? 'simd' : 'scalar');
+    })().catch(() => undefined);
+    return this.preloadPromise;
+  }
+
+  private async fetchCore(variant: 'simd' | 'scalar'): Promise<{ variant: 'simd' | 'scalar'; bytes: ArrayBuffer }> {
+    const wasmUrl = variant === 'simd' ? simdWasmUrl : scalarWasmUrl;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const response = await fetch(wasmUrl, { signal: controller.signal });
+      if (!response.ok) throw new Error(t('err.wasmFetch', { status: response.status }));
+      return { variant, bytes: await response.arrayBuffer() };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private load(ctx: AudioContext, maxPolyphony: number, routes?: ModRoute[]): Promise<void> {
     if (this.node) return Promise.resolve();
     if (this.loadPromise) return this.loadPromise;
@@ -210,11 +247,17 @@ export class AudioEngine {
         // a browser can advertise SIMD while rejecting another instruction
         // the build uses. Validate the actual bytes and fall back if needed.
         let variant: 'simd' | 'scalar' = this.simdSupported ? 'simd' : 'scalar';
-        let bytes = await fetchBytes(variant === 'simd');
+        let bytes =
+          this.preloaded && this.preloaded.variant === variant
+            ? this.preloaded.bytes
+            : await fetchBytes(variant === 'simd');
         if (!WebAssembly.validate(bytes)) {
           if (variant === 'simd') {
             variant = 'scalar';
-            bytes = await fetchBytes(false);
+            bytes =
+              this.preloaded && this.preloaded.variant === 'scalar'
+                ? this.preloaded.bytes
+                : await fetchBytes(false);
           }
           if (!WebAssembly.validate(bytes)) {
             throw new Error(t('err.wasmValidate'));
@@ -222,7 +265,9 @@ export class AudioEngine {
         }
         this.wasmVariant = variant;
 
-        await ctx.audioWorklet.addModule(processorUrl);
+        // Already registered by `preload()` when it ran; adding twice throws.
+        if (!this.workletRegistered) await ctx.audioWorklet.addModule(processorUrl);
+        this.workletRegistered = true;
 
         const node = new AudioWorkletNode(ctx, 'gs1-synth-processor', {
           numberOfInputs: 0,
