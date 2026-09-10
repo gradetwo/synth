@@ -18,6 +18,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.27.0',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '修复**导出音频过轻**（电钢 + 致爱丽丝实测峰值仅 **−23.4 dBFS**）：导出改为**双向归一化**，现在会把安静的音色提升到 −1 dBFS 附近（提升上限 +24 dB）。过轻的文件会逼着播放端大幅加增益（手机响度自动补偿、蓝牙编解码、功放底噪都会被一起推起来），这正是"听起来有刺啦"的常见来源。',
+        'Fixed **exports that were far too quiet** (the electric piano + Für Elise export peaked at **−23.4 dBFS**): exports are now normalised **in both directions**, lifting quiet patches to about −1 dBFS (boost capped at +24 dB). A too-quiet file forces the playback chain to add 20+ dB — the phone loudness normaliser, a Bluetooth codec, the amplifier noise floor — which is a common source of "crackling" that the synth never produced.',
+      ],
+      [
+        'MP3 导出码率 192 → **256 kbps**：音色起音快时编码预回声（pre-echo）更不容易被听到。',
+        'MP3 exports now encode at **256 kbps** instead of 192, which keeps pre-echo away from sharp attacks.',
+      ],
+    ],
+  },
+  {
     version: '1.26.0',
     date: '2026-09-10',
     kind: 'feature',

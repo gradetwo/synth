@@ -59,10 +59,19 @@ describe('export normalisation', () => {
     expect(data[0][1] / data[0][2]).toBeCloseTo(0.5 / -1.4, 4);
   });
 
-  it('leaves a quiet render alone', () => {
+  it('lifts a quiet render up to the ceiling', () => {
+    // A single-note synth patch can legitimately peak 20 dB down; the export
+    // must still be a normal-level file, so this boosts as well as cuts.
     const data = [Float32Array.from([0, 0.2, -0.3])];
     expect(normalizePeak(data, 0.891)).toBeCloseTo(0.3, 5);
-    expect(data[0][2]).toBeCloseTo(-0.3, 5);
+    expect(peakOf(data)).toBeCloseTo(0.891, 4);
+  });
+
+  it('caps the boost so near-silence stays near-silence', () => {
+    const data = [Float32Array.from([0, 1e-5, -1e-5])];
+    normalizePeak(data, 0.891, 24);
+    // +24 dB at most, i.e. a factor of ~15.8.
+    expect(peakOf(data)).toBeLessThan(1e-5 * 16);
   });
 
   it('survives silence and non-finite samples', () => {

@@ -118,14 +118,20 @@ function writeString(view: DataView, offset: number, text: string) {
 
 /** Encode an AudioBuffer (or anything AudioBuffer-like) as a 16-bit PCM WAV. */
 /**
- * Scale a rendered buffer so its highest sample sits at `ceiling`.
+ * Normalise a rendered buffer to `ceiling`.
  *
- * Exports bypass the live master limiter's metering, so a patch that is loud
- * enough to be limited live would otherwise leave the render pinned near full
- * scale. Normalising keeps every export at a predictable level (and only ever
- * turns things *down*: quiet renders are left alone).
+ * Both directions matter: a loud patch must not leave the render pinned at full
+ * scale, and — more importantly — a quiet patch must not be *exported* quiet. A
+ * synth patch that plays single notes sits 15-20 dB below a dense chord, so
+ * without a boost the electric pianos exported at about -23 dBFS: listeners
+ * then crank the volume (or a phone's loudness normalisation does it for them)
+ * and everything downstream — the DAC, the speaker, a Bluetooth codec — is
+ * driven far harder than the file deserves.
+ *
+ * The boost is capped so an almost-silent render cannot be amplified into a
+ * noise floor.
  */
-export function normalizePeak(data: Float32Array[], ceiling = 0.891): number {
+export function normalizePeak(data: Float32Array[], ceiling = 0.891, maxBoostDb = 24): number {
   let peak = 0;
   for (const channel of data) {
     for (let i = 0; i < channel.length; i++) {
@@ -133,8 +139,10 @@ export function normalizePeak(data: Float32Array[], ceiling = 0.891): number {
       if (v > peak) peak = v;
     }
   }
-  if (!Number.isFinite(peak) || peak <= ceiling) return peak;
-  const gain = ceiling / peak;
+  if (!Number.isFinite(peak) || peak <= 0) return peak;
+  const minPeak = ceiling / 10 ** (maxBoostDb / 20);
+  const gain = ceiling / Math.max(peak, minPeak);
+  if (Math.abs(gain - 1) < 1e-4) return peak;
   for (const channel of data) {
     for (let i = 0; i < channel.length; i++) channel[i] *= gain;
   }

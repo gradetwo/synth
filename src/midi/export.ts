@@ -14,6 +14,13 @@ import { writeMidi, type MidiSong } from './smf';
 /** Target peak for rendered exports: -1 dBFS, the usual streaming headroom. */
 const EXPORT_CEILING = 0.891;
 
+/**
+ * MP3 bitrate. 192 kbps is the streaming default, but the export is a synth
+ * patch with sharp attacks, where a little extra headroom in the encoder keeps
+ * pre-echo away; the file is still a few MB.
+ */
+const EXPORT_KBPS = 256;
+
 const safeName = (s: string) => s.replace(/[^\w\u4e00-\u9fa5-]+/g, '_').slice(0, 48) || 'gs1';
 
 export function exportSongMidi(song: MidiSong, name: string): void {
@@ -32,6 +39,6 @@ export async function exportSongMp3(song: MidiSong, name: string): Promise<void>
   const channels = [];
   for (let c = 0; c < buffer.numberOfChannels; c++) channels.push(buffer.getChannelData(c));
   normalizePeak(channels, EXPORT_CEILING);
-  const blob = await encodeMp3(buffer);
+  const blob = await encodeMp3(buffer, EXPORT_KBPS);
   downloadBlob(`${safeName(name)}.mp3`, blob);
 }

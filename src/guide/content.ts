@@ -975,7 +975,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Export MIDI**: saves the current track or take as `.mid` for further editing in a DAW.',
           ],
           [
-            '**导出 MP3**：用当前音色离线渲染整首曲目并编码为 192 kbps MP3。录制的片段可以在换音色后重新导出，得到不同音色的版本。',
+            '**导出 MP3**：用当前音色离线渲染整首曲目，导出前把峰值归一化到 −1 dBFS（安静音色会被提升到正常音量，避免播放端大幅加增益），再编码为 256 kbps MP3。录制的片段可以在换音色后重新导出，得到不同音色的版本。',
             '**Export MP3**: renders the whole track offline with the current patch and encodes it to 192 kbps MP3. A recorded take can be re-exported after changing the patch for a different timbre.',
           ],
           [
