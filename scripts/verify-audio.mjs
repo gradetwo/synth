@@ -38,10 +38,10 @@ const P = {
   OSC2_LEVEL: 11, FILTER_TYPE: 13, FILTER_CUTOFF: 14, FILTER_RES: 15, FILTER_DRIVE: 16,
   FILTER_ENV_AMT: 17, ENV_ATTACK: 19, ENV_DECAY: 20, ENV_SUSTAIN: 21, ENV_RELEASE: 22,
   LFO_ON: 23, FX_REVERB_ON: 29, FX_DELAY_ON: 32, FX_CHORUS_ON: 43, FX_FLANGER_ON: 47,
-  FX_PHASER_ON: 51, FX_DRIVE_ON: 55, VOICE_MODE: 42,
+  FX_PHASER_ON: 51, FX_DRIVE_ON: 55, VOICE_MODE: 42, OSC1_PW: 6, WT_USER: 79,
 };
 
-const WAVE = { sine: 0, triangle: 1, saw: 2, square: 3, pulse: 4, noise: 5 };
+const WAVE = { sine: 0, triangle: 1, saw: 2, square: 3, pulse: 4, noise: 5, wavetable: 8 };
 
 const failures = [];
 const report = [];
@@ -379,6 +379,84 @@ function blockSteps(frames) {
   }
   const load = (perBlockUs / BUDGET_US) * 100;
   check('worst-case block fits the budget', load < 60, `${load.toFixed(0)}% of ${BUDGET_US.toFixed(0)} µs`);
+}
+
+// ------------------------------------------ 5. imported single-cycle wavetable
+{
+  /** Hand a cycle to the core exactly as the worklet does. */
+  const importCycle = (cycle) => {
+    const capacity = ex.gs_wavetable_capacity();
+    if (cycle.length > capacity) throw new Error(`cycle longer than ${capacity}`);
+    const scratch = new Float32Array(ex.memory.buffer, ex.gs_wavetable_import_ptr(), capacity);
+    scratch.set(cycle);
+    return ex.gs_wavetable_import(cycle.length);
+  };
+
+  const sine = Array.from({ length: 2048 }, (_, i) => Math.sin((2 * Math.PI * i) / 2048));
+  check('a clean cycle imports', importCycle(sine) === 0, 'code 0');
+  check('the core reports the imported table', ex.gs_wavetable_has() === 1, 'has = 1');
+  check('junk is refused', importCycle(new Array(2048).fill(0)) === 2, 'a silent cycle is rejected');
+
+  // Put the sine back and play it: one harmonic, and it must be a *sine*.
+  importCycle(sine);
+  const patch = (wave, wtUser) => [
+    [P.OSC1_ON, 1], [P.OSC1_WAVE, wave], [P.OSC1_LEVEL, 0.9],
+    [P.OSC1_PW, 1], [P.WT_USER, wtUser], [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0],
+    [P.FILTER_CUTOFF, 18000], [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0],
+    [P.ENV_ATTACK, 0.001], [P.ENV_SUSTAIN, 1], [P.LFO_ON, 0], [P.MASTER_VOLUME, 1],
+    [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
+    [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0],
+  ];
+  {
+    engine(patch(WAVE.wavetable, 1), [[69, 1]]);
+    const buf = [];
+    for (const [l] of render(100)) buf.push(...l);
+    const f0 = 440;
+    const fundamental = binMag(buf, f0);
+    const harmonics = [2, 3, 5].map((k) => binMag(buf, f0 * k));
+    const worst = Math.max(...harmonics);
+    check('an imported sine plays as a sine', fundamental > 0.02, `fundamental ${fundamental.toFixed(3)}`);
+    check(
+      'an imported sine has no harmonics',
+      20 * Math.log10(worst / Math.max(fundamental, 1e-12)) < -60,
+      `worst harmonic ${(20 * Math.log10(worst / Math.max(fundamental, 1e-12))).toFixed(1)} dB`,
+    );
+    // The imported cycle must not arrive at a different level from the same
+    // waveform built in: an import that silently rescales is a loudness bug.
+    engine(patch(WAVE.sine, 0), [[69, 1]]);
+    const analog = [];
+    for (const [l] of render(100)) analog.push(...l);
+    const analogFundamental = binMag(analog, f0);
+    const level = 20 * Math.log10(fundamental / Math.max(analogFundamental, 1e-12));
+    check('an imported sine matches the built-in one in level', Math.abs(level) < 3, `${level.toFixed(1)} dB apart`);
+  }
+
+  // A saw imported from samples has to be band-limited by the same rule as a
+  // factory bank: at C7 nothing may appear between its harmonics.
+  const saw = Array.from({ length: 2048 }, (_, i) => {
+    let sum = 0;
+    for (let k = 1; k <= 1024; k++) sum += Math.sin((2 * Math.PI * k * i) / 2048) / k;
+    return sum;
+  });
+  check('an imported saw is accepted', importCycle(saw) === 0, 'code 0');
+  engine(patch(WAVE.wavetable, 1), [[96, 1]]); // C7
+  {
+    const buf = [];
+    for (const [l] of render(100)) buf.push(...l);
+    const f0 = 2093;
+    let between = 0;
+    let k = 1;
+    while (f0 * (k + 0.5) < 20000) {
+      between += binMag(buf, f0 * (k + 0.5)) ** 2;
+      k += 1;
+    }
+    const signal = buf.reduce((sum, v) => sum + v * v, 0) / buf.length;
+    const ratio = 10 * Math.log10(between / Math.max(signal, 1e-12));
+    check('an imported saw is band-limited at C7', ratio < -60, `aliasing ${ratio.toFixed(1)} dB below the signal`);
+  }
+
+  ex.gs_wavetable_clear();
+  check('clearing removes the table', ex.gs_wavetable_has() === 0, 'has = 0');
 }
 
 console.log('[audio] quality gate');
