@@ -340,6 +340,44 @@ function blockSteps(frames) {
   check('filter drive stays musical', thd < 6, `THD ${thd.toFixed(2)}% at full drive`);
 }
 
+// --------------------------------------------------- 3b. wavetable aliasing
+//
+// The wavetable oscillator plays a harmonic table; a table that holds harmonics
+// above Nyquist for the note would fold them back down. Playing the highest
+// notes through the brightest table and measuring *between* the harmonics is
+// where a folded partial would land, so that is the measurement.
+{
+  const note = 93; // A6
+  const f0 = 440 * 2 ** ((note - 69) / 12);
+  engine(
+    [
+      [P.OSC1_ON, 1], [P.OSC1_WAVE, 8], [P.OSC1_LEVEL, 0.9], [P.OSC1_PW, 1],
+      [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0],
+      [P.FILTER_CUTOFF, 18000], [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0],
+      [P.ENV_ATTACK, 0.001], [P.ENV_SUSTAIN, 1], [P.LFO_ON, 0], [P.MASTER_VOLUME, 1],
+      [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
+      [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0],
+    ],
+    [[note, 1]],
+  );
+  const blocks = render(120);
+  const buf = [];
+  for (const [l] of blocks) buf.push(...l);
+  const fundamental = binMag(buf, f0);
+  let between = 0;
+  let k = 1;
+  while (f0 * (k + 0.5) < 20000) {
+    between += binMag(buf, f0 * (k + 0.5)) ** 2;
+    k += 1;
+  }
+  const ratio = 20 * Math.log10(Math.sqrt(between) / Math.max(fundamental, 1e-9));
+  check(
+    'wavetable does not alias at the top of the keyboard',
+    ratio < -40,
+    `between-harmonic energy ${ratio.toFixed(1)} dB below the fundamental`,
+  );
+}
+
 // -------------------------------------------------------------------- 4. CPU
 {
   const notes = [36, 43, 48, 52, 55, 59, 62, 64, 67, 71, 74, 79, 83, 86, 88, 91];

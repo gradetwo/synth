@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.43.1',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '音质门禁新增一项：**波表在键盘最高音区不产生混叠**（实测谐波之间的混叠能量低于基频 76.9 dB）。至此波表从生成、播放到门禁全线覆盖。',
+        'The audio gate gained a check that the **wavetable does not alias at the top of the keyboard** (measured: between-harmonic energy 76.9 dB below the fundamental), which closes the loop from table generation through playback to the gate.',
+      ],
+    ],
+  },
+  {
     version: '1.43.0',
     date: '2026-09-10',
     kind: 'feature',
