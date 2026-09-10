@@ -7,6 +7,7 @@
  */
 
 import { engine } from './engine';
+import { midiOut } from '@/midi/output';
 
 export interface NoteInfo {
   note: number | null;
@@ -72,6 +73,7 @@ class NoteBus {
     this.held.add(note);
     this.last.velocity = velocity;
     engine.noteOn(note, velocity);
+    if (midiOutOn()) midiOut.noteOn(note, velocity);
     this.emit();
     this.emitEvent({ note, velocity, on: true });
   }
@@ -80,6 +82,7 @@ class NoteBus {
     if (!this.held.has(note)) return;
     this.held.delete(note);
     engine.noteOff(note);
+    if (midiOutOn()) midiOut.noteOff(note);
     this.emit();
     this.emitEvent({ note, velocity: this.last.velocity, on: false });
   }
@@ -98,6 +101,15 @@ class NoteBus {
   heldNotes(): number[] {
     return [...this.held];
   }
+}
+
+/** Sending to an external device is opt-in (see the audio-settings panel). */
+const midiOutOn = () => activeMidiOut;
+let activeMidiOut = false;
+
+export function setMidiOutEnabled(enabled: boolean) {
+  if (activeMidiOut && !enabled) midiOut.allNotesOff();
+  activeMidiOut = enabled;
 }
 
 export const noteBus = new NoteBus();

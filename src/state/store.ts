@@ -39,6 +39,8 @@ import {
 } from './presets';
 import { midiLibrary, type Track } from '@/midi/library';
 import { midi } from '@/audio/midi';
+import { midiOut } from '@/midi/output';
+import { setMidiOutEnabled } from '@/audio/noteBus';
 import { temperamentById, temperamentTable } from '@/audio/tuning';
 import { scalaTable, type ScalaScale } from '@/audio/scala';
 import { bindCc, unbindParam } from '@/audio/ccmap';
@@ -759,6 +761,20 @@ export class SynthStore {
   deleteScene(id: string) {
     this.scenes = this.scenes.filter((entry) => entry.id !== id);
     saveJson(SCENES_KEY, this.scenes);
+    this.mark();
+    this.commit();
+  }
+
+  /** Send played notes to an external MIDI device. */
+  setMidiOut(enabled: boolean, port?: string) {
+    this.layout = {
+      ...this.layout,
+      midiOut: enabled,
+      midiOutPort: port ?? this.layout.midiOutPort,
+    };
+    saveJson(LAYOUT_KEY, this.layout);
+    setMidiOutEnabled(enabled);
+    if (enabled) midiOut.selectPort(this.layout.midiOutPort);
     this.mark();
     this.commit();
   }

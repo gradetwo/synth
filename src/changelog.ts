@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.43.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '新增 **MIDI 输出**（音频设置）：把演奏的音符发送到外部设备——硬件合成器、鼓机、DAW 都能收到。先在顶栏授权 MIDI，再选输出端口并打开开关；关闭时会先发送"全部音符关闭"，避免外部设备留下长音。',
+        'New **MIDI output** (Audio settings): send played notes to an external device — a hardware synth, a drum machine or a DAW. Grant MIDI access in the top bar, pick the output port and switch it on; switching it off sends an all-notes-off first, so nothing is left droning on the other end.',
+      ],
+    ],
+  },
+  {
     version: '1.42.0',
     date: '2026-09-10',
     kind: 'feature',

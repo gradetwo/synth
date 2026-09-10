@@ -38,6 +38,14 @@ export function useMpe(): boolean {
   );
 }
 
+/** Send-to-external-MIDI preference. */
+export function useMidiOut(): boolean {
+  return useSyncExternalStore(
+    (fn) => store.subscribe(fn),
+    () => store.getSnapshot().layout.midiOut,
+  );
+}
+
 export function useParam(id: ParamId): number {
   return useSyncExternalStore(
     subscribe,

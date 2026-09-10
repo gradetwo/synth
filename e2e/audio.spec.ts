@@ -22,6 +22,8 @@ test.describe('audio settings', () => {
     await expect(panel).toContainText('kHz');
     await expect(panel).toContainText('ms');
     await expect(panel).toContainText('simd');
+    // MIDI output is offered (disabled here: a headless browser has no ports).
+    await expect(panel).toContainText('MIDI 输出');
     await expect(panel.locator('.audio-row')).toHaveCount(6);
 
     // Pinning the polyphony goes through the store to the engine.
@@ -133,7 +135,8 @@ test.describe('MPE input', () => {
     await page.getByRole('button', { name: '预设库' }).click();
     await page.getByRole('button', { name: '音频设置', exact: true }).click();
     const panel = page.locator('.audio-settings.open');
-    const toggle = panel.locator('.audio-toggle input');
+    // Several rows share the toggle style; address this one by its setting id.
+    const toggle = panel.locator('[data-setting="mpe"] input');
     await expect(toggle).not.toBeChecked();
     await toggle.check();
     await expect(toggle).toBeChecked();
@@ -142,7 +145,7 @@ test.describe('MPE input', () => {
     await page.waitForTimeout(300);
     await page.getByRole('button', { name: '预设库' }).click();
     await page.getByRole('button', { name: '音频设置', exact: true }).click();
-    await expect(page.locator('.audio-settings.open .audio-toggle input')).toBeChecked();
+    await expect(page.locator('.audio-settings.open [data-setting="mpe"] input')).toBeChecked();
   });
 });
 

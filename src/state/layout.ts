@@ -77,6 +77,10 @@ export interface LayoutState {
   ccMap: CcBinding[];
   /** Live-input velocity curve (see `audio/velocity`). */
   velocityCurve: string;
+  /** Send played notes to an external MIDI device. */
+  midiOut: boolean;
+  /** Selected MIDI output port id ('' = none). */
+  midiOutPort: string;
   /** Quantise grid applied to recordings ('off' = leave the take alone). */
   recordQuantise: string;
   /** Imported Scala scale, when the temperament is set to `custom`. */
@@ -106,6 +110,8 @@ export function defaultLayout(): LayoutState {
     temperament: 'equal',
     ccMap: [],
     velocityCurve: 'linear',
+    midiOut: false,
+    midiOutPort: '',
     recordQuantise: 'off',
     customTuning: null,
     mpe: false,
@@ -175,6 +181,8 @@ export function normalizeLayout(raw: unknown): LayoutState {
     velocityCurve: ['linear', 'soft', 'hard'].includes(input.velocityCurve as string)
       ? (input.velocityCurve as string)
       : 'linear',
+    midiOut: input.midiOut === true,
+    midiOutPort: typeof input.midiOutPort === 'string' ? input.midiOutPort : '',
     recordQuantise: ['off', '1/16', '1/8', '1/8t', '1/4'].includes(input.recordQuantise as string)
       ? (input.recordQuantise as string)
       : 'off',

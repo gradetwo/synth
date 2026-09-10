@@ -9,6 +9,7 @@ import { store } from '@/state/store';
 import { Param, type ParamId } from './params';
 import { ccToParamValue, paramForCc } from './ccmap';
 import { shapeVelocity } from './velocity';
+import { midiOut } from '@/midi/output';
 import { MpeRouter } from './mpe';
 import { engine } from './engine';
 import { noteBus } from './noteBus';
@@ -116,6 +117,12 @@ class MidiManager {
     }
     try {
       this.access = await navigator.requestMIDIAccess({ sysex: false });
+      // The output side shares this access object: one permission prompt, one
+      // device list.
+      midiOut.attach(this.access);
+      if (store.getSnapshot().layout.midiOut) {
+        midiOut.selectPort(store.getSnapshot().layout.midiOutPort);
+      }
       this.access.onstatechange = () => this.bindInputs();
       this.state = { ...this.state, enabled: true, error: null };
       this.bindInputs();
@@ -130,6 +137,7 @@ class MidiManager {
   }
 
   disable() {
+    midiOut.detach();
     for (const input of this.inputs) input.onmidimessage = null;
     this.inputs = [];
     this.access = null;

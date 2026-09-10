@@ -4,8 +4,9 @@ import { toast } from './Toast';
 import { engine } from '@/audio/engine';
 import { analysis } from '@/audio/analysis';
 import { store } from '@/state/store';
-import { useCcMap, useMpe } from '@/hooks/useSynth';
+import { useCcMap, useMidiOut, useMpe } from '@/hooks/useSynth';
 import { canPickOutput, currentOutputId, outputDevices, type OutputDevice } from '@/audio/devices';
+import { midiOut, type MidiOutPort } from '@/midi/output';
 import { Param, SPEC_BY_ID, PARAM_SPECS } from '@/audio/params';
 import { ccForParam } from '@/audio/ccmap';
 
@@ -41,6 +42,13 @@ export function AudioSettings({ open, onClose }: { open: boolean; onClose: () =>
   const [learn, setLearn] = useState<number | null>(null);
   const ccMap = useCcMap();
   const mpe = useMpe();
+  const midiOutOn = useMidiOut();
+  const [outPorts, setOutPorts] = useState<MidiOutPort[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setTimeout(() => setOutPorts(midiOut.ports()), 0);
+    return () => window.clearTimeout(timer);
+  }, [open]);
   const [devices, setDevices] = useState<OutputDevice[]>([]);
   const [outputId, setOutputId] = useState('');
   const listOutputs = useCallback(async () => {
@@ -150,6 +158,36 @@ export function AudioSettings({ open, onClose }: { open: boolean; onClose: () =>
             />
 
             <div className="audio-cc">
+              <span className="audio-label">{t('midi.outTitle')}</span>
+              <label className="audio-toggle" data-setting="midiOut">
+                <input
+                  type="checkbox"
+                  checked={midiOutOn}
+                  onChange={(event) => store.setMidiOut(event.target.checked, outPorts[0]?.id)}
+                  disabled={outPorts.length === 0}
+                />
+                <span>{t('midi.outHint')}</span>
+              </label>
+              {outPorts.length > 0 ? (
+                <div className="audio-output-row">
+                  <select
+                    value={store.getSnapshot().layout.midiOutPort}
+                    aria-label={t('midi.outPort')}
+                    onChange={(event) => store.setMidiOut(true, event.target.value)}
+                  >
+                    {outPorts.map((port) => (
+                      <option key={port.id} value={port.id}>
+                        {port.name || port.manufacturer || port.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <p className="audio-note">{t('midi.outNone')}</p>
+              )}
+            </div>
+
+            <div className="audio-cc">
               <span className="audio-label">{t('audio.output')}</span>
               {canPickOutput(engine.ctx) ? (
                 <>
@@ -183,7 +221,7 @@ export function AudioSettings({ open, onClose }: { open: boolean; onClose: () =>
 
             <div className="audio-poly">
               <span className="audio-label">{t('midi.mpe')}</span>
-              <label className="audio-toggle">
+              <label className="audio-toggle" data-setting="mpe">
                 <input
                   type="checkbox"
                   checked={mpe}
