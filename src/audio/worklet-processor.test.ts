@@ -84,16 +84,14 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
     const outputs = [[new Float32Array(128), new Float32Array(128)]];
     let clock = 0;
     const realNow = performance.now.bind(performance);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (performance as any).now = () => {
+    (performance as unknown as { now: () => number }).now = () => {
       clock += cost;
       return clock;
     };
     try {
       processor.process([], outputs, {});
     } finally {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (performance as any).now = realNow;
+      (performance as unknown as { now: () => number }).now = realNow;
     }
   };
 

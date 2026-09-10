@@ -51,7 +51,11 @@ export function AudioSettings({ open, onClose }: { open: boolean; onClose: () =>
   }, []);
   useEffect(() => {
     if (!open) return;
-    void listOutputs();
+    // Deferred by a tick: the listing is async anyway, and reading it straight
+    // from the effect body trips the "no synchronous setState in an effect"
+    // rule (the linter cannot see through the await).
+    const timer = window.setTimeout(() => void listOutputs(), 0);
+    return () => window.clearTimeout(timer);
   }, [open, listOutputs]);
   // Diagnostics are read during render; the subscription only bumps a counter
   // so a status change (running → suspended) repaints the panel.
