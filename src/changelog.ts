@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.42.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '「音频设置」新增**输出设备**选择：可把声音送到指定的输出（耳机 / 扬声器 / 音频接口）而不改动系统默认设备。浏览器不支持时会明确说明；未命名的设备会显示为"输出 1/2…"（浏览器需要先授权麦克风才会显示真实名称）。',
+        'Audio settings gained an **output device** picker: route the synth to a chosen output (headphones, speakers, interface) without changing the system default. Browsers without support say so, and unnamed devices show as "Output 1/2…" — the real names need microphone permission first.',
+      ],
+    ],
+  },
+  {
     version: '1.41.0',
     date: '2026-09-10',
     kind: 'sound',

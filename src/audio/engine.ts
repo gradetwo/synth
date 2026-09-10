@@ -460,6 +460,14 @@ export class AudioEngine {
     this.node?.port.postMessage({ type: 'mute', value: muted });
   }
 
+  /** Route the output to a chosen device (Chromium-only; a no-op elsewhere). */
+  async setOutputDevice(id: string): Promise<boolean> {
+    const ctx = this.ctx as (AudioContext & { setSinkId?: (id: string) => Promise<void> }) | null;
+    if (!ctx || typeof ctx.setSinkId !== 'function') return false;
+    await ctx.setSinkId(id);
+    return true;
+  }
+
   /** Bend one note by `semitones` (MPE: bends are per note, not per synth). */
   noteBend(note: number, semitones: number) {
     this.node?.port.postMessage({ type: 'noteBend', note, semitones });

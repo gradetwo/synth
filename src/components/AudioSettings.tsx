@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { t } from '@/i18n';
+import { toast } from './Toast';
 import { engine } from '@/audio/engine';
 import { analysis } from '@/audio/analysis';
 import { store } from '@/state/store';
 import { useCcMap, useMpe } from '@/hooks/useSynth';
+import { canPickOutput, currentOutputId, outputDevices, type OutputDevice } from '@/audio/devices';
 import { Param, SPEC_BY_ID, PARAM_SPECS } from '@/audio/params';
 import { ccForParam } from '@/audio/ccmap';
 
@@ -39,6 +41,18 @@ export function AudioSettings({ open, onClose }: { open: boolean; onClose: () =>
   const [learn, setLearn] = useState<number | null>(null);
   const ccMap = useCcMap();
   const mpe = useMpe();
+  const [devices, setDevices] = useState<OutputDevice[]>([]);
+  const [outputId, setOutputId] = useState('');
+  const listOutputs = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return;
+    const found = outputDevices(await navigator.mediaDevices.enumerateDevices(), t('audio.output'));
+    setDevices(found);
+    setOutputId((current) => currentOutputId(found, current));
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    void listOutputs();
+  }, [open, listOutputs]);
   // Diagnostics are read during render; the subscription only bumps a counter
   // so a status change (running → suspended) repaints the panel.
   const [, bump] = useState(0);
@@ -130,6 +144,38 @@ export function AudioSettings({ open, onClose }: { open: boolean; onClose: () =>
               value={<span ref={loadRef} className="audio-load">—</span>}
               hint={t('audio.loadHint')}
             />
+
+            <div className="audio-cc">
+              <span className="audio-label">{t('audio.output')}</span>
+              {canPickOutput(engine.ctx) ? (
+                <>
+                  <div className="audio-output-row">
+                    <select
+                      value={currentOutputId(devices, outputId)}
+                      aria-label={t('audio.output')}
+                      onChange={async (event) => {
+                        const id = event.target.value;
+                        const ok = await engine.setOutputDevice(id);
+                        setOutputId(id);
+                        toast(t(ok ? 'audio.outputSet' : 'audio.outputUnsupported'));
+                      }}
+                    >
+                      {devices.map((device) => (
+                        <option key={device.id} value={device.id}>
+                          {device.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button type="button" className="roll-btn" onClick={() => void listOutputs()}>
+                      {t('audio.refresh')}
+                    </button>
+                  </div>
+                  <p className="audio-note">{t('audio.outputHint')}</p>
+                </>
+              ) : (
+                <p className="audio-note">{t('audio.outputUnsupported')}</p>
+              )}
+            </div>
 
             <div className="audio-poly">
               <span className="audio-label">{t('midi.mpe')}</span>
