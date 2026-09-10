@@ -295,8 +295,10 @@ export function VuMeter() {
         const db = 20 * Math.log10(peak);
         const lufs = analysis.loudness > 1e-6 ? 20 * Math.log10(analysis.loudness) : -60;
         const gr = analysis.limit < 0.999 ? ` · GR ${(20 * Math.log10(analysis.limit)).toFixed(1)}` : '';
-        el.textContent = `${db > -0.1 ? 'PEAK' : `${db.toFixed(1)}`} · ${lufs.toFixed(0)}${gr}`;
-        el.classList.toggle('hot', db > -0.5);
+        // Peak · loudness · DSP load. The load is what explains dropouts.
+        const load = analysis.load > 0.005 ? ` · ${Math.round(analysis.load * 100)}%` : '';
+        el.textContent = `${db > -0.1 ? 'PEAK' : `${db.toFixed(1)}`} · ${lufs.toFixed(0)}${gr}${load}`;
+        el.classList.toggle('hot', db > -0.5 || analysis.load > 0.9);
       }),
     [],
   );
@@ -307,7 +309,7 @@ export function VuMeter() {
         <canvas ref={ref} style={{ width: '100%', height: '100%' }} aria-label={t('canvas.vuAria')} />
       </div>
       <span className="vu-cap">VU</span>
-      <span className="vu-meter" ref={caption} />
+      <span className="vu-meter" ref={caption} title={t('canvas.meterHint')} />
     </div>
   );
 }

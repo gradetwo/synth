@@ -219,17 +219,25 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
   }
 
   monitorLoad(frames, cost, rate) {
-    if (this.blockCount < 30) return; // ignore JIT warm-up
+    if (this.blockCount < 15) return; // ignore JIT warm-up
     const budget = (frames / rate) * 1000;
     // A faster average (about twelve blocks) so a patch that is too heavy is
     // caught in ~15 ms rather than after a visible stumble.
     this.costAvg = this.costAvg ? this.costAvg * 0.92 + cost * 0.08 : cost;
     const now = nowMs();
-    // 35% of the block period leaves headroom for the browser's own work on the
-    // audio thread; past that a slow device starts missing deadlines, which is
-    // exactly what "crackling" is.
-    if (this.costAvg > budget * 0.35 && this.currentPoly > 4 && now - this.lastDowngrade > 900) {
-      this.currentPoly = Math.max(4, this.currentPoly - 4);
+    const load = this.costAvg / budget;
+    // A block that ate the whole quantum has *already* glitched: the audio
+    // thread missed its deadline. Shed voices at once rather than waiting for
+    // the average to catch up, and shed more when the overshoot is large.
+    const missed = cost > budget;
+    const step = load > 0.85 || missed ? 8 : 4;
+    const cooldown = missed ? 250 : 900;
+    if (
+      (load > 0.35 || missed) &&
+      this.currentPoly > 4 &&
+      now - this.lastDowngrade > cooldown
+    ) {
+      this.currentPoly = Math.max(4, this.currentPoly - step);
       this.wasm.gs_set_max_polyphony(this.currentPoly);
       this.wasm.gs_force_release_excess();
       this.lastDowngrade = now;
@@ -285,6 +293,7 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
 
     // 4. Periodic analyser + meter message (small, structured-cloned copy).
     this.blockCount++;
+    const budget = (block / sampleRate) * 1000;
     if (this.blockCount % ANALYSIS_INTERVAL === 0) {
       const spec = new Float32Array(this.memory.buffer, this.spectrumPtr, this.bins);
       this.pendingSpectrum.set(spec.subarray(0, SPECTRUM_BINS));
@@ -300,6 +309,9 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
           truePeak: this.wasm.gs_take_true_peak ? this.wasm.gs_take_true_peak() : 0,
           loudness: this.wasm.gs_loudness_rms ? this.wasm.gs_loudness_rms() : 0,
           limit: this.wasm.gs_limit_reduction ? this.wasm.gs_limit_reduction() : 1,
+          // Share of the render-quantum budget the DSP is using: the number to
+          // watch when a device starts dropping out ("crackling").
+          load: budget > 0 ? this.costAvg / budget : 0,
         },
         [],
       );

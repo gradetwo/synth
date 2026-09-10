@@ -62,6 +62,10 @@ extern "C" {
 /// Short release applied to a stolen voice (seconds).
 const STEAL_RELEASE: f32 = 0.008;
 /// Per-voice gain before the mix bus.
+/// Envelope level below which a voice stops being filtered: -54 dB, far under
+/// anything audible, which is exactly where long release tails spend their time.
+const SILENT_VOICE: f32 = 0.002;
+
 /// Trim applied *before* the per-voice filter, with the same amount made up
 /// after it. The ladder's tanh stages saturate around unity, and the raw
 /// oscillator sum can reach ~1.2 at full level, so without this trim every
@@ -162,6 +166,8 @@ pub struct Engine {
     random_seed: u32,
     /// Polyphony asked for by the host, before the unison budget is applied.
     poly_request: usize,
+    /// Blocks a voice spent in its silent release tail (filter skipped).
+    silent_blocks: u32,
     reverb: Reverb,
     /// One comb resonator per voice, used by the COMB filter type.
     combs: [CombFilter; MAX_VOICES],
@@ -241,6 +247,7 @@ impl Engine {
             phase_seed: 0,
             random_seed: 0,
             poly_request: 16,
+            silent_blocks: 0,
             reverb: Reverb::new(),
             combs: [const { CombFilter::new() }; MAX_VOICES],
             pitch_bend: 0.0,
@@ -403,6 +410,11 @@ impl Engine {
     pub fn set_max_polyphony(&mut self, n: usize) {
         self.poly_request = n.clamp(2, MAX_VOICES);
         self.apply_polyphony_cap();
+    }
+
+    /// Voice-blocks that took the silent-tail fast path (diagnostics).
+    pub fn silent_blocks(&self) -> u32 {
+        self.silent_blocks
     }
 
     /// Current voice ceiling (see [`Self::update_polyphony_cap`]).
@@ -1144,7 +1156,19 @@ impl Engine {
         let kind = params.filter.kind;
         // The matrix can push resonance up to twice the knob value (clamped).
         let resonance = (params.filter.res * (1.0 + mod_res) + mod_res * 0.25).clamp(0.0, 1.0);
-        if kind == crate::params::FilterType::Comb {
+
+        // Release tails are the expensive half of a long-release patch: a dense
+        // song keeps a dozen voices ringing well below -50 dB, and filtering
+        // them cannot be heard. Past this point the voice passes through dry —
+        // its filter state is re-initialised when the slot is retriggered.
+        let audible = env_last >= SILENT_VOICE;
+
+        if !audible {
+            // Nothing to do: the trimmed oscillator signal is already in
+            // `voice_buf` (and `voice_buf_r`) and falls through to the makeup
+            // gain below.
+            self.silent_blocks = self.silent_blocks.saturating_add(1);
+        } else if kind == crate::params::FilterType::Comb {
             // Rust comb resonator: the cutoff sets the comb pitch and the
             // resonance its feedback. It replaces the ladder/SVF chain here.
             // The comb keeps one delay line per voice, so this filter type runs
@@ -2259,6 +2283,81 @@ mod tests {
             comb > plain * 3.0,
             "comb was no more periodic than a low-pass: {comb} vs {plain}"
         );
+    }
+
+    /// Where does a block's time actually go? Prints a breakdown so the audio
+    /// budget can be spent where it matters (run with `--release --nocapture`).
+    #[test]
+    fn diagnose_cost_breakdown() {
+        let _guard = lock_engine();
+        let build = |reverb: f32, chorus: f32, drive: f32| -> Box<Engine> {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+            e.set_param(id::OSC1_LEVEL, 0.7);
+            e.set_param(id::OSC2_ON, 1.0);
+            e.set_param(id::OSC2_WAVE, crate::params::Wave::Triangle as u32 as f32);
+            e.set_param(id::OSC2_PITCH, 12.0);
+            e.set_param(id::OSC2_LEVEL, 0.3);
+            e.set_param(id::FILTER_CUTOFF, 4200.0);
+            e.set_param(id::FILTER_RES, 0.1);
+            e.set_param(id::FILTER_DRIVE, 0.2);
+            e.set_param(id::ENV_DECAY, 1.1);
+            e.set_param(id::ENV_SUSTAIN, 0.3);
+            e.set_param(id::ENV_RELEASE, 1.3);
+            e.set_param(id::FX_REVERB_ON, reverb);
+            e.set_param(id::FX_REVERB_MIX, 0.3 * reverb);
+            e.set_param(id::FX_CHORUS_ON, chorus);
+            e.set_param(id::FX_CHORUS_MIX, 0.3 * chorus);
+            e.set_param(id::FX_DRIVE_ON, drive);
+            e.set_param(id::FX_DRIVE_MIX, 0.45 * drive);
+            e
+        };
+        // Interleaved, best-of-three: a single pass picks up whatever else the
+        // machine is doing and invents costs that are not there.
+        let configs: [(&str, f32, f32, f32); 5] = [
+            ("voices only", 0.0, 0.0, 0.0),
+            ("+reverb", 1.0, 0.0, 0.0),
+            ("+chorus", 0.0, 1.0, 0.0),
+            ("+drive", 0.0, 0.0, 1.0),
+            ("everything", 1.0, 1.0, 1.0),
+        ];
+        let notes = [52u8, 55, 59, 64, 67, 71, 76, 79, 83, 88, 91, 95];
+        let mut engines: Vec<(String, Box<Engine>)> = configs
+            .iter()
+            .map(|(label, rev, cho, drv)| {
+                let mut e = build(*rev, *cho, *drv);
+                for note in notes {
+                    e.note_on(note, 0.9);
+                }
+                for _ in 0..80 {
+                    e.process(128);
+                }
+                ((*label).to_string(), e)
+            })
+            .collect();
+        let mut best = vec![f64::MAX; engines.len()];
+        for _round in 0..4 {
+            for (i, (_, engine)) in engines.iter_mut().enumerate() {
+                let blocks = 200;
+                let start = std::time::Instant::now();
+                for _ in 0..blocks {
+                    engine.process(128);
+                }
+                let us = start.elapsed().as_secs_f64() * 1e6 / blocks as f64;
+                best[i] = best[i].min(us);
+            }
+        }
+        for (i, (label, _)) in engines.iter().enumerate() {
+            println!(
+                "COST {label}: {:.0}us ({:.0}% of 2667us)",
+                best[i],
+                best[i] / 2667.0 * 100.0
+            );
+        }
+    }
+
+    #[allow(dead_code)]
+    fn unused_run_placeholder() {
     }
 
     /// A quiet signal must pass through the limiter untouched (gain exactly 1)

@@ -58,6 +58,7 @@ const DICT: Record<string, [string, string]> = {
   'monitor.polyTitle': ['负载过高时自动降低的复音上限', 'Polyphony cap reduced automatically under load'],
   'canvas.scopeAria': ['时域波形示波器', 'Waveform oscilloscope'],
   'canvas.spectrumAria': ['频谱分析', 'Spectrum analyser'],
+  'canvas.meterHint': ['峰值 dB · 响度 dB · DSP 负载（占每个渲染量子的时间预算）', 'Peak dB · loudness dB · DSP load (share of the render-quantum budget)'],
   'canvas.vuAria': ['输出电平', 'Output level'],
 
   // --- modules -------------------------------------------------------------

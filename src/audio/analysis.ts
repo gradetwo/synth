@@ -21,6 +21,8 @@ export const analysis = {
   loudness: 0,
   /** Limiter gain reduction, 1.0 = none. */
   limit: 1,
+  /** DSP load as a share of the render-quantum budget. */
+  load: 0,
   frames: 0,
 };
 
@@ -38,6 +40,7 @@ export function wireAnalysis() {
     analysis.truePeak = frame.truePeak;
     analysis.loudness = frame.loudness;
     analysis.limit = frame.limit;
+    analysis.load = frame.load;
     analysis.frames += 1;
     for (let i = 0; i < analysis.spectrum.length; i++) {
       const v = analysis.spectrum[i];

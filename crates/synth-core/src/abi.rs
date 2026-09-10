@@ -163,6 +163,13 @@ pub extern "C" fn gs_limit_reduction() -> f32 {
     engine().limit_reduction()
 }
 
+/// Voice-blocks rendered through the silent-tail fast path (diagnostics for the
+/// audio-quality gate: the optimisation must actually engage on dense songs).
+#[no_mangle]
+pub extern "C" fn gs_silent_voice_blocks() -> u32 {
+    engine().silent_blocks()
+}
+
 #[no_mangle]
 pub extern "C" fn gs_active_voices() -> u32 {
     engine().active_voices()

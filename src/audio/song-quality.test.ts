@@ -24,11 +24,15 @@ const BLOCK = 128;
 /** The soft limiter is transparent below this (see dsp/util.rs). */
 const KNEE = 0.82;
 
+/** A 3 kHz sine at 0.5 amplitude steps by ~0.2 between samples. */
+const STEP_LIMIT = 0.35;
+
 interface Report {
   costMean: number;
   costPeak: number;
   maxVoices: number;
   meanVoices: number;
+  silentBlocks: number;
   fullBlocks: number;
   steals: number;
   peak: number;
@@ -55,6 +59,7 @@ interface Core {
   gs_process(frames: number): void;
   gs_left_ptr(): number;
   gs_active_voices(): number;
+  gs_silent_voice_blocks(): number;
   gs_limit_reduction(): number;
   gs_nan_events(): number;
   gs_alloc_violations(): number;
@@ -178,6 +183,7 @@ function renderSong(presetId: string, songId: string, poly = 16, sr = SR): Repor
     maxVoices,
     meanVoices: voiceSum / Math.max(1, blocksMeasured),
     fullBlocks: fullBlocks / Math.max(1, blocksMeasured),
+    silentBlocks: ex.gs_silent_voice_blocks(),
     steals,
     peak,
     overKnee: overKnee / measured,
@@ -194,6 +200,15 @@ function renderSong(presetId: string, songId: string, poly = 16, sr = SR): Repor
   };
 }
 
+function expectClean(report: Report) {
+  expect(report.nan).toBe(0);
+  expect(report.allocs).toBe(0);
+  expect(report.peak).toBeLessThanOrEqual(1.0);
+  expect(report.overUnity).toBe(0);
+  expect(report.bigSteps).toBe(0);
+  expect(report.maxStep).toBeLessThan(STEP_LIMIT);
+}
+
 const fmt = (r: Report) =>
   [
     `peak ${r.peak.toFixed(3)}`,
@@ -202,7 +217,7 @@ const fmt = (r: Report) =>
     `limiter ${r.minGain.toFixed(3)}/${r.meanGain.toFixed(3)}`,
     `maxStep ${r.maxStep.toFixed(3)} (${r.bigSteps})`,
     `hf ${r.hfMean.toFixed(4)}/${r.hfPeak.toFixed(4)}`,
-    `voices ${r.meanVoices.toFixed(1)}/${r.maxVoices} full ${(r.fullBlocks * 100).toFixed(0)}% newNotes ${r.steals}`,
+    `voices ${r.meanVoices.toFixed(1)}/${r.maxVoices} full ${(r.fullBlocks * 100).toFixed(0)}% silent ${r.silentBlocks}`,
     `cpu ${((r.costMean / 2667) * 100).toFixed(0)}% avg / ${((r.costPeak / 2667) * 100).toFixed(0)}% peak`,
     `nan ${r.nan}`,
     `allocs ${r.allocs}`,
@@ -234,6 +249,21 @@ describe.skipIf(!hasWasm)('song audio quality', () => {
       expect(report.bigSteps).toBe(0);
       expect(report.maxStep).toBeLessThan(0.35);
       expect(report.maxVoices).toBeLessThanOrEqual(poly);
+    }
+  });
+
+  it('renders the electric pianos without crackle', () => {
+    // Both EP patches have a long release, so Elise keeps the voice pool full
+    // and every new note steals a ringing one. That tail is also where the
+    // silent-tail fast path earns its keep: without it these patches cost more
+    // than twice as much to render (24-27% of a phone's budget in Chromium,
+    // 11% with it), which is exactly the margin that decides whether a slow
+    // device crackles.
+    for (const id of ['epiano', 'rhodes', 'wurli']) {
+      const report = renderSong(id, 'elise');
+      console.log(`[song] ${id} + elise →`, fmt(report));
+      expectClean(report);
+      expect(report.silentBlocks).toBeGreaterThan(100);
     }
   });
 

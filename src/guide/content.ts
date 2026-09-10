@@ -625,6 +625,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**LFO modes**: `RETRIG` restarts the LFO with every note (each voice gets its own phase, so vibrato and filter sweeps line up with the attack), and `ONE SHOT` runs a single cycle then holds — an extra envelope, in effect. Both are independent for LFO 1 and LFO 2.',
           ],
           [
+            '**CPU 与负载**：监视器会显示 **DSP 负载**（占每个渲染量子的时间预算百分比）。设备较慢时它会升高；超过约 35% 时引擎会自动减少复音数，单个块一旦吃满预算就立刻降 8 个声部——所以负载长期贴近 100% 时先把复音数或效果关掉一些。长释放音色的衰减尾巴低于 −54 dB 后不再走滤波器（听不见的部分不消耗 CPU）。',
+            '**CPU and load**: the monitor shows the **DSP load** (share of the render-quantum budget). It climbs on slower devices; past ~35% the engine starts shedding voices automatically, and a block that eats the whole quantum sheds eight at once — so if the number sits near 100%, lower the polyphony or switch effects off. Release tails below −54 dB stop running the filter: the inaudible part costs nothing.',
+          ],
+          [
             '矩阵以**块速率**（每 128 采样）在每个声部上计算一次，然后在整个块内平滑应用，兼顾效率与稳定。',
             'The matrix is evaluated once per **block** (128 samples) per voice and applied smoothly across the block — efficient and stable.',
           ],

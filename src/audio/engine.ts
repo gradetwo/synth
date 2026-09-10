@@ -39,6 +39,8 @@ export interface AnalysisFrame {
   loudness: number;
   /** Limiter gain reduction, 1.0 = none. */
   limit: number;
+  /** Share of the render-quantum budget the DSP used (0.42 = 42%). */
+  load: number;
 }
 
 type AnalysisListener = (frame: AnalysisFrame) => void;
@@ -265,6 +267,7 @@ export class AudioEngine {
               truePeak: (data.truePeak as number) ?? 0,
               loudness: (data.loudness as number) ?? 0,
               limit: (data.limit as number) ?? 1,
+              load: (data.load as number) ?? 0,
             };
             for (const fn of this.listeners) fn(frame);
           } else if (data.type === 'polyphony') {
