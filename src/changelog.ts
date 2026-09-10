@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.40.1',
+    date: '2026-09-10',
+    kind: 'sound',
+    items: [
+      [
+        '波表振荡器的**波表引擎**已就位（五个谐波配方 + 每八度一层的抗混叠波表），下一步接进振荡器与界面即可使用。',
+        'The **table generator** for the wavetable oscillator is in place (five harmonic recipes with one anti-aliased table per octave); the next step wires it into the oscillator and the UI.',
+      ],
+    ],
+  },
+  {
     version: '1.40.0',
     date: '2026-09-10',
     kind: 'feature',

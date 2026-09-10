@@ -270,7 +270,10 @@
 
 **当前版本**：v1.40.0（提交 `27f2b7c`），已部署；`npm run verify` 与全部 e2e 均为绿。
 
-**下一批：A6.2 波表振荡器**（建议一次做完，避免半成品）。落地路径与关键文件：
+**下一批：A6.2 波表振荡器**。**已完成（v1.40.1）：表生成器 `crates/synth-core/src/dsp/wavetable.rs`**——5 个谐波配方、
+每八度一层的 **mipmap**（2048…8 采样，共 9 级）、按音高选层、线性插值；带 4 条单测（每级频谱在其自身 Nyquist 之上无能量、
+选层不会混叠且不浪费、长度与归一化、相位回绕与插值）。**待接线**：
+
 1. `crates/synth-core/src/dsp/wavetable.rs`（新建）：由**谐波配方**生成单周期表，并按八度生成 **mipmap 级**（2048/1024/…/32 采样），每一级只含该级 Nyquist 以下的谐波——**抗混叠由构造保证**，无需额外过采样；`sample(phase, level)` 线性插值。
 2. `crates/synth-core/src/params.rs`：新增 `Wave::Wavetable`（映射到 `daisy_id() => None`，即 **Rust 侧渲染**，与噪声同路径）与配方参数（建议**一个共享配方参数**，省去两个 id）；同步 `PARAM_COUNT`。
 3. `crates/synth-core/src/engine.rs`：在 `render_oscillator` 的 `None` 分支里按波表渲染，需要**每声部相位状态**（`wt_phase: [[f32; 2]; MAX_VOICES]`），并在 `gs_voice_reset` 路径复位；unison 可先不支持并注明。
