@@ -23,6 +23,25 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.54.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '**设置有了自己的入口**（顶栏「设置」，和「预设库」同级），不再挤在预设库底部。里面按用途分组：**工作区**（场景）、**演奏**（调律 / 力度曲线 / 音频设置）、**界面**（主题 / 高对比 / 语言 / 振动 / 重置布局）、**关于与文档**（使用指南 / 更新记录 / 检查更新），以后加东西有地方放。',
+        '**Settings have their own entry** now (the Settings button in the top bar, beside the preset library) instead of living at the bottom of it. They are grouped by purpose: **Workspace** (scenes), **Playing** (tuning, velocity curve, audio settings), **Appearance** (theme, contrast, language, haptics, reset layout) and **About & docs** (manual, changelog, check for updates) — so the next control has a home.',
+      ],
+      [
+        '下拉框不再为了对齐被强行拉长（宽度按内容来），预设库底部只剩「导入 / 导出 / 分享」三个等宽按钮。',
+        'Selects are no longer stretched to fill a column — they size to their content — and the preset library keeps just three equal-width buttons: Import, Export and Share.',
+      ],
+      [
+        '测试新增 **iPhone / iPad 横竖屏** 六种尺寸的端到端用例：启动按钮完整可见、没有横向滚动、设置入口可达、抽屉不超出屏幕、键盘在屏内。',
+        'Added end-to-end coverage for **six iPhone / iPad sizes in both orientations**: the start button fits, nothing scrolls sideways, the settings entry is reachable, the drawer stays on screen and the keyboard is visible.',
+      ],
+    ],
+  },
+  {
     version: '1.53.2',
     date: '2026-09-10',
     kind: 'fix',

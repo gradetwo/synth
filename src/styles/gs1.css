@@ -795,6 +795,20 @@ body.module-dragging .module-grip{cursor:grabbing}
 @media (max-width:900px) and (orientation:landscape){
   .mini-canvas{height:32px}
 }
+/* Settings drawer: grouped sections, controls sized to their content. */
+.settings-body{display:flex;flex-direction:column;gap:14px;padding:14px 16px 20px}
+.settings-section{display:flex;flex-direction:column;gap:8px}
+.settings-section h3{margin:0;font:600 8.5px/1 var(--mono);letter-spacing:.16em;color:var(--txt-dim)}
+.settings-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.settings-label{font:600 9px/1 var(--mono);letter-spacing:.06em;color:var(--txt-dim);
+  min-width:52px;flex:none}
+.settings-row select{background:var(--bg-socket);border:1px solid var(--border);border-radius:8px;
+  color:var(--txt-1);font:600 10px/1 var(--mono);padding:7px 8px;outline:none;
+  width:auto;min-width:104px;max-width:190px;flex:0 1 auto}
+.settings-row .roll-btn{min-height:28px}
+.settings-row .d-theme{padding:0;border:none;background:none;gap:6px;flex-wrap:wrap}
+.d-foot-actions.preset-actions{grid-template-columns:repeat(3,minmax(0,1fr))}
+
 /* The drawer body scrolls as one: the preset list first, the settings under it.
    Nothing is docked, so the list is never squeezed by however many buttons the
    settings have grown to. */

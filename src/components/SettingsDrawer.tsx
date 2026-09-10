@@ -1,0 +1,325 @@
+/**
+ * Settings drawer.
+ *
+ * The settings used to live at the bottom of the preset library, where they grew
+ * a control at a time until they were a wall of buttons that also pushed the
+ * presets around. They are their own entry now, at the same level as the preset
+ * library, grouped by what they are for — so the next control has an obvious
+ * home instead of making the pile longer.
+ *
+ * Controls are deliberately *not* stretched to fill a column: a select that
+ * shows "平均律" does not need 380px of width to look tidy.
+ */
+
+import { useRef, useState } from 'react';
+import { store } from '@/state/store';
+import { checkForUpdate } from '@/pwa/register';
+import { TEMPERAMENTS } from '@/audio/tuning';
+import { VELOCITY_CURVES, velocityCurveLabel } from '@/audio/velocity';
+import { parseScala } from '@/audio/scala';
+import { toast } from './Toast';
+import { LANG_LABELS, t } from '@/i18n';
+import { useHaptics, useLang, useTheme, useContrast } from '@/hooks/useSynth';
+import { canVibrate, haptic, HAPTIC } from '@/hooks/useInputMode';
+
+export function SettingsDrawer({
+  open,
+  onClose,
+  onOpenGuide,
+  onOpenChangelog,
+  onOpenAudio,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onOpenGuide: () => void;
+  onOpenChangelog: () => void;
+  onOpenAudio: () => void;
+}) {
+  const lang = useLang();
+  const theme = useTheme();
+  const contrast = useContrast();
+  const hapticsOn = useHaptics();
+  const vibrate = canVibrate();
+  // Bumped after a mutation so the selects re-read the store.
+  const [, bump] = useState(0);
+  const scaleRef = useRef<HTMLInputElement | null>(null);
+
+  const temperamentLabel = (id: string) => {
+    if (id === 'custom') {
+      const scale = store.getSnapshot().layout.customTuning;
+      return scale ? `${lang === 'zh' ? '自定义' : 'Custom'} · ${scale.name}` : 'Custom';
+    }
+    const temperament = TEMPERAMENTS.find((x) => x.id === id) ?? TEMPERAMENTS[0];
+    return temperament.name[lang === 'zh' ? 0 : 1];
+  };
+
+  const importScale = async (file: File) => {
+    try {
+      const scale = parseScala(await file.text());
+      store.importTuning(scale);
+      bump((n) => n + 1);
+      toast(t('tuning.imported', { name: scale.name, notes: String(scale.degrees.length) }));
+    } catch (err) {
+      toast(t('tuning.importFailed', { msg: err instanceof Error ? t(`tuning.${err.message}`) : '' }));
+    }
+  };
+
+  const scenes = store.getSnapshot().scenes;
+
+  return (
+    <>
+      <div className={`drawer-mask${open ? ' show' : ''}`} onClick={onClose} />
+      <aside
+        className={`drawer settings-drawer${open ? ' open' : ''}`}
+        aria-hidden={!open}
+        aria-label={t('settings.title')}
+      >
+        <div className="drawer-head">
+          <span className="d-title">{t('settings.title')}</span>
+          <button type="button" className="d-close" onClick={onClose} aria-label={t('drawer.close')}>
+            ✕
+          </button>
+        </div>
+        <div className="d-body">
+          <div className="settings-body">
+            <section className="settings-section" data-section="workspace">
+              <h3>{t('settings.workspace')}</h3>
+              <div className="settings-row" data-setting="scene">
+                <span className="settings-label">{t('scene.title')}</span>
+                <select
+                  aria-label={t('scene.title')}
+                  value=""
+                  onChange={(event) => {
+                    if (!event.target.value) return;
+                    haptic();
+                    store.applyScene(event.target.value);
+                    toast(t('scene.applied'));
+                  }}
+                >
+                  <option value="">{t('scene.pick')}</option>
+                  {scenes.map((scene) => (
+                    <option key={scene.id} value={scene.id}>
+                      {scene.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="roll-btn"
+                  onClick={() => {
+                    haptic();
+                    const scene = store.saveScene(
+                      `${t('scene.defaultName')} ${store.getSnapshot().scenes.length + 1}`,
+                    );
+                    bump((n) => n + 1);
+                    toast(t('scene.saved', { name: scene.name }));
+                  }}
+                >
+                  {t('scene.save')}
+                </button>
+                <button
+                  type="button"
+                  className="roll-btn"
+                  disabled={scenes.length === 0}
+                  onClick={() => {
+                    const list = store.getSnapshot().scenes;
+                    if (!list.length) return;
+                    haptic();
+                    store.deleteScene(list[list.length - 1].id);
+                    bump((n) => n + 1);
+                    toast(t('scene.deleted'));
+                  }}
+                >
+                  {t('scene.delete')}
+                </button>
+              </div>
+            </section>
+
+            <section className="settings-section" data-section="performance">
+              <h3>{t('settings.performance')}</h3>
+              <div className="settings-row" data-setting="temperament">
+                <span className="settings-label">{t('tuning.title')}</span>
+                <select
+                  aria-label={t('tuning.title')}
+                  value={store.getSnapshot().layout.temperament}
+                  onChange={(event) => {
+                    haptic();
+                    store.setTemperament(event.target.value);
+                    toast(t('tuning.changed', { name: temperamentLabel(event.target.value) }));
+                  }}
+                >
+                  {TEMPERAMENTS.map((temperament) => (
+                    <option key={temperament.id} value={temperament.id}>
+                      {temperamentLabel(temperament.id)}
+                    </option>
+                  ))}
+                  {store.getSnapshot().layout.customTuning ? (
+                    <option value="custom">{temperamentLabel('custom')}</option>
+                  ) : null}
+                </select>
+                <button type="button" className="roll-btn" onClick={() => scaleRef.current?.click()}>
+                  {t('tuning.import')}
+                </button>
+              </div>
+              <div className="settings-row" data-setting="velocity">
+                <span className="settings-label">{t('velocity.title')}</span>
+                <select
+                  aria-label={t('velocity.title')}
+                  value={store.getSnapshot().layout.velocityCurve}
+                  onChange={(event) => {
+                    haptic();
+                    store.setVelocityCurve(event.target.value);
+                    toast(t('velocity.changed', { name: velocityCurveLabel(event.target.value, lang) }));
+                  }}
+                >
+                  {VELOCITY_CURVES.map((curve) => (
+                    <option key={curve.id} value={curve.id}>
+                      {velocityCurveLabel(curve.id, lang)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="settings-row">
+                <span className="settings-label">{t('audio.title')}</span>
+                <button type="button" className="roll-btn" onClick={onOpenAudio}>
+                  {t('settings.openAudio')}
+                </button>
+              </div>
+            </section>
+
+            <section className="settings-section" data-section="appearance">
+              <h3>{t('settings.appearance')}</h3>
+              <div className="settings-row" data-setting="theme">
+                <span className="settings-label">{t('theme.label')}</span>
+                <div className="d-theme" role="group" aria-label={t('theme.label')}>
+                  {(['dark', 'light', 'auto'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={`d-theme-btn${theme === mode ? ' on' : ''}`}
+                      aria-pressed={theme === mode}
+                      title={mode === 'auto' ? t('theme.autoHint') : t(`theme.${mode}`)}
+                      onClick={() => {
+                        haptic();
+                        store.setTheme(mode);
+                      }}
+                    >
+                      {t(`theme.${mode}`)}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="roll-btn"
+                  aria-pressed={contrast}
+                  onClick={() => {
+                    store.toggleContrast();
+                    toast(store.getSnapshot().layout.contrast ? t('drawer.contrastOn') : t('drawer.contrastOff'));
+                  }}
+                >
+                  {t('drawer.contrast')}
+                </button>
+                <button
+                  type="button"
+                  className="roll-btn"
+                  onClick={() => store.toggleLang()}
+                  title={lang === 'zh' ? 'Switch to English' : '切换为中文'}
+                >
+                  {lang === 'zh' ? LANG_LABELS.en : LANG_LABELS.zh}
+                </button>
+              </div>
+              <div className="settings-row">
+                <span className="settings-label">{t('settings.behaviour')}</span>
+                {vibrate ? (
+                  <button
+                    type="button"
+                    className="roll-btn"
+                    aria-pressed={hapticsOn}
+                    onClick={() => {
+                      haptic(HAPTIC.medium);
+                      store.toggleHaptics();
+                      toast(store.getSnapshot().layout.haptics ? t('drawer.hapticsOn') : t('drawer.hapticsOff'));
+                    }}
+                  >
+                    {t('drawer.haptics')} {hapticsOn ? '✓' : '✕'}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="roll-btn"
+                  onClick={() => {
+                    store.resetLayout();
+                    bump((n) => n + 1);
+                    toast(t('drawer.resetDone'));
+                  }}
+                >
+                  {t('drawer.reset')}
+                </button>
+              </div>
+            </section>
+
+            <section className="settings-section" data-section="about">
+              <h3>{t('settings.about')}</h3>
+              <div className="settings-row">
+                <span className="settings-label">{t('settings.docs')}</span>
+                <button
+                  type="button"
+                  className="roll-btn"
+                  onClick={() => {
+                    haptic();
+                    onOpenGuide();
+                  }}
+                  title={t('guide.sub')}
+                >
+                  {t('drawer.guide')}
+                </button>
+                <button
+                  type="button"
+                  className="roll-btn"
+                  onClick={() => {
+                    haptic();
+                    onOpenChangelog();
+                  }}
+                  title={t('changelog.sub')}
+                >
+                  {t('drawer.changelog')}
+                </button>
+                <button
+                  type="button"
+                  className="roll-btn"
+                  title={t('drawer.checkUpdate')}
+                  onClick={async () => {
+                    haptic();
+                    const result = await checkForUpdate();
+                    toast(
+                      t(
+                        result === 'updated'
+                          ? 'drawer.updateFound'
+                          : result === 'current'
+                            ? 'drawer.updateCurrent'
+                            : 'drawer.updateUnsupported',
+                      ),
+                    );
+                  }}
+                >
+                  {t('drawer.checkUpdate')}
+                </button>
+              </div>
+            </section>
+          </div>
+        </div>
+        <input
+          ref={scaleRef}
+          type="file"
+          accept=".scl,text/plain"
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) void importScale(file);
+          }}
+        />
+      </aside>
+    </>
+  );
+}

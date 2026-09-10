@@ -366,6 +366,16 @@ const DICT: Record<string, [string, string]> = {
   'wave.brown': ['棕噪', 'Brown'],
   'wave.wavetable': ['波表（PW 选表）', 'Wavetable (PW picks it)'],
   'audio.streamed': ['流式编译', 'streamed'],
+  'top.settings': ['设置', 'Settings'],
+  // --- settings drawer -----------------------------------------------------
+  'settings.title': ['设置', 'Settings'],
+  'settings.workspace': ['工作区', 'Workspace'],
+  'settings.performance': ['演奏', 'Playing'],
+  'settings.appearance': ['界面', 'Appearance'],
+  'settings.behaviour': ['交互', 'Interaction'],
+  'settings.about': ['关于与文档', 'About & docs'],
+  'settings.docs': ['文档', 'Docs'],
+  'settings.openAudio': ['打开音频设置', 'Open audio settings'],
   // --- sampler (A) ---------------------------------------------------------
   'wave.sample': ['采样', 'Sample'],
   'smp.import': ['导入采样', 'Import sample'],

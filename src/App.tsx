@@ -12,6 +12,7 @@ import { PianoRoll } from '@/components/PianoRoll';
 import { ModuleFor } from '@/panels/modules';
 import { ModulesGrid } from '@/components/Module';
 import { PresetDrawer } from '@/components/PresetDrawer';
+import { SettingsDrawer } from '@/components/SettingsDrawer';
 // The three dialogs carry a lot of copy (the guide alone is tens of KB) and
 // ship as their own chunks: the synth itself should not wait for a manual.
 const Guide = lazy(() => import('@/components/Guide').then((m) => ({ default: m.Guide })));
@@ -102,6 +103,7 @@ export default function App() {
   const [guideOpen, setGuideOpen] = useState(false);
   const [changelogOpen, setChangelogOpen] = useState(false);
   const [audioOpen, setAudioOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [playerOpen, setPlayerOpen] = useState(false);
   const [rollOpen, setRollOpen] = useState(false);
   const [status, setStatus] = useState(engine.getState());
@@ -316,6 +318,7 @@ export default function App() {
     <div className="app" data-device={viewport.device} data-view={view}>
       <TopBar
         onBrowse={() => setDrawerOpen(true)}
+        onSettings={() => setSettingsOpen(true)}
         onRoll={openRoll}
         view={view}
         onView={(next) => store.setView(next)}
@@ -345,19 +348,21 @@ export default function App() {
 
       <PianoRoll open={rollOpen} onClose={() => setRollOpen(false)} />
 
-      <PresetDrawer
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+      <PresetDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+
+      <SettingsDrawer
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
         onOpenGuide={() => {
-          setDrawerOpen(false);
+          setSettingsOpen(false);
           setGuideOpen(true);
         }}
         onOpenChangelog={() => {
-          setDrawerOpen(false);
+          setSettingsOpen(false);
           setChangelogOpen(true);
         }}
         onOpenAudio={() => {
-          setDrawerOpen(false);
+          setSettingsOpen(false);
           setAudioOpen(true);
         }}
       />

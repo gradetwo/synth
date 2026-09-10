@@ -54,7 +54,7 @@ test.describe('iPhone portrait', () => {
     await page.locator('.top-menu .tbtn', { hasText: '预设库' }).click();
     await expect(page.locator('.top-menu')).toHaveCount(0);
     await expect(page.locator('.drawer.open')).toBeVisible();
-    await page.locator('.drawer .d-close').click();
+    await page.locator('.preset-drawer .d-close').click();
     await expect(page.locator('.drawer.open')).toHaveCount(0);
 
     // The preset stepper sits on its own full-width row.

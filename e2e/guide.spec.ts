@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 async function openGuide(page: import('@playwright/test').Page) {
   await page.goto('/');
   await page.getByRole('button', { name: /启动音频引擎/ }).click();
-  await page.getByRole('button', { name: '预设库' }).click();
+  await page.locator('[data-act="settings"]').click();
   await expect(page.locator('.drawer.open')).toBeVisible();
   await page.getByRole('button', { name: '使用指南' }).click();
   await expect(page.locator('.guide.open')).toBeVisible();
@@ -35,7 +35,7 @@ test.describe('guide (phone)', () => {
     await page.getByRole('button', { name: /启动音频引擎/ }).tap();
     // Phone top bar keeps 预设库 inside the overflow menu.
     await page.locator('.top-more .tbtn').tap();
-    await page.getByRole('button', { name: '预设库' }).tap();
+    await page.locator('[data-act="settings"]').tap();
     await page.getByRole('button', { name: '使用指南' }).tap();
     const guide = page.locator('.guide.open');
     await expect(guide).toBeVisible();
@@ -67,7 +67,7 @@ test.describe('changelog', () => {
   test('opens from the preset drawer next to the guide', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
-    await page.getByRole('button', { name: '预设库' }).click();
+    await page.locator('[data-act="settings"]').click();
     // Same action row as the guide.
     await expect(page.getByRole('button', { name: '使用指南' })).toBeVisible();
     await page.getByRole('button', { name: '更新记录' }).click();
@@ -89,8 +89,8 @@ test.describe('changelog', () => {
   test('follows the interface language', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
-    await page.getByRole('button', { name: '预设库' }).click();
-    await page.locator('.d-reset', { hasText: 'EN' }).click();
+    await page.locator('[data-act="settings"]').click();
+    await page.locator('.settings-drawer', { hasText: 'EN' }).getByRole('button', { name: 'EN' }).click();
     await page.getByRole('button', { name: 'Changelog' }).click();
     const panel = page.locator('.changelog.open');
     await expect(panel).toContainText('current');

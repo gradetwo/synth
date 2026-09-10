@@ -71,9 +71,9 @@ test.describe('colour scheme', () => {
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 
     // Pin light mode from the preset drawer.
-    await page.getByRole('button', { name: '预设库' }).click();
-    await page.locator('.d-theme-btn', { hasText: '浅色' }).click();
-    await page.locator('.drawer .d-close').click();
+    await page.locator('[data-act="settings"]').click();
+    await page.locator('[data-setting="theme"] .d-theme-btn', { hasText: '浅色' }).click();
+    await page.locator('.settings-drawer .d-close').click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     expect(await page.evaluate(() => document.documentElement.style.colorScheme)).toBe('light');
 
@@ -190,9 +190,9 @@ test.describe('colour scheme', () => {
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
 
     // Pin dark, then reload: the pinned choice wins over the system.
-    await page.getByRole('button', { name: '预设库' }).click();
-    await page.locator('.d-theme-btn', { hasText: '深色' }).click();
-    await page.locator('.drawer .d-close').click();
+    await page.locator('[data-act="settings"]').click();
+    await page.locator('[data-setting="theme"] .d-theme-btn', { hasText: '深色' }).click();
+    await page.locator('.settings-drawer .d-close').click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     await page.reload();
     await page.waitForTimeout(600);

@@ -13,8 +13,8 @@ test.describe('audio settings', () => {
     await page.goto('/');
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
     await page.waitForTimeout(500);
-    await page.getByRole('button', { name: '预设库' }).click();
-    await page.getByRole('button', { name: '音频设置', exact: true }).click();
+    await page.locator('[data-act="settings"]').click();
+    await page.getByRole('button', { name: '打开音频设置' }).click();
 
     const panel = page.locator('.audio-settings.open');
     await expect(panel).toBeVisible();
@@ -62,8 +62,8 @@ test.describe('audio settings', () => {
     expect(wasmTypes.length).toBeGreaterThan(0);
     // And the engine reports that it took the streaming path: the audio
     // settings panel shows the core as `simd · streamed`.
-    await page.getByRole('button', { name: '预设库' }).click();
-    await page.getByRole('button', { name: '音频设置', exact: true }).click();
+    await page.locator('[data-act="settings"]').click();
+    await page.getByRole('button', { name: '打开音频设置' }).click();
     await expect(page.locator('.audio-settings.open')).toContainText('流式编译');
   });
 });
@@ -76,7 +76,7 @@ test.describe('microtuning', () => {
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
     await page.waitForTimeout(400);
     await page.getByRole('button', { name: '预设库' }).click();
-    const select = page.locator('.d-temperament select');
+    const select = page.locator('[data-setting="temperament"] select');
     await expect(select).toBeVisible();
     await expect(select.locator('option')).toHaveCount(4);
     await select.selectOption('just');
@@ -87,7 +87,7 @@ test.describe('microtuning', () => {
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
     await page.waitForTimeout(300);
     await page.getByRole('button', { name: '预设库' }).click();
-    await expect(page.locator('.d-temperament select')).toHaveValue('just');
+    await expect(page.locator('[data-setting="temperament"] select')).toHaveValue('just');
   });
 });
 
@@ -98,8 +98,8 @@ test.describe('MIDI CC mapping', () => {
     await page.goto('/');
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
     await page.waitForTimeout(400);
-    await page.getByRole('button', { name: '预设库' }).click();
-    await page.getByRole('button', { name: '音频设置', exact: true }).click();
+    await page.locator('[data-act="settings"]').click();
+    await page.getByRole('button', { name: '打开音频设置' }).click();
     const panel = page.locator('.audio-settings.open');
     await expect(panel).toContainText('尚未映射任何 CC');
 
@@ -130,15 +130,15 @@ test.describe('Scala scale import', () => {
       buffer: Buffer.from(scala),
     });
     await expect(page.locator('.toast')).toContainText('19 equal');
-    await expect(page.locator('.d-temperament select')).toHaveValue('custom');
-    await expect(page.locator('.d-temperament select option:checked')).toContainText('19 equal');
+    await expect(page.locator('[data-setting="temperament"] select')).toHaveValue('custom');
+    await expect(page.locator('[data-setting="temperament"] select option:checked')).toContainText('19 equal');
 
     // The imported scale survives a reload.
     await page.reload();
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
     await page.waitForTimeout(300);
     await page.getByRole('button', { name: '预设库' }).click();
-    await expect(page.locator('.d-temperament select')).toHaveValue('custom');
+    await expect(page.locator('[data-setting="temperament"] select')).toHaveValue('custom');
   });
 });
 
@@ -149,8 +149,8 @@ test.describe('MPE input', () => {
     await page.goto('/');
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
     await page.waitForTimeout(400);
-    await page.getByRole('button', { name: '预设库' }).click();
-    await page.getByRole('button', { name: '音频设置', exact: true }).click();
+    await page.locator('[data-act="settings"]').click();
+    await page.getByRole('button', { name: '打开音频设置' }).click();
     const panel = page.locator('.audio-settings.open');
     // Several rows share the toggle style; address this one by its setting id.
     const toggle = panel.locator('[data-setting="mpe"] input');
@@ -160,8 +160,8 @@ test.describe('MPE input', () => {
     await page.reload();
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
     await page.waitForTimeout(300);
-    await page.getByRole('button', { name: '预设库' }).click();
-    await page.getByRole('button', { name: '音频设置', exact: true }).click();
+    await page.locator('[data-act="settings"]').click();
+    await page.getByRole('button', { name: '打开音频设置' }).click();
     await expect(page.locator('.audio-settings.open [data-setting="mpe"] input')).toBeChecked();
   });
 });
@@ -174,7 +174,7 @@ test.describe('velocity curve', () => {
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
     await page.waitForTimeout(400);
     await page.getByRole('button', { name: '预设库' }).click();
-    const select = page.locator('.d-velocity select');
+    const select = page.locator('[data-setting="velocity"] select');
     await expect(select).toHaveValue('linear');
     await select.selectOption('soft');
     await expect(page.locator('.toast')).toContainText('柔和');
@@ -182,7 +182,7 @@ test.describe('velocity curve', () => {
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
     await page.waitForTimeout(300);
     await page.getByRole('button', { name: '预设库' }).click();
-    await expect(page.locator('.d-velocity select')).toHaveValue('soft');
+    await expect(page.locator('[data-setting="velocity"] select')).toHaveValue('soft');
   });
 });
 
@@ -193,19 +193,19 @@ test.describe('workspace scenes', () => {
     await page.goto('/');
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
     await page.waitForTimeout(400);
-    await page.getByRole('button', { name: '预设库' }).click();
+    await page.locator('[data-act="settings"]').click();
     // Save the current workspace (modules view, all expanded).
-    await page.locator('.d-scene button', { hasText: '保存当前' }).click();
-    await page.locator('.drawer .d-close').click();
+    await page.locator('[data-setting="scene"] button', { hasText: '保存当前' }).click();
+    await page.locator('.settings-drawer .d-close').click();
 
     // Change it: switch to the signal-flow view.
     await page.getByRole('button', { name: '信号流' }).click();
     await expect(page.locator('.app')).toHaveAttribute('data-view', 'flow');
 
-    // Recall the scene through the drawer and the view comes back.
-    await page.getByRole('button', { name: '预设库' }).click();
-    await page.locator('.d-scene select').selectOption({ index: 1 });
-    await page.locator('.drawer .d-close').click();
+    // Recall the scene through the settings and the view comes back.
+    await page.locator('[data-act="settings"]').click();
+    await page.locator('[data-setting="scene"] select').selectOption({ index: 1 });
+    await page.locator('.settings-drawer .d-close').click();
     await expect(page.locator('.app')).toHaveAttribute('data-view', 'modules');
   });
 });

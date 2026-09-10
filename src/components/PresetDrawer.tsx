@@ -1,16 +1,11 @@
 import { useMemo, useRef, useState } from 'react';
 import { store } from '@/state/store';
-import { checkForUpdate } from '@/pwa/register';
-import { TEMPERAMENTS } from '@/audio/tuning';
-import { VELOCITY_CURVES, velocityCurveLabel } from '@/audio/velocity';
-import { parseScala } from '@/audio/scala';
 import { useSynth } from '@/hooks/useSynth';
 import { PRESET_CATEGORIES, type PresetCategory } from '@/state/presets';
 import { WaveIcon } from './controls';
 import { toast } from './Toast';
-import { LANG_LABELS, localizeName, t } from '@/i18n';
-import { useLang, useHaptics, useTheme, useContrast } from '@/hooks/useSynth';
-import { canVibrate, haptic, HAPTIC } from '@/hooks/useInputMode';
+import { localizeName, t } from '@/i18n';
+import { haptic } from '@/hooks/useInputMode';
 
 const SW_COLOR: Record<string, string> = {
   sine: '#4da3ff',
@@ -21,47 +16,11 @@ const SW_COLOR: Record<string, string> = {
   noise: '#f87171',
 };
 
-export function PresetDrawer({
-  open,
-  onClose,
-  onOpenGuide,
-  onOpenChangelog,
-  onOpenAudio,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onOpenGuide: () => void;
-  onOpenChangelog: () => void;
-  onOpenAudio: () => void;
-}) {
+export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { userPresets, currentPresetId } = useSynth();
-  const lang = useLang();
-  /** Temperament names are bilingual pairs; pick by the current language. */
-  const temperamentLabel = (id: string) => {
-    if (id === 'custom') {
-      const scale = store.getSnapshot().layout.customTuning;
-      return scale ? `${lang === 'zh' ? '自定义' : 'Custom'} · ${scale.name}` : 'Custom';
-    }
-    const temperament = TEMPERAMENTS.find((x) => x.id === id) ?? TEMPERAMENTS[0];
-    return temperament.name[lang === 'zh' ? 0 : 1];
-  };
-  const importScale = async (file: File) => {
-    try {
-      const scale = parseScala(await file.text());
-      store.importTuning(scale);
-      toast(t('tuning.imported', { name: scale.name, notes: String(scale.degrees.length) }));
-    } catch (err) {
-      toast(t('tuning.importFailed', { msg: err instanceof Error ? t(`tuning.${err.message}`) : '' }));
-    }
-  };
-  const theme = useTheme();
-  const contrast = useContrast();
-  const hapticsOn = useHaptics();
-  const vibrate = canVibrate();
   const [category, setCategory] = useState<PresetCategory>('ALL');
   const [query, setQuery] = useState('');
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const scaleRef = useRef<HTMLInputElement | null>(null);
 
   // `userPresets` is the change signal; `allPresets()` reads the store directly.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -78,7 +37,7 @@ export function PresetDrawer({
   return (
     <>
       <div className={`drawer-mask${open ? ' show' : ''}`} onClick={onClose} />
-      <aside className={`drawer${open ? ' open' : ''}`} aria-hidden={!open} aria-label={t('drawer.title')}>
+      <aside className={`drawer preset-drawer${open ? ' open' : ''}`} aria-hidden={!open} aria-label={t('drawer.title')}>
         <div className="drawer-head">
           <span className="d-title">{t('drawer.title')}</span>
           <button type="button" className="d-close" onClick={onClose} aria-label={t('drawer.close')}>
@@ -166,7 +125,7 @@ export function PresetDrawer({
           )}
         </div>
           <div className="d-foot">
-          <div className="d-foot-actions">
+          <div className="d-foot-actions preset-actions">
             <button type="button" className="d-reset" onClick={() => fileRef.current?.click()}>
               {t('drawer.import')}
             </button>
@@ -195,220 +154,6 @@ export function PresetDrawer({
               }}
             >
               {t('drawer.share')}
-            </button>
-            <button
-              type="button"
-              className="d-reset"
-              onClick={() => {
-                haptic();
-                onOpenGuide();
-              }}
-              title={t('guide.sub')}
-            >
-              {t('drawer.guide')}
-            </button>
-            <button
-              type="button"
-              className="d-reset"
-              onClick={() => {
-                haptic();
-                onOpenChangelog();
-              }}
-              title={t('changelog.sub')}
-            >
-              {t('drawer.changelog')}
-            </button>
-            <label className="d-temperament">
-              <span>{t('tuning.title')}</span>
-              <select
-                value={store.getSnapshot().layout.temperament}
-                onChange={(event) => {
-                  haptic();
-                  store.setTemperament(event.target.value);
-                  toast(t('tuning.changed', { name: temperamentLabel(event.target.value) }));
-                }}
-              >
-                {TEMPERAMENTS.map((temperament) => (
-                  <option key={temperament.id} value={temperament.id}>
-                    {temperamentLabel(temperament.id)}
-                  </option>
-                ))}
-                {store.getSnapshot().layout.customTuning ? (
-                  <option value="custom">{temperamentLabel('custom')}</option>
-                ) : null}
-              </select>
-              <button
-                type="button"
-                className="d-reset"
-                onClick={() => scaleRef.current?.click()}
-                title={t('tuning.importHint')}
-              >
-                {t('tuning.import')}
-              </button>
-            </label>
-            <input
-              ref={scaleRef}
-              type="file"
-              accept=".scl,text/plain"
-              hidden
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = '';
-                if (file) void importScale(file);
-              }}
-            />
-            <button
-              type="button"
-              className="d-reset"
-              onClick={() => {
-                haptic();
-                onOpenAudio();
-              }}
-              title={t('audio.sub')}
-            >
-              {t('audio.title')}
-            </button>
-            <label className="d-scene">
-              <span>{t('scene.title')}</span>
-              <select
-                value=""
-                onChange={(event) => {
-                  if (!event.target.value) return;
-                  haptic();
-                  store.applyScene(event.target.value);
-                  toast(t('scene.applied'));
-                }}
-              >
-                <option value="">{t('scene.pick')}</option>
-                {store.getSnapshot().scenes.map((scene) => (
-                  <option key={scene.id} value={scene.id}>
-                    {scene.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="d-reset"
-                onClick={() => {
-                  haptic();
-                  const scene = store.saveScene(
-                    `${t('scene.defaultName')} ${store.getSnapshot().scenes.length + 1}`,
-                  );
-                  toast(t('scene.saved', { name: scene.name }));
-                }}
-              >
-                {t('scene.save')}
-              </button>
-              <button
-                type="button"
-                className="d-reset"
-                disabled={store.getSnapshot().scenes.length === 0}
-                onClick={() => {
-                  const scenes = store.getSnapshot().scenes;
-                  if (!scenes.length) return;
-                  haptic();
-                  store.deleteScene(scenes[scenes.length - 1].id);
-                  toast(t('scene.deleted'));
-                }}
-              >
-                {t('scene.delete')}
-              </button>
-            </label>
-            <label className="d-velocity">
-              <span>{t('velocity.title')}</span>
-              <select
-                value={store.getSnapshot().layout.velocityCurve}
-                onChange={(event) => {
-                  haptic();
-                  store.setVelocityCurve(event.target.value);
-                  toast(t('velocity.changed', { name: velocityCurveLabel(event.target.value, lang) }));
-                }}
-              >
-                {VELOCITY_CURVES.map((curve) => (
-                  <option key={curve.id} value={curve.id}>
-                    {velocityCurveLabel(curve.id, lang)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              className="d-reset"
-              title={t('drawer.checkUpdate')}
-              onClick={async () => {
-                haptic();
-                const result = await checkForUpdate();
-                toast(t(result === 'updated'
-                  ? 'drawer.updateFound'
-                  : result === 'current'
-                    ? 'drawer.updateCurrent'
-                    : 'drawer.updateUnsupported'));
-              }}
-            >
-              {t('drawer.checkUpdate')}
-            </button>
-            <button
-              type="button"
-              className="d-reset"
-              onClick={() => store.toggleLang()}
-              title={lang === 'zh' ? 'Switch to English' : '切换为中文'}
-            >
-              {lang === 'zh' ? LANG_LABELS.en : LANG_LABELS.zh}
-            </button>
-            <div className="d-theme" role="group" aria-label={t('theme.label')}>
-              <span className="d-theme-label">{t('theme.label')}</span>
-              {(['dark', 'light', 'auto'] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  className={`d-theme-btn${theme === mode ? ' on' : ''}`}
-                  aria-pressed={theme === mode}
-                  title={mode === 'auto' ? t('theme.autoHint') : t(`theme.${mode}`)}
-                  onClick={() => {
-                    haptic();
-                    store.setTheme(mode);
-                  }}
-                >
-                  {t(`theme.${mode}`)}
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              className="d-reset d-half"
-              aria-pressed={contrast}
-              onClick={() => {
-                store.toggleContrast();
-                toast(
-                  store.getSnapshot().layout.contrast ? t('drawer.contrastOn') : t('drawer.contrastOff'),
-                );
-              }}
-            >
-              {t('drawer.contrast')}
-            </button>
-            {vibrate ? (
-              <button
-                type="button"
-                className="d-reset d-half"
-                aria-pressed={hapticsOn}
-                onClick={() => {
-                  haptic(HAPTIC.medium);
-                  store.toggleHaptics();
-                  toast(store.getSnapshot().layout.haptics ? t('drawer.hapticsOn') : t('drawer.hapticsOff'));
-                }}
-              >
-                {t('drawer.haptics')} {hapticsOn ? '✓' : '✕'}
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="d-reset wide"
-              onClick={() => {
-                store.resetLayout();
-                toast(t('drawer.resetDone'));
-              }}
-            >
-              {t('drawer.reset')}
             </button>
           </div>
           <input

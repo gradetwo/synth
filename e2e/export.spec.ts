@@ -15,7 +15,7 @@ test.describe('export', () => {
     await page.waitForTimeout(400);
     await page.getByRole('button', { name: '预设库' }).click();
     await page.locator('.pcard', { hasText: 'Electric Piano' }).first().click();
-    await page.locator('.drawer .d-close').click();
+    await page.locator('.preset-drawer .d-close').click();
     await page.locator('.display-row .monitor-actions .demo-btn').click();
     await page.waitForTimeout(300);
     await page.locator('.player-track', { hasText: '琶音' }).click();

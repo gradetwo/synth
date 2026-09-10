@@ -13,8 +13,8 @@ import { expect, test } from '@playwright/test';
 test.use({ launchOptions: { args: ['--autoplay-policy=user-gesture-required'] } });
 
 const kernelLine = async (page: import('@playwright/test').Page) => {
-  await page.getByRole('button', { name: '预设库' }).click();
-  await page.getByRole('button', { name: '音频设置', exact: true }).click();
+  await page.locator('[data-act="settings"]').click();
+  await page.getByRole('button', { name: '打开音频设置' }).click();
   const panel = await page.locator('.audio-settings.open').innerText();
   await page.keyboard.press('Escape');
   return panel.replace(/\s+/g, ' ');

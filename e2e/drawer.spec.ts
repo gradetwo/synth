@@ -1,57 +1,56 @@
 import { expect, test } from '@playwright/test';
 
 /**
- * Preset drawer layout.
+ * Preset library and settings drawers.
  *
- * The settings block grew a control at a time until it was a ragged wall of
- * buttons that also took a fixed slice of the drawer. These assertions are the
- * two things that made it a problem: the rows have to line up, and the preset
- * list must not be squeezed or clipped by them.
+ * The settings used to be pinned to the bottom of the preset library, where they
+ * grew a control at a time into a ragged wall that also took a fixed slice of the
+ * list. They are their own entry now; these assertions pin both halves of that.
  */
-test.describe('preset drawer', () => {
+test.describe('drawers', () => {
   test.use({ viewport: { width: 1280, height: 900 } });
 
-  test('keeps the settings tidy and out of the preset list’s way', async ({ page }) => {
+  test('keeps the preset list whole and the settings out of its way', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
     await page.waitForTimeout(400);
     await page.getByRole('button', { name: '预设库' }).click();
     await page.waitForTimeout(400);
 
-    // Every preset is rendered: the list is not clipped to whatever fitted next
-    // to a docked settings block.
-    const cards = await page.locator('.d-list .pcard').count();
-    expect(cards).toBeGreaterThan(20);
-
-    // The drawer body is the scroller, and the list is not a second one.
-    const scroll = await page.evaluate(() => {
-      const body = document.querySelector('.d-body') as HTMLElement;
-      const list = document.querySelector('.d-list') as HTMLElement;
-      return {
-        bodyScrolls: body.scrollHeight > body.clientHeight + 50,
-        listScrolls: list.scrollHeight > list.clientHeight + 2,
-        listBelowFold: list.getBoundingClientRect().height > body.clientHeight,
-      };
-    });
-    expect(scroll.bodyScrolls).toBe(true);
-    expect(scroll.listScrolls).toBe(false);
-    expect(scroll.listBelowFold).toBe(true);
-
-    // The action buttons share one grid: four to a row, all the same width.
-    const widths = await page.locator('.d-foot-actions > .d-reset').evaluateAll((buttons) =>
-      buttons.slice(0, 4).map((button) => Math.round(button.getBoundingClientRect().width)),
+    // Every preset is rendered, and the library's own footer is just the patch
+    // file actions: three equal buttons and nothing else.
+    expect(await page.locator('.d-list .pcard').count()).toBeGreaterThan(20);
+    const actions = page.locator('.preset-actions > .d-reset');
+    await expect(actions).toHaveCount(3);
+    await expect(page.locator('.d-foot-actions > label')).toHaveCount(0);
+    const widths = await actions.evaluateAll((buttons) =>
+      buttons.map((button) => Math.round(button.getBoundingClientRect().width)),
     );
-    expect(widths).toHaveLength(4);
     expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(2);
-    // And they sit on one row.
-    const tops = await page.locator('.d-foot-actions > .d-reset').evaluateAll((buttons) =>
-      buttons.slice(0, 4).map((button) => Math.round(button.getBoundingClientRect().top)),
-    );
-    expect(new Set(tops).size).toBe(1);
+  });
 
-    // The settings are reachable and still work.
-    await page.locator('.d-foot').scrollIntoViewIfNeeded();
-    await page.getByRole('button', { name: '音频设置', exact: true }).click();
+  test('gives the settings their own grouped panel', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(400);
+    // Same level as the preset library: a top-bar entry of its own.
+    await page.locator('[data-act="settings"]').click();
+    const panel = page.locator('.settings-drawer.open');
+    await expect(panel).toBeVisible();
+    await expect(panel.locator('.settings-section')).toHaveCount(4);
+    await expect(panel).toContainText('工作区');
+    await expect(panel).toContainText('演奏');
+    await expect(panel).toContainText('界面');
+
+    // Controls are sized to their content, not stretched to fill a column: a
+    // select that shows three characters does not need the whole drawer width.
+    const select = panel.locator('select').first();
+    const box = (await select.boundingBox())!;
+    const drawer = (await panel.boundingBox())!;
+    expect(box.width).toBeLessThan(drawer.width * 0.6);
+
+    // And they still work: the audio panel opens from here.
+    await panel.getByRole('button', { name: '打开音频设置' }).click();
     await expect(page.locator('.audio-settings.open')).toBeVisible();
   });
 });
