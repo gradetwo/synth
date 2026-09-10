@@ -95,6 +95,18 @@ const PARAMS = [
   ['wtUser', 79, 0, 0, 1],
   ['fxDelayDamp', 80, 0.35, 0, 1],
   ['fxDelayPingpong', 81, 0, 0, 1],
+  ['fxChain1', 82, 1, 0, 6],
+  ['fxChain2', 83, 2, 0, 6],
+  ['fxChain3', 84, 3, 0, 6],
+  ['fxChain4', 85, 4, 0, 6],
+  ['fxChain5', 86, 5, 0, 6],
+  ['fxChain6', 87, 6, 0, 6],
+  ['fxParallel1', 88, 0, 0, 1],
+  ['fxParallel2', 89, 0, 0, 1],
+  ['fxParallel3', 90, 0, 0, 1],
+  ['fxParallel4', 91, 0, 0, 1],
+  ['fxParallel5', 92, 0, 0, 1],
+  ['fxParallel6', 93, 0, 0, 1],
 ];
 
 const SPECTRUM_BINS = 36;

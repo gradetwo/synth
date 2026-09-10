@@ -2,6 +2,8 @@ import { store } from '@/state/store';
 import { useLang, useParam, useRoutes } from '@/hooks/useSynth';
 import {
   DELAY_SYNCS,
+  FX_KIND_LABELS,
+  FX_SLOTS,
   LFO_TARGETS,
   LFO_WAVES,
   MOD_DESTS,
@@ -16,8 +18,14 @@ import {
   intToFilter,
   intToModDst,
   intToModSrc,
+  chainId,
+  fxKindCanBeParallel,
+  fxKindToInt,
+  intToFxKind,
   modDstToInt,
   modSrcToInt,
+  parallelId,
+  type FxKind,
   type ParamId,
   type ParamSpec,
   type Wave,
@@ -303,11 +311,109 @@ function ModMatrix() {
 
 // ---------------------------------------------------------------------- FX
 
+/**
+ * The effect chain (A5): which effect runs at each of the six positions.
+ *
+ * Reordering is a swap between neighbours, which is what "reorderable" means
+ * when every position holds one effect and the chain is a permutation — it can
+ * never lose an effect or run one twice. Each chip also carries the send (∥)
+ * switch where a send is meaningful.
+ */
+function FxChain() {
+  // One hook per position, written out: a hook called from a loop or a callback
+  // would break the rules of hooks the moment the chain length changed.
+  const chain = [
+    intToFxKind(useParam(chainId(0))),
+    intToFxKind(useParam(chainId(1))),
+    intToFxKind(useParam(chainId(2))),
+    intToFxKind(useParam(chainId(3))),
+    intToFxKind(useParam(chainId(4))),
+    intToFxKind(useParam(chainId(5))),
+  ];
+
+  const swap = (a: number, b: number) => {
+    const first = chain[a];
+    const second = chain[b];
+    store.setParam(chainId(a), fxKindToInt(second), { immediate: true });
+    store.setParam(chainId(b), fxKindToInt(first), { immediate: true });
+  };
+
+  return (
+    <div className="fx-chain" data-unit="chain">
+      <div className="fx-chain-head" title={t('fx.chainHint')}>
+        {t('fx.chain')}
+      </div>
+      <div className="fx-chain-list">
+        {chain.map((kind, slot) => (
+          <ChainChip
+            key={slot}
+            slot={slot}
+            kind={kind}
+            onSwap={swap}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChainChip({
+  slot,
+  kind,
+  onSwap,
+}: {
+  slot: number;
+  kind: FxKind;
+  onSwap: (a: number, b: number) => void;
+}) {
+  const parallel = useParam(parallelId(slot)) >= 0.5;
+  return (
+    <span className="fx-chip" data-slot={slot} data-kind={kind}>
+      <button
+        type="button"
+        className="fx-move"
+        data-act="left"
+        aria-label={t('fx.moveLeft')}
+        disabled={slot === 0}
+        onClick={() => onSwap(slot, slot - 1)}
+      >
+        ‹
+      </button>
+      <span className="fx-chip-name">{FX_KIND_LABELS[kind]}</span>
+      {fxKindCanBeParallel(kind) && (
+        <button
+          type="button"
+          className={`fx-par${parallel ? ' on' : ''}`}
+          data-act="parallel"
+          data-setting={`fxParallel${slot + 1}`}
+          aria-pressed={parallel}
+          aria-label={t('fx.parallel')}
+          title={t('fx.parallelHint')}
+          onClick={() => store.setParam(parallelId(slot), parallel ? 0 : 1, { immediate: true })}
+        >
+          ∥
+        </button>
+      )}
+      <button
+        type="button"
+        className="fx-move"
+        data-act="right"
+        aria-label={t('fx.moveRight')}
+        disabled={slot === FX_SLOTS - 1}
+        onClick={() => onSwap(slot, slot + 1)}
+      >
+        ›
+      </button>
+    </span>
+  );
+}
+
 function FxModule() {
   const sync = intToDelaySync(useParam(Param.FX_DELAY_SYNC));
   const pingPong = useParam(Param.FX_DELAY_PINGPONG) >= 0.5;
   return (
     <ModuleShell id="fx">
+      <FxChain />
       <div className="fx-grid">
         <div className="fx-unit" data-unit="reverb">
           <div className="fx-title">

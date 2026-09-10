@@ -218,6 +218,21 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
   background:var(--bg-socket);border:1px solid var(--line-soft-2);border-radius:7px}
 .mini-label{font:600 7.5px/1 var(--mono);letter-spacing:.18em;color:var(--txt-dim);
   margin-top:5px;text-align:right}
+/* Effect chain reorder row (A5). */
+.fx-chain{margin-bottom:10px}
+.fx-chain-head{font:600 8px/1 var(--mono);letter-spacing:.16em;color:var(--txt-dim);margin-bottom:6px}
+.fx-chain-list{display:flex;gap:4px;flex-wrap:wrap}
+.fx-chip{display:inline-flex;align-items:center;gap:2px;background:var(--bg-inset);
+  border:1px solid var(--border);border-radius:7px;padding:2px 3px}
+.fx-chip-name{font:600 8.5px/1 var(--mono);letter-spacing:.06em;color:var(--txt-2);
+  padding:0 3px;min-width:38px;text-align:center}
+.fx-move{width:18px;height:20px;border:none;background:none;color:var(--txt-dim);cursor:pointer;
+  font:700 12px/1 var(--grot);border-radius:5px}
+.fx-move:hover:not(:disabled){color:var(--accent);background:var(--accent-tint)}
+.fx-move:disabled{opacity:.25;cursor:not-allowed}
+.fx-par{width:18px;height:20px;border:1px solid var(--border);border-radius:5px;
+  background:var(--bg-socket);color:var(--txt-dim);cursor:pointer;font:700 11px/1 var(--mono)}
+.fx-par.on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
 /* Ping-pong switch under the delay knobs. */
 .dly-ping{margin-top:8px;min-height:26px;padding:0 9px;border-radius:7px;border:1px solid var(--border);
   background:var(--bg-inset);color:var(--txt-2);font:600 9.5px/1 var(--grot);letter-spacing:.05em;

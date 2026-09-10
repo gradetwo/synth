@@ -647,6 +647,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Reverb**: Soundpipe’s `reverbsc` (Sean Costello’s eight-delay-line feedback network). `SIZE` maps feedback 0.70–0.97 and a low-pass from 4–14 kHz; `MIX` sets the dry/wet balance.',
           ],
           [
+            '**信号链**：FX 模块顶部的顺序就是处理顺序，用 `‹` `›` 调换相邻两位（六种效果的一个排列，不会丢也不会重复），`∥` 把插入式效果（合唱/镶边/移相/过载）改成**并联送出**——干声保留，效果叠加。默认顺序与历史一致，旧音色不变。',
+            '**Chain**: the order of the six effects in the FX module is the processing order; `‹` `›` swap neighbours (a permutation, so nothing is lost or doubled) and `∥` turns an insert effect (chorus, flanger, phaser, drive) into a **parallel send** that leaves the dry signal intact. The default order matches what the synth always did, so existing patches are unchanged.',
+          ],
+          [
             '**延迟**：立体声延时线加反馈，时值可同步到 1/4、1/8.、1/8、1/16；改变时值时用约 20 ms 的一极点平滑，避免咔哒。`DAMP` 让每一遍回声比上一遍更暗（低通在反馈环内），`PING-PONG` 让回声左右交替。',
             '**Delay**: a stereo delay line with feedback, synced to 1/4, 1/8., 1/8 or 1/16. Time changes are smoothed with a ~20 ms one-pole to avoid clicks. `DAMP` makes each repeat darker than the last (the filter sits inside the feedback loop) and `Ping-pong` alternates the echoes between the speakers.',
           ],

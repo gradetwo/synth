@@ -18,8 +18,8 @@ use crate::dsp::wavetable::{CycleError, Table, BASE_LEN as WT_BASE_LEN};
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_limit, Rng};
 use crate::fft::Spectrum;
 use crate::params::{
-    id, is_continuous, LfoTarget, ModDst, ModSrc, OscParams, Params, MAX_BLOCK_SIZE, MAX_UNISON,
-    MAX_VOICES, PARAM_COUNT,
+    id, is_continuous, FxKind, LfoTarget, ModDst, ModSrc, OscParams, Params, FX_SLOTS,
+    MAX_BLOCK_SIZE, MAX_UNISON, MAX_VOICES, PARAM_COUNT,
 };
 use crate::voice::{NoteOnResult, VoiceManager};
 
@@ -1535,96 +1535,122 @@ impl Engine {
         }
     }
 
+    /// Run the effect chain (A5).
+    ///
+    /// The chain is a list of positions, each holding one effect, run in signal
+    /// order. Every effect keeps its own on/off switch and mix from before, so a
+    /// patch that never touched the chain sounds exactly as it did; reordering
+    /// only changes the order things happen in.
+    ///
+    /// A position marked *parallel* is a send: the effect runs on a copy of the
+    /// signal and its wet output is added, leaving the signal underneath intact.
+    /// A serial position is an insert: wet and dry are crossfaded.
     fn apply_fx(&mut self, frames: usize) {
-        let fx = self.params.fx;
-        // The delay reads its parameters every block, so a change in tempo, time
-        // or damping is picked up without a setter round trip. When it is off the
-        // wet mix is zero, which is exactly a bypass (the line keeps running so
-        // its tail does not pop back when it is switched on again).
-        self.delay.process(
-            DelayParams {
-                time_s: self.params.delay_time_seconds(),
-                feedback: fx.delay_fb,
-                mix: if fx.delay_on { fx.delay_mix } else { 0.0 },
-                damp: fx.delay_damp,
-                ping_pong: fx.delay_ping_pong,
-            },
-            &mut self.fx_l[..frames],
-            &mut self.fx_r[..frames],
-            frames,
-        );
-
-        // Rust reverb: damped, modulated and with a pre-delay, which the old
-        // Soundpipe `revsc` could not do. It replaces revsc entirely.
-        self.reverb.set_params(ReverbParams {
-            size: if fx.reverb_on { fx.reverb_size } else { 0.0 },
-            damp: fx.reverb_damp,
-            mix: if fx.reverb_on { fx.reverb_mix } else { 0.0 },
-            width: fx.reverb_width,
-            predelay: fx.reverb_predelay,
-        });
-        self.reverb
-            .process(&mut self.fx_l[..frames], &mut self.fx_r[..frames]);
-
-        // Modulation effects run after reverb/delay, each wet/dry blended.
-        if fx.chorus_on && fx.chorus_mix > 0.0 {
-            unsafe {
-                gs_fx_chorus_set(fx.chorus_depth, fx.chorus_rate, 20.0, 0.25);
-                gs_fx_chorus_block(
-                    self.fx_l.as_ptr(),
-                    self.fx_r.as_ptr(),
-                    self.osc_a.as_mut_ptr(),
-                    self.osc_b.as_mut_ptr(),
-                    frames as u32,
-                );
+        for slot in 0..FX_SLOTS {
+            let kind = self.params.fx.chain[slot];
+            let parallel = self.params.fx.parallel[slot];
+            let fx = self.params.fx;
+            match kind {
+                FxKind::None => {}
+                FxKind::Delay => {
+                    // The delay reads its parameters every block, so a change in
+                    // tempo, time or damping is picked up without a setter round
+                    // trip. When it is off the wet mix is zero, which is exactly
+                    // a bypass (the line keeps running so its tail does not pop
+                    // back when it is switched on again).
+                    self.delay.process(
+                        DelayParams {
+                            time_s: self.params.delay_time_seconds(),
+                            feedback: fx.delay_fb,
+                            mix: if fx.delay_on { fx.delay_mix } else { 0.0 },
+                            damp: fx.delay_damp,
+                            ping_pong: fx.delay_ping_pong,
+                        },
+                        &mut self.fx_l[..frames],
+                        &mut self.fx_r[..frames],
+                        frames,
+                    );
+                }
+                FxKind::Reverb => {
+                    // Damped, modulated and with a pre-delay, which the old
+                    // Soundpipe `revsc` could not do.
+                    self.reverb.set_params(ReverbParams {
+                        size: if fx.reverb_on { fx.reverb_size } else { 0.0 },
+                        damp: fx.reverb_damp,
+                        mix: if fx.reverb_on { fx.reverb_mix } else { 0.0 },
+                        width: fx.reverb_width,
+                        predelay: fx.reverb_predelay,
+                    });
+                    self.reverb
+                        .process(&mut self.fx_l[..frames], &mut self.fx_r[..frames]);
+                }
+                FxKind::Chorus if fx.chorus_on && fx.chorus_mix > 0.0 => {
+                    unsafe {
+                        gs_fx_chorus_set(fx.chorus_depth, fx.chorus_rate, 20.0, 0.25);
+                        gs_fx_chorus_block(
+                            self.fx_l.as_ptr(),
+                            self.fx_r.as_ptr(),
+                            self.osc_a.as_mut_ptr(),
+                            self.osc_b.as_mut_ptr(),
+                            frames as u32,
+                        );
+                    }
+                    self.mix_effect(frames, fx.chorus_mix, parallel);
+                }
+                FxKind::Flanger if fx.flanger_on && fx.flanger_mix > 0.0 => {
+                    unsafe {
+                        gs_fx_flanger_set(0.5, fx.flanger_rate, 2.0, fx.flanger_fb);
+                        gs_fx_flanger_block(
+                            self.fx_l.as_ptr(),
+                            self.fx_r.as_ptr(),
+                            self.osc_a.as_mut_ptr(),
+                            self.osc_b.as_mut_ptr(),
+                            frames as u32,
+                        );
+                    }
+                    self.mix_effect(frames, fx.flanger_mix, parallel);
+                }
+                FxKind::Phaser if fx.phaser_on && fx.phaser_mix > 0.0 => {
+                    unsafe {
+                        gs_fx_phaser_set(0.8, fx.phaser_rate, fx.phaser_fb, 4);
+                        gs_fx_phaser_block(
+                            self.fx_l.as_ptr(),
+                            self.fx_r.as_ptr(),
+                            self.osc_a.as_mut_ptr(),
+                            self.osc_b.as_mut_ptr(),
+                            frames as u32,
+                        );
+                    }
+                    self.mix_effect(frames, fx.phaser_mix, parallel);
+                }
+                FxKind::Drive if fx.drive_on && fx.drive_mix > 0.0 => {
+                    unsafe {
+                        gs_fx_overdrive_set(fx.drive_amt);
+                        gs_fx_overdrive_block(
+                            self.fx_l.as_ptr(),
+                            self.fx_r.as_ptr(),
+                            self.osc_a.as_mut_ptr(),
+                            self.osc_b.as_mut_ptr(),
+                            frames as u32,
+                        );
+                    }
+                    self.mix_effect(frames, fx.drive_mix, parallel);
+                }
+                _ => {}
             }
-            self.blend_wet(frames, fx.chorus_mix);
-        }
-        if fx.flanger_on && fx.flanger_mix > 0.0 {
-            unsafe {
-                gs_fx_flanger_set(0.5, fx.flanger_rate, 2.0, fx.flanger_fb);
-                gs_fx_flanger_block(
-                    self.fx_l.as_ptr(),
-                    self.fx_r.as_ptr(),
-                    self.osc_a.as_mut_ptr(),
-                    self.osc_b.as_mut_ptr(),
-                    frames as u32,
-                );
-            }
-            self.blend_wet(frames, fx.flanger_mix);
-        }
-        if fx.phaser_on && fx.phaser_mix > 0.0 {
-            unsafe {
-                gs_fx_phaser_set(0.8, fx.phaser_rate, fx.phaser_fb, 4);
-                gs_fx_phaser_block(
-                    self.fx_l.as_ptr(),
-                    self.fx_r.as_ptr(),
-                    self.osc_a.as_mut_ptr(),
-                    self.osc_b.as_mut_ptr(),
-                    frames as u32,
-                );
-            }
-            self.blend_wet(frames, fx.phaser_mix);
-        }
-        if fx.drive_on && fx.drive_mix > 0.0 {
-            unsafe {
-                gs_fx_overdrive_set(fx.drive_amt);
-                gs_fx_overdrive_block(
-                    self.fx_l.as_ptr(),
-                    self.fx_r.as_ptr(),
-                    self.osc_a.as_mut_ptr(),
-                    self.osc_b.as_mut_ptr(),
-                    frames as u32,
-                );
-            }
-            self.blend_wet(frames, fx.drive_mix);
         }
     }
 
-    /// `fx_l/fx_r = dry*(1-mix) + wet*mix`, where the wet signal is in
-    /// `osc_a/osc_b` (free scratch buffers after the voice loop).
-    fn blend_wet(&mut self, frames: usize, mix: f32) {
-        let dry = 1.0 - mix;
+    /// Fold an effect's wet signal into the bus.
+    ///
+    /// Serial (insert): `fx = dry*(1-mix) + wet*mix`.
+    /// Parallel (send): `fx = dry + wet*mix` — the dry signal is left untouched,
+    /// so the effect adds to the mix instead of replacing part of it.
+    ///
+    /// The wet signal arrives in `osc_a/osc_b` (free scratch buffers after the
+    /// voice loop).
+    fn mix_effect(&mut self, frames: usize, mix: f32, parallel: bool) {
+        let dry = if parallel { 1.0 } else { 1.0 - mix };
         for i in 0..frames {
             self.fx_l[i] = self.fx_l[i] * dry + self.osc_a[i] * mix;
             self.fx_r[i] = self.fx_r[i] * dry + self.osc_b[i] * mix;
@@ -3150,9 +3176,9 @@ mod tests {
 
     // ------------------------------------------------------------- delay (A5)
 
-    /// A short pluck with the delay on, rendered to stereo. 1/16 at 120 BPM is
-    /// 125 ms, so the repeats land at 0.125 s intervals.
-    fn render_delay_tail(ping_pong: bool, damp: f32) -> (Vec<f32>, Vec<f32>) {
+    /// A short pluck, rendered to stereo, with a hook to configure the FX.
+    /// 1/16 at 120 BPM is 125 ms, so delay repeats land at 0.125 s intervals.
+    fn render_fx(configure: impl FnOnce(&mut Engine)) -> (Vec<f32>, Vec<f32>) {
         let mut e = new_engine(16);
         e.set_param(id::OSC1_ON, 1.0);
         e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
@@ -3171,15 +3197,10 @@ mod tests {
         e.set_param(id::FX_REVERB_ON, 0.0);
         e.set_param(id::MASTER_VOLUME, 1.0);
         e.set_param(id::TEMPO, 120.0);
-        e.set_param(id::FX_DELAY_ON, 1.0);
-        e.set_param(id::FX_DELAY_SYNC, 3.0);
-        e.set_param(id::FX_DELAY_FB, 0.6);
-        e.set_param(id::FX_DELAY_MIX, 0.9);
-        e.set_param(id::FX_DELAY_DAMP, damp);
-        e.set_param(id::FX_DELAY_PINGPONG, if ping_pong { 1.0 } else { 0.0 });
         for index in 0..crate::params::MOD_ROUTES {
             e.set_route(index, 0, 0, 0.0, false);
         }
+        configure(&mut e);
         e.note_on(69, 1.0);
         let frames = 48_000 * 3 / 2;
         let mut left = vec![0.0f32; frames];
@@ -3191,6 +3212,18 @@ mod tests {
             right[at..at + 128].copy_from_slice(&e.out_r[..128]);
         }
         (left, right)
+    }
+
+    /// The pluck with the delay on, as the delay tests want it.
+    fn render_delay_tail(ping_pong: bool, damp: f32) -> (Vec<f32>, Vec<f32>) {
+        render_fx(|e| {
+            e.set_param(id::FX_DELAY_ON, 1.0);
+            e.set_param(id::FX_DELAY_SYNC, 3.0);
+            e.set_param(id::FX_DELAY_FB, 0.6);
+            e.set_param(id::FX_DELAY_MIX, 0.9);
+            e.set_param(id::FX_DELAY_DAMP, damp);
+            e.set_param(id::FX_DELAY_PINGPONG, if ping_pong { 1.0 } else { 0.0 });
+        })
     }
 
     fn rms(signal: &[f32], from: usize, to: usize) -> f32 {
@@ -3267,6 +3300,160 @@ mod tests {
         assert!(
             high_loss < low_loss * 0.5,
             "damping should cost the top end much more than the low end: {high_loss:.3} vs {low_loss:.3}"
+        );
+    }
+
+    // ------------------------------------------------------- chain order (A5)
+
+    /// Set the whole chain at once: `kinds` are chain positions in signal order.
+    fn set_chain(e: &mut Engine, kinds: &[u32]) {
+        for slot in 0..FX_SLOTS {
+            e.set_param(id::FX_CHAIN1 + slot as u32, *kinds.get(slot).unwrap_or(&0) as f32);
+        }
+    }
+
+    /// Total energy above the second harmonic: a distortion meter for the
+    /// repeats, measured where only the repeats are sounding.
+    fn harmonics(signal: &[f32], from: usize, to: usize, f0: f32) -> f32 {
+        let slice = &signal[from..to.min(signal.len())];
+        let magnitude = |freq: f32| {
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (i, value) in slice.iter().enumerate() {
+                let phase = core::f64::consts::TAU * freq as f64 * i as f64 / 48_000.0;
+                re += *value as f64 * phase.cos();
+                im -= *value as f64 * phase.sin();
+            }
+            (re * re + im * im).sqrt() / slice.len().max(1) as f64
+        };
+        let first = magnitude(f0).max(1e-9);
+        let mut out = 0.0;
+        for k in 2..8 {
+            out += (magnitude(f0 * k as f32) / first) as f32;
+        }
+        out
+    }
+
+    /// The whole point of a chain: the order changes the sound. Distortion does
+    /// not commute with a delay, so driving the repeats and driving the mix
+    /// cannot come out the same.
+    #[test]
+    fn reordering_the_chain_changes_the_sound() {
+        let _guard = lock_engine();
+        let f0 = note_to_hz(69.0);
+        let with_drive = |order: [u32; 6]| {
+            render_fx(|e| {
+                e.set_param(id::FX_DELAY_ON, 1.0);
+                e.set_param(id::FX_DELAY_SYNC, 3.0);
+                e.set_param(id::FX_DELAY_FB, 0.6);
+                e.set_param(id::FX_DELAY_MIX, 0.8);
+                e.set_param(id::FX_DELAY_DAMP, 0.0);
+                e.set_param(id::FX_DRIVE_ON, 1.0);
+                e.set_param(id::FX_DRIVE_AMT, 0.9);
+                e.set_param(id::FX_DRIVE_MIX, 1.0);
+                set_chain(e, &order);
+            })
+            .0
+        };
+        let delay_then_drive = with_drive([1, 6, 0, 0, 0, 0]);
+        let drive_then_delay = with_drive([6, 1, 0, 0, 0, 0]);
+        // A memoryless distortion applied to the *sum* of a note and its own
+        // repeat is not the same as distorting the note and then repeating it:
+        // the two renders have to differ across the overlap, where both copies
+        // are present at once.
+        let reference = rms(&delay_then_drive, 0, 20_000).max(1e-9);
+        let difference = {
+            let sum: f32 = delay_then_drive
+                .iter()
+                .zip(drive_then_delay.iter())
+                .map(|(a, b)| (a - b) * (a - b))
+                .sum();
+            (sum / delay_then_drive.len() as f32).sqrt()
+        };
+        assert!(
+            difference > reference * 0.1,
+            "reordering should change the sound: difference {difference} vs level {reference}"
+        );
+        // What an isolated repeat *sounds like* is the same either way — the
+        // distortion is applied to one copy of the note in both orders, and a
+        // memoryless curve commutes with a delay. Pin that down so nobody later
+        // "fixes" the reorder into a no-op by measuring the wrong thing: the
+        // difference is real, but it lives in the mix, not in one isolated echo.
+        let tail_a = harmonics(&delay_then_drive, 18_000, 19_200, f0);
+        let tail_b = harmonics(&drive_then_delay, 18_000, 19_200, f0);
+        assert!(
+            (tail_a - tail_b).abs() < 0.1 * tail_a.max(tail_b),
+            "an isolated repeat should have the same colour: {tail_a} vs {tail_b}"
+        );
+    }
+
+    /// A position left empty runs nothing, whatever the effect's own switch says.
+    #[test]
+    fn an_effect_dropped_from_the_chain_does_not_run() {
+        let _guard = lock_engine();
+        let with_everything = |chain: [u32; 6]| {
+            let (left, right) = render_fx(|e| {
+                e.set_param(id::FX_DELAY_ON, 1.0);
+                e.set_param(id::FX_DELAY_MIX, 0.5);
+                e.set_param(id::FX_REVERB_ON, 1.0);
+                e.set_param(id::FX_REVERB_MIX, 0.5);
+                e.set_param(id::FX_CHORUS_ON, 1.0);
+                e.set_param(id::FX_CHORUS_MIX, 0.5);
+                e.set_param(id::FX_DRIVE_ON, 1.0);
+                e.set_param(id::FX_DRIVE_MIX, 0.5);
+                set_chain(e, &chain);
+            });
+            (rms(&left, 0, 20_000), rms(&right, 0, 20_000))
+        };
+        // The full chain, and an empty one. The empty chain must equal the dry
+        // pluck, which is a different level from four effects at 50%.
+        let (full_l, full_r) = with_everything([1, 2, 3, 6, 0, 0]);
+        let (dry_l, dry_r) = with_everything([0; 6]);
+        assert!(full_l > dry_l * 1.05 || full_r > dry_r * 1.05, "the chain should do something");
+        assert!((dry_l - dry_r).abs() < dry_l * 0.02, "an empty chain is a clean pass-through");
+        // An effect sitting in the chain but switched off is skipped as well:
+        // the render has to match the empty chain, not merely be similar.
+        let (off_l, off_r) = render_fx(|e| {
+            e.set_param(id::FX_DELAY_ON, 0.0);
+            e.set_param(id::FX_DELAY_MIX, 0.9);
+            e.set_param(id::FX_REVERB_ON, 0.0);
+            e.set_param(id::FX_CHORUS_ON, 0.0);
+            e.set_param(id::FX_DRIVE_ON, 0.0);
+            set_chain(e, &[1, 2, 3, 6, 0, 0]);
+        });
+        assert!(
+            (rms(&off_l, 0, 20_000) - dry_l).abs() < dry_l * 0.01,
+            "a switched-off effect must pass the signal through"
+        );
+        assert!((rms(&off_r, 0, 20_000) - dry_r).abs() < dry_r * 0.01);
+    }
+
+    /// Parallel means *send*: the dry signal stays in the mix instead of being
+    /// crossfaded away, so full-wet no longer removes the note itself.
+    #[test]
+    fn a_parallel_position_adds_instead_of_replacing() {
+        let _guard = lock_engine();
+        let f0 = note_to_hz(69.0);
+        let fundamental = |parallel: bool| {
+            let (left, _) = render_fx(|e| {
+                // A mild drive at 50%: the dry copy is half of the serial output
+                // and all of the parallel one, so the note itself is measurably
+                // stronger when the position is a send.
+                e.set_param(id::FX_DRIVE_ON, 1.0);
+                e.set_param(id::FX_DRIVE_AMT, 0.3);
+                e.set_param(id::FX_DRIVE_MIX, 0.5);
+                set_chain(e, &[6, 0, 0, 0, 0, 0]);
+                if parallel {
+                    e.set_param(id::FX_PARALLEL1, 1.0);
+                }
+            });
+            // 0.05 s in: the envelope is open and the effect is running.
+            bin_mag(&left[2400..4800], f0, 48_000.0)
+        };
+        let serial = fundamental(false);
+        let parallel = fundamental(true);
+        assert!(
+            parallel > serial * 1.25,
+            "a send should keep the dry note in the mix: {parallel} vs {serial}"
         );
     }
 

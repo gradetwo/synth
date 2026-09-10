@@ -94,7 +94,82 @@ export const Param = {
   FX_DELAY_DAMP: 80,
   /** Delay ping-pong: cross-feed so the repeats alternate channels (A5). */
   FX_DELAY_PINGPONG: 81,
+  /** Effect chain positions 1..6, in signal order (A5). */
+  FX_CHAIN1: 82,
+  FX_CHAIN2: 83,
+  FX_CHAIN3: 84,
+  FX_CHAIN4: 85,
+  FX_CHAIN5: 86,
+  FX_CHAIN6: 87,
+  /** 1 = that position is a send (parallel) instead of an insert (A5). */
+  FX_PARALLEL1: 88,
+  FX_PARALLEL2: 89,
+  FX_PARALLEL3: 90,
+  FX_PARALLEL4: 91,
+  FX_PARALLEL5: 92,
+  FX_PARALLEL6: 93,
 } as const;
+
+/** Positions in the effect chain (A5). One per effect: the chain is a permutation. */
+export const FX_SLOTS = 6;
+
+/** What can run at a chain position. Keep in step with `FxKind` in params.rs. */
+export type FxKind = 'none' | 'delay' | 'reverb' | 'chorus' | 'flanger' | 'phaser' | 'drive';
+
+export const FX_KINDS: FxKind[] = ['none', 'delay', 'reverb', 'chorus', 'flanger', 'phaser', 'drive'];
+
+export const FX_KIND_LABELS: Record<FxKind, string> = {
+  none: '—',
+  delay: 'DELAY',
+  reverb: 'REVERB',
+  chorus: 'CHORUS',
+  flanger: 'FLANGER',
+  phaser: 'PHASER',
+  drive: 'DRIVE',
+};
+
+export function fxKindToInt(kind: FxKind): number {
+  return FX_KINDS.indexOf(kind);
+}
+
+/**
+ * Anything outside the known kinds reads as "nothing here", which is what the
+ * DSP does with the same value. Clamping instead would turn a value written by a
+ * newer build into an effect this one suddenly runs.
+ */
+export function intToFxKind(value: number): FxKind {
+  return FX_KINDS[Math.round(value)] ?? 'none';
+}
+
+/**
+ * Only the insert effects have a wet/dry crossfade the send mode can replace;
+ * a delay and a reverb already add their wet signal, so the switch would do
+ * nothing and the UI does not offer it.
+ */
+export function fxKindCanBeParallel(kind: FxKind): boolean {
+  return kind === 'chorus' || kind === 'flanger' || kind === 'phaser' || kind === 'drive';
+}
+
+/** The chain as it is set today, in signal order. */
+export function readChain(get: (id: ParamId) => number): FxKind[] {
+  const ids = [
+    Param.FX_CHAIN1,
+    Param.FX_CHAIN2,
+    Param.FX_CHAIN3,
+    Param.FX_CHAIN4,
+    Param.FX_CHAIN5,
+    Param.FX_CHAIN6,
+  ];
+  return ids.map((id) => intToFxKind(get(id as ParamId)));
+}
+
+export function chainId(slot: number): ParamId {
+  return (Param.FX_CHAIN1 + slot) as ParamId;
+}
+
+export function parallelId(slot: number): ParamId {
+  return (Param.FX_PARALLEL1 + slot) as ParamId;
+}
 
 export type ParamId = (typeof Param)[keyof typeof Param];
 
@@ -105,6 +180,18 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.WT_USER]: 'wtUser',
   [Param.FX_DELAY_DAMP]: 'fxDelayDamp',
   [Param.FX_DELAY_PINGPONG]: 'fxDelayPingpong',
+  [Param.FX_CHAIN1]: 'fxChain1',
+  [Param.FX_CHAIN2]: 'fxChain2',
+  [Param.FX_CHAIN3]: 'fxChain3',
+  [Param.FX_CHAIN4]: 'fxChain4',
+  [Param.FX_CHAIN5]: 'fxChain5',
+  [Param.FX_CHAIN6]: 'fxChain6',
+  [Param.FX_PARALLEL1]: 'fxParallel1',
+  [Param.FX_PARALLEL2]: 'fxParallel2',
+  [Param.FX_PARALLEL3]: 'fxParallel3',
+  [Param.FX_PARALLEL4]: 'fxParallel4',
+  [Param.FX_PARALLEL5]: 'fxParallel5',
+  [Param.FX_PARALLEL6]: 'fxParallel6',
   [Param.OSC1_ON]: 'osc1On',
   [Param.OSC1_WAVE]: 'osc1Wave',
   [Param.OSC1_PITCH]: 'osc1Pitch',
@@ -345,6 +432,19 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.WT_USER]: 0,
   [Param.FX_DELAY_DAMP]: 0.35,
   [Param.FX_DELAY_PINGPONG]: 0,
+  // The order effects have always run in, so every existing patch keeps its sound.
+  [Param.FX_CHAIN1]: 1,
+  [Param.FX_CHAIN2]: 2,
+  [Param.FX_CHAIN3]: 3,
+  [Param.FX_CHAIN4]: 4,
+  [Param.FX_CHAIN5]: 5,
+  [Param.FX_CHAIN6]: 6,
+  [Param.FX_PARALLEL1]: 0,
+  [Param.FX_PARALLEL2]: 0,
+  [Param.FX_PARALLEL3]: 0,
+  [Param.FX_PARALLEL4]: 0,
+  [Param.FX_PARALLEL5]: 0,
+  [Param.FX_PARALLEL6]: 0,
   [Param.MASTER_TUNE]: 0,
   [Param.VOICE_MODE]: 0,
   [Param.FX_CHORUS_ON]: 0,

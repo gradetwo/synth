@@ -101,10 +101,65 @@ pub mod id {
     pub const FX_DELAY_DAMP: u32 = 80;
     /// Delay ping-pong: cross-feed the channels so echoes alternate (A5).
     pub const FX_DELAY_PINGPONG: u32 = 81;
+    /// Chain position 1..6: which effect runs there (`FxKind`).
+    pub const FX_CHAIN1: u32 = 82;
+    pub const FX_CHAIN2: u32 = 83;
+    pub const FX_CHAIN3: u32 = 84;
+    pub const FX_CHAIN4: u32 = 85;
+    pub const FX_CHAIN5: u32 = 86;
+    pub const FX_CHAIN6: u32 = 87;
+    /// 1 = the effect at that position runs as a *send* (its wet output is added
+    /// to the unprocessed signal) instead of an insert.
+    pub const FX_PARALLEL1: u32 = 88;
+    pub const FX_PARALLEL2: u32 = 89;
+    pub const FX_PARALLEL3: u32 = 90;
+    pub const FX_PARALLEL4: u32 = 91;
+    pub const FX_PARALLEL5: u32 = 92;
+    pub const FX_PARALLEL6: u32 = 93;
 }
 
-/// Highest parameter id + 1 (ids are 0..=81).
-pub const PARAM_COUNT: usize = 82;
+/// Highest parameter id + 1 (ids are 0..=93).
+pub const PARAM_COUNT: usize = 94;
+
+/// Positions in the effect chain (A5). Six is one per effect: the chain is a
+/// permutation, so reordering can never lose an effect or double one up.
+pub const FX_SLOTS: usize = 6;
+
+/// Which effect runs at a chain position.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FxKind {
+    /// Empty position: nothing runs here.
+    None,
+    Delay,
+    Reverb,
+    Chorus,
+    Flanger,
+    Phaser,
+    Drive,
+}
+
+impl FxKind {
+    pub fn from_u32(value: u32) -> Self {
+        match value {
+            1 => FxKind::Delay,
+            2 => FxKind::Reverb,
+            3 => FxKind::Chorus,
+            4 => FxKind::Flanger,
+            5 => FxKind::Phaser,
+            6 => FxKind::Drive,
+            _ => FxKind::None,
+        }
+    }
+
+    /// Insert effects are blended with the dry signal; a send is added.
+    ///
+    /// Delay and reverb already add their wet signal inside their own mix, so
+    /// for them the parallel switch has nothing to change (and the UI does not
+    /// offer it).
+    pub fn can_be_parallel(self) -> bool {
+        matches!(self, FxKind::Chorus | FxKind::Flanger | FxKind::Phaser | FxKind::Drive)
+    }
+}
 
 /// Number of keys the tuning table covers (MIDI 0..127).
 pub const TUNING_NOTES: usize = 128;
@@ -445,6 +500,10 @@ pub struct FxParams {
     pub delay_mix: f32,
     pub delay_damp: f32,
     pub delay_ping_pong: bool,
+    /// Effect chain, one [`FxKind`] per position, in signal order (A5).
+    pub chain: [FxKind; FX_SLOTS],
+    /// Positions that run as sends rather than inserts.
+    pub parallel: [bool; FX_SLOTS],
     pub chorus_on: bool,
     pub chorus_depth: f32,
     pub chorus_rate: f32,
@@ -554,6 +613,17 @@ impl Params {
                 delay_mix: 0.1,
                 delay_damp: 0.35,
                 delay_ping_pong: false,
+                // The order effects have always run in. Keeping it as the
+                // default is what makes every existing patch sound the same.
+                chain: [
+                    FxKind::Delay,
+                    FxKind::Reverb,
+                    FxKind::Chorus,
+                    FxKind::Flanger,
+                    FxKind::Phaser,
+                    FxKind::Drive,
+                ],
+                parallel: [false; FX_SLOTS],
                 chorus_on: false,
                 chorus_depth: 0.5,
                 chorus_rate: 0.6,
@@ -664,6 +734,14 @@ impl Params {
             p::FX_DELAY_MIX => self.fx.delay_mix = clamp01(value),
             p::FX_DELAY_DAMP => self.fx.delay_damp = clamp01(value),
             p::FX_DELAY_PINGPONG => self.fx.delay_ping_pong = value >= 0.5,
+            p::FX_CHAIN1..=p::FX_CHAIN6 => {
+                let slot = (param_id - p::FX_CHAIN1) as usize;
+                self.fx.chain[slot] = FxKind::from_u32(value as u32);
+            }
+            p::FX_PARALLEL1..=p::FX_PARALLEL6 => {
+                let slot = (param_id - p::FX_PARALLEL1) as usize;
+                self.fx.parallel[slot] = value >= 0.5;
+            }
             p::FX_CHORUS_ON => self.fx.chorus_on = value > 0.5,
             p::FX_CHORUS_DEPTH => self.fx.chorus_depth = clamp01(value),
             p::FX_CHORUS_RATE => self.fx.chorus_rate = value.clamp(0.02, 10.0),

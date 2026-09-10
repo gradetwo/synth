@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.47.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '效果链可以**自由换顺序**了：FX 模块顶部新增「信号链」一行，用 `‹` `›` 把混响、延迟、合唱、镶边、移相、过载排成你想要的先后顺序（靠前的先处理，例如「先失真后延迟」和「先延迟后失真」听起来完全不同）。顺序随音色保存。',
+        'The effect chain can now be **reordered**: a new Chain row at the top of the FX module moves reverb, delay, chorus, flanger, phaser and drive into whatever order you want with `‹` `›` (earlier processes first, and drive-then-delay does not sound like delay-then-drive). The order is saved with the patch.',
+      ],
+      [
+        '每个插入式效果还多了 `∥` **并联送出**开关：打开后效果声叠加在干声上，而不是与干声交叉淡化——想保留原始音头、只加一层效果时用它。',
+        'Each insert effect also has a `∥` **parallel send** switch: the effect is added on top of the dry signal instead of being crossfaded with it, which is what you want when the original attack has to stay intact.',
+      ],
+    ],
+  },
+  {
     version: '1.46.0',
     date: '2026-09-10',
     kind: 'sound',

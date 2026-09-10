@@ -365,6 +365,19 @@ const DICT: Record<string, [string, string]> = {
   'wave.pink': ['粉噪', 'Pink'],
   'wave.brown': ['棕噪', 'Brown'],
   'wave.wavetable': ['波表（PW 选表）', 'Wavetable (PW picks it)'],
+  // --- effect chain (A5) ---------------------------------------------------
+  'fx.chain': ['信号链', 'CHAIN'],
+  'fx.chainHint': [
+    '效果的处理顺序：靠前的先处理。用 ‹ › 换位置，∥ 把插入式效果变成并联送出（干声保留，效果叠加）',
+    'The order effects are processed in: earlier runs first. Use ‹ › to swap positions, ∥ to turn an insert effect into a parallel send (dry kept, effect added)',
+  ],
+  'fx.moveLeft': ['前移一位', 'Move earlier'],
+  'fx.moveRight': ['后移一位', 'Move later'],
+  'fx.parallel': ['并联送出', 'Parallel send'],
+  'fx.parallelHint': [
+    '并联：效果声叠加在干声上，而不是与干声交叉淡化',
+    'Parallel: the effect is added to the dry signal instead of being crossfaded with it',
+  ],
   // --- delay (A5) ----------------------------------------------------------
   'fx.pingPong': ['乒乓', 'Ping-pong'],
   'fx.pingPongHint': [
