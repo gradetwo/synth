@@ -23,6 +23,36 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.52.1',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '修复 Safari/Chrome 升级后打不开的问题：某些静态托管会把 `/index.html` 重定向到 `/`，离线缓存把这次重定向的结果当页面交回浏览器，于是第二次访问会直接跳到「网页可能暂时无法访问」。现在离线缓存改为请求不会重定向的地址，并且即使遇到重定向也会重新包装后再交给浏览器。',
+        'Fixed the blank/error page on Safari and Chrome after an update: some static hosts redirect `/index.html` to `/`, and the offline cache was handing that redirect back to the browser as the page, so the second visit landed on "this page might be down". The cache now asks for a URL that does not redirect, and rebuilds the response if it ever gets one.',
+      ],
+      [
+        '如果你现在正好卡在这个错误页：**强制刷新一次**（Mac: ⌘⇧R，Windows: Ctrl+Shift+R）即可恢复；之后正常刷新不会再出现。',
+        'If you are stuck on that error page right now: **one hard refresh** (⌘⇧R on macOS, Ctrl+Shift+R on Windows) brings it back, and normal refreshes will be fine afterwards.',
+      ],
+    ],
+  },
+  {
+    version: '1.52.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '**导入的 MIDI 与录制片段现在会保存在本机**：重开页面后它们仍在曲库里，并且还是上次选中的那一首——以前一次刷新就全丢了。',
+        '**Imported MIDI files and recordings are now kept on the device**: they are still in the player library after a reload, with the same track selected — previously one refresh lost them.',
+      ],
+      [
+        '最多保留 12 首、且体积超限的曲目只在本次会话内有效（避免占满浏览器存储）；来自更新版本的曲库文件会被忽略而不是读错。',
+        'Up to 12 user tracks are kept, and anything oversized stays for the session only (so a phone is not filled up); a library written by a newer version is ignored rather than misread.',
+      ],
+    ],
+  },
+  {
     version: '1.51.0',
     date: '2026-09-10',
     kind: 'fix',

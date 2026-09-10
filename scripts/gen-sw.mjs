@@ -81,11 +81,37 @@ self.addEventListener('fetch', (event) => {
     // which leaves the app booting into 404s — "no sound" with no obvious
     // cause. A versioned, no-store shell cannot be stale, and the cached copy
     // is still there for the offline case.
+    //
+    // Two details matter and both have bitten us in production:
+    //   * Ask for './' rather than './index.html'. Static hosts (Cloudflare's
+    //     asset server, GitHub Pages, most "pretty URL" setups) redirect
+    //     /index.html to /, and a navigation request has redirect mode
+    //     "manual", so handing the browser the *followed* response aborts the
+    //     load with "a redirected response was used for a request whose
+    //     redirect mode is not follow" — the browser's own error page, with no
+    //     way back into the app. The version query still defeats any CDN copy.
+    //   * Even so, rebuild the response if it arrives redirected: a host is
+    //     free to redirect for its own reasons, and a rebuilt response is
+    //     always legal to return.
     event.respondWith(
-      fetch('./index.html?v=' + CACHE, { cache: 'no-store' })
-        .then((response) => (response.ok ? response : Promise.reject(new Error('shell'))))
+      fetch('./?v=' + CACHE, { cache: 'no-store' })
+        .then(async (response) => {
+          if (!response.ok) throw new Error('shell');
+          if (response.redirected) {
+            const body = await response.blob();
+            return new Response(body, {
+              status: 200,
+              statusText: 'OK',
+              headers: response.headers,
+            });
+          }
+          return response;
+        })
         .catch(() =>
-          caches.match('./index.html').then((r) => r || fetch(request, { cache: 'no-store' })),
+          caches
+            .match('./index.html')
+            .then((cached) => cached || caches.match('./'))
+            .then((cached) => cached || fetch(request, { cache: 'no-store' })),
         )
     );
     return;
