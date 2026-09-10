@@ -161,7 +161,7 @@ class SynthStore {
   }
 
   addRoute() {
-    if (this.state.routes.length >= 6) return;
+    if (this.state.routes.length >= 8) return;
     const routes = [...this.state.routes, { src: 'lfo' as ModSrc, dst: 'cutoff' as ModDst, amount: 0.5, enabled: false }];
     this.state = { ...this.state, routes };
     engine.setRoute(routes.length - 1, routes[routes.length - 1]);

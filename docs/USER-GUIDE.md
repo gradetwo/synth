@@ -52,7 +52,7 @@
 | FILTER | 类型 LP/HP/BP/NT、截止、共振、驱动、包络量、键盘跟踪、频响曲线 |
 | AMP ENV | 振幅 ADSR（可拖动手柄）+ FILTER ENV 独立包络 + POLY/MONO/LEGATO + GLIDE |
 | LFO | LFO 1 与 LFO 2：波形、速率、深度、目标（截止/音高/音量/脉宽）、同步 |
-| MOD MATRIX | 调制路由（源 → 目标 + 量 + 开关），可增删 |
+| MOD MATRIX | 调制路由（8 槽，源 → 目标 + 双极深度 + 开关，可增删）。源：LFO / LFO2 / ENV / 调制轮 / 力度 / 触后 / 每音随机 / 键位跟踪；目标：截止 / 音高 / 音量 / PWM / 声像 / 共振 |
 | FX | 混响（SIZE 衰减 / MIX 干湿 / DAMP 尾音阻尼 / WIDTH 立体声宽度 / PRE 预延迟）、延迟（含同步分频、反馈、混合） |
 | FX 2 | 合唱、镶边、移相、过载 |
 

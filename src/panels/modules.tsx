@@ -5,6 +5,8 @@ import {
   LFO_TARGETS,
   LFO_WAVES,
   MOD_DESTS,
+  MOD_DST_LABELS,
+  MOD_SRC_LABELS,
   MOD_SOURCES,
   Param,
   SPEC_BY_ID,
@@ -207,9 +209,9 @@ function ModMatrix() {
               onChange={(e) => store.setRoute(i, { src: intToModSrc(Number(e.target.value)) })}
               aria-label={t('module.matrixSrc')}
             >
-              {MOD_SOURCES.map((s, si) => (
-                <option key={s} value={si}>
-                  {s.toUpperCase()}
+              {MOD_SOURCES.map((src, si) => (
+                <option key={src} value={si}>
+                  {MOD_SRC_LABELS[src]}
                 </option>
               ))}
             </select>
@@ -220,20 +222,26 @@ function ModMatrix() {
               onChange={(e) => store.setRoute(i, { dst: intToModDst(Number(e.target.value)) })}
               aria-label={t('module.matrixDst')}
             >
-              {MOD_DESTS.map((d, di) => (
-                <option key={d} value={di}>
-                  {d.toUpperCase()}
+              {MOD_DESTS.map((dst, di) => (
+                <option key={dst} value={di}>
+                  {MOD_DST_LABELS[dst]}
                 </option>
               ))}
             </select>
             <input
               type="range"
-              className="mod-range"
-              min={0}
+              className="mod-range bipolar"
+              min={-1}
               max={1}
               step={0.01}
               value={route.amount}
-              style={{ ['--p' as string]: `${route.amount * 100}%` }}
+              // The fill grows outwards from the centre, so the sign is visible.
+              style={
+                {
+                  ['--p' as string]: `${((route.amount + 1) / 2) * 100}%`,
+                  ['--c' as string]: '50%',
+                } as React.CSSProperties
+              }
               onChange={(e) => store.setRoute(i, { amount: Number(e.target.value) })}
               aria-label={t('module.matrixAmt')}
             />

@@ -262,6 +262,17 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
   background:var(--thumb-bg);border:1px solid var(--thumb-border);box-shadow:0 2px 5px var(--shadow-2);cursor:grab}
 .mod-range::-moz-range-thumb{width:13px;height:13px;border-radius:4px;background:var(--thumb-bg);
   border:1px solid var(--thumb-border);cursor:grab}
+/* Bipolar route amount: the fill grows outwards from the centre detent. */
+.mod-range.bipolar{background:
+  linear-gradient(90deg,
+    transparent var(--c,50%),
+    transparent var(--c,50%)),
+  linear-gradient(90deg,var(--line-3) 0,var(--line-3) 100%);
+  position:relative}
+.mod-range.bipolar::after{content:'';position:absolute;left:calc(var(--c,50%) - 1px);top:-2px;
+  width:2px;height:calc(100% + 4px);background:var(--line-3);opacity:.55;pointer-events:none}
+.mod-range.bipolar::-webkit-slider-runnable-track{background:
+  linear-gradient(90deg,var(--line-3) 50%,var(--matrix) 50%)}
 .mrow .led{--mc:var(--matrix)}
 .add-route{width:100%;margin-top:10px;font:600 9.5px/1 var(--grot);letter-spacing:.1em;
   color:var(--txt-dim);background:transparent;border:1px dashed var(--line-3);border-radius:8px;

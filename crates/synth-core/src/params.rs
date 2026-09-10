@@ -7,7 +7,7 @@
 pub const MAX_VOICES: usize = 32;
 pub const MAX_BLOCK_SIZE: usize = 1024;
 pub const SPECTRUM_BINS: usize = 36;
-pub const MOD_ROUTES: usize = 4;
+pub const MOD_ROUTES: usize = 8;
 
 /// Numeric parameter identifiers (`gs_set_param` / `gs_set_int_param`).
 pub mod id {
@@ -256,6 +256,14 @@ pub enum ModSrc {
     Env,
     ModWheel,
     Velocity,
+    /// Second LFO (free-running, same signal for every voice).
+    Lfo2,
+    /// Channel pressure from the controller.
+    Aftertouch,
+    /// A different random value per note, held for the note's lifetime.
+    Random,
+    /// Note position relative to middle C, ±1 over ±48 semitones.
+    KeyTrack,
 }
 
 impl ModSrc {
@@ -264,6 +272,10 @@ impl ModSrc {
             1 => ModSrc::Env,
             2 => ModSrc::ModWheel,
             3 => ModSrc::Velocity,
+            4 => ModSrc::Lfo2,
+            5 => ModSrc::Aftertouch,
+            6 => ModSrc::Random,
+            7 => ModSrc::KeyTrack,
             _ => ModSrc::Lfo,
         }
     }
@@ -275,6 +287,8 @@ pub enum ModDst {
     Pitch,
     Volume,
     Pwm,
+    Pan,
+    Resonance,
 }
 
 impl ModDst {
@@ -283,6 +297,8 @@ impl ModDst {
             1 => ModDst::Pitch,
             2 => ModDst::Volume,
             3 => ModDst::Pwm,
+            4 => ModDst::Pan,
+            5 => ModDst::Resonance,
             _ => ModDst::Cutoff,
         }
     }
@@ -496,6 +512,20 @@ impl Params {
                     amount: 0.55,
                     enabled: true,
                 },
+                ModRoute {
+                    src: ModSrc::Lfo,
+                    dst: ModDst::Pitch,
+                    amount: 0.18,
+                    enabled: false,
+                },
+                ModRoute {
+                    src: ModSrc::ModWheel,
+                    dst: ModDst::Cutoff,
+                    amount: 0.4,
+                    enabled: false,
+                },
+                ModRoute::empty(),
+                ModRoute::empty(),
                 ModRoute::empty(),
                 ModRoute::empty(),
             ],

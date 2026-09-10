@@ -160,8 +160,16 @@ export type Wave = 'sine' | 'triangle' | 'saw' | 'square' | 'pulse' | 'noise';
 export type FilterType = 'lp' | 'hp' | 'bp' | 'nt';
 export type LfoWave = 'sine' | 'triangle' | 'square' | 'saw';
 export type LfoTarget = 'cutoff' | 'pitch' | 'volume' | 'pwm';
-export type ModSrc = 'lfo' | 'env' | 'modwheel' | 'velocity';
-export type ModDst = 'cutoff' | 'pitch' | 'volume' | 'pwm';
+export type ModSrc =
+  | 'lfo'
+  | 'lfo2'
+  | 'env'
+  | 'modwheel'
+  | 'velocity'
+  | 'aftertouch'
+  | 'random'
+  | 'keytrack';
+export type ModDst = 'cutoff' | 'pitch' | 'volume' | 'pwm' | 'pan' | 'res';
 export type DelaySync = '1/4' | '1/8.' | '1/8' | '1/16';
 
 export const WAVES: Wave[] = ['sine', 'triangle', 'saw', 'square', 'pulse', 'noise'];
@@ -176,8 +184,38 @@ export const WAVE_CN: Record<Wave, string> = {
 export const FILTER_TYPES: FilterType[] = ['lp', 'hp', 'bp', 'nt'];
 export const LFO_WAVES: LfoWave[] = ['sine', 'triangle', 'square', 'saw'];
 export const LFO_TARGETS: LfoTarget[] = ['cutoff', 'pitch', 'volume', 'pwm'];
-export const MOD_SOURCES: ModSrc[] = ['lfo', 'env', 'modwheel', 'velocity'];
-export const MOD_DESTS: ModDst[] = ['cutoff', 'pitch', 'volume', 'pwm'];
+/** Engine-side modulation slots (must match `MOD_ROUTES` in params.rs). */
+export const MAX_ROUTES = 8;
+export const MOD_SOURCES: ModSrc[] = [
+  'lfo',
+  'lfo2',
+  'env',
+  'modwheel',
+  'velocity',
+  'aftertouch',
+  'random',
+  'keytrack',
+];
+export const MOD_DESTS: ModDst[] = ['cutoff', 'pitch', 'volume', 'pwm', 'pan', 'res'];
+/** Compact labels for the matrix rows (kept short so the panel stays tidy). */
+export const MOD_SRC_LABELS: Record<ModSrc, string> = {
+  lfo: 'LFO',
+  lfo2: 'LFO2',
+  env: 'ENV',
+  modwheel: 'WHEEL',
+  velocity: 'VELO',
+  aftertouch: 'AFTER',
+  random: 'RANDOM',
+  keytrack: 'KEY',
+};
+export const MOD_DST_LABELS: Record<ModDst, string> = {
+  cutoff: 'CUTOFF',
+  pitch: 'PITCH',
+  volume: 'VOLUME',
+  pwm: 'PWM',
+  pan: 'PAN',
+  res: 'RES',
+};
 export const DELAY_SYNCS: DelaySync[] = ['1/4', '1/8.', '1/8', '1/16'];
 
 export interface ModRoute {
@@ -327,6 +365,10 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.FX_DELAY_MIX]: 0.22,
 };
 
+/**
+ * Default patch rows. The engine has `MAX_ROUTES` slots, but a fresh patch only
+ * shows the classic four; the rest are added on demand from the matrix panel.
+ */
 export const DEFAULT_ROUTES: ModRoute[] = [
   { src: 'lfo', dst: 'cutoff', amount: 0.8, enabled: true },
   { src: 'env', dst: 'cutoff', amount: 0.55, enabled: true },

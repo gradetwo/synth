@@ -127,6 +127,12 @@ pub extern "C" fn gs_mod_wheel(value: f32) {
     engine().mod_wheel(value);
 }
 
+/// Channel pressure, 0..1.
+#[no_mangle]
+pub extern "C" fn gs_aftertouch(value: f32) {
+    engine().aftertouch(value);
+}
+
 // ---------------------------------------------------------------- diagnostics
 
 #[no_mangle]

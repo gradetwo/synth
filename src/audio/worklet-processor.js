@@ -186,6 +186,9 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
       case 'pitchBend':
         this.wasm.gs_pitch_bend(data.value);
         break;
+      case 'aftertouch':
+        this.wasm.gs_aftertouch(data.value);
+        break;
       case 'modWheel':
         this.wasm.gs_mod_wheel(data.value);
         break;

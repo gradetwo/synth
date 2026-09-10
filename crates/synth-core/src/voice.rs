@@ -25,6 +25,9 @@ pub struct Voice {
     pub current_freq: f32,
     /// Last envelope output, feeding the filter envelope amount.
     pub env_value: f32,
+    /// Per-note random value (0..1), sampled once at note-on for the RANDOM
+    /// modulation source so a held note does not wobble.
+    pub random: f32,
     /// True while this slot is fading out to make room for a pending note.
     pub stealing: bool,
 }
@@ -41,6 +44,7 @@ impl Voice {
             target_freq: 440.0,
             current_freq: 440.0,
             env_value: 0.0,
+            random: 0.5,
             stealing: false,
         }
     }
@@ -130,6 +134,7 @@ impl VoiceManager {
             target_freq: freq,
             current_freq: freq,
             env_value: 0.0,
+            random: 0.5,
             stealing: false,
         };
         index

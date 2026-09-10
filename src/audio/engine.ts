@@ -19,6 +19,7 @@ import scalarWasmUrl from '@/generated/synth_core_scalar.wasm?url';
 import processorUrl from './worklet-processor.js?url';
 import { t } from '@/i18n';
 import {
+  MAX_ROUTES,
   PARAM_NAMES,
   type ModRoute,
   type ParamId,
@@ -352,9 +353,15 @@ export class AudioEngine {
       this.setParam(Number(id) as ParamId, value, immediate);
     }
     state.routes.forEach((route, index) => this.setRoute(index, route));
+    // Patches may carry fewer routes than the engine has slots: clear the rest
+    // so a previous patch cannot leave a stray modulation running.
+    for (let index = state.routes.length; index < MAX_ROUTES; index++) {
+      this.setRoute(index, { src: 'lfo', dst: 'cutoff', amount: 0, enabled: false });
+    }
   }
 
   setRoute(index: number, route: ModRoute) {
+    if (index >= MAX_ROUTES) return;
     this.node?.port.postMessage({
       type: 'modRoute',
       index,
@@ -377,6 +384,11 @@ export class AudioEngine {
 
   pitchBend(semitones: number) {
     this.node?.port.postMessage({ type: 'pitchBend', value: semitones });
+  }
+
+  /** Channel pressure, 0..1 (feeds the AFTERTOUCH modulation source). */
+  aftertouch(value: number) {
+    this.node?.port.postMessage({ type: 'aftertouch', value });
   }
 
   modWheel(value: number) {

@@ -2,12 +2,16 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PARAMS,
+  DEFAULT_ROUTES,
   DELAY_SYNCS,
   FILTER_TYPES,
   LFO_TARGETS,
   LFO_WAVES,
   MOD_DESTS,
+  MOD_DST_LABELS,
   MOD_SOURCES,
+  MOD_SRC_LABELS,
+  MAX_ROUTES,
   Param,
   PARAM_NAMES,
   SPEC_BY_ID,
@@ -30,6 +34,38 @@ import {
   modSrcToInt,
   waveToInt,
 } from './params';
+
+describe('modulation model', () => {
+  it('round-trips every source and destination', () => {
+    MOD_SOURCES.forEach((src, i) => {
+      expect(modSrcToInt(src)).toBe(i);
+      expect(intToModSrc(i)).toBe(src);
+    });
+    MOD_DESTS.forEach((dst, i) => {
+      expect(modDstToInt(dst)).toBe(i);
+      expect(intToModDst(i)).toBe(dst);
+    });
+    // The engine resolves the same numeric ids (see params.rs `from_u32`).
+    expect(MOD_SOURCES).toEqual([
+      'lfo',
+      'lfo2',
+      'env',
+      'modwheel',
+      'velocity',
+      'aftertouch',
+      'random',
+      'keytrack',
+    ]);
+    expect(MOD_DESTS).toEqual(['cutoff', 'pitch', 'volume', 'pwm', 'pan', 'res']);
+  });
+
+  it('has a label and room for every row', () => {
+    for (const src of MOD_SOURCES) expect(MOD_SRC_LABELS[src]).toBeTruthy();
+    for (const dst of MOD_DESTS) expect(MOD_DST_LABELS[dst]).toBeTruthy();
+    expect(DEFAULT_ROUTES.length).toBeLessThanOrEqual(MAX_ROUTES);
+    expect(MAX_ROUTES).toBe(8);
+  });
+});
 
 describe('parameter model', () => {
   it('keeps the worklet parameter table in step with the Rust ids', () => {

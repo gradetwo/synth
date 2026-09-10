@@ -16,6 +16,7 @@ export type MidiAction =
   | { type: 'noteOff'; note: number }
   | { type: 'pitchBend'; value: number }
   | { type: 'modWheel'; value: number }
+  | { type: 'aftertouch'; value: number }
   | { type: 'sustain'; value: number }
   | { type: 'allNotesOff' };
 
@@ -37,6 +38,12 @@ export function decodeMidi(data: ArrayLike<number>): MidiAction | null {
       if (d1 === 64) return { type: 'sustain', value: d2 / 127 };
       if (d1 === 120 || d1 === 123) return { type: 'allNotesOff' };
       return null;
+    case 0xa0:
+      // Polyphonic key pressure: treat it as channel pressure, which is what
+      // the single AFTERTOUCH modulation source expects.
+      return { type: 'aftertouch', value: d2 / 127 };
+    case 0xd0:
+      return { type: 'aftertouch', value: d1 / 127 };
     case 0xe0:
       return { type: 'pitchBend', value: ((d2 << 7) | d1) / 8192 - 1 };
     default:
@@ -159,6 +166,9 @@ class MidiManager {
         break;
       case 'modWheel':
         engine.modWheel(action.value);
+        break;
+      case 'aftertouch':
+        engine.aftertouch(action.value);
         break;
       case 'allNotesOff':
         this.sustained.clear();

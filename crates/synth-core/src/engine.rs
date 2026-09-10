@@ -133,9 +133,13 @@ pub struct Engine {
     rng: Rng,
     /// Increments per started voice; drives the low-discrepancy phase spread.
     phase_seed: u32,
+    /// Increments per started voice; drives the per-note RANDOM source.
+    random_seed: u32,
     reverb: Reverb,
     pitch_bend: f32,
     mod_wheel: f32,
+    /// Channel pressure (0..1) from the controller.
+    aftertouch: f32,
     /// Held notes for mono/legato mode (slot 0 only).
     mono_held: [u8; 16],
     mono_len: usize,
@@ -200,9 +204,11 @@ impl Engine {
             out_r: [0.0; MAX_BLOCK_SIZE],
             rng: Rng::new(0x51f3_9b1d),
             phase_seed: 0,
+            random_seed: 0,
             reverb: Reverb::new(),
             pitch_bend: 0.0,
             mod_wheel: 0.0,
+            aftertouch: 0.0,
             mono_held: [0; 16],
             mono_len: 0,
             master_gain: 0.75,
@@ -265,6 +271,7 @@ impl Engine {
         self.vm.set_max_polyphony(max_polyphony);
         self.pitch_bend = 0.0;
         self.mod_wheel = 0.0;
+        self.aftertouch = 0.0;
         self.mono_held = [0; 16];
         self.mono_len = 0;
         self.master_gain = self.params.master_volume;
@@ -365,6 +372,10 @@ impl Engine {
         self.mod_wheel = value.clamp(0.0, 1.0);
     }
 
+    pub fn aftertouch(&mut self, value: f32) {
+        self.aftertouch = value.clamp(0.0, 1.0);
+    }
+
     pub fn note_on(&mut self, note: u8, velocity: f32) {
         if self.params.voice_mode != 0 {
             self.mono_note_on(note, velocity);
@@ -394,6 +405,12 @@ impl Engine {
     pub fn all_notes_off(&mut self) {
         self.mono_len = 0;
         self.vm.all_notes_off();
+    }
+
+    /// Deterministic per-note random value for the RANDOM modulation source.
+    fn next_random(&mut self) -> f32 {
+        self.random_seed = self.random_seed.wrapping_add(1);
+        (self.random_seed as f32 * 0.754_877_7 + 0.13).fract()
     }
 
     /// Deterministic low-discrepancy start phases for a new voice.
@@ -435,6 +452,8 @@ impl Engine {
             unsafe { gs_voice_reset(slot as i32) };
             let (p0, p1) = self.next_phases();
             unsafe { gs_voice_phase(slot as i32, p0, p1) };
+            let random = self.next_random();
+            self.vm.voices[slot].random = random;
             let p = self.params.env;
             let env = &mut self.envs[slot];
             env.reset();
@@ -481,6 +500,8 @@ impl Engine {
         // baseline stay reproducible.
         let (p0, p1) = self.next_phases();
         unsafe { gs_voice_phase(slot as i32, p0, p1) };
+        let random = self.next_random();
+        self.vm.voices[slot].random = random;
         let p = self.params.env;
         let env = &mut self.envs[slot];
         env.reset();
@@ -767,6 +788,10 @@ impl Engine {
             .flush_pending(|note| note_to_hz(note as f32 + tune))
         {
             unsafe { gs_voice_reset(slot as i32) };
+            let (p0, p1) = self.next_phases();
+            unsafe { gs_voice_phase(slot as i32, p0, p1) };
+            let random = self.next_random();
+            self.vm.voices[slot].random = random;
             let env = &mut self.envs[slot];
             env.reset();
             env.set_params(params.attack, params.decay, params.sustain, params.release);
@@ -807,6 +832,8 @@ impl Engine {
         let mut mod_pitch = 0.0f32;
         let mut mod_volume = 0.0f32;
         let mut mod_pwm = 0.0f32;
+        let mut mod_pan = 0.0f32;
+        let mut mod_res = 0.0f32;
         for route in params.routes.iter() {
             if !route.enabled || route.amount == 0.0 {
                 continue;
@@ -816,6 +843,12 @@ impl Engine {
                 ModSrc::Env => voice.env_value,
                 ModSrc::ModWheel => self.mod_wheel,
                 ModSrc::Velocity => voice.velocity,
+                ModSrc::Lfo2 => lfo2_value,
+                ModSrc::Aftertouch => self.aftertouch,
+                // Bipolar, sampled once per note so a held note stays put.
+                ModSrc::Random => voice.random * 2.0 - 1.0,
+                // ±1 across ±48 semitones around middle C.
+                ModSrc::KeyTrack => (voice.note as f32 - 60.0) / 48.0,
             };
             let v = src * route.amount;
             match route.dst {
@@ -823,6 +856,8 @@ impl Engine {
                 ModDst::Pitch => mod_pitch += v,
                 ModDst::Volume => mod_volume += v,
                 ModDst::Pwm => mod_pwm += v,
+                ModDst::Pan => mod_pan += v,
+                ModDst::Resonance => mod_res += v,
             }
         }
 
@@ -938,12 +973,14 @@ impl Engine {
         cutoff = cutoff.clamp(20.0, sr * 0.45);
 
         let kind = params.filter.kind;
+        // The matrix can push resonance up to twice the knob value (clamped).
+        let resonance = (params.filter.res * (1.0 + mod_res) + mod_res * 0.25).clamp(0.0, 1.0);
         unsafe {
             gs_voice_filter_set(
                 slot as i32,
                 kind.to_u32() as i32,
                 cutoff,
-                params.filter.res,
+                resonance,
                 params.filter.drive,
             );
             gs_voice_filter_block(
@@ -967,10 +1004,11 @@ impl Engine {
         // equal-power law after the filter.
         let levels = osc_level[0] + osc_level[1];
         let pan = if levels > 1e-4 {
-            ((osc_level[0] * params.osc[0].pan + osc_level[1] * params.osc[1].pan) / levels)
+            ((osc_level[0] * params.osc[0].pan + osc_level[1] * params.osc[1].pan) / levels
+                + mod_pan)
                 .clamp(-1.0, 1.0)
         } else {
-            0.0
+            mod_pan.clamp(-1.0, 1.0)
         };
         let angle = (pan + 1.0) * core::f32::consts::FRAC_PI_4;
         let pan_l = angle.cos();
@@ -1613,6 +1651,80 @@ mod tests {
             e.process(128);
         }
         assert!(e.limit_gain > 0.99, "limiter did not release: {}", e.limit_gain);
+    }
+
+    /// The new modulation sources must actually reach the DSP: aftertouch and
+    /// key tracking move the cutoff, and the per-note random is stable.
+    #[test]
+    fn aftertouch_keytrack_and_random_modulate() {
+        let _guard = lock_engine();
+        let base = |e: &mut Engine| {
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_CUTOFF, 800.0);
+            e.set_param(id::FILTER_RES, 0.1);
+            e.set_param(id::FILTER_ENV_AMT, 0.0);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::LFO_ON, 0.0);
+            e.set_param(id::LFO2_ON, 0.0);
+        };
+        // Mean sample-to-sample step of the left channel: a cheap, monotonic
+        // proxy for brightness (more high end = bigger steps).
+        let brightness = |e: &mut Engine| {
+            for _ in 0..40 {
+                e.process(128);
+            }
+            let mut sum = 0.0f32;
+            let mut prev = e.out_l[0];
+            for sample in e.out_l[..128].iter() {
+                sum += (sample - prev).abs();
+                prev = *sample;
+            }
+            sum
+        };
+
+        // AFTERTOUCH -> cutoff.
+        let mut e = new_engine(16);
+        base(&mut e);
+        e.set_route(0, ModSrc::Aftertouch as u32, ModDst::Cutoff as u32, 1.0, true);
+        e.note_on(60, 0.8);
+        let quiet = brightness(&mut e);
+        e.aftertouch(1.0);
+        let pressed = brightness(&mut e);
+        assert!(pressed > quiet * 1.05, "aftertouch did nothing: {quiet} -> {pressed}");
+
+        // KEYTRACK -> cutoff: a high note must be brighter than a low one.
+        let mut e = new_engine(16);
+        base(&mut e);
+        e.set_route(0, ModSrc::KeyTrack as u32, ModDst::Cutoff as u32, 1.0, true);
+        e.note_on(36, 0.8);
+        let low = brightness(&mut e);
+        e.all_notes_off();
+        for _ in 0..80 {
+            e.process(128);
+        }
+        e.note_on(84, 0.8);
+        let high = brightness(&mut e);
+        assert!(high > low * 1.2, "key tracking did nothing: {low} -> {high}");
+
+        // RANDOM -> pan: a steady value per note, different between notes.
+        let mut e = new_engine(16);
+        base(&mut e);
+        e.set_route(0, ModSrc::Random as u32, ModDst::Pan as u32, 1.0, true);
+        e.note_on(60, 0.8);
+        let mut first = 0.0f32;
+        for _ in 0..40 {
+            e.process(128);
+            first += e.out_l[64].abs() - e.out_r[64].abs();
+        }
+        let mut second = 0.0f32;
+        e.note_on(67, 0.8);
+        for _ in 0..40 {
+            e.process(128);
+            second += e.out_l[64].abs() - e.out_r[64].abs();
+        }
+        assert!((first - second).abs() > 1e-3, "random pan never varied");
     }
 
     /// A quiet signal must pass through the limiter untouched (gain exactly 1)

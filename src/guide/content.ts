@@ -480,7 +480,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
       {
         kind: 'p',
         text: [
-          '本机是**数字减法合成器（虚拟模拟）**：固定架构，两个振荡器 + 梯形/SVF 滤波器 + 双包络 + 双 LFO + 4 路调制矩阵 + 立体声效果，16 复音，参数以块速率更新，运行在浏览器 AudioWorklet 里。',
+          '本机是**数字减法合成器（虚拟模拟）**：固定架构，两个振荡器 + 梯形/SVF 滤波器 + 双包络 + 双 LFO + 8 槽调制矩阵 + 立体声效果，16 复音，参数以块速率更新，运行在浏览器 AudioWorklet 里。',
           'This synth is a **digital subtractive (virtual analogue)** instrument: fixed architecture, two oscillators, a ladder/SVF filter, two envelopes, two LFOs, a four-slot mod matrix and stereo effects, 16-voice polyphonic, with block-rate parameters inside a browser AudioWorklet.',
         ],
       },
@@ -605,8 +605,12 @@ export const GUIDE_SECTIONS: GuideSection[] = [
         kind: 'ul',
         items: [
           [
-            '**源**：LFO、包络、调制轮、力度；**目标**：截止、音高、音量、PWM。每条路由有深度，可多条叠加。',
-            '**Sources**: LFO, envelope, mod wheel, velocity. **Destinations**: cutoff, pitch, volume, PWM. Each route has an amount and routes stack.',
+            '**源**：LFO、LFO2、包络、调制轮、力度、**触后（AFTER）**、**每音随机（RANDOM）**、**键位跟踪（KEY）**；**目标**：截止、音高、音量、PWM、**声像（PAN）**、**共振（RES）**。',
+            '**Sources**: LFO, LFO2, envelope, mod wheel, velocity, **aftertouch**, **per-note random**, **key tracking**. **Destinations**: cutoff, pitch, volume, PWM, **pan** and **resonance**.',
+          ],
+          [
+            '路由槽位共 **8** 个（面板上点「+ 添加路由」增加，`✕` 删除），深度是**双极**的：从中心向左为负、向右为正，可做反相调制。RANDOM 在每次按键时取一个新值并保持到该音结束，KEY 以中央 C 为中心 ±48 半音映射到 ±1。',
+            'Eight slots are available (add with “+ add route”, remove with `✕`). Amounts are **bipolar** — left of centre inverts the modulation. RANDOM samples a fresh value per note and holds it for that note; KEY maps ±48 semitones around middle C to ±1.',
           ],
           [
             '矩阵以**块速率**（每 128 采样）在每个声部上计算一次，然后在整个块内平滑应用，兼顾效率与稳定。',
