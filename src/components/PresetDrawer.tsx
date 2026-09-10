@@ -113,7 +113,11 @@ export function PresetDrawer({
             </button>
           ))}
         </div>
-        <div className="d-list">
+        {/* The settings live *inside* the scroller with the list. Pinned to the
+            bottom they took a fixed slice of the drawer no matter how many
+            presets there were to look at. */}
+        <div className="d-body">
+          <div className="d-list">
           {items.length === 0 ? (
             <div style={{ textAlign: 'center', color: 'var(--txt-dim)', padding: '30px 0', font: '500 11px var(--mono)' }}>
               NO PRESET FOUND
@@ -161,7 +165,7 @@ export function PresetDrawer({
             ))
           )}
         </div>
-        <div className="d-foot">
+          <div className="d-foot">
           <div className="d-foot-actions">
             <button type="button" className="d-reset" onClick={() => fileRef.current?.click()}>
               {t('drawer.import')}
@@ -371,7 +375,7 @@ export function PresetDrawer({
             </div>
             <button
               type="button"
-              className="d-reset"
+              className="d-reset d-half"
               aria-pressed={contrast}
               onClick={() => {
                 store.toggleContrast();
@@ -385,7 +389,7 @@ export function PresetDrawer({
             {vibrate ? (
               <button
                 type="button"
-                className="d-reset"
+                className="d-reset d-half"
                 aria-pressed={hapticsOn}
                 onClick={() => {
                   haptic(HAPTIC.medium);
@@ -398,7 +402,7 @@ export function PresetDrawer({
             ) : null}
             <button
               type="button"
-              className="d-reset"
+              className="d-reset wide"
               onClick={() => {
                 store.resetLayout();
                 toast(t('drawer.resetDone'));
@@ -422,6 +426,7 @@ export function PresetDrawer({
           />
           <div className="d-foot-count">
             <span dangerouslySetInnerHTML={{ __html: t('drawer.footer', { n: all.length, m: userPresets.length }) }} />
+          </div>
           </div>
         </div>
       </aside>

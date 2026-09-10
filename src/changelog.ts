@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.53.1',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '预设库底部重新排版：按钮排成整齐的等宽网格（一行四个），调律/场景/力度曲线也各自成行、左右对齐，不再是长短不一的一团。',
+        'The bottom of the preset library is laid out again: the buttons form a regular equal-width grid (four per row), and tuning, scenes and velocity curve each get their own aligned row instead of a ragged pile.',
+      ],
+      [
+        '设置区不再**固定占住**预设列表的高度：它跟着列表一起滚动，所以打开预设库时看到的是更多音色，而不是半屏按钮。',
+        'The settings no longer **occupy a fixed slice** of the preset list: they scroll with it, so opening the library shows more sounds instead of half a screen of buttons.',
+      ],
+    ],
+  },
+  {
     version: '1.53.0',
     date: '2026-09-10',
     kind: 'feature',

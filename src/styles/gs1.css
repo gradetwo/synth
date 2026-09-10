@@ -382,9 +382,10 @@ body.drawer-open .drawer-mask{opacity:1;pointer-events:auto}
   cursor:pointer;transition:.15s;background:none}
 .chip:hover{color:var(--txt-2)}
 .chip.active{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
-.d-list{flex:1;overflow-y:auto;padding:10px 16px;display:flex;flex-direction:column;gap:8px}
-.d-list::-webkit-scrollbar{width:8px}
-.d-list::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:4px}
+/* `flex:none`: the list keeps its natural height and the *body* scrolls. Without
+   it the list shrank to whatever fitted and silently hid the rest of the
+   presets. */
+.d-list{flex:none;padding:10px 16px;display:flex;flex-direction:column;gap:8px}
 .pcard{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px;
   cursor:pointer;background:var(--bg-module);border:1px solid var(--line-soft);transition:.15s}
 .pcard:hover{border-color:var(--border-hi);transform:translateX(-2px)}
@@ -794,11 +795,34 @@ body.module-dragging .module-grip{cursor:grabbing}
 @media (max-width:900px) and (orientation:landscape){
   .mini-canvas{height:32px}
 }
-.d-foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+/* The drawer body scrolls as one: the preset list first, the settings under it.
+   Nothing is docked, so the list is never squeezed by however many buttons the
+   settings have grown to. */
+.d-body{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column}
+.d-body::-webkit-scrollbar{width:8px}
+.d-body::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:4px}
+.d-foot{display:flex;flex-direction:column;gap:7px}
 .d-reset{font:600 10px/1 var(--grot);letter-spacing:.04em;color:var(--txt-2);
   background:var(--bg-inset);border:1px solid var(--border);border-radius:8px;
-  padding:8px 11px;cursor:pointer;flex:none}
+  padding:9px 8px;cursor:pointer;min-width:0;text-align:center}
 .d-reset:hover{color:var(--accent);border-color:var(--accent-dim)}
+/* Every action sits in the same grid, so the rows line up instead of ending
+   wherever their label happens to end. */
+.d-foot-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+  grid-auto-flow:row dense;gap:6px;align-items:center}
+.d-foot-actions > .d-reset{width:100%}
+.d-foot-actions > .d-reset.wide{grid-column:1/-1}
+/* Two state toggles side by side rather than one and a half columns. */
+.d-foot-actions > .d-reset.d-half{grid-column:span 2}
+/* A labelled field needs the whole row: a select plus one or two buttons does
+   not fit a quarter of a 380px drawer without squashing the select to nothing. */
+.d-foot-actions > label{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;
+  gap:6px;align-items:center}
+.d-foot-actions > label > .d-reset{padding:8px 10px}
+.d-foot-actions > label > span{font:600 9px/1 var(--mono);letter-spacing:.06em;color:var(--txt-dim);white-space:nowrap}
+.d-foot-actions > label > select{min-width:0;width:100%}
+.d-foot-actions > .d-theme{grid-column:1/-1}
+.d-foot-actions > .d-theme .d-theme-btn{flex:1;min-width:0}
 
 /* ---- P0.2: comfortable touch targets (coarse pointers only) ---- */
 @media (pointer: coarse){
@@ -834,9 +858,7 @@ body.module-dragging .module-grip{cursor:grabbing}
 .env-foot .seg{flex:1;margin-bottom:0}
 .env-foot .knob{flex:none;width:64px}
 .tbtn.on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
-.d-foot{flex-direction:column;align-items:stretch;gap:9px}
-.d-foot-actions{display:flex;gap:6px;flex-wrap:wrap}
-.d-foot-actions .d-reset{flex:1;min-width:64px}
+.d-foot{gap:9px}
 .d-foot-count{font:500 9.5px/1 var(--mono);color:var(--txt-dim);text-align:center}
 .monitor-actions{position:absolute;top:7px;right:10px;display:flex;gap:6px;z-index:2}
 .monitor-actions .demo-btn{position:static;top:auto;right:auto}
