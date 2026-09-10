@@ -2,8 +2,11 @@
  * gs_soundpipe.c — C ABI wrappers around the vendored Soundpipe modules.
  *
  * Vendored sources (MIT):
- *   vendor/soundpipe/h/{base,delay,allpass,comb,revsc}.h
- *   vendor/soundpipe/modules/{base,delay,allpass,comb,revsc}.c
+ *   vendor/soundpipe/h/{base,delay,allpass,comb}.h
+ *   vendor/soundpipe/modules/{base,delay,allpass,comb}.c
+ *
+ * The reverb used to live here too; it is now a Rust module
+ * (`src/dsp/reverb.rs`) so it can offer damping, pre-delay and modulation.
  *
  * Reverb is Soundpipe's Csound-derived `reverbsc`. The delay line is built on
  * Soundpipe's own `sp_auxdata` storage but uses a fractional read pointer, so
@@ -19,7 +22,6 @@
 #define GS_SP_TIME_SLEW 0.0008f
 
 static sp_data g_sp;
-static sp_revsc g_rev;
 static sp_auxdata g_dly_buf[2];
 static uint32_t g_dly_size = 0;
 static uint32_t g_dly_write = 0;
@@ -27,7 +29,6 @@ static float g_dly_samples = 0.0f;
 static float g_dly_target = 0.0f;
 static float g_dly_fb = 0.0f;
 static float g_dly_mix = 0.0f;
-static float g_rev_mix = 0.0f;
 static int g_ready = 0;
 static uint32_t g_alloc_events = 0;
 
@@ -43,38 +44,17 @@ void gs_sp_init(float sample_rate)
     g_sp.rand = 1u;
     g_sp.filename[0] = 0;
 
-    sp_revsc_init(&g_sp, &g_rev);
-    g_rev.feedback = 0.90f;
-    g_rev.lpfreq = 9000.0f;
-
     g_dly_size = (uint32_t)(GS_SP_MAX_DELAY * sample_rate) + 4;
     for (int ch = 0; ch < 2; ++ch) {
         sp_auxdata_alloc(&g_dly_buf[ch], g_dly_size * sizeof(SPFLOAT));
         ++g_alloc_events;
     }
-    /* sp_revsc_init allocates its eight delay lines through sp_auxdata_alloc. */
-    ++g_alloc_events;
     g_dly_write = 0;
     g_dly_samples = g_dly_size - 1;
     g_dly_target = g_dly_samples;
     g_dly_fb = 0.0f;
     g_dly_mix = 0.0f;
-    g_rev_mix = 0.0f;
     g_ready = 1;
-}
-
-void gs_sp_set_reverb(float feedback, float lpfreq, float mix)
-{
-    if (!g_ready) return;
-    if (feedback < 0.0f) feedback = 0.0f;
-    if (feedback > 0.98f) feedback = 0.98f;
-    if (lpfreq < 200.0f) lpfreq = 200.0f;
-    if (lpfreq > 20000.0f) lpfreq = 20000.0f;
-    if (mix < 0.0f) mix = 0.0f;
-    if (mix > 1.0f) mix = 1.0f;
-    g_rev.feedback = feedback;
-    g_rev.lpfreq = lpfreq;
-    g_rev_mix = mix;
 }
 
 void gs_sp_set_delay(float time_s, float feedback, float mix)
@@ -120,24 +100,19 @@ void gs_sp_process_block(const float *in_l,
 
     SPFLOAT *bl = (SPFLOAT *)g_dly_buf[0].ptr;
     SPFLOAT *br = (SPFLOAT *)g_dly_buf[1].ptr;
-    const float rev_mix = g_rev_mix;
     const float dly_mix = g_dly_mix;
     const float fb = g_dly_fb;
 
     for (uint32_t i = 0; i < frames; ++i) {
         float l = in_l[i];
         float r = in_r[i];
-        float rvl = 0.0f, rvr = 0.0f;
-
-        sp_revsc_compute(&g_sp, &g_rev, &l, &r, &rvl, &rvr);
-
         float dl = gs_sp_read(bl, g_dly_samples);
         float dr = gs_sp_read(br, g_dly_samples);
         bl[g_dly_write] = l + dl * fb;
         br[g_dly_write] = r + dr * fb;
 
-        out_l[i] = l + rvl * rev_mix + dl * dly_mix;
-        out_r[i] = r + rvr * rev_mix + dr * dly_mix;
+        out_l[i] = l + dl * dly_mix;
+        out_r[i] = r + dr * dly_mix;
 
         g_dly_write = (g_dly_write + 1u) % g_dly_size;
         g_dly_samples += (g_dly_target - g_dly_samples) * GS_SP_TIME_SLEW;

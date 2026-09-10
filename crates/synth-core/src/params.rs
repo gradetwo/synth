@@ -78,10 +78,13 @@ pub mod id {
     pub const LFO2_RATE: u32 = 64;
     pub const LFO2_DEPTH: u32 = 65;
     pub const LFO2_TARGET: u32 = 66;
+    pub const FX_REVERB_DAMP: u32 = 67;
+    pub const FX_REVERB_WIDTH: u32 = 68;
+    pub const FX_REVERB_PREDELAY: u32 = 69;
 }
 
-/// Highest parameter id + 1 (ids are 0..=66).
-pub const PARAM_COUNT: usize = 67;
+/// Highest parameter id + 1 (ids are 0..=69).
+pub const PARAM_COUNT: usize = 70;
 
 /// Continuous parameters are smoothed across blocks (one-pole, ~20 ms) so the
 /// host can drag a knob without producing zipper noise. Discrete/stepped
@@ -112,6 +115,9 @@ pub fn is_continuous(param_id: u32) -> bool {
             | p::LFO_DEPTH
             | p::FX_REVERB_SIZE
             | p::FX_REVERB_MIX
+            | p::FX_REVERB_DAMP
+            | p::FX_REVERB_WIDTH
+            | p::FX_REVERB_PREDELAY
             | p::FX_DELAY_FB
             | p::FX_DELAY_MIX
             | p::GLIDE
@@ -359,6 +365,9 @@ pub struct FxParams {
     pub reverb_on: bool,
     pub reverb_size: f32,
     pub reverb_mix: f32,
+    pub reverb_damp: f32,
+    pub reverb_width: f32,
+    pub reverb_predelay: f32,
     pub delay_on: bool,
     pub delay_sync: u32,
     pub delay_fb: f32,
@@ -451,6 +460,9 @@ impl Params {
                 reverb_on: false,
                 reverb_size: 0.4,
                 reverb_mix: 0.1,
+                reverb_damp: 0.35,
+                reverb_width: 0.8,
+                reverb_predelay: 0.012,
                 delay_on: false,
                 delay_sync: 2,
                 delay_fb: 0.3,
@@ -536,6 +548,9 @@ impl Params {
             p::FX_REVERB_ON => self.fx.reverb_on = value > 0.5,
             p::FX_REVERB_SIZE => self.fx.reverb_size = clamp01(value),
             p::FX_REVERB_MIX => self.fx.reverb_mix = clamp01(value),
+            p::FX_REVERB_DAMP => self.fx.reverb_damp = clamp01(value),
+            p::FX_REVERB_WIDTH => self.fx.reverb_width = clamp01(value),
+            p::FX_REVERB_PREDELAY => self.fx.reverb_predelay = value.clamp(0.0, 0.1),
             p::FX_DELAY_ON => self.fx.delay_on = value > 0.5,
             p::FX_DELAY_SYNC => self.fx.delay_sync = (value as u32).min(3),
             p::FX_DELAY_FB => self.fx.delay_fb = value.clamp(0.0, 0.95),

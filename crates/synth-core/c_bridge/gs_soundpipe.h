@@ -17,7 +17,6 @@ extern "C" {
 void gs_sp_init(float sample_rate);
 
 /* reverb: feedback 0..0.98, low-pass damping frequency in Hz, wet mix 0..1 */
-void gs_sp_set_reverb(float feedback, float lpfreq, float mix);
 
 /* delay: time in seconds (<= GS_SP_MAX_DELAY), feedback 0..0.95, wet mix 0..1 */
 void gs_sp_set_delay(float time_s, float feedback, float mix);

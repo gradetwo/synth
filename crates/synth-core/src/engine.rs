@@ -9,6 +9,7 @@ use crate::alloc_arena;
 use crate::dsp::adsr::Adsr;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::simd;
+use crate::dsp::reverb::{Reverb, ReverbParams};
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_limit, Rng};
 use crate::fft::Spectrum;
 use crate::params::{
@@ -40,7 +41,6 @@ extern "C" {
     fn gs_fx_overdrive_block(in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
     #[cfg(test)]
     fn gs_sp_alloc_events() -> u32;
-    fn gs_sp_set_reverb(feedback: f32, lpfreq: f32, mix: f32);
     fn gs_sp_set_delay(time_s: f32, feedback: f32, mix: f32);
     fn gs_sp_process_block(
         in_l: *const f32,
@@ -81,9 +81,6 @@ fn is_env_param(param_id: u32) -> bool {
 
 #[derive(Clone, Copy)]
 struct FxSnapshot {
-    reverb_fb: f32,
-    reverb_lpf: f32,
-    reverb_mix: f32,
     delay_time: f32,
     delay_fb: f32,
     delay_mix: f32,
@@ -92,9 +89,6 @@ struct FxSnapshot {
 impl FxSnapshot {
     const fn new() -> Self {
         Self {
-            reverb_fb: -1.0,
-            reverb_lpf: -1.0,
-            reverb_mix: -1.0,
             delay_time: -1.0,
             delay_fb: -1.0,
             delay_mix: -1.0,
@@ -135,6 +129,7 @@ pub struct Engine {
     rng: Rng,
     /// Increments per started voice; drives the low-discrepancy phase spread.
     phase_seed: u32,
+    reverb: Reverb,
     pitch_bend: f32,
     mod_wheel: f32,
     /// Held notes for mono/legato mode (slot 0 only).
@@ -187,6 +182,7 @@ impl Engine {
             out_r: [0.0; MAX_BLOCK_SIZE],
             rng: Rng::new(0x51f3_9b1d),
             phase_seed: 0,
+            reverb: Reverb::new(),
             pitch_bend: 0.0,
             mod_wheel: 0.0,
             mono_held: [0; 16],
@@ -219,6 +215,14 @@ impl Engine {
             gs_sp_init(self.sample_rate);
             gs_fx_init(self.sample_rate);
         }
+        self.reverb.set_sample_rate(self.sample_rate);
+        self.reverb.set_params(ReverbParams {
+            size: self.params.fx.reverb_size,
+            damp: self.params.fx.reverb_damp,
+            mix: 0.0,
+            width: self.params.fx.reverb_width,
+            predelay: self.params.fx.reverb_predelay,
+        });
         self.spectrum.init();
         self.spectrum.reset();
         self.lfo.reset();
@@ -901,22 +905,10 @@ impl Engine {
 
     fn apply_fx(&mut self, frames: usize) {
         let fx = self.params.fx;
-        let rev_mix = if fx.reverb_on { fx.reverb_mix } else { 0.0 };
         let dly_mix = if fx.delay_on { fx.delay_mix } else { 0.0 };
-        let rev_fb = 0.70 + fx.reverb_size * 0.27;
-        let rev_lpf = 4000.0 + fx.reverb_size * 10000.0;
         let dly_time = self.params.delay_time_seconds();
         let dly_fb = fx.delay_fb;
 
-        if (rev_fb - self.fx.reverb_fb).abs() > 1e-4
-            || (rev_lpf - self.fx.reverb_lpf).abs() > 1.0
-            || (rev_mix - self.fx.reverb_mix).abs() > 1e-4
-        {
-            unsafe { gs_sp_set_reverb(rev_fb, rev_lpf, rev_mix) };
-            self.fx.reverb_fb = rev_fb;
-            self.fx.reverb_lpf = rev_lpf;
-            self.fx.reverb_mix = rev_mix;
-        }
         if (dly_time - self.fx.delay_time).abs() > 1e-4
             || (dly_fb - self.fx.delay_fb).abs() > 1e-4
             || (dly_mix - self.fx.delay_mix).abs() > 1e-4
@@ -936,6 +928,18 @@ impl Engine {
                 frames as u32,
             );
         }
+
+        // Rust reverb: damped, modulated and with a pre-delay, which the old
+        // Soundpipe `revsc` could not do. It replaces revsc entirely.
+        self.reverb.set_params(ReverbParams {
+            size: if fx.reverb_on { fx.reverb_size } else { 0.0 },
+            damp: fx.reverb_damp,
+            mix: if fx.reverb_on { fx.reverb_mix } else { 0.0 },
+            width: fx.reverb_width,
+            predelay: fx.reverb_predelay,
+        });
+        self.reverb
+            .process(&mut self.fx_l[..frames], &mut self.fx_r[..frames]);
 
         // Modulation effects run after reverb/delay, each wet/dry blended.
         if fx.chorus_on && fx.chorus_mix > 0.0 {
@@ -1291,6 +1295,114 @@ mod tests {
         e.set_param(id::OSC1_WAVE, crate::params::Wave::Square as u32 as f32);
         e.process(128);
         assert_eq!(e.params.osc[0].wave, crate::params::Wave::Square);
+    }
+
+    /// Single-bin magnitude with a Hann window (measurement helper).
+    fn bin_mag(samples: &[f32], freq: f32, sr: f32) -> f32 {
+        let n = samples.len();
+        let w = core::f32::consts::TAU as f64 * freq as f64 / sr as f64;
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (i, x) in samples.iter().enumerate() {
+            let win = 0.5 - 0.5 * (core::f32::consts::TAU as f64 * i as f64 / n as f64).cos();
+            let v = *x as f64 * win;
+            re += v * (w * i as f64).cos();
+            im -= v * (w * i as f64).sin();
+        }
+        ((re * re + im * im).sqrt() / n as f64) as f32 * 2.0
+    }
+
+    #[test]
+    fn measure_aliasing_and_thd() {
+        let _guard = ENGINE_LOCK.lock().unwrap();
+        let sr = 48000.0f32;
+
+        // --- oscillator aliasing: C7 saw, filter wide open -------------------
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::FX_REVERB_ON, 0.0);
+        e.note_on(96, 1.0);
+        for _ in 0..120 {
+            e.process(128);
+        }
+        let mut buf = vec![0.0f32; 8192];
+        for chunk in buf.chunks_mut(128) {
+            e.process(128);
+            chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+        }
+        let f0 = 440.0 * 2f32.powf((96.0 - 69.0) / 12.0);
+        let mut harm = 0.0f32;
+        let mut alias = 0.0f32;
+        for k in 1..=9 {
+            let f = f0 * k as f32;
+            if f < 20000.0 {
+                harm += bin_mag(&buf, f, sr).powi(2);
+            }
+        }
+        for k in 1..=9 {
+            alias += bin_mag(&buf, f0 * k as f32 + f0 * 0.5, sr).powi(2);
+        }
+        println!(
+            "MEAS aliasing saw_C7 harmonic={:.4} alias={:.6} ratio={:.1}dB",
+            10.0 * (harm + 1e-12).log10(),
+            10.0 * (alias + 1e-12).log10(),
+            10.0 * (harm / alias.max(1e-12)).log10()
+        );
+
+        // --- filter drive THD: sine through the ladder -----------------------
+        for drive in [0.0f32, 0.5, 1.0] {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_TYPE, 0.0);
+            e.set_param(id::FILTER_CUTOFF, 12000.0);
+            e.set_param(id::FILTER_RES, 0.2);
+            e.set_param(id::FILTER_DRIVE, drive);
+            e.set_param(id::FILTER_ENV_AMT, 0.0);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::FX_REVERB_ON, 0.0);
+            e.note_on(69, 1.0);
+            for _ in 0..120 {
+                e.process(128);
+            }
+            let mut buf = vec![0.0f32; 8192];
+            for chunk in buf.chunks_mut(128) {
+                e.process(128);
+                chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+            }
+            // Sanity check the analyser itself on a synthetic tone.
+            let reference: Vec<f32> = (0..8192)
+                .map(|i| 0.13 * (core::f32::consts::TAU * 440.0 * i as f32 / sr).sin())
+                .collect();
+            let ref_fund = bin_mag(&reference, 440.0, sr);
+            let mut ref_h = 0.0f32;
+            for k in 2..=12 {
+                ref_h += bin_mag(&reference, 440.0 * k as f32, sr).powi(2);
+            }
+            println!("MEAS wave_param={:?} kind={:?}", e.params.osc[0].wave, e.params.filter.kind);
+            let fund = bin_mag(&buf, 440.0, sr);
+            let mut h = 0.0f32;
+            let mut parts = String::new();
+            for k in 2..=12 {
+                let m = bin_mag(&buf, 440.0 * k as f32, sr);
+                h += m * m;
+                if k <= 6 {
+                    parts.push_str(&format!(" h{k}={:.4}", m / fund.max(1e-9)));
+                }
+            }
+            let thd = (h.sqrt() / fund.max(1e-9)) * 100.0;
+            println!(
+                "MEAS thd sine drive={drive:.1} fund={fund:.4} thd={thd:.2}% | reference fund={ref_fund:.4} thd={:.2}% |{parts}",
+                (ref_h.sqrt() / ref_fund.max(1e-9)) * 100.0
+            );
+        }
     }
 
     fn render_chord(e: &mut Engine, notes: &[u8], blocks: usize) -> (f32, f32, f32) {
