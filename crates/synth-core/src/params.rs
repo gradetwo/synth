@@ -97,10 +97,14 @@ pub mod id {
     /// Play the imported single-cycle wavetable instead of a factory bank
     /// (A6.2). Ignored when nothing has been imported.
     pub const WT_USER: u32 = 79;
+    /// Delay feedback damping: how much top end each repeat loses (A5).
+    pub const FX_DELAY_DAMP: u32 = 80;
+    /// Delay ping-pong: cross-feed the channels so echoes alternate (A5).
+    pub const FX_DELAY_PINGPONG: u32 = 81;
 }
 
-/// Highest parameter id + 1 (ids are 0..=79).
-pub const PARAM_COUNT: usize = 80;
+/// Highest parameter id + 1 (ids are 0..=81).
+pub const PARAM_COUNT: usize = 82;
 
 /// Number of keys the tuning table covers (MIDI 0..127).
 pub const TUNING_NOTES: usize = 128;
@@ -439,6 +443,8 @@ pub struct FxParams {
     pub delay_sync: u32,
     pub delay_fb: f32,
     pub delay_mix: f32,
+    pub delay_damp: f32,
+    pub delay_ping_pong: bool,
     pub chorus_on: bool,
     pub chorus_depth: f32,
     pub chorus_rate: f32,
@@ -546,6 +552,8 @@ impl Params {
                 delay_sync: 2,
                 delay_fb: 0.3,
                 delay_mix: 0.1,
+                delay_damp: 0.35,
+                delay_ping_pong: false,
                 chorus_on: false,
                 chorus_depth: 0.5,
                 chorus_rate: 0.6,
@@ -654,6 +662,8 @@ impl Params {
             p::FX_DELAY_SYNC => self.fx.delay_sync = (value as u32).min(3),
             p::FX_DELAY_FB => self.fx.delay_fb = value.clamp(0.0, 0.95),
             p::FX_DELAY_MIX => self.fx.delay_mix = clamp01(value),
+            p::FX_DELAY_DAMP => self.fx.delay_damp = clamp01(value),
+            p::FX_DELAY_PINGPONG => self.fx.delay_ping_pong = value >= 0.5,
             p::FX_CHORUS_ON => self.fx.chorus_on = value > 0.5,
             p::FX_CHORUS_DEPTH => self.fx.chorus_depth = clamp01(value),
             p::FX_CHORUS_RATE => self.fx.chorus_rate = value.clamp(0.02, 10.0),

@@ -647,8 +647,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Reverb**: Soundpipe’s `reverbsc` (Sean Costello’s eight-delay-line feedback network). `SIZE` maps feedback 0.70–0.97 and a low-pass from 4–14 kHz; `MIX` sets the dry/wet balance.',
           ],
           [
-            '**延迟**：单条延时线加反馈，时值可同步到 1/4、1/8.、1/8、1/16；改变时值时用约 20 ms 的一极点平滑，避免咔哒。',
-            '**Delay**: one delay line with feedback, synced to 1/4, 1/8., 1/8 or 1/16. Time changes are smoothed with a ~20 ms one-pole to avoid clicks.',
+            '**延迟**：立体声延时线加反馈，时值可同步到 1/4、1/8.、1/8、1/16；改变时值时用约 20 ms 的一极点平滑，避免咔哒。`DAMP` 让每一遍回声比上一遍更暗（低通在反馈环内），`PING-PONG` 让回声左右交替。',
+            '**Delay**: a stereo delay line with feedback, synced to 1/4, 1/8., 1/8 or 1/16. Time changes are smoothed with a ~20 ms one-pole to avoid clicks. `DAMP` makes each repeat darker than the last (the filter sits inside the feedback loop) and `Ping-pong` alternates the echoes between the speakers.',
           ],
           [
             '**合唱**：短延时（约 5–30 ms）被 LFO 调制，产生多个失谐副本；**镶边**用更短的延时并加入反馈，形成梳状滤波扫频。',

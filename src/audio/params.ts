@@ -90,6 +90,10 @@ export const Param = {
   LFO2_ONESHOT: 77,
   /** Play the imported single-cycle wavetable (A6.2) instead of a factory bank. */
   WT_USER: 79,
+  /** Delay feedback damping: top end lost per repeat (A5). */
+  FX_DELAY_DAMP: 80,
+  /** Delay ping-pong: cross-feed so the repeats alternate channels (A5). */
+  FX_DELAY_PINGPONG: 81,
 } as const;
 
 export type ParamId = (typeof Param)[keyof typeof Param];
@@ -99,6 +103,8 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.MASTER_VOLUME]: 'masterVolume',
   [Param.PATCH_GAIN]: 'patchGain',
   [Param.WT_USER]: 'wtUser',
+  [Param.FX_DELAY_DAMP]: 'fxDelayDamp',
+  [Param.FX_DELAY_PINGPONG]: 'fxDelayPingpong',
   [Param.OSC1_ON]: 'osc1On',
   [Param.OSC1_WAVE]: 'osc1Wave',
   [Param.OSC1_PITCH]: 'osc1Pitch',
@@ -337,6 +343,8 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.PATCH_GAIN]: 1,
   // Factory banks by default; the player flips this after importing a cycle.
   [Param.WT_USER]: 0,
+  [Param.FX_DELAY_DAMP]: 0.35,
+  [Param.FX_DELAY_PINGPONG]: 0,
   [Param.MASTER_TUNE]: 0,
   [Param.VOICE_MODE]: 0,
   [Param.FX_CHORUS_ON]: 0,
@@ -533,6 +541,7 @@ export const PARAM_SPECS: ParamSpec[] = [
   spec(Param.FX_REVERB_PREDELAY, 'PRE', 0, 0.1, 0.012, (v) => `${Math.round(v * 1000)} ms`),
   spec(Param.FX_DELAY_FB, 'FDBK', 0, 0.9, 0.35, fmt.pct),
   spec(Param.FX_DELAY_MIX, 'MIX', 0, 1, 0.22, fmt.pct),
+  spec(Param.FX_DELAY_DAMP, 'DAMP', 0, 1, 0.35, fmt.pct),
   spec(Param.FILTER_ENV_ATTACK, 'ATTACK', 0.0005, 8, 0.01, fmt.ms, { curve: 'log' }),
   spec(Param.FILTER_ENV_DECAY, 'DECAY', 0.001, 12, 0.3, fmt.ms, { curve: 'log' }),
   spec(Param.FILTER_ENV_SUSTAIN, 'SUSTAIN', 0, 1, 0.5, fmt.pct),

@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.46.0',
+    date: '2026-09-10',
+    kind: 'sound',
+    items: [
+      [
+        '延迟效果重做：新增**乒乓（PING-PONG）**开关，回声左右交替；新增 `DAMP` 旋钮，每一遍回声都比上一遍更暗（默认 35%，尾音不再刺耳）。',
+        'The delay was rebuilt: a **Ping-pong** switch makes the echoes alternate between the speakers, and a `DAMP` knob makes each repeat darker than the one before it (35% by default, so the tail is no longer brittle).',
+      ],
+      [
+        '时值切换仍然平滑无咔哒，反馈与同步分频的行为不变，旧音色听起来还是原来的样子。',
+        'Time changes are still smooth and click-free, and feedback and sync divisions behave as before, so existing patches still sound like themselves.',
+      ],
+    ],
+  },
+  {
     version: '1.45.0',
     date: '2026-09-10',
     kind: 'feature',

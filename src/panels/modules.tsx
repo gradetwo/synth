@@ -305,10 +305,11 @@ function ModMatrix() {
 
 function FxModule() {
   const sync = intToDelaySync(useParam(Param.FX_DELAY_SYNC));
+  const pingPong = useParam(Param.FX_DELAY_PINGPONG) >= 0.5;
   return (
     <ModuleShell id="fx">
       <div className="fx-grid">
-        <div className="fx-unit">
+        <div className="fx-unit" data-unit="reverb">
           <div className="fx-title">
             <ParamLed id={Param.FX_REVERB_ON} label={t('module.reverbOn')} />
             REVERB
@@ -322,7 +323,7 @@ function FxModule() {
           </div>
         </div>
         <div className="fx-sep" />
-        <div className="fx-unit">
+        <div className="fx-unit" data-unit="delay">
           <div className="fx-title">
             <ParamLed id={Param.FX_DELAY_ON} label={t('module.delayOn')} />
             DELAY
@@ -342,7 +343,18 @@ function FxModule() {
           <div className="knob-row">
             <Knob spec={SPEC_BY_ID[Param.FX_DELAY_FB]} />
             <Knob spec={SPEC_BY_ID[Param.FX_DELAY_MIX]} />
+            <Knob spec={SPEC_BY_ID[Param.FX_DELAY_DAMP]} />
           </div>
+          <button
+            type="button"
+            className={`dly-ping${pingPong ? ' on' : ''}`}
+            data-setting="delayPingPong"
+            aria-pressed={pingPong}
+            title={t('fx.pingPongHint')}
+            onClick={() => store.setParam(Param.FX_DELAY_PINGPONG, pingPong ? 0 : 1, { immediate: true })}
+          >
+            {t('fx.pingPong')}
+          </button>
         </div>
       </div>
     </ModuleShell>

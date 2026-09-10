@@ -10,6 +10,7 @@ use crate::dsp::adsr::Adsr;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::simd;
 use crate::dsp::comb::CombFilter;
+use crate::dsp::delay::{Delay, DelayParams};
 use crate::dsp::ladder::LadderFilter;
 use crate::dsp::noise::NoiseGen;
 use crate::dsp::reverb::{Reverb, ReverbParams};
@@ -61,14 +62,6 @@ extern "C" {
     fn gs_fx_overdrive_block(in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
     #[cfg(test)]
     fn gs_sp_alloc_events() -> u32;
-    fn gs_sp_set_delay(time_s: f32, feedback: f32, mix: f32);
-    fn gs_sp_process_block(
-        in_l: *const f32,
-        in_r: *const f32,
-        out_l: *mut f32,
-        out_r: *mut f32,
-        frames: u32,
-    );
 }
 
 /// Short release applied to a stolen voice (seconds).
@@ -131,23 +124,6 @@ fn is_env_param(param_id: u32) -> bool {
             | id::FILTER_ENV_SUSTAIN
             | id::FILTER_ENV_RELEASE
     )
-}
-
-#[derive(Clone, Copy)]
-struct FxSnapshot {
-    delay_time: f32,
-    delay_fb: f32,
-    delay_mix: f32,
-}
-
-impl FxSnapshot {
-    const fn new() -> Self {
-        Self {
-            delay_time: -1.0,
-            delay_fb: -1.0,
-            delay_mix: -1.0,
-        }
-    }
 }
 
 pub struct Engine {
@@ -264,7 +240,8 @@ pub struct Engine {
     pub nan_events: u32,
     spectrum_counter: u32,
     env_dirty: bool,
-    fx: FxSnapshot,
+    /// Stereo delay with ping-pong and damping (replaces the vendored one).
+    delay: Delay,
     initialised: bool,
 }
 
@@ -338,7 +315,7 @@ impl Engine {
             nan_events: 0,
             spectrum_counter: 0,
             env_dirty: true,
-            fx: FxSnapshot::new(),
+            delay: Delay::new(),
             initialised: false,
         }
     }
@@ -362,6 +339,7 @@ impl Engine {
             comb.prepare(self.sample_rate);
         }
         self.reverb.set_sample_rate(self.sample_rate);
+        self.delay.setup(self.sample_rate);
         self.reverb.set_params(ReverbParams {
             size: self.params.fx.reverb_size,
             damp: self.params.fx.reverb_damp,
@@ -394,7 +372,7 @@ impl Engine {
         self.peak_r = 0.0;
         self.nan_events = 0;
         self.env_dirty = true;
-        self.fx = FxSnapshot::new();
+        self.delay.reset();
         self.initialised = true;
     }
 
@@ -1559,29 +1537,22 @@ impl Engine {
 
     fn apply_fx(&mut self, frames: usize) {
         let fx = self.params.fx;
-        let dly_mix = if fx.delay_on { fx.delay_mix } else { 0.0 };
-        let dly_time = self.params.delay_time_seconds();
-        let dly_fb = fx.delay_fb;
-
-        if (dly_time - self.fx.delay_time).abs() > 1e-4
-            || (dly_fb - self.fx.delay_fb).abs() > 1e-4
-            || (dly_mix - self.fx.delay_mix).abs() > 1e-4
-        {
-            unsafe { gs_sp_set_delay(dly_time, dly_fb, dly_mix) };
-            self.fx.delay_time = dly_time;
-            self.fx.delay_fb = dly_fb;
-            self.fx.delay_mix = dly_mix;
-        }
-
-        unsafe {
-            gs_sp_process_block(
-                self.fx_l.as_ptr(),
-                self.fx_r.as_ptr(),
-                self.fx_l.as_mut_ptr(),
-                self.fx_r.as_mut_ptr(),
-                frames as u32,
-            );
-        }
+        // The delay reads its parameters every block, so a change in tempo, time
+        // or damping is picked up without a setter round trip. When it is off the
+        // wet mix is zero, which is exactly a bypass (the line keeps running so
+        // its tail does not pop back when it is switched on again).
+        self.delay.process(
+            DelayParams {
+                time_s: self.params.delay_time_seconds(),
+                feedback: fx.delay_fb,
+                mix: if fx.delay_on { fx.delay_mix } else { 0.0 },
+                damp: fx.delay_damp,
+                ping_pong: fx.delay_ping_pong,
+            },
+            &mut self.fx_l[..frames],
+            &mut self.fx_r[..frames],
+            frames,
+        );
 
         // Rust reverb: damped, modulated and with a pre-delay, which the old
         // Soundpipe `revsc` could not do. It replaces revsc entirely.
@@ -3175,6 +3146,128 @@ mod tests {
                 e.process(128);
             }
         }
+    }
+
+    // ------------------------------------------------------------- delay (A5)
+
+    /// A short pluck with the delay on, rendered to stereo. 1/16 at 120 BPM is
+    /// 125 ms, so the repeats land at 0.125 s intervals.
+    fn render_delay_tail(ping_pong: bool, damp: f32) -> (Vec<f32>, Vec<f32>) {
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        // A pluck: no sustain, so each repeat is a separate event to measure.
+        e.set_param(id::ENV_ATTACK, 0.002);
+        e.set_param(id::ENV_DECAY, 0.04);
+        e.set_param(id::ENV_SUSTAIN, 0.0);
+        e.set_param(id::ENV_RELEASE, 0.03);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::FX_REVERB_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        e.set_param(id::TEMPO, 120.0);
+        e.set_param(id::FX_DELAY_ON, 1.0);
+        e.set_param(id::FX_DELAY_SYNC, 3.0);
+        e.set_param(id::FX_DELAY_FB, 0.6);
+        e.set_param(id::FX_DELAY_MIX, 0.9);
+        e.set_param(id::FX_DELAY_DAMP, damp);
+        e.set_param(id::FX_DELAY_PINGPONG, if ping_pong { 1.0 } else { 0.0 });
+        for index in 0..crate::params::MOD_ROUTES {
+            e.set_route(index, 0, 0, 0.0, false);
+        }
+        e.note_on(69, 1.0);
+        let frames = 48_000 * 3 / 2;
+        let mut left = vec![0.0f32; frames];
+        let mut right = vec![0.0f32; frames];
+        for chunk in 0..frames / 128 {
+            e.process(128);
+            let at = chunk * 128;
+            left[at..at + 128].copy_from_slice(&e.out_l[..128]);
+            right[at..at + 128].copy_from_slice(&e.out_r[..128]);
+        }
+        (left, right)
+    }
+
+    fn rms(signal: &[f32], from: usize, to: usize) -> f32 {
+        let slice = &signal[from..to.min(signal.len())];
+        (slice.iter().map(|v| v * v).sum::<f32>() / slice.len().max(1) as f32).sqrt()
+    }
+
+    /// Ping-pong is a stereo feature: the repeats must trade channels, which is
+    /// only visible by comparing the two channels window by window.
+    #[test]
+    fn ping_pong_alternates_the_repeats_in_the_engine() {
+        let _guard = lock_engine();
+        let (left, right) = render_delay_tail(true, 0.0);
+        let echo = 6000; // 125 ms at 48 kHz
+        let window = 900;
+        let l1 = rms(&left, echo, echo + window);
+        let r1 = rms(&right, echo, echo + window);
+        let l2 = rms(&left, echo * 2, echo * 2 + window);
+        let r2 = rms(&right, echo * 2, echo * 2 + window);
+        let l3 = rms(&left, echo * 3, echo * 3 + window);
+        let r3 = rms(&right, echo * 3, echo * 3 + window);
+        assert!(l1 > r1 * 4.0, "first repeat should sit left: {l1} vs {r1}");
+        assert!(r2 > l2 * 4.0, "second repeat should sit right: {r2} vs {l2}");
+        assert!(l3 > r3 * 4.0, "third repeat should sit left again: {l3} vs {r3}");
+        // And they must still get quieter, not build up.
+        assert!(l3 < l1, "repeats should decay: {l3} vs {l1}");
+
+        // Without ping-pong each channel repeats its own input, so a centred
+        // note echoes equally on both sides — the contrast with the case above.
+        let (plain_l, plain_r) = render_delay_tail(false, 0.0);
+        let first = rms(&plain_l, echo, echo + window);
+        assert!(first > 0.0);
+        for tap in 1..=3 {
+            let at = echo * tap;
+            let l = rms(&plain_l, at, at + window);
+            let r = rms(&plain_r, at, at + window);
+            assert!(l > first * 0.2, "repeat {tap} should still be there: {l} vs {first}");
+            assert!(
+                (l - r).abs() < l * 0.05,
+                "repeat {tap} should be equal on both sides without ping-pong: {l} vs {r}"
+            );
+        }
+    }
+
+    /// Damping has to be a tone control on the repeats, not a level control:
+    /// measured from the audio, the third repeat loses far more top end than it
+    /// loses low end when damping is up.
+    #[test]
+    fn delay_damping_darkens_the_repeats_in_the_engine() {
+        let _guard = lock_engine();
+        let spectrum = |damp: f32| {
+            let (left, _) = render_delay_tail(false, damp);
+            let echo = 6000usize;
+            let window = 1200;
+            let slice = &left[echo * 3..echo * 3 + window];
+            let magnitude = |freq: f32| {
+                let (mut re, mut im) = (0.0f64, 0.0f64);
+                for (i, value) in slice.iter().enumerate() {
+                    let phase = core::f64::consts::TAU * freq as f64 * i as f64 / 48_000.0;
+                    re += *value as f64 * phase.cos();
+                    im -= *value as f64 * phase.sin();
+                }
+                (re * re + im * im).sqrt() / window as f64
+            };
+            // 440 Hz is the note; 8.8 kHz is the 20th harmonic, well inside the
+            // saw's spectrum and the band the damping filter acts on.
+            (magnitude(440.0), magnitude(8800.0))
+        };
+
+        let (low_bright, high_bright) = spectrum(0.0);
+        let (low_damped, high_damped) = spectrum(0.9);
+        let high_loss = high_damped / high_bright;
+        let low_loss = low_damped / low_bright;
+        assert!(
+            high_loss < low_loss * 0.5,
+            "damping should cost the top end much more than the low end: {high_loss:.3} vs {low_loss:.3}"
+        );
     }
 
     /// The noise wave ids must actually reach the coloured-noise filters: white

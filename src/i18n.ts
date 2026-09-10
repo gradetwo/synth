@@ -365,6 +365,12 @@ const DICT: Record<string, [string, string]> = {
   'wave.pink': ['粉噪', 'Pink'],
   'wave.brown': ['棕噪', 'Brown'],
   'wave.wavetable': ['波表（PW 选表）', 'Wavetable (PW picks it)'],
+  // --- delay (A5) ----------------------------------------------------------
+  'fx.pingPong': ['乒乓', 'Ping-pong'],
+  'fx.pingPongHint': [
+    '开启后回声左右交替出现；关闭时左右各自重复',
+    'Echoes alternate between the speakers; off, each channel repeats its own input',
+  ],
   // --- imported single-cycle wavetable (A6.2) ------------------------------
   'wt.import': ['导入波形', 'Import wave'],
   'wt.use': ['使用', 'Use'],

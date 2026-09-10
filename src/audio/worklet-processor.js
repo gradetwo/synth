@@ -93,6 +93,8 @@ const PARAMS = [
   // Per-patch loudness trim: presets set it, the UI does not show it.
   ['patchGain', 78, 1, 0, 8],
   ['wtUser', 79, 0, 0, 1],
+  ['fxDelayDamp', 80, 0.35, 0, 1],
+  ['fxDelayPingpong', 81, 0, 0, 1],
 ];
 
 const SPECTRUM_BINS = 36;
