@@ -61,6 +61,15 @@ void LadderFilter::Init(float sample_rate)
     Qadjust_      = 1.0f;
     oldinput_     = 0.f;
     mode_         = FilterMode::LP24;
+    // Integrator state starts empty. Zeroing it here (rather than with in-class
+    // initialisers) keeps the class trivially constructible, which keeps the
+    // wasm build free of global constructors.
+    for(size_t i = 0; i < 4; i++)
+    {
+        beta_[i] = 0.0f;
+        z0_[i]   = 0.0f;
+        z1_[i]   = 0.0f;
+    }
 
     SetPassbandGain(0.5f);
     SetInputDrive(0.5f);

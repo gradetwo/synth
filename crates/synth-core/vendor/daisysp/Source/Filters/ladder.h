@@ -122,9 +122,17 @@ class LadderFilter
 
     float      sample_rate_, sr_int_recip_;
     float      alpha_;
-    float      beta_[4] = {0.0, 0.0, 0.0, 0.0};
-    float      z0_[4]   = {0.0, 0.0, 0.0, 0.0};
-    float      z1_[4]   = {0.0, 0.0, 0.0, 0.0};
+    // NOTE: no in-class initialisers here on purpose. They would make this
+    // class non-trivially default-constructible, which in turn forces dynamic
+    // initialization of the namespace-scope `VoiceDsp g_voice[]` in
+    // c_bridge/gs_daisy.cpp. In the wasm build that produced a global
+    // constructor that was re-run on *every* exported call (see
+    // docs/notes/wasm-ladder-root-cause.md), silently zeroing filter state at
+    // every render block. Static storage is zero-initialised anyway, and
+    // Init() now clears the integrators explicitly.
+    float      beta_[4];
+    float      z0_[4];
+    float      z1_[4];
     float      K_;
     float      Fbase_;
     float      Qadjust_;

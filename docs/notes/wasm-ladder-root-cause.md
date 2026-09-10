@@ -57,8 +57,11 @@ both start from the same zero state — `Init()` does **not** clear `z0_`/`z1_`)
 |  1024 | `6.558e-1` |
 
 At `chunk=128`, the first sample of block 1 is `1.45e-5` in the chunked run versus
-`3.855e-1` for the correct single-call trajectory. Meaningful/meaningless detail:
-identical when the setters are called every block or once, so the setters are not
+`3.855e-1` for the correct single-call trajectory. The exact depth and recovery
+length depend on cutoff/resonance: at `freq=1200, res=0.4` the first sample collapses
+to almost zero and the next few samples rebuild the state (the ~375 Hz click train);
+across tested settings `max |chunked − single|` ranged `0.31 … 0.75`. Calling the
+parameter setters every block versus once changes nothing, so the setters are not
 involved.
 
 ### 2. The state really is zero at every block start

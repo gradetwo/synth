@@ -18,6 +18,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.32.2',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '**根治 wasm 特有的"每块丢样本"隐患**：原因是 vendored 的 C++ 梯形滤波器用了类内成员初始化，使全局声部数组变成"需要动态初始化"；wasm 以 command 模块链接时，**每个导出函数的调用都会重跑一次 C++ 全局构造函数**，把 32 个声部的滤波器状态清零。原生 ELF 只在启动时跑一次，所以同一份代码原生正常。已去掉类内初始化并显式清零，构造函数彻底消失；wasm 门禁新增「**核心中不得存在 C++ 全局构造函数**」断言，防止复发。',
+        '**Removed the wasm-only hazard for good**: the vendored C++ ladder used in-class member initialisers, which made the global voice array require dynamic initialization — and a wasm *command* module re-runs `__wasm_call_ctors` on **every exported call**, zeroing the filter state of all 32 voices. Native ELF runs it once, which is why the same source was clean there. The initialisers are gone, `Init()` clears the state explicitly, and the wasm gate now asserts that **the core contains no C++ global constructors**.',
+      ],
+    ],
+  },
+  {
     version: '1.32.1',
     date: '2026-09-10',
     kind: 'fix',

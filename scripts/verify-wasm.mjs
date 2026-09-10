@@ -53,6 +53,29 @@ check('max block size is 1024', ex.gs_max_block_size() === 1024);
 check('voice pool is 32', ex.gs_max_voices() === 32);
 check('spectrum exposes 36 bins', ex.gs_spectrum_bins() === 36);
 
+// The C++ layer must not need dynamic initialization.
+//
+// This is the guard for a bug that only existed in wasm and cost days:
+// in-class member initialisers in a vendored class made the global voice array
+// require a C++ global constructor, and because this module is linked as a
+// *command* module wasm-ld wraps every exported call in a shim that re-runs
+// `__wasm_call_ctors` — so every `gs_*` call silently reset filter state, which
+// showed up as a click at every render-block boundary. Native never saw it
+// (ELF runs `.init_array` once). See docs/notes/wasm-ladder-root-cause.md.
+{
+  const raw = readFileSync(wasmPath);
+  const text = raw.toString('latin1');
+  const ctors = text.includes('__wasm_call_ctors');
+  const globals = text.includes('_GLOBAL__sub_I');
+  check(
+    'no C++ global constructors in the core',
+    !ctors && !globals,
+    ctors || globals
+      ? 'a dynamically-initialised global would be re-initialised on every call'
+      : 'static initialization only',
+  );
+}
+
 // ---------------------------------------------------------------- frequency
 ex.gs_init(48000, 16);
 ex.gs_set_param(Param.OSC1_ON, 1);
