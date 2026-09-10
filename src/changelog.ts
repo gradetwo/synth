@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.44.1',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '音质门禁的**混叠检查扩展到全部含谐波波形**（锯齿 / 方波 / 脉冲 / 波表，最高音区实测 −84 ～ −156 dB），此前只抽查了锯齿与波表——任何一档振荡器出现混叠都会被立刻拦下。',
+        'The gate\'s **aliasing check now covers every harmonic-rich wave** (saw, square, pulse, wavetable; measured −84 to −156 dB at the top of the keyboard). It used to spot-check only the saw and the wavetable, so a regression in any other oscillator would have slipped through.',
+      ],
+    ],
+  },
+  {
     version: '1.44.0',
     date: '2026-09-10',
     kind: 'sound',

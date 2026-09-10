@@ -195,40 +195,6 @@ function blockSteps(frames) {
   );
 }
 
-// --------------------------------------------------------------- 2. aliasing
-{
-  const f0 = 440 * 2 ** ((96 - 69) / 12);
-  engine(
-    [
-      [P.OSC1_ON, 1], [P.OSC1_WAVE, WAVE.saw], [P.OSC1_LEVEL, 0.8],
-      [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0],
-      [P.FILTER_CUTOFF, 18000], [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0],
-      [P.ENV_SUSTAIN, 1], [P.LFO_ON, 0], [P.MASTER_VOLUME, 0.75],
-      // The engine keeps its parameters across gs_init (the worklet pushes
-      // every param each block), so silence the effects explicitly.
-      [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
-      [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0],
-    ],
-    [[96, 1]],
-  );
-  const blocks = render(80);
-  const buf = [];
-  for (const [l] of blocks) buf.push(...l);
-  // Aliased partials fold to frequencies *between* the harmonics, so the energy
-  // at those midpoints is aliasing (plus noise). Compare it with the total
-  // signal energy: a clean oscillator keeps it far below the signal itself.
-  // Only probe midpoints below Nyquist: a probe above it folds back onto real
-  // harmonic content and would report that as aliasing.
-  let alias = 0;
-  for (let k = 1; f0 * (k + 0.5) < SR / 2 - 1000; k++) alias += binMag(buf, f0 * k + f0 * 0.5) ** 2;
-  const signal = buf.reduce((s, v) => s + v * v, 0) / buf.length;
-  const aliasDb = 10 * Math.log10(alias / Math.max(signal, 1e-12));
-  // The wasm build measures ~-58 dB here (1st-order polyBLEP residue; the
-  // native build is ~-160 dB, which is worth understanding when the oversampled
-  // oscillator lands — roadmap A1). The gate catches regressions in the meantime.
-  check('saw at C7 is band-limited', aliasDb < -55, `aliasing ${aliasDb.toFixed(1)} dB below the signal`);
-}
-
 // ------------------------------------------- 3. block clicks + spectrum purity
 //
 // The regression this exists for: the vendored ladder filter was broken *only*
@@ -340,42 +306,52 @@ function blockSteps(frames) {
   check('filter drive stays musical', thd < 6, `THD ${thd.toFixed(2)}% at full drive`);
 }
 
-// --------------------------------------------------- 3b. wavetable aliasing
+// ------------------------------------------ 3c. aliasing across the wave list
 //
-// The wavetable oscillator plays a harmonic table; a table that holds harmonics
-// above Nyquist for the note would fold them back down. Playing the highest
-// notes through the brightest table and measuring *between* the harmonics is
-// where a folded partial would land, so that is the measurement.
+// One wave is not enough: the gate checked the saw and the wavetable, but a
+// regression in any of the band-limited oscillators would have gone unnoticed.
+// Every harmonic-rich wave is played at the top of the keyboard and the energy
+// *between* its harmonics measured, which is where folded partials land.
 {
-  const note = 93; // A6
+  const waves = [
+    ['saw', 2],
+    ['square', 3],
+    ['pulse', 4],
+    ['wavetable', 8],
+  ];
+  const note = 96; // C7
   const f0 = 440 * 2 ** ((note - 69) / 12);
-  engine(
-    [
-      [P.OSC1_ON, 1], [P.OSC1_WAVE, 8], [P.OSC1_LEVEL, 0.9], [P.OSC1_PW, 1],
-      [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0],
-      [P.FILTER_CUTOFF, 18000], [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0],
-      [P.ENV_ATTACK, 0.001], [P.ENV_SUSTAIN, 1], [P.LFO_ON, 0], [P.MASTER_VOLUME, 1],
-      [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
-      [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0],
-    ],
-    [[note, 1]],
-  );
-  const blocks = render(120);
-  const buf = [];
-  for (const [l] of blocks) buf.push(...l);
-  const fundamental = binMag(buf, f0);
-  let between = 0;
-  let k = 1;
-  while (f0 * (k + 0.5) < 20000) {
-    between += binMag(buf, f0 * (k + 0.5)) ** 2;
-    k += 1;
+  for (const [name, wave] of waves) {
+    engine(
+      [
+        [P.OSC1_ON, 1], [P.OSC1_WAVE, wave], [P.OSC1_LEVEL, 0.8], [P.OSC1_PW, 0.5],
+        [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0],
+        [P.FILTER_CUTOFF, 18000], [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0],
+        [P.ENV_ATTACK, 0.001], [P.ENV_SUSTAIN, 1], [P.LFO_ON, 0], [P.MASTER_VOLUME, 1],
+        [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
+        [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0],
+      ],
+      [[note, 1]],
+    );
+    const blocks = render(100);
+    const buf = [];
+    for (const [l] of blocks) buf.push(...l);
+    const fundamental = binMag(buf, f0);
+    let between = 0;
+    let k = 1;
+    while (f0 * (k + 0.5) < 20000) {
+      between += binMag(buf, f0 * (k + 0.5)) ** 2;
+      k += 1;
+    }
+    const signal = buf.reduce((sum, v) => sum + v * v, 0) / buf.length;
+    const ratio = 10 * Math.log10(between / Math.max(signal, 1e-12));
+    check(
+      `${name} at C7 is band-limited`,
+      ratio < (name === 'wavetable' ? -60 : -55),
+      `aliasing ${ratio.toFixed(1)} dB below the signal`,
+    );
+    void fundamental;
   }
-  const ratio = 20 * Math.log10(Math.sqrt(between) / Math.max(fundamental, 1e-9));
-  check(
-    'wavetable does not alias at the top of the keyboard',
-    ratio < -40,
-    `between-harmonic energy ${ratio.toFixed(1)} dB below the fundamental`,
-  );
 }
 
 // -------------------------------------------------------------------- 4. CPU
