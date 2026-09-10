@@ -263,3 +263,21 @@
 6. 随后进入 **P1**：按 5.1 Unison → 5.4 调制扩展 → 5.6 MPE/MIDI Learn 的顺序推进（听感收益最大）。
 
 > P0 剩余项建议一个迭代内收尾并发布 v1.8.1；P2 立项前先做动态信号图技术预研（Rust 侧原型 + 性能评估）。
+
+---
+
+## 11. 交接说明（下一窗口从这里开始）
+
+**当前版本**：v1.40.0（提交 `27f2b7c`），已部署；`npm run verify` 与全部 e2e 均为绿。
+
+**下一批：A6.2 波表振荡器**（建议一次做完，避免半成品）。落地路径与关键文件：
+1. `crates/synth-core/src/dsp/wavetable.rs`（新建）：由**谐波配方**生成单周期表，并按八度生成 **mipmap 级**（2048/1024/…/32 采样），每一级只含该级 Nyquist 以下的谐波——**抗混叠由构造保证**，无需额外过采样；`sample(phase, level)` 线性插值。
+2. `crates/synth-core/src/params.rs`：新增 `Wave::Wavetable`（映射到 `daisy_id() => None`，即 **Rust 侧渲染**，与噪声同路径）与配方参数（建议**一个共享配方参数**，省去两个 id）；同步 `PARAM_COUNT`。
+3. `crates/synth-core/src/engine.rs`：在 `render_oscillator` 的 `None` 分支里按波表渲染，需要**每声部相位状态**（`wt_phase: [[f32; 2]; MAX_VOICES]`），并在 `gs_voice_reset` 路径复位；unison 可先不支持并注明。
+4. TS 侧：`src/audio/params.ts`（id 与名称）、`worklet-processor.js`（**PARAMS 描述符表必须同步**，否则值到不了 DSP——本轮踩过这个坑）、`WAVES`/`WAVE_ICONS`/`i18n`、OSC 模块的配方式选择。
+5. 测试：① `dsp::wavetable` 单测——每级频谱在谐波上限以上无能量（带宽受限）、基频正确、输出有界；② 引擎级**频域**测试——高音区谐波之间无混叠能量（沿用 `verify-audio.mjs` 的 FFT 手法）；③ 门禁新增一项"波表在高音区不产生混叠"。
+6. 完成后：`npm run verify`、e2e、更新记录（只说改了什么）、`docs/USER-GUIDE.md`、`npm run package`、`wrangler deploy`。
+
+**之后的队列**：A5 效果路由/并联 + 卷积混响（IR 导入）→ P2 10b 动态信号图与节点内联编辑 → 多轨/时间线、采样导入、Web MIDI 输出 → P0.5 多浏览器 E2E（需 `playwright install-deps`，配置已就绪）、P0.6 进一步 streaming。
+
+**已知事项**：Cloudflare 对首页 HTML 有边缘缓存，部署后若线上仍是旧资源，用带参数地址或应用内「检查更新」；`wrangler` 的 OAuth token 在 `~/.zshrc`（bash 需先 `eval` 那一行）。本机缺 WebKit/Firefox 系统库，多浏览器 e2e 需要 CI 或 `install-deps`。
