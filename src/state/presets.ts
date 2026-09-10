@@ -664,6 +664,42 @@ export const FACTORY_PRESETS: Preset[] = [
     [P.LFO_ON]: 0,
     [P.FX_REVERB_ON]: 0, [P.FX_DELAY_ON]: 0,
   }),
+  // Wavetable recipes (A6.2): the PW knob picks the table, so each of these
+  // shows off a different harmonic bank.
+  preset('wtorgan', 'Wavetable Organ · 波表风琴', 'WAVETABLE', 'KEYS', 'wavetable', {
+    ...envP(0.004, 0.2, 0.85, 0.25),
+    [P.OSC1_WAVE]: 8, [P.OSC1_PW]: 0.05, [P.OSC1_LEVEL]: 0.7,
+    [P.OSC2_ON]: 1, [P.OSC2_WAVE]: 0, [P.OSC2_PITCH]: 12, [P.OSC2_LEVEL]: 0.2,
+    [P.FILTER_CUTOFF]: 9000, [P.FILTER_RES]: 0.05, [P.FILTER_ENV_AMT]: 0.2,
+    [P.LFO_ON]: 0,
+    [P.FX_CHORUS_ON]: 1, [P.FX_CHORUS_MIX]: 0.3,
+    [P.FX_REVERB_SIZE]: 0.4, [P.FX_REVERB_MIX]: 0.25,
+  }),
+  preset('wtvocal', 'Wavetable Vox · 波表人声', 'WAVETABLE', 'PAD', 'wavetable', {
+    ...envP(0.08, 0.6, 0.8, 0.7),
+    [P.OSC1_WAVE]: 8, [P.OSC1_PW]: 0.5, [P.OSC1_LEVEL]: 0.65, [P.OSC1_UNISON]: 2, [P.OSC1_SPREAD]: 0.18,
+    [P.OSC2_ON]: 1, [P.OSC2_WAVE]: 1, [P.OSC2_PITCH]: -12, [P.OSC2_LEVEL]: 0.22,
+    [P.FILTER_CUTOFF]: 4200, [P.FILTER_RES]: 0.15, [P.FILTER_ENV_AMT]: 0.25,
+    [P.LFO_ON]: 1, [P.LFO_TARGET]: 1, [P.LFO_DEPTH]: 0.1, [P.LFO_RATE]: 4.2,
+    [P.FX_REVERB_SIZE]: 0.65, [P.FX_REVERB_MIX]: 0.34,
+  }),
+  preset('wtglass', 'Wavetable Glass · 波表玻璃', 'WAVETABLE', 'PLUCK', 'wavetable', {
+    ...envP(0.002, 0.5, 0.2, 0.8),
+    [P.OSC1_WAVE]: 8, [P.OSC1_PW]: 0.95, [P.OSC1_LEVEL]: 0.7,
+    [P.OSC2_ON]: 1, [P.OSC2_WAVE]: 0, [P.OSC2_PITCH]: 12, [P.OSC2_DETUNE]: 5, [P.OSC2_LEVEL]: 0.25,
+    [P.FILTER_CUTOFF]: 7000, [P.FILTER_RES]: 0.1, [P.FILTER_ENV_AMT]: 0.4,
+    [P.LFO_ON]: 0,
+    [P.FX_DELAY_ON]: 1, [P.FX_DELAY_MIX]: 0.2, [P.FX_DELAY_SYNC]: 1,
+    [P.FX_REVERB_SIZE]: 0.6, [P.FX_REVERB_MIX]: 0.3,
+  }),
+  preset('wtmetal', 'Wavetable Metal · 波表金属', 'WAVETABLE', 'FX', 'wavetable', {
+    ...envP(0.003, 0.35, 0.4, 0.5),
+    [P.OSC1_WAVE]: 8, [P.OSC1_PW]: 0.7, [P.OSC1_LEVEL]: 0.7,
+    [P.OSC2_ON]: 1, [P.OSC2_WAVE]: 8, [P.OSC2_PW]: 0.7, [P.OSC2_PITCH]: 7, [P.OSC2_LEVEL]: 0.3,
+    [P.FILTER_TYPE]: 1, [P.FILTER_CUTOFF]: 1200, [P.FILTER_RES]: 0.35, [P.FILTER_ENV_AMT]: 0.5,
+    [P.LFO_ON]: 0,
+    [P.FX_REVERB_SIZE]: 0.7, [P.FX_REVERB_MIX]: 0.35,
+  }),
   // ------------------------------------------------- modern / fun (2020s)
   preset('hyperpop', 'Hyperpop Lead · 超流行主音', 'HYPERPOP', 'LEAD', 'saw', {
     ...envP(0.002, 0.18, 0.85, 0.12),
@@ -853,6 +889,10 @@ const PATCH_TRIM: Record<string, number> = {
   wind: 1.436,
   wobble: 0.585,
   wobblebass: 0.22,
+  wtglass: 1.187,
+  wtmetal: 2.902,
+  wtorgan: 0.393,
+  wtvocal: 0.718,
   wurli: 0.663,
 };
 

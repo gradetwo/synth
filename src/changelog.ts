@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.44.0',
+    date: '2026-09-10',
+    kind: 'sound',
+    items: [
+      [
+        '新增 **4 个波表音色**：**波表风琴**（organ 表，明亮通透）、**波表人声**（vocal 表 + 慢颤音，像合唱"啊"）、**波表玻璃**（glass 表 + 同步延迟，晶莹）、**波表金属**（metallic 表 + 高通，敲击金属感）——正好演示五张表里的四张，`PW` 旋钮就是选表。',
+        'Four **wavetable presets**: **Wavetable Organ** (the organ bank, bright and open), **Wavetable Vox** (the vocal bank with slow vibrato, a choir-like "ah"), **Wavetable Glass** (the glass bank with synced delay) and **Wavetable Metal** (the metallic bank through a high-pass). Between them they demonstrate four of the five banks, with the PW knob selecting which.',
+      ],
+    ],
+  },
+  {
     version: '1.43.2',
     date: '2026-09-10',
     kind: 'fix',
