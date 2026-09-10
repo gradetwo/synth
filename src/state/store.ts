@@ -39,6 +39,7 @@ import {
 } from './presets';
 import { midiLibrary, type Track } from '@/midi/library';
 import { temperamentById, temperamentTable } from '@/audio/tuning';
+import { bindCc, unbindParam } from '@/audio/ccmap';
 import { decodePatch, downloadText, encodePatch, shareUrl } from './share';
 import { setLang } from '@/i18n';
 
@@ -53,6 +54,8 @@ interface Snapshot {
   userPresets: Preset[];
   canUndo: boolean;
   canRedo: boolean;
+  /** Parameter waiting for a MIDI CC while CC Learn is armed. */
+  midiLearn: number | null;
   activeSlot: 'a' | 'b';
   slotFilled: { a: boolean; b: boolean };
   version: number;
@@ -116,6 +119,8 @@ class SynthStore {
   private currentPresetId = FACTORY_PRESETS[0].id;
   private transientPreset: Preset | null = null;
   private history: HistoryEntry[] = [];
+  /** Parameter waiting for a CC, or null (transient: not part of the document). */
+  private midiLearn: number | null = null;
   private historyIndex = -1;
   private historyTimer: number | undefined;
   private slots: { a: SynthState | null; b: SynthState | null } = { a: null, b: null };
@@ -145,6 +150,7 @@ class SynthStore {
       layout: this.layout,
       currentPresetId: this.currentPresetId,
       userPresets: this.userPresets,
+      midiLearn: this.midiLearn,
       canUndo: this.historyIndex > 0,
       canRedo: this.historyIndex >= 0 && this.historyIndex < this.history.length - 1,
       activeSlot: this.activeSlot,
@@ -667,6 +673,36 @@ class SynthStore {
     this.state = { ...this.state, power: on };
     engine.setMuted(!on);
     if (!on) engine.allNotesOff();
+    this.commit();
+  }
+
+  /** Arm CC Learn for a parameter (null clears it). Not persisted. */
+  armMidiLearn(param: number | null) {
+    this.midiLearn = param;
+    this.commit();
+  }
+
+  /** Bind the controller that just arrived to the armed parameter. */
+  bindMidiCc(param: number, cc: number) {
+    this.layout = { ...this.layout, ccMap: bindCc(this.layout.ccMap, param, cc) };
+    saveJson(LAYOUT_KEY, this.layout);
+    this.midiLearn = null;
+    this.mark();
+    this.commit();
+    return this.layout.ccMap;
+  }
+
+  clearMidiCc(param: number) {
+    this.layout = { ...this.layout, ccMap: unbindParam(this.layout.ccMap, param) };
+    saveJson(LAYOUT_KEY, this.layout);
+    this.mark();
+    this.commit();
+  }
+
+  clearAllMidiCc() {
+    this.layout = { ...this.layout, ccMap: [] };
+    saveJson(LAYOUT_KEY, this.layout);
+    this.mark();
     this.commit();
   }
 

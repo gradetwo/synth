@@ -8,6 +8,7 @@
 import type { ParamId } from '@/audio/params';
 import type { Lang } from '@/i18n';
 import { Param } from '@/audio/params';
+import { normalizeBindings, type CcBinding } from '@/audio/ccmap';
 
 export type ModuleId = 'osc1' | 'osc2' | 'filter' | 'env' | 'lfo' | 'matrix' | 'fx' | 'fx2';
 
@@ -71,6 +72,8 @@ export interface LayoutState {
   polyphony: number;
   /** Microtuning temperament id (see `audio/tuning`). */
   temperament: string;
+  /** MIDI CC → parameter bindings (see `audio/ccmap`). */
+  ccMap: CcBinding[];
 }
 
 export function defaultLayout(): LayoutState {
@@ -92,6 +95,7 @@ export function defaultLayout(): LayoutState {
     autoCollapsed: [],
     polyphony: 0,
     temperament: 'equal',
+    ccMap: [],
   };
 }
 
@@ -154,6 +158,7 @@ export function normalizeLayout(raw: unknown): LayoutState {
       typeof input.displayExpanded === 'boolean' ? input.displayExpanded : null,
     phoneDefaults: input.phoneDefaults === true,
     temperament: typeof input.temperament === 'string' ? input.temperament : 'equal',
+    ccMap: normalizeBindings(input.ccMap),
     polyphony: [0, 4, 8, 16, 32].includes(input.polyphony as number)
       ? (input.polyphony as number)
       : 0,

@@ -1,3 +1,4 @@
+import type { CcBinding } from '@/audio/ccmap';
 import { useSyncExternalStore } from 'react';
 import { store, type Snapshot } from '@/state/store';
 import type { ParamId } from '@/audio/params';
@@ -21,6 +22,14 @@ export function useSynth(): Snapshot {
 }
 
 /** One DSP parameter. */
+/** Persisted MIDI CC bindings (re-renders when they change). */
+export function useCcMap(): CcBinding[] {
+  return useSyncExternalStore(
+    (fn) => store.subscribe(fn),
+    () => store.getSnapshot().layout.ccMap,
+  );
+}
+
 export function useParam(id: ParamId): number {
   return useSyncExternalStore(
     subscribe,

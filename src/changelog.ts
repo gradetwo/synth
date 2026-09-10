@@ -18,6 +18,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.32.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '新增 **MIDI CC 映射（CC Learn）**：在「音频设置」里选一个控件 → 点「学习」→ 转动 MIDI 控制器上的旋钮，即完成绑定。之后该 CC 直接驱动这个参数（对数控件按对数缩放，开关/步进控件取整），映射**会记住**、可单独清除。CC1（调制轮）与 CC64（延音）未被映射时仍保留原有功能。',
+        'New **MIDI CC mapping (CC Learn)**: in Audio settings pick a control, press Learn, then move a knob on your MIDI controller. That CC then drives the parameter — logarithmic controls scale logarithmically, stepped controls round to whole steps. Mappings are **remembered** and can be cleared individually. CC1 (mod wheel) and CC64 (sustain) keep their built-in behaviour when unmapped.',
+      ],
+    ],
+  },
+  {
     version: '1.31.1',
     date: '2026-09-10',
     kind: 'fix',

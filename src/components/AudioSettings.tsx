@@ -3,6 +3,15 @@ import { t } from '@/i18n';
 import { engine } from '@/audio/engine';
 import { analysis } from '@/audio/analysis';
 import { store } from '@/state/store';
+import { useCcMap } from '@/hooks/useSynth';
+import { Param, SPEC_BY_ID, PARAM_SPECS } from '@/audio/params';
+import { ccForParam } from '@/audio/ccmap';
+
+/** Knobs a controller can drive, in panel order. */
+const CC_TARGETS = PARAM_SPECS.filter((spec) => !spec.discrete || spec.max > 1).map((spec) => ({
+  id: spec.id,
+  label: spec.label,
+}));
 
 /** Polyphony the user can pin; 0 = let the load monitor decide. */
 const POLY_CHOICES = [4, 8, 16, 32];
@@ -26,6 +35,9 @@ function Row({ label, value, hint }: { label: string; value: ReactNode; hint?: s
  */
 export function AudioSettings({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [poly, setPoly] = useState(engine.polyphony);
+  const [ccParam, setCcParam] = useState<number>(Param.FILTER_CUTOFF);
+  const [learn, setLearn] = useState<number | null>(null);
+  const ccMap = useCcMap();
   // Diagnostics are read during render; the subscription only bumps a counter
   // so a status change (running → suspended) repaints the panel.
   const [, bump] = useState(0);
@@ -34,6 +46,7 @@ export function AudioSettings({ open, onClose }: { open: boolean; onClose: () =>
   const loadRef = useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => engine.onPolyphony(setPoly), []);
+  useEffect(() => store.subscribe(() => setLearn(store.getSnapshot().midiLearn)), []);
   useEffect(() => engine.onStatus(() => bump((n) => n + 1)), []);
 
   // Live numbers without re-rendering React: the panel is a readout.
@@ -136,6 +149,51 @@ export function AudioSettings({ open, onClose }: { open: boolean; onClose: () =>
                 ))}
               </div>
               <p className="audio-note">{t('audio.polyHint')}</p>
+            </div>
+
+            <div className="audio-cc">
+              <span className="audio-label">{t('cc.title')}</span>
+              <p className="audio-note">{t('cc.hint')}</p>
+              <div className="audio-cc-row">
+                <select
+                  value={ccParam}
+                  aria-label={t('cc.param')}
+                  onChange={(event) => {
+                    setCcParam(Number(event.target.value));
+                    store.armMidiLearn(null);
+                  }}
+                >
+                  {CC_TARGETS.map((spec) => (
+                    <option key={spec.id} value={spec.id}>
+                      {spec.label}
+                    </option>
+                  ))}
+                </select>
+                {learn === ccParam ? (
+                  <button type="button" className="roll-btn primary" onClick={() => store.armMidiLearn(null)}>
+                    {t('cc.waiting')}
+                  </button>
+                ) : (
+                  <button type="button" className="roll-btn" onClick={() => store.armMidiLearn(ccParam)}>
+                    {t('cc.learn')}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="roll-btn"
+                  disabled={ccForParam(ccMap, ccParam) == null}
+                  onClick={() => store.clearMidiCc(ccParam)}
+                >
+                  {t('cc.clear')}
+                </button>
+              </div>
+              <p className="audio-note">
+                {ccMap.length === 0
+                  ? t('cc.none')
+                  : ccMap
+                      .map((b) => `CC${b.cc} → ${SPEC_BY_ID[b.param]?.label ?? b.param}`)
+                      .join(' · ')}
+              </p>
             </div>
 
             {ctx && ctx.state !== 'running' ? (

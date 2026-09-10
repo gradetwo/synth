@@ -983,6 +983,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Export WAV (lossless)**: the same render with no encoder in the path — the way to tell an encoder artefact from a playback-chain one. Export rendering uses the full 32-voice pool (offline has no deadline), so long-release patches are not cut short by voice stealing.',
           ],
           [
+            '**MIDI CC 映射**：在「音频设置」里选控件 → 点「学习」→ 转动控制器旋钮即可绑定；对数控件按对数缩放、步进控件取整，映射会记住并可单独清除。CC1/CC64 未映射时仍保留调制轮与延音功能。',
+            '**MIDI CC mapping**: in Audio settings pick a control, press Learn, then move a knob on your controller — logarithmic controls scale logarithmically, stepped ones round to whole steps, and mappings are remembered and individually clearable. CC1 and CC64 keep their built-in behaviour while unmapped.',
+          ],
+          [
             '**微调律**：预设库里的「调律」可选平均律 / 纯律 / 毕达哥拉斯律 / 中庸律。偏移逐键送进内核，弯音、滑音、曲目播放都不受影响——纯律的三度更"甜"，代价是部分五度变窄，这是历史律法的取舍。选择会记住。',
             '**Microtuning**: pick Equal, Just, Pythagorean or quarter-comma meantone under Tuning in the preset drawer. The per-key offsets go straight into the core, so bend, glide and file playback are unaffected — just intonation locks thirds in at the cost of a narrow fifth, which is the historical trade-off. The choice is remembered.',
           ],

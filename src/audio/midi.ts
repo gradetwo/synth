@@ -6,7 +6,8 @@
  */
 
 import { store } from '@/state/store';
-import { Param } from './params';
+import { Param, type ParamId } from './params';
+import { ccToParamValue, paramForCc } from './ccmap';
 import { engine } from './engine';
 import { noteBus } from './noteBus';
 import { t } from '@/i18n';
@@ -15,10 +16,9 @@ export type MidiAction =
   | { type: 'noteOn'; note: number; velocity: number }
   | { type: 'noteOff'; note: number }
   | { type: 'pitchBend'; value: number }
-  | { type: 'modWheel'; value: number }
   | { type: 'aftertouch'; value: number }
-  | { type: 'sustain'; value: number }
-  | { type: 'allNotesOff' };
+  | { type: 'allNotesOff' }
+  | { type: 'cc'; controller: number; value: number };
 
 /** Decode a raw MIDI message. Returns null for messages we ignore. */
 export function decodeMidi(data: ArrayLike<number>): MidiAction | null {
@@ -34,10 +34,12 @@ export function decodeMidi(data: ArrayLike<number>): MidiAction | null {
     case 0x80:
       return { type: 'noteOff', note: d1 };
     case 0xb0:
-      if (d1 === 1) return { type: 'modWheel', value: d2 / 127 };
-      if (d1 === 64) return { type: 'sustain', value: d2 / 127 };
+      // Control changes we do not interpret ourselves are still interesting:
+      // CC Learn binds them, and a mapped CC drives its parameter.
+      if (d1 === 1) return { type: 'cc', controller: 1, value: d2 / 127 };
+      if (d1 === 64) return { type: 'cc', controller: 64, value: d2 / 127 };
       if (d1 === 120 || d1 === 123) return { type: 'allNotesOff' };
-      return null;
+      return { type: 'cc', controller: d1, value: d2 / 127 };
     case 0xa0:
       // Polyphonic key pressure: treat it as channel pressure, which is what
       // the single AFTERTOUCH modulation source expects.
@@ -152,20 +154,32 @@ class MidiManager {
         if (this.sustain) this.sustained.add(action.note);
         else noteBus.noteOff(action.note);
         break;
-      case 'sustain': {
-        const on = action.value > 0.5;
-        if (this.sustain && !on) {
-          for (const note of this.sustained) noteBus.noteOff(note);
-          this.sustained.clear();
+      case 'cc': {
+        // Learn first: while armed, the next control change becomes the binding.
+        const learning = store.getSnapshot().midiLearn;
+        if (learning != null) {
+          store.bindMidiCc(learning, action.controller);
+          break;
         }
-        this.sustain = on;
+        const mapped = paramForCc(store.getSnapshot().layout.ccMap, action.controller);
+        if (mapped != null) {
+          const value = ccToParamValue(mapped, action.value);
+          if (value != null) store.setParam(mapped as ParamId, value);
+        }
+        // CC1 and CC64 are also hard-wired; they keep working when unmapped.
+        if (action.controller === 1 && mapped == null) engine.modWheel(action.value);
+        if (action.controller === 64) {
+          const on = action.value > 0.5;
+          if (this.sustain && !on) {
+            for (const note of this.sustained) noteBus.noteOff(note);
+            this.sustained.clear();
+          }
+          this.sustain = on;
+        }
         break;
       }
       case 'pitchBend':
         engine.pitchBend(action.value * store.getParam(Param.PITCH_BEND_RANGE));
-        break;
-      case 'modWheel':
-        engine.modWheel(action.value);
         break;
       case 'aftertouch':
         engine.aftertouch(action.value);

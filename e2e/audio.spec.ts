@@ -71,3 +71,25 @@ test.describe('microtuning', () => {
     await expect(page.locator('.d-temperament select')).toHaveValue('just');
   });
 });
+
+test.describe('MIDI CC mapping', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test('arms learn, shows the waiting state and clears a mapping', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(400);
+    await page.getByRole('button', { name: '预设库' }).click();
+    await page.getByRole('button', { name: '音频设置', exact: true }).click();
+    const panel = page.locator('.audio-settings.open');
+    await expect(panel).toContainText('尚未映射任何 CC');
+
+    await panel.locator('.audio-cc-row select').selectOption({ label: 'CUTOFF' });
+    await panel.getByRole('button', { name: '学习' }).click();
+    await expect(panel.getByRole('button', { name: /等待 CC/ })).toBeVisible();
+    // Cancelling leaves nothing bound.
+    await panel.getByRole('button', { name: /等待 CC/ }).click();
+    await expect(panel.getByRole('button', { name: '学习' })).toBeVisible();
+    await expect(panel).toContainText('尚未映射任何 CC');
+  });
+});
