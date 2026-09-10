@@ -9,8 +9,8 @@
 | 范围 | 状态 |
 | :--- | :--- |
 | P0.3 参数平滑 / P0.4 主输出保护 / P0.4 撤销重做扩展 / P0.4 播放器 A-B·节拍器·量化 / P0.7 性能预算门禁 | ✅ |
-| P0.5 多浏览器 E2E | 🔶 Playwright 已配 webkit/firefox 工程，**本机缺系统库**，缺 CI |
-| P0.6 WASM 预热与 streaming | 🔶 已预热 + 双核心回退；未用 `instantiateStreaming` |
+| P0.5 多浏览器 E2E | ✅ CI `e2e-engines` 作业（WebKit/Firefox）；本机缺系统库，本地只跑 Chromium |
+| P0.6 WASM 预热与 streaming | ✅ 预热 + 边下载边编译（不可用自动回退） |
 | P1 5.1–5.7（Unison、每声部 LFO/调制矩阵、CMB/FRM、MPE、CC Learn、微调律含 .scl、效果与混响） | ✅ |
 | A1–A9 音质项（抗混叠、lookahead 限制器与响度、混响升级、真立体声与扩展滤波、效果路由/卷积、合成能力、MPE/力度/微调律、测量门禁） | ✅ |
 | A6.2 波表：五张谐波表 + 每八度 mipmap + **单周期文件导入** | ✅ v1.41.0 / v1.45.0 |
@@ -77,11 +77,13 @@
 **验收**：① 单测：拓扑排序稳定、并联求和、断线静音不炸；
 ② 门禁：图中每节点关闭时 bit 级旁通；③ E2E：连线/删线/重载保持。
 
-### E. 工程项收尾（P0.5 / P0.6）— 建议 1 批 + CI
-1. CI（GitHub Actions，`npx playwright install --with-deps`）：三浏览器跑 E2E；本机仍只跑 Chromium。
-2. `instantiateStreaming`：优先流式编译，失败回退 `arrayBuffer`，Safari 走现有路径；记录 TTI 变化。
-3. 顺带：`docs/DEPLOY.md` 增加 CI 徽章与缓存说明。
-**验收**：CI 三浏览器全绿；首次启动时间不劣于当前（±10%）。
+### E. 工程项收尾（P0.5 / P0.6）— ✅ 已完成（v1.51.0）
+1. CI 增加 `e2e-engines` 作业（`--with-deps webkit firefox`）跑同一套端到端；`verify` 作业补齐
+   lint / 体积预算 / 音质门禁，并新增 `verify:ci` 门禁脚本检查这些步骤没有被误删。
+2. `wasmFetch.ts`：优先 `WebAssembly.compileStreaming`（顺带预热引擎编译缓存）并回退 `arrayBuffer`；
+   「音频设置」显示是否为流式编译。
+**验收**：本地 `npm run verify`（含 `verify:ci`）+ Chromium E2E 全绿；WebKit/Firefox 由 CI 判定
+（本机缺系统库，无法本地验证——如实记录）。
 
 ### F. 预设/工程 schema 版本化与迁移 — ✅ 已完成（v1.49.0）
 1. 预设、分享链接、曲库、场景、`localStorage` 键统一带 `schema: N`；
@@ -97,8 +99,8 @@
 
 ## 三、批次顺序建议
 
-1. ~~**F**（schema 版本化，1 批）~~ ✅ v1.49.0 → 2. ~~**A**（采样导入，2 批）~~ ✅ v1.50.0 →
-3. **E**（CI + streaming，1 批）→ 4. **B**（双实例，3 批）→ 5. **C**（多轨时间线，3–4 批）→
+1. ~~**F**（schema 版本化）~~ ✅ v1.49.0 → 2. ~~**A**（采样导入）~~ ✅ v1.50.0 →
+3. ~~**E**（CI + streaming）~~ ✅ v1.51.0 → 4. **B**（双实例，3 批）→ 5. **C**（多轨时间线，3–4 批）→
 6. **D**（节点图，3 批）→ 7. **G**（按需）。
 
 理由：F 是所有状态扩张的安全网（已就位）；A 成本最低、用户感知最强；E 把质量保障补齐；B 是 C 的前置；

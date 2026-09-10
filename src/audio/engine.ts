@@ -18,6 +18,7 @@ import simdWasmUrl from '@/generated/synth_core.wasm?url';
 import scalarWasmUrl from '@/generated/synth_core_scalar.wasm?url';
 import processorUrl from './worklet-processor.js?url';
 import { recoverFromStaleBuild } from '@/pwa/register';
+import { fetchCoreBytes } from './wasmFetch';
 import { t } from '@/i18n';
 import {
   MAX_ROUTES,
@@ -79,6 +80,8 @@ export type EngineStatus = 'idle' | 'loading' | 'running' | 'suspended' | 'error
 export interface EngineDiagnostics {
   simd: boolean;
   wasm: 'simd' | 'scalar' | 'none';
+  /** True when the core was compiled while it was still downloading (P0.6). */
+  streamed: boolean;
   contextState: string;
   sampleRate: number;
   polyphony: number;
@@ -121,6 +124,8 @@ export class AudioEngine {
   private preloaded: { variant: 'simd' | 'scalar'; bytes: ArrayBuffer } | null = null;
   private workletRegistered = false;
   private timeBuffer = new Float32Array(1024);
+  /** Whether the last core fetch compiled while streaming (diagnostics). */
+  private lastCoreStreamed = false;
 
   onAnalysis(fn: AnalysisListener): () => void {
     this.listeners.add(fn);
@@ -141,6 +146,8 @@ export class AudioEngine {
     return {
       simd: this.simdSupported,
       wasm: this.wasmVariant,
+      /** True when the core was compiled while it was still downloading. */
+      streamed: this.lastCoreStreamed,
       contextState: this.ctx?.state ?? 'none',
       sampleRate: this.sampleRate,
       polyphony: this.polyphony,
@@ -247,9 +254,11 @@ export class AudioEngine {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
     try {
-      const response = await fetch(wasmUrl, { signal: controller.signal });
-      if (!response.ok) throw new Error(t('err.wasmFetch', { status: response.status }));
-      return { variant, bytes: await response.arrayBuffer() };
+      // Streamed compile where the server and browser allow it: the worklet's
+      // own compile of the same bytes then hits the engine's compile cache.
+      const { bytes, streamed } = await fetchCoreBytes(wasmUrl, controller.signal);
+      this.lastCoreStreamed = streamed;
+      return { variant, bytes };
     } finally {
       clearTimeout(timer);
     }

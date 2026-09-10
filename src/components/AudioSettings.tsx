@@ -149,7 +149,16 @@ export function AudioSettings({ open, onClose }: { open: boolean; onClose: () =>
               value={diag.sampleRate ? `${(diag.sampleRate / 1000).toFixed(1)} kHz` : '—'}
             />
             <Row label={t('audio.latency')} value={latencyMs != null ? `${latencyMs} ms` : '—'} />
-            <Row label={t('audio.core')} value={diag.wasm === 'none' ? '—' : diag.wasm} />
+            <Row
+              label={t('audio.core')}
+              value={
+                diag.wasm === 'none'
+                  ? '—'
+                  : // Whether the core was compiled while it was still downloading
+                    // (P0.6): the difference is startup time, not sound.
+                    `${diag.wasm}${diag.streamed ? ` · ${t('audio.streamed')}` : ''}`
+              }
+            />
             <Row label={t('audio.peak')} value={<span ref={caption}>—</span>} />
             <Row
               label={t('audio.load')}

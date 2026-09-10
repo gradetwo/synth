@@ -38,8 +38,14 @@ test.describe('audio settings', () => {
 
   test('preloads the DSP core before the start gesture', async ({ page }) => {
     const wasmRequests: string[] = [];
+    const wasmTypes: string[] = [];
     page.on('request', (request) => {
       if (/synth_core.*\.wasm/.test(request.url())) wasmRequests.push(request.url());
+    });
+    page.on('response', (response) => {
+      if (/synth_core.*\.wasm/.test(response.url())) {
+        wasmTypes.push(response.headers()['content-type'] ?? '');
+      }
     });
     await page.goto('/');
     // No click yet: warming the audio path is what makes the first tap cheap.
@@ -48,6 +54,17 @@ test.describe('audio settings', () => {
     await page.waitForTimeout(500);
     // Starting must reuse the preloaded bytes, not fetch them a second time.
     expect(wasmRequests.length).toBe(1);
+    // `application/wasm` is what lets the browser compile the core while it is
+    // still downloading (P0.6); anything else silently costs startup time.
+    for (const type of wasmTypes) {
+      expect(type).toContain('application/wasm');
+    }
+    expect(wasmTypes.length).toBeGreaterThan(0);
+    // And the engine reports that it took the streaming path: the audio
+    // settings panel shows the core as `simd · streamed`.
+    await page.getByRole('button', { name: '预设库' }).click();
+    await page.getByRole('button', { name: '音频设置', exact: true }).click();
+    await expect(page.locator('.audio-settings.open')).toContainText('流式编译');
   });
 });
 

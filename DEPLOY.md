@@ -173,3 +173,15 @@ CMD ["nginx", "-g", "daemon off;"]
 | 更新后仍是旧版本 | 确认 `sw.js` 未被 CDN 长缓存；强制刷新一次 |
 | 首次加载后离线打不开 | 确认 `sw.js` 与 `manifest.webmanifest` 可访问且未被缓存策略拦截 |
 | 声音卡顿 | 关闭其他占用音频/CPU 的标签页；应用会自动降低复音数 |
+
+## 持续集成（GitHub Actions）
+
+`.github/workflows/ci.yml` 有两个作业：
+
+| 作业 | 内容 |
+| --- | --- |
+| `verify` | Rust 测试、前端/Worklet 测试、lint、生产构建、**SIMD 与标量两套 WASM 门禁**、dist 完整性、体积预算、音频质量门禁（时域+频域）、DSP 指纹基线、Chromium 端到端；`dist/` 作为产物上传 |
+| `e2e-engines` | 在 **WebKit 与 Firefox** 上跑同一套端到端（P0.5）；这些引擎涉及 AudioWorklet、WebAudio 手势、文件导入、Service Worker 与触屏，Chromium 跑得再绿也代表不了它们 |
+
+本地只需 `npm run verify` + `npx playwright test --project=chromium`：`npm run verify` 里含 `verify:ci`，
+它会检查上面的门禁没有被误删。WebKit/Firefox 的浏览器二进制需要系统库，本机没有安装，因此以 CI 为准。

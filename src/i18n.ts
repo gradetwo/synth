@@ -365,6 +365,7 @@ const DICT: Record<string, [string, string]> = {
   'wave.pink': ['粉噪', 'Pink'],
   'wave.brown': ['棕噪', 'Brown'],
   'wave.wavetable': ['波表（PW 选表）', 'Wavetable (PW picks it)'],
+  'audio.streamed': ['流式编译', 'streamed'],
   // --- sampler (A) ---------------------------------------------------------
   'wave.sample': ['采样', 'Sample'],
   'smp.import': ['导入采样', 'Import sample'],

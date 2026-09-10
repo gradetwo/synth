@@ -38,16 +38,25 @@ jobs:
       - name: WASM quality gates (SIMD + scalar)
         run: node scripts/verify-wasm.mjs && node scripts/verify-wasm.mjs src/generated/synth_core_scalar.wasm
 
+      - name: Lint
+        run: npm run lint
+
       - name: Dist integrity
         run: npm run verify:dist
+
+      - name: Payload budget
+        run: npm run verify:budget
+
+      - name: Audio quality gates (time + frequency domain)
+        run: npm run verify:audio
 
       - name: DSP regression baseline
         run: npm run test:dsp
 
-      - name: Install Playwright browser
+      - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Browser E2E smoke
+      - name: Browser E2E (Chromium)
         run: npm run test:e2e
 
       - uses: actions/upload-artifact@v4
@@ -55,4 +64,46 @@ jobs:
         with:
           name: dist
           path: dist
+          retention-days: 7
+
+  # P0.5: the same specs on the other two engines. The platform-sensitive parts
+  # are audio (AudioWorklet, WebAudio autoplay), file import, the service worker
+  # and touch — exactly what a Chromium-only run cannot speak for.
+  e2e-engines:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install clang (vendored C/C++ -> wasm)
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      - run: npm ci
+
+      - name: Production build (WASM + SW)
+        run: npm run build
+
+      - name: Install Playwright WebKit + Firefox
+        run: npx playwright install --with-deps webkit firefox
+
+      - name: Browser E2E (WebKit)
+        run: npx playwright test --project=webkit
+
+      - name: Browser E2E (Firefox)
+        run: npx playwright test --project=firefox
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-engines-failures
+          path: test-results
           retention-days: 7

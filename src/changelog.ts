@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.51.0',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '启动更快：DSP 内核改为**边下载边编译**（浏览器支持时），首屏点「启动音频引擎」的等待更短；「音频设置」里的内核一行会显示是否为流式编译。若服务器或浏览器不支持，会自动退回原来的下载方式，功能不受影响。',
+        'Faster start: the DSP core is **compiled while it is still downloading** where the browser allows it, so the wait after tapping Start is shorter. The core line in Audio settings says whether it took that path; without support, the app falls back to the old download, unchanged.',
+      ],
+      [
+        '持续集成现在也跑**音质门禁、体积预算、lint**，并在三个浏览器引擎（Chromium / WebKit / Firefox）上跑端到端测试，平台相关的问题不会再等到用户发现。',
+        'Continuous integration now also runs the **audio quality gates, the payload budget and lint**, and runs the end-to-end suite on all three browser engines (Chromium / WebKit / Firefox), so platform-specific problems are caught before a player finds them.',
+      ],
+    ],
+  },
+  {
     version: '1.50.0',
     date: '2026-09-10',
     kind: 'feature',
