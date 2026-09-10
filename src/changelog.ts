@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.39.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '录制的片段现在可以**量化**：播放器里选「量化」网格（十六分 / 八分 / 八分三连 / 四分），停止录制时把音符起点对齐到网格，音符长度与演奏的相对位置都不变。只作用于**新录制**，已有曲目与导入文件不受影响。',
+        'Recordings can now be **quantised**: pick a grid in the player (1/16, 1/8, 1/8 triplet, 1/4) and a take snaps to it when you stop recording, keeping note lengths and the take\'s own position. It only touches **new recordings** — existing tracks and imports are untouched.',
+      ],
+    ],
+  },
+  {
     version: '1.38.2',
     date: '2026-09-10',
     kind: 'fix',

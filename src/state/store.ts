@@ -724,6 +724,14 @@ export class SynthStore {
     this.commit();
   }
 
+  /** Quantise grid for recordings. */
+  setRecordQuantise(id: string) {
+    this.layout = { ...this.layout, recordQuantise: id };
+    saveJson(LAYOUT_KEY, this.layout);
+    this.mark();
+    this.commit();
+  }
+
   /** Live-input velocity curve. */
   setVelocityCurve(id: string) {
     this.layout = { ...this.layout, velocityCurve: id };

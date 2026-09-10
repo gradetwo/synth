@@ -190,3 +190,18 @@ test.describe('player keyboard shortcuts', () => {
     await expect(page.locator('.player.open')).toHaveCount(0);
   });
 });
+
+test('record quantise is selectable and remembered', async ({ page }) => {
+  await boot(page);
+  await page.locator('.player-open').click();
+  const select = page.locator('.player-quantise select');
+  await expect(select).toHaveValue('off');
+  await select.selectOption('1/16');
+  await expect(select).toHaveValue('1/16');
+
+  await page.reload();
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(300);
+  await page.locator('.player-open').click();
+  await expect(page.locator('.player-quantise select')).toHaveValue('1/16');
+});

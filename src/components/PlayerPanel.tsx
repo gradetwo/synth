@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { t } from '@/i18n';
+import { getLang, t } from '@/i18n';
 import { toast } from './Toast';
 import { haptic, HAPTIC } from '@/hooks/useInputMode';
 import { midiPlayer, type PlayerState } from '@/midi/player';
@@ -8,6 +8,7 @@ import { parseMidi } from '@/midi/smf';
 import { midiLibrary, trackTitle, type TrackGroup } from '@/midi/library';
 import { store } from '@/state/store';
 import { exportSongMidi, exportSongMp3, exportSongWav } from '@/midi/export';
+import { QUANTISE_GRIDS, quantiseLabel, quantiseNotes, type QuantiseGrid } from '@/midi/quantise';
 import { TransportIcon } from './TransportIcon';
 
 const fmtTime = (s: number) => {
@@ -110,15 +111,23 @@ export function PlayerPanel({
     if (rec.recording) {
       const clip = recorder.stop();
       if (clip) {
+        // Quantising is a per-recording decision, applied as the take is saved.
+        const grid = store.getSnapshot().layout.recordQuantise as QuantiseGrid;
+        const quantised = grid === 'off' ? clip : { ...clip, notes: quantiseNotes(clip.notes, grid, clip.bpm) };
         midiLibrary.put({
           id: 'clip',
           title: [t('player.recordingName'), t('player.recordingName')],
           composer: t('player.recordedBy'),
-          song: clip,
+          song: quantised,
           group: 'clip',
         })
       store.mark();
-        toast(t('player.clipSaved', { n: clip.notes.length }));
+        toast(
+          t(grid === 'off' ? 'player.clipSaved' : 'player.clipSavedQuantised', {
+            n: String(quantised.notes.length),
+            grid: quantiseLabel(grid, getLang()),
+          }),
+        );
       }
       return;
     }
@@ -335,6 +344,22 @@ export function Transport({
       >
         <TransportIcon name={rec.recording ? 'stop' : 'record'} />
       </button>
+      <label className="player-quantise" title={t('player.quantiseHint')}>
+        <span>{t('player.quantise')}</span>
+        <select
+          value={store.getSnapshot().layout.recordQuantise}
+          onChange={(event) => {
+            haptic();
+            store.setRecordQuantise(event.target.value);
+          }}
+        >
+          {QUANTISE_GRIDS.map((grid) => (
+            <option key={grid.id} value={grid.id}>
+              {quantiseLabel(grid.id, getLang())}
+            </option>
+          ))}
+        </select>
+      </label>
       <button
         type="button"
         className={`player-btn${player.metronome ? ' on' : ''}`}

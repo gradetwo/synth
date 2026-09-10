@@ -249,6 +249,9 @@ const DICT: Record<string, [string, string]> = {
   'player.groupClip': ['录制', 'Recordings'],
   'player.groupImported': ['导入', 'Imported'],
   'player.groupBuiltin': ['内置曲目', 'Built-in'],
+  'player.quantise': ['量化', 'Quantise'],
+  'player.quantiseHint': ['录制结束时把音符对齐到网格（不影响已有曲目）', 'Snap a recording to the grid when it is saved (does not touch existing tracks)'],
+  'player.clipSavedQuantised': ['已保存录制（{n} 个音，已按 {grid} 量化）', 'Recording saved ({n} notes, quantised to {grid})'],
   'player.clipSaved': [
     '录制完成 · {n} 个音符 · 点「编辑」可在钢琴卷帘里修改',
     'Take finished · {n} notes — tap Edit to tweak it in the piano roll',

@@ -77,6 +77,8 @@ export interface LayoutState {
   ccMap: CcBinding[];
   /** Live-input velocity curve (see `audio/velocity`). */
   velocityCurve: string;
+  /** Quantise grid applied to recordings ('off' = leave the take alone). */
+  recordQuantise: string;
   /** Imported Scala scale, when the temperament is set to `custom`. */
   customTuning: { name: string; degrees: number[]; period: number } | null;
   /** MPE input: per-note bend and pressure from a channel-per-note controller. */
@@ -104,6 +106,7 @@ export function defaultLayout(): LayoutState {
     temperament: 'equal',
     ccMap: [],
     velocityCurve: 'linear',
+    recordQuantise: 'off',
     customTuning: null,
     mpe: false,
   };
@@ -172,6 +175,9 @@ export function normalizeLayout(raw: unknown): LayoutState {
     velocityCurve: ['linear', 'soft', 'hard'].includes(input.velocityCurve as string)
       ? (input.velocityCurve as string)
       : 'linear',
+    recordQuantise: ['off', '1/16', '1/8', '1/8t', '1/4'].includes(input.recordQuantise as string)
+      ? (input.recordQuantise as string)
+      : 'off',
     customTuning: normalizeScale(input.customTuning),
     mpe: input.mpe === true,
     polyphony: [0, 4, 8, 16, 32].includes(input.polyphony as number)
