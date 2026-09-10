@@ -552,13 +552,17 @@ button{touch-action:manipulation}
 /* Audio start gate (browsers require a gesture before sound). */
 .start-overlay{position:fixed;inset:0;z-index:70;display:grid;place-items:center;
   background:var(--mask);backdrop-filter:blur(3px);padding:24px}
-.start-btn{display:flex;flex-direction:column;align-items:center;gap:10px;cursor:pointer;
-  background:linear-gradient(180deg,#ffc76a,#e69a24);color:#1a1206;border:1px solid #a06b17;
-  border-radius:16px;padding:22px 34px;font:700 15px/1 var(--grot);letter-spacing:.04em;
-  box-shadow:0 18px 50px var(--shadow-2),0 0 40px rgba(255,179,64,.25)}
-.start-btn small{font:500 10px/1.4 var(--grot);opacity:.72;letter-spacing:0}
-.start-icon{font-size:22px;line-height:1}
+.start-btn{display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;
+  background:linear-gradient(180deg,#ffd089,#e9a02c 62%,#d98c1c);color:#231703;
+  border:1px solid rgba(255,255,255,.35);border-radius:20px;padding:18px 40px 16px;
+  font:700 17px/1 var(--grot);letter-spacing:.08em;min-height:64px;
+  box-shadow:0 20px 44px var(--shadow-2),inset 0 1px 0 rgba(255,255,255,.5)}
+/* A quiet hint line under the label instead of a play glyph: the icon said
+   nothing the label did not, and it read as decoration. */
+.start-btn small{font:500 10.5px/1.4 var(--grot);opacity:.68;letter-spacing:.02em;
+  border-top:1px solid rgba(35,23,3,.18);padding-top:8px;min-width:180px;text-align:center}
 .start-btn:active{transform:translateY(1px)}
+.start-btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 
 /* PWA update banner. */
 .update-banner{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));
@@ -579,12 +583,17 @@ button{touch-action:manipulation}
               calc(20px + env(safe-area-inset-bottom))
               max(10px,env(safe-area-inset-left))}
   .notice{font-size:10px;padding:6px 8px;text-align:center}
-  .topbar{gap:10px;padding:10px 0 12px}
+  .topbar{gap:8px;padding:8px 0 10px;flex-wrap:nowrap;align-items:center}
   .brand-text .brand-sub{display:none}
-  .top-actions{gap:6px;width:100%;order:4}
-  .top-actions .tbtn{flex:1;justify-content:center;padding:10px 6px}
-  .preset-ctrl{order:3;flex-basis:100%;width:100%}
-  .preset-display{max-width:none}
+  /* The preset pager used to take a whole row of its own, which pushed the
+     modules down by ~64px. It now sits *in* the top row beside the icons: the
+     icons keep their size, and the pager gets what is left. */
+  .preset-ctrl{order:2;flex:1 1 auto;width:auto;flex-basis:auto;gap:4px;min-width:0;justify-content:flex-end}
+  .preset-display{max-width:none;padding:6px 8px;gap:0}
+  .preset-tag{font-size:7px;letter-spacing:.16em;margin-bottom:1px}
+  .preset-name{font-size:12.5px;line-height:1.15}
+  .top-actions{gap:6px;width:auto;order:3}
+  .top-actions .tbtn{flex:none;justify-content:center;padding:10px 8px}
   .display-row{gap:10px;margin-top:10px}
   .scope-body,.spec-body{height:104px}
   .monitor-body{height:104px;gap:8px;padding:8px}
@@ -810,6 +819,10 @@ body.module-dragging .module-grip{cursor:grabbing}
 .settings-inline{display:inline-flex;align-items:center;gap:6px;
   font:600 9px/1 var(--mono);letter-spacing:.06em;color:var(--txt-dim)}
 .settings-inline select{min-width:76px}
+/* The 1 / 2 instance switch: wide enough to be a target, not a 26px sliver. */
+.settings-row[data-setting='instance'] .seg{margin-bottom:0}
+.settings-row[data-setting='instance'] .seg button{min-width:56px;min-height:44px;
+  font-size:13px;letter-spacing:.04em}
 .settings-row .d-theme{padding:0;border:none;background:none;gap:6px;flex-wrap:wrap}
 .d-foot-actions.preset-actions{grid-template-columns:repeat(3,minmax(0,1fr))}
 
@@ -846,7 +859,18 @@ body.module-dragging .module-grip{cursor:grabbing}
 @media (pointer: coarse){
   .led{position:relative}
   .led::before{content:'';position:absolute;inset:-13px;border-radius:12px}
-  .seg button{min-height:40px}
+  .seg button{min-height:44px}
+  /* Everything in the settings drawer, the layer strip and the player is a
+     finger target: 44px is the smallest that is comfortable on a phone, and a
+     1/2 switch that is 30px wide is a mis-tap waiting to happen. */
+  .settings-row .roll-btn,.settings-row select,.settings-row .seg button{
+    min-height:44px;min-width:44px;font-size:11px;padding:10px 12px}
+  .settings-row .d-theme-btn{min-height:44px;padding:0 12px}
+  .settings-inline select{min-height:44px}
+  .layer-btn{width:44px;height:44px;font-size:12px}
+  .layer-row{gap:10px}
+  .d-reset{min-height:40px}
+  .d-theme-btn{min-height:40px}
   .nav-btn{width:40px}
   .d-close,.oct-btn,.dock-hide,.route-del,.pcard-del,.module-grip,.module-collapse{min-width:40px;min-height:40px}
   .chip{min-height:36px;padding:8px 12px}

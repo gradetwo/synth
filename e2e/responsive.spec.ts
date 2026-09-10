@@ -65,8 +65,35 @@ for (const device of DEVICES) {
       await expect(panel.locator('.settings-section')).toHaveCount(5);
       expect(await overflow(page), 'no sideways scrolling with the drawer open').toBeLessThanOrEqual(1);
 
+      // Touch targets: everything a finger has to hit is at least 40px, and the
+      // 1/2 instance switch is a real button rather than a 26px sliver.
+      const cramped = await panel.locator('.settings-section button, .settings-section select').evaluateAll((els) =>
+        els
+          .map((el) => el.getBoundingClientRect())
+          .filter((box) => box.width > 0 && box.height > 0 && (box.height < 40 || box.width < 40))
+          .map((box) => `${Math.round(box.width)}x${Math.round(box.height)}`),
+      );
+      expect(cramped).toEqual([]);
+
       await panel.locator('.d-close').click();
       await expect(panel).not.toBeVisible();
+
+      // Phone portrait: the preset pager shares the top row with the actions
+      // instead of taking a banner of its own. Wider portrait bars keep the
+      // roomier two-row arrangement.
+      if (device.width <= 430) {
+        const row = await page.evaluate(() => {
+          const ctrl = document.querySelector('.preset-ctrl') as HTMLElement | null;
+          const actions = document.querySelector('.top-actions.compact') as HTMLElement | null;
+          if (!ctrl || !actions) return null;
+          return {
+            ctrl: Math.round(ctrl.getBoundingClientRect().top),
+            actions: Math.round(actions.getBoundingClientRect().top),
+          };
+        });
+        expect(row).not.toBeNull();
+        expect(Math.abs(row!.ctrl - row!.actions)).toBeLessThan(16);
+      }
 
       // The keyboard is the one control that must never be off screen.
       const keyboard = page.locator('.keyboard, .kbd-dock').first();

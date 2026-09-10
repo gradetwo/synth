@@ -52,7 +52,6 @@ function StartOverlay({
     <div className="start-overlay" role="dialog" aria-label={t('app.start')}>
       <div className="start-card">
         <button type="button" className="start-btn" onClick={onStart} disabled={busy}>
-          <span className="start-icon">▶</span>
           <span>{busy ? t('app.starting') : t('app.start')}</span>
           <small>{t('app.startHint')}</small>
         </button>

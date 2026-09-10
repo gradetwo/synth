@@ -57,16 +57,22 @@ test.describe('iPhone portrait', () => {
     await page.locator('.preset-drawer .d-close').click();
     await expect(page.locator('.drawer.open')).toHaveCount(0);
 
-    // The preset stepper sits on its own full-width row.
+    // The preset stepper shares the top row on a phone instead of taking a full
+    // banner of its own, so the modules start higher. The brand and the icon
+    // actions keep their own size.
     const rows = await page.evaluate(() => {
       const r = (sel: string) => {
         const b = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
         return { y: Math.round(b.y), h: Math.round(b.height), w: Math.round(b.width) };
       };
-      return { brand: r('.brand'), preset: r('.preset-ctrl'), vw: window.innerWidth };
+      return { brand: r('.brand'), preset: r('.preset-ctrl'), topbar: r('.topbar'), vw: window.innerWidth };
     });
-    expect(rows.preset.y).toBeGreaterThanOrEqual(rows.brand.y + rows.brand.h - 2);
-    expect(rows.preset.w).toBeGreaterThan(rows.vw * 0.9);
+    // Same row: the stepper's top is inside the brand's band…
+    expect(rows.preset.y).toBeLessThan(rows.brand.y + rows.brand.h);
+    // …and it is a compact pill, not the full width of the screen.
+    expect(rows.preset.w).toBeLessThan(rows.vw * 0.85);
+    // One row instead of two: the bar is a phone bar, not a banner.
+    expect(rows.topbar.h).toBeLessThan(80);
 
     // Overflow menu exposes the secondary actions.
     await page.locator('.top-more .tbtn').click();

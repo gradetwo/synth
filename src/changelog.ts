@@ -23,6 +23,25 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.59.0',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '手机竖屏：**音色名横幅不再独占一行**，改为和上方图标同一行的紧凑胶囊（图标尺寸不变），模块因此整体上移；音色名与分类标签的字号也同步收紧。',
+        'Phone portrait: the **patch name banner no longer takes a row of its own** — it is a compact pill in the same row as the icon buttons (their size is unchanged), so the modules start higher. The name and tag type are tightened to match.',
+      ],
+      [
+        '「启动音频引擎」按钮重做：去掉那个突兀的播放图标，改成一枚干净的大按钮（更圆、更大的字号，副提示用分隔线放在下面）。',
+        'The Start Audio Engine button was redone: the jarring play glyph is gone, replaced by a clean large button — rounder, bigger label, with the hint under a divider.',
+      ],
+      [
+        '**触屏尺寸**：设置里的 `1 / 2` 正在编辑切换从 52×34 变成 56×44 的按钮，设置抽屉里的按钮/下拉、播放器的层静音/独奏（M/S）在触屏设备上一律不小于 44px——按手指的粒度，而不是鼠标的精度。',
+        '**Touch sizing**: the `1 / 2` editing switch in Settings is now a 56×44 button instead of 52×34, and every button and select in the settings drawer plus the player\'s layer mute/solo (M/S) is at least 44px on touch devices — sized for a finger, not a cursor.',
+      ],
+    ],
+  },
+  {
     version: '1.58.0',
     date: '2026-09-10',
     kind: 'feature',
