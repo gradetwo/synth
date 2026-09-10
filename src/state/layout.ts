@@ -77,6 +77,8 @@ export interface LayoutState {
   ccMap: CcBinding[];
   /** Imported Scala scale, when the temperament is set to `custom`. */
   customTuning: { name: string; degrees: number[]; period: number } | null;
+  /** MPE input: per-note bend and pressure from a channel-per-note controller. */
+  mpe: boolean;
 }
 
 export function defaultLayout(): LayoutState {
@@ -100,6 +102,7 @@ export function defaultLayout(): LayoutState {
     temperament: 'equal',
     ccMap: [],
     customTuning: null,
+    mpe: false,
   };
 }
 
@@ -164,6 +167,7 @@ export function normalizeLayout(raw: unknown): LayoutState {
     temperament: typeof input.temperament === 'string' ? input.temperament : 'equal',
     ccMap: normalizeBindings(input.ccMap),
     customTuning: normalizeScale(input.customTuning),
+    mpe: input.mpe === true,
     polyphony: [0, 4, 8, 16, 32].includes(input.polyphony as number)
       ? (input.polyphony as number)
       : 0,

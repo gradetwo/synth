@@ -8,31 +8,34 @@
 import { store } from '@/state/store';
 import { Param, type ParamId } from './params';
 import { ccToParamValue, paramForCc } from './ccmap';
+import { MpeRouter } from './mpe';
 import { engine } from './engine';
 import { noteBus } from './noteBus';
 import { t } from '@/i18n';
 
 export type MidiAction =
-  | { type: 'noteOn'; note: number; velocity: number }
-  | { type: 'noteOff'; note: number }
-  | { type: 'pitchBend'; value: number }
-  | { type: 'aftertouch'; value: number }
+  | { type: 'noteOn'; note: number; channel: number; velocity: number }
+  | { type: 'noteOff'; note: number; channel: number }
+  | { type: 'pitchBend'; channel: number; value: number }
+  | { type: 'aftertouch'; channel: number; value: number }
   | { type: 'allNotesOff' }
-  | { type: 'cc'; controller: number; value: number };
+  | { type: 'cc'; controller: number; value: number }
+  | { type: 'noteBend'; note: number; channel: number; value: number };
 
 /** Decode a raw MIDI message. Returns null for messages we ignore. */
 export function decodeMidi(data: ArrayLike<number>): MidiAction | null {
   if (!data || data.length < 2) return null;
   const status = data[0] & 0xf0;
+  const channel = data[0] & 0x0f;
   const d1 = data[1] ?? 0;
   const d2 = data[2] ?? 0;
   switch (status) {
     case 0x90:
       return d2 > 0
-        ? { type: 'noteOn', note: d1, velocity: d2 / 127 }
-        : { type: 'noteOff', note: d1 };
+        ? { type: 'noteOn', note: d1, channel, velocity: d2 / 127 }
+        : { type: 'noteOff', note: d1, channel };
     case 0x80:
-      return { type: 'noteOff', note: d1 };
+      return { type: 'noteOff', note: d1, channel };
     case 0xb0:
       // Control changes we do not interpret ourselves are still interesting:
       // CC Learn binds them, and a mapped CC drives its parameter.
@@ -43,11 +46,11 @@ export function decodeMidi(data: ArrayLike<number>): MidiAction | null {
     case 0xa0:
       // Polyphonic key pressure: treat it as channel pressure, which is what
       // the single AFTERTOUCH modulation source expects.
-      return { type: 'aftertouch', value: d2 / 127 };
+      return { type: 'aftertouch', channel, value: d2 / 127 };
     case 0xd0:
-      return { type: 'aftertouch', value: d1 / 127 };
+      return { type: 'aftertouch', channel, value: d1 / 127 };
     case 0xe0:
-      return { type: 'pitchBend', value: ((d2 << 7) | d1) / 8192 - 1 };
+      return { type: 'pitchBend', channel, value: ((d2 << 7) | d1) / 8192 - 1 };
     default:
       return null;
   }
@@ -71,6 +74,7 @@ class MidiManager {
   private inputs: MIDIInput[] = [];
   private listeners = new Set<() => void>();
   private sustain = false;
+  private mpe = new MpeRouter(false);
   private sustained = new Set<number>();
   private state: MidiSnapshot = {
     supported: typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator,
@@ -90,6 +94,17 @@ class MidiManager {
 
   private emit() {
     for (const fn of this.listeners) fn();
+  }
+
+  /** MPE mode: per-note bend and pressure from a channel-per-note controller. */
+  setMpe(enabled: boolean) {
+    for (const event of this.mpe.setEnabled(enabled)) {
+      engine.noteBend(event.note, event.semitones);
+    }
+  }
+
+  isMpe(): boolean {
+    return this.mpe.isEnabled();
   }
 
   async enable(): Promise<void> {
@@ -146,14 +161,29 @@ class MidiManager {
     const action = decodeMidi(event.data);
     if (!action) return;
     switch (action.type) {
-      case 'noteOn':
+      case 'noteOn': {
         this.sustained.delete(action.note);
+        // MPE first: a note that lands on a channel inherits that channel's
+        // current bend, so a controller that bends before pressing still works.
+        for (const event of this.mpe.handle(action)) {
+          if (event.type === 'bend') engine.noteBend(event.note, event.semitones);
+        }
         noteBus.noteOn(action.note, action.velocity);
         break;
-      case 'noteOff':
-        if (this.sustain) this.sustained.add(action.note);
-        else noteBus.noteOff(action.note);
+      }
+      case 'noteOff': {
+        if (this.sustain) {
+          this.sustained.add(action.note);
+          break;
+        }
+        // Release the per-note bend before the note ends, so the slot is clean
+        // for whatever note lands on that channel next.
+        for (const event of this.mpe.handle(action)) {
+          if (event.type === 'bend') engine.noteBend(event.note, event.semitones);
+        }
+        noteBus.noteOff(action.note);
         break;
+      }
       case 'cc': {
         // Learn first: while armed, the next control change becomes the binding.
         const learning = store.getSnapshot().midiLearn;
@@ -178,14 +208,30 @@ class MidiManager {
         }
         break;
       }
-      case 'pitchBend':
-        engine.pitchBend(action.value * store.getParam(Param.PITCH_BEND_RANGE));
+      case 'pitchBend': {
+        const events = this.mpe.handle(action);
+        if (events.length === 0) {
+          // No MPE: the wheel bends the whole synth.
+          engine.pitchBend(action.value * store.getParam(Param.PITCH_BEND_RANGE));
+          break;
+        }
+        for (const event of events) engine.noteBend(event.note, event.semitones);
         break;
-      case 'aftertouch':
+      }
+      case 'aftertouch': {
+        const events = this.mpe.handle(action);
+        // Per-note pressure would need a per-voice modulation source; until
+        // then channel pressure drives the global aftertouch either way.
+        void events;
         engine.aftertouch(action.value);
         break;
+      }
       case 'allNotesOff':
         this.sustained.clear();
+        for (const event of this.mpe.handle({ type: 'reset' })) {
+          engine.noteBend(event.note, event.semitones);
+        }
+        this.mpe.reset();
         noteBus.allOff();
         break;
       default:

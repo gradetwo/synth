@@ -18,6 +18,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.34.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '新增 **MPE 输入**（音频设置里开关）：为每个音提供**独立弯音**。控制器每个音占一个 MIDI 通道时，通道上的弯音只作用于该音，通道压力也随通道记录；关掉 MPE 时所有音立即回到原位（不会留下被弯住的音）。',
+        'New **MPE input** (toggle in Audio settings): **per-note pitch bend**. When a controller gives each note its own channel, a bend on that channel moves only that note, and channel pressure is tracked per channel; turning MPE off releases every bend immediately, so nothing is left detuned.',
+      ],
+      [
+        '音符在通道上「继承」当前弯音与压力：先弯后按也能得到正确音高；每个音结束时先复位弯音，避免复用的通道把下一个音带偏。',
+        'A new note inherits the current bend and pressure of its channel (so bending before pressing works), and every note-off resets its bend first, so a reused channel cannot drag the next note out of tune.',
+      ],
+    ],
+  },
+  {
     version: '1.33.0',
     date: '2026-09-10',
     kind: 'feature',

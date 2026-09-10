@@ -983,6 +983,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Export WAV (lossless)**: the same render with no encoder in the path — the way to tell an encoder artefact from a playback-chain one. Export rendering uses the full 32-voice pool (offline has no deadline), so long-release patches are not cut short by voice stealing.',
           ],
           [
+            '**MPE 输入**：在「音频设置」开启后，每个音拥有独立弯音——控制器每音一通道时，通道弯音只作用于该音；关闭时所有弯音立即复位。通道压力仍作用于整体（每音压力需要每声部调制源，属后续项）。',
+            '**MPE input**: with it on (Audio settings) every note bends on its own — a bend on a note\'s channel moves only that note, and switching MPE off releases them all. Channel pressure still applies globally (per-note pressure needs a per-voice modulation source, which is a later item).',
+          ],
+          [
             '**导入 .scl**：支持 Scala 调律文件（任意音数、比例或音分、非八度周期）；导入即切到该调律并记住。非 12 音音阶按音数逐键展开，不做 ±50 音分折算（那样会把 19 平均律这类音阶压坏）。',
             '**Import .scl**: Scala tuning files are supported (any note count, ratios or cents, non-octave periods); importing switches to the scale and remembers it. Non-12-note scales spread by degree instead of being folded into ±50 cents, which would collapse them.',
           ],

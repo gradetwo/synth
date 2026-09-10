@@ -122,3 +122,26 @@ test.describe('Scala scale import', () => {
     await expect(page.locator('.d-temperament select')).toHaveValue('custom');
   });
 });
+
+test.describe('MPE input', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test('toggles MPE and remembers it', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(400);
+    await page.getByRole('button', { name: '预设库' }).click();
+    await page.getByRole('button', { name: '音频设置', exact: true }).click();
+    const panel = page.locator('.audio-settings.open');
+    const toggle = panel.locator('.audio-toggle input');
+    await expect(toggle).not.toBeChecked();
+    await toggle.check();
+    await expect(toggle).toBeChecked();
+    await page.reload();
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole('button', { name: '预设库' }).click();
+    await page.getByRole('button', { name: '音频设置', exact: true }).click();
+    await expect(page.locator('.audio-settings.open .audio-toggle input')).toBeChecked();
+  });
+});

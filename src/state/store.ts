@@ -38,6 +38,7 @@ import {
   type PresetCategory,
 } from './presets';
 import { midiLibrary, type Track } from '@/midi/library';
+import { midi } from '@/audio/midi';
 import { temperamentById, temperamentTable } from '@/audio/tuning';
 import { scalaTable, type ScalaScale } from '@/audio/scala';
 import { bindCc, unbindParam } from '@/audio/ccmap';
@@ -712,6 +713,15 @@ class SynthStore {
     this.layout = { ...this.layout, temperament: id };
     saveJson(LAYOUT_KEY, this.layout);
     engine.setTuning(this.tuningTableFor(id));
+    this.mark();
+    this.commit();
+  }
+
+  /** MPE input mode. */
+  setMpe(enabled: boolean) {
+    this.layout = { ...this.layout, mpe: enabled };
+    saveJson(LAYOUT_KEY, this.layout);
+    midi.setMpe(enabled);
     this.mark();
     this.commit();
   }

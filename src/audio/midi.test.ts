@@ -3,16 +3,31 @@ import { decodeMidi } from './midi';
 
 describe('MIDI decoding', () => {
   it('decodes note on/off including velocity-0 note-on', () => {
-    expect(decodeMidi([0x90, 60, 127])).toEqual({ type: 'noteOn', note: 60, velocity: 1 });
-    expect(decodeMidi([0x90, 60, 64])).toEqual({ type: 'noteOn', note: 60, velocity: 64 / 127 });
-    expect(decodeMidi([0x90, 60, 0])).toEqual({ type: 'noteOff', note: 60 });
-    expect(decodeMidi([0x80, 60, 40])).toEqual({ type: 'noteOff', note: 60 });
+    // The channel rides along: MPE needs it to know which note a message is for.
+    expect(decodeMidi([0x90, 60, 127])).toEqual({
+      type: 'noteOn',
+      note: 60,
+      channel: 0,
+      velocity: 1,
+    });
+    expect(decodeMidi([0x92, 60, 64])).toEqual({
+      type: 'noteOn',
+      note: 60,
+      channel: 2,
+      velocity: 64 / 127,
+    });
+    expect(decodeMidi([0x90, 60, 0])).toEqual({ type: 'noteOff', note: 60, channel: 0 });
+    expect(decodeMidi([0x80, 60, 40])).toEqual({ type: 'noteOff', note: 60, channel: 0 });
   });
 
   it('decodes pitch bend to -1..1', () => {
-    expect(decodeMidi([0xe0, 0, 64])).toEqual({ type: 'pitchBend', value: 0 });
-    expect(decodeMidi([0xe0, 0, 0])).toEqual({ type: 'pitchBend', value: -1 });
-    expect(decodeMidi([0xe0, 127, 127])).toEqual({ type: 'pitchBend', value: 16383 / 8192 - 1 });
+    expect(decodeMidi([0xe0, 0, 64])).toEqual({ type: 'pitchBend', channel: 0, value: 0 });
+    expect(decodeMidi([0xe5, 0, 0])).toEqual({ type: 'pitchBend', channel: 5, value: -1 });
+    expect(decodeMidi([0xe0, 127, 127])).toEqual({
+      type: 'pitchBend',
+      channel: 0,
+      value: 16383 / 8192 - 1,
+    });
   });
 
   it('decodes CC1/CC64/CC123 and keeps other controllers addressable', () => {

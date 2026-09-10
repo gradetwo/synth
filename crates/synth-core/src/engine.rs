@@ -199,6 +199,9 @@ pub struct Engine {
     /// Per-note tuning offsets in cents. Lives here rather than in `Params` so
     /// it is an instrument setting that presets do not overwrite.
     tuning: [f32; crate::params::TUNING_NOTES],
+    /// Per-note pitch bend in semitones (MPE): every note bends on its own, so
+    /// this cannot be the single global `pitch_bend` wheel.
+    bends: [f32; crate::params::TUNING_NOTES],
     reverb: Reverb,
     /// One comb resonator per voice, used by the COMB filter type.
     combs: [CombFilter; MAX_VOICES],
@@ -281,6 +284,7 @@ impl Engine {
             silent_blocks: 0,
             ladders: [[LadderFilter::new(); 2]; MAX_VOICES],
             tuning: [0.0; crate::params::TUNING_NOTES],
+            bends: [0.0; crate::params::TUNING_NOTES],
             reverb: Reverb::new(),
             combs: [const { CombFilter::new() }; MAX_VOICES],
             pitch_bend: 0.0,
@@ -462,6 +466,17 @@ impl Engine {
         if (note as usize) < crate::params::TUNING_NOTES {
             self.tuning[note as usize] = cents.clamp(-1200.0, 1200.0);
         }
+    }
+
+    /// Bend one note (MPE). `semitones` is the already-scaled bend amount.
+    pub fn note_bend(&mut self, note: u32, semitones: f32) {
+        if (note as usize) < crate::params::TUNING_NOTES {
+            self.bends[note as usize] = semitones.clamp(-48.0, 48.0);
+        }
+    }
+
+    pub fn note_bend_at(&self, note: usize) -> f32 {
+        self.bends.get(note).copied().unwrap_or(0.0)
     }
 
     pub fn tuning_cents_at(&self, note: usize) -> f32 {
@@ -1082,7 +1097,9 @@ impl Engine {
         pitch_mod += mod_pitch * 12.0;
         pw_mod += mod_pwm * 0.4;
 
-        let bend = semitone_ratio(pitch_mod);
+        // The note's own bend (MPE) rides on top of the global wheel.
+        let note_bend = self.note_bend_at(voice.note as usize);
+        let bend = semitone_ratio(pitch_mod + note_bend);
 
         // --- oscillators ----------------------------------------------------
         // Unison renders each sub-voice through this scratch buffer; it is moved
@@ -2653,6 +2670,97 @@ mod tests {
         // Out-of-range keys are ignored rather than panicking.
         e.set_tuning_note(200, 50.0);
         assert_eq!(e.tuning_cents_at(200), 0.0);
+    }
+
+    /// MPE: bending one note must move that note and only that note. Measured
+    /// from the audio, because the bend is applied where the oscillator is
+    /// tuned rather than stored on the voice.
+    #[test]
+    fn per_note_bend_moves_only_that_note() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        for index in 0..crate::params::MOD_ROUTES {
+            e.set_route(index, 0, 0, 0.0, false);
+        }
+
+        /// Frequency from upward zero crossings — good to a fraction of a Hz
+        /// over a second of a clean sine, which is all this test needs.
+        fn measured_hz(e: &mut Engine) -> f32 {
+            let frames = 24_000;
+            let mut buffer = vec![0.0f32; frames];
+            for chunk in buffer.chunks_mut(128) {
+                e.process(128);
+                chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+            }
+            let mut crossings = 0;
+            let mut first = None;
+            let mut last = 0;
+            for i in 1..frames {
+                if buffer[i - 1] < 0.0 && buffer[i] >= 0.0 {
+                    crossings += 1;
+                    if first.is_none() {
+                        first = Some(i);
+                    }
+                    last = i;
+                }
+            }
+            let span = (last - first.unwrap_or(0)) as f32;
+            if crossings < 2 || span <= 0.0 {
+                return 0.0;
+            }
+            (crossings - 1) as f32 * 48_000.0 / span
+        }
+
+        // One note, bent: the pitch must rise by exactly two semitones.
+        e.note_on(67, 1.0);
+        let plain = measured_hz(&mut e);
+        e.note_bend(67, 2.0);
+        let bent = measured_hz(&mut e);
+        assert!(
+            (bent / plain - 2.0f32.powf(2.0 / 12.0)).abs() < 0.01,
+            "bend was not two semitones: {plain:.1} Hz -> {bent:.1} Hz"
+        );
+        e.note_bend(67, 0.0);
+        let restored = measured_hz(&mut e);
+        assert!(
+            (restored / plain - 1.0).abs() < 0.01,
+            "clearing the bend did not restore the note: {plain:.1} -> {restored:.1}"
+        );
+
+        // A second note must be untouched by the first note's bend.
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        for index in 0..crate::params::MOD_ROUTES {
+            e.set_route(index, 0, 0, 0.0, false);
+        }
+        e.note_on(60, 1.0);
+        let low = measured_hz(&mut e);
+        e.note_bend(67, 7.0); // bend a note that is not sounding
+        let low_after = measured_hz(&mut e);
+        assert!(
+            (low_after / low - 1.0).abs() < 0.005,
+            "bending another note moved this one: {low:.1} -> {low_after:.1}"
+        );
     }
 
     /// A quiet signal must pass through the limiter untouched (gain exactly 1)

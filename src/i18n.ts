@@ -188,6 +188,8 @@ const DICT: Record<string, [string, string]> = {
   'tuning.scala.badPeriod': ['周期无效', 'invalid period'],
   'tuning.title': ['调律', 'Tuning'],
   'tuning.changed': ['调律已改为 {name}', 'Tuning set to {name}'],
+  'midi.mpe': ['MPE 输入', 'MPE input'],
+  'midi.mpeHint': ['每个音独立弯音（每通道一音，通道压力仍作用于整体）', 'Per-note pitch bend (one note per channel; channel pressure still applies globally)'],
   'cc.title': ['MIDI CC 映射', 'MIDI CC mapping'],
   'cc.hint': ['选一个控件 → 点「学习」→ 转动 MIDI 控制器上的旋钮即可绑定（可在下面查看/清除）。映射会记住。',
     'Pick a control, press Learn, then move the knob on your MIDI controller. Mappings are listed below and remembered.'],

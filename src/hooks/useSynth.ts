@@ -30,6 +30,14 @@ export function useCcMap(): CcBinding[] {
   );
 }
 
+/** MPE input mode (persisted preference). */
+export function useMpe(): boolean {
+  return useSyncExternalStore(
+    (fn) => store.subscribe(fn),
+    () => store.getSnapshot().layout.mpe,
+  );
+}
+
 export function useParam(id: ParamId): number {
   return useSyncExternalStore(
     subscribe,

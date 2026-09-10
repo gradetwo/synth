@@ -3,7 +3,7 @@ import { t } from '@/i18n';
 import { engine } from '@/audio/engine';
 import { analysis } from '@/audio/analysis';
 import { store } from '@/state/store';
-import { useCcMap } from '@/hooks/useSynth';
+import { useCcMap, useMpe } from '@/hooks/useSynth';
 import { Param, SPEC_BY_ID, PARAM_SPECS } from '@/audio/params';
 import { ccForParam } from '@/audio/ccmap';
 
@@ -38,6 +38,7 @@ export function AudioSettings({ open, onClose }: { open: boolean; onClose: () =>
   const [ccParam, setCcParam] = useState<number>(Param.FILTER_CUTOFF);
   const [learn, setLearn] = useState<number | null>(null);
   const ccMap = useCcMap();
+  const mpe = useMpe();
   // Diagnostics are read during render; the subscription only bumps a counter
   // so a status change (running → suspended) repaints the panel.
   const [, bump] = useState(0);
@@ -129,6 +130,18 @@ export function AudioSettings({ open, onClose }: { open: boolean; onClose: () =>
               value={<span ref={loadRef} className="audio-load">—</span>}
               hint={t('audio.loadHint')}
             />
+
+            <div className="audio-poly">
+              <span className="audio-label">{t('midi.mpe')}</span>
+              <label className="audio-toggle">
+                <input
+                  type="checkbox"
+                  checked={mpe}
+                  onChange={(event) => store.setMpe(event.target.checked)}
+                />
+                <span>{t('midi.mpeHint')}</span>
+              </label>
+            </div>
 
             <div className="audio-poly">
               <span className="audio-label">{t('audio.polyphony')}</span>

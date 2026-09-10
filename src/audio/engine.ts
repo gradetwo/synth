@@ -453,6 +453,11 @@ export class AudioEngine {
     this.node?.port.postMessage({ type: 'mute', value: muted });
   }
 
+  /** Bend one note by `semitones` (MPE: bends are per note, not per synth). */
+  noteBend(note: number, semitones: number) {
+    this.node?.port.postMessage({ type: 'noteBend', note, semitones });
+  }
+
   /** Push a 128-entry cent table to the core (microtuning). */
   setTuning(table: Float32Array) {
     if (!this.node) return;

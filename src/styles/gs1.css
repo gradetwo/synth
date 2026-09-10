@@ -1703,3 +1703,8 @@ input,textarea,[contenteditable='true']{
 .audio-cc-row select{flex:1;min-width:0;font:600 11px/1.4 var(--grot);color:var(--txt-1);
   background:var(--fill-2);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
 .audio-cc-row .roll-btn{flex:0 0 auto;padding:6px 12px}
+
+/* Checkbox row in the audio panel (MPE). */
+.audio-toggle{display:flex;align-items:flex-start;gap:8px;cursor:pointer;
+  font:500 10.5px/1.5 var(--grot);color:var(--txt-dim)}
+.audio-toggle input{accent-color:var(--accent);margin-top:1px}
