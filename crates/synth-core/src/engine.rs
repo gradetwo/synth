@@ -11,8 +11,9 @@ use crate::dsp::lfo::Lfo;
 use crate::dsp::simd;
 use crate::dsp::comb::CombFilter;
 use crate::dsp::ladder::LadderFilter;
-use crate::dsp::noise::{NoiseColour, NoiseGen};
+use crate::dsp::noise::NoiseGen;
 use crate::dsp::reverb::{Reverb, ReverbParams};
+use crate::dsp::wavetable::{CycleError, Table, BASE_LEN as WT_BASE_LEN};
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_limit, Rng};
 use crate::fft::Spectrum;
 use crate::params::{
@@ -205,6 +206,15 @@ pub struct Engine {
     /// Band-limited harmonic tables, one bank per recipe. Filled in `init`:
     /// building them is not const-constructible, and they never change after.
     tables: Vec<crate::dsp::wavetable::Table>,
+    /// Imported single-cycle wavetable (A6.2), if the player loaded one. It sits
+    /// beside `tables` rather than replacing them so a patch that asks for the
+    /// user table on a machine that has none still plays a factory bank instead
+    /// of falling silent.
+    user_table: Option<crate::dsp::wavetable::Table>,
+    /// Where an imported cycle is staged before `import_wavetable` reads it.
+    /// A field rather than a second static: the worklet writes here directly and
+    /// the engine already owns the storage.
+    wt_scratch: [f32; WT_BASE_LEN],
     /// One four-pole low-pass per voice per oscillator side.
     ladders: [[LadderFilter; 2]; MAX_VOICES],
     /// Per-note tuning offsets in cents. Lives here rather than in `Params` so
@@ -296,6 +306,8 @@ impl Engine {
             noise: [[NoiseGen::new(); 2]; MAX_VOICES],
             wt_phase: [[0.0; 2]; MAX_VOICES],
             tables: Vec::new(),
+            user_table: None,
+            wt_scratch: [0.0; WT_BASE_LEN],
             ladders: [[LadderFilter::new(); 2]; MAX_VOICES],
             tuning: [0.0; crate::params::TUNING_NOTES],
             bends: [0.0; crate::params::TUNING_NOTES],
@@ -426,6 +438,40 @@ impl Engine {
                 self.vm.voices[slot].released = true;
             }
         }
+    }
+
+    /// Where the host stages an imported cycle, then calls
+    /// [`Engine::import_wavetable`]. The samples land straight in engine memory
+    /// instead of going through a copy on the way in.
+    pub fn wavetable_scratch_ptr(&mut self) -> *mut f32 {
+        self.wt_scratch.as_mut_ptr()
+    }
+
+    /// Build a mipmapped table from [`Engine::wavetable_scratch_ptr`].
+    ///
+    /// Returns 0 on success, or the numeric [`CycleError`] the host should
+    /// explain to the player. Analysis only — never called from `process`.
+    pub fn import_wavetable(&mut self, len: usize) -> i32 {
+        let len = len.min(self.wt_scratch.len());
+        match Table::from_cycle(&self.wt_scratch[..len]) {
+            Ok(table) => {
+                self.user_table = Some(table);
+                0
+            }
+            Err(CycleError::TooShort) => 1,
+            Err(CycleError::Silent) => 2,
+            Err(CycleError::NotFinite) => 3,
+        }
+    }
+
+    /// Drop the imported table. Patches asking for it fall back to the factory
+    /// banks themselves, so this cannot leave a silent patch behind.
+    pub fn clear_wavetable(&mut self) {
+        self.user_table = None;
+    }
+
+    pub fn has_wavetable(&self) -> bool {
+        self.user_table.is_some()
     }
 
     pub fn set_route(&mut self, index: usize, src: u32, dst: u32, amount: f32, enabled: bool) {
@@ -1172,6 +1218,8 @@ impl Engine {
                 &mut self.rng,
                 &mut self.noise[slot][which],
                 &self.tables,
+                self.user_table.as_ref(),
+                self.params.wt_user,
                 &mut self.wt_phase[slot][which],
                 sr,
                 &mut scratch[..],
@@ -1627,6 +1675,8 @@ fn render_oscillator(
     rng: &mut Rng,
     noise: &mut NoiseGen,
     tables: &[crate::dsp::wavetable::Table],
+    user_table: Option<&Table>,
+    use_user_table: bool,
     wt_phase: &mut f32,
     sample_rate: f32,
     scratch: &mut [f32],
@@ -1682,10 +1732,15 @@ fn render_oscillator(
             if params.wave == crate::params::Wave::Wavetable && !tables.is_empty() {
                 // The pulse-width control picks the recipe: 0.05..0.95 maps onto
                 // the five banks, so one knob covers "which table" without a new
-                // parameter and without a new UI control.
+                // parameter and without a new UI control. An imported cycle is
+                // its own bank and is chosen by its own switch instead, so the
+                // factory mapping keeps meaning exactly what it meant before.
                 let recipe = ((pw.clamp(0.0, 1.0) * 4.0).round() as usize)
                     .min(crate::dsp::wavetable::RECIPES.len() - 1);
-                let table = &tables[recipe];
+                let table = match (use_user_table, user_table) {
+                    (true, Some(imported)) => imported,
+                    _ => &tables[recipe],
+                };
                 let level = table.level_for(freq, sample_rate);
                 let step = freq / sample_rate;
                 let mut phase = *wt_phase;
@@ -2940,6 +2995,186 @@ mod tests {
             ratio < -60.0,
             "wavetable aliases: between-harmonic energy {ratio:.1} dB below the fundamental"
         );
+    }
+
+    // ------------------------------------------------ imported single cycles
+
+    /// Stage a cycle in engine memory and import it, exactly as the worklet
+    /// does: write into the scratch buffer, then ask for the analysis.
+    fn import_cycle(e: &mut Engine, cycle: &[f32]) -> i32 {
+        let ptr = e.wavetable_scratch_ptr();
+        unsafe {
+            core::ptr::copy_nonoverlapping(cycle.as_ptr(), ptr, cycle.len());
+        }
+        e.import_wavetable(cycle.len())
+    }
+
+    fn cycle_of(len: usize, f: impl Fn(f32) -> f32) -> Vec<f32> {
+        (0..len)
+            .map(|index| f(core::f32::consts::TAU * index as f32 / len as f32))
+            .collect()
+    }
+
+    /// Render one A4 note of a wavetable patch and hand back the left channel.
+    fn render_wavetable_note(e: &mut Engine, pw: f32) -> Vec<f32> {
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Wavetable as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.9);
+        e.set_param(id::OSC1_PW, pw);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        for index in 0..crate::params::MOD_ROUTES {
+            e.set_route(index, 0, 0, 0.0, false);
+        }
+        e.note_on(69, 1.0);
+        let frames = 24_000;
+        let mut buffer = vec![0.0f32; frames];
+        for chunk in buffer.chunks_mut(128) {
+            e.process(128);
+            chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+        }
+        buffer
+    }
+
+    /// The switch has to actually swap the bank: a sine that was imported is one
+    /// harmonic, the factory bank sitting at the same knob position is not, and
+    /// with nothing imported the switch changes nothing at all.
+    #[test]
+    fn the_import_switch_selects_the_imported_cycle() {
+        let _guard = lock_engine();
+        let cycle = cycle_of(WT_BASE_LEN, |phase| phase.sin());
+        let f0 = note_to_hz(69.0);
+
+        // PW 1.0 = the brightest factory bank, so the contrast is unmistakable.
+        let mut e = new_engine(16);
+        let plain = render_wavetable_note(&mut e, 1.0);
+
+        let mut e = new_engine(16);
+        assert_eq!(import_cycle(&mut e, &cycle), 0, "clean cycle should import");
+        e.set_param(id::WT_USER, 0.0);
+        let factory = render_wavetable_note(&mut e, 1.0);
+
+        let mut e = new_engine(16);
+        assert_eq!(import_cycle(&mut e, &cycle), 0, "clean cycle should import");
+        e.set_param(id::WT_USER, 1.0);
+        let imported = render_wavetable_note(&mut e, 1.0);
+
+        let fifth = |buffer: &[f32]| bin_mag(buffer, f0 * 5.0, 48_000.0);
+        let fundamental = |buffer: &[f32]| bin_mag(buffer, f0, 48_000.0);
+        assert!(
+            fifth(&imported) < fundamental(&imported) * 1e-3,
+            "the imported sine should have no fifth harmonic, got {}",
+            fifth(&imported)
+        );
+        assert!(
+            fifth(&factory) > fundamental(&factory) * 0.1,
+            "the factory bank should still be there with the switch off"
+        );
+        assert!(
+            (fundamental(&plain) - fundamental(&factory)).abs() < fundamental(&plain) * 0.05,
+            "loading a table changes nothing until the switch is on"
+        );
+    }
+
+    /// An imported cycle obeys the same anti-aliasing rule as a factory bank:
+    /// nothing between the harmonics at a pitch that forces a short table.
+    #[test]
+    fn an_imported_cycle_is_band_limited_at_a_high_pitch() {
+        let _guard = lock_engine();
+        // A saw has energy at every harmonic, so a leaky import shows up here.
+        let cycle = cycle_of(WT_BASE_LEN, |phase| {
+            let mut sum = 0.0f32;
+            for k in 1..=WT_BASE_LEN / 2 {
+                sum += (k as f32 * phase).sin() / k as f32;
+            }
+            sum
+        });
+        let mut e = new_engine(16);
+        assert_eq!(import_cycle(&mut e, &cycle), 0);
+        e.set_param(id::WT_USER, 1.0);
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Wavetable as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.9);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        for index in 0..crate::params::MOD_ROUTES {
+            e.set_route(index, 0, 0, 0.0, false);
+        }
+        e.note_on(93, 1.0); // A6: the bank has to drop to a short table
+        let frames = 24_000;
+        let mut buffer = vec![0.0f32; frames];
+        for chunk in buffer.chunks_mut(128) {
+            e.process(128);
+            chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+        }
+        let f0 = note_to_hz(93.0);
+        let magnitude = |freq: f32| {
+            let w = core::f32::consts::TAU * freq / 48_000.0;
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (index, value) in buffer.iter().enumerate().skip(frames / 2) {
+                re += (*value as f64) * (w * index as f32).cos() as f64;
+                im -= (*value as f64) * (w * index as f32).sin() as f64;
+            }
+            (re * re + im * im).sqrt() / (frames / 2) as f64
+        };
+        let fundamental = magnitude(f0);
+        let mut worst = 0.0f64;
+        let mut k = 1;
+        while f0 * (k as f32 + 0.5) < 20_000.0 {
+            worst = worst.max(magnitude(f0 * (k as f32 + 0.5)));
+            k += 1;
+        }
+        let ratio = 20.0 * (worst / fundamental).log10();
+        assert!(
+            ratio < -60.0,
+            "the imported table aliases: between-harmonic energy {ratio:.1} dB down"
+        );
+    }
+
+    /// Import failures are reported, not silently accepted, and a patch that
+    /// asks for a table that is not there keeps making sound.
+    #[test]
+    fn a_bad_import_is_refused_and_a_missing_table_falls_back() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        assert_eq!(import_cycle(&mut e, &[0.0; 8]), 1, "too short");
+        assert_eq!(import_cycle(&mut e, &[0.0; WT_BASE_LEN]), 2, "silent");
+        assert_eq!(import_cycle(&mut e, &[0.3; WT_BASE_LEN]), 2, "only DC");
+        let mut nan = vec![0.0f32; WT_BASE_LEN];
+        nan[5] = f32::NAN;
+        assert_eq!(import_cycle(&mut e, &nan), 3, "not finite");
+        assert!(!e.has_wavetable(), "a refused import must not install a table");
+
+        // Switch on with nothing imported, and after clearing: still audible.
+        for stage in ["nothing imported", "cleared"] {
+            if stage == "cleared" {
+                assert_eq!(import_cycle(&mut e, &cycle_of(WT_BASE_LEN, f32::sin)), 0);
+                e.clear_wavetable();
+                assert!(!e.has_wavetable());
+            }
+            e.set_param(id::WT_USER, 1.0);
+            let buffer = render_wavetable_note(&mut e, 1.0);
+            let peak = buffer.iter().fold(0.0f32, |peak, value| peak.max(value.abs()));
+            assert!(peak > 0.01, "{stage}: the patch fell silent, peak {peak}");
+            e.note_off(69);
+            for _ in 0..40 {
+                e.process(128);
+            }
+        }
     }
 
     /// The noise wave ids must actually reach the coloured-noise filters: white

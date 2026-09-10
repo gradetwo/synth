@@ -94,10 +94,13 @@ pub mod id {
     pub const LFO2_ONESHOT: u32 = 77;
     /// Per-patch output trim (presets only; no UI control).
     pub const PATCH_GAIN: u32 = 78;
+    /// Play the imported single-cycle wavetable instead of a factory bank
+    /// (A6.2). Ignored when nothing has been imported.
+    pub const WT_USER: u32 = 79;
 }
 
-/// Highest parameter id + 1 (ids are 0..=78).
-pub const PARAM_COUNT: usize = 79;
+/// Highest parameter id + 1 (ids are 0..=79).
+pub const PARAM_COUNT: usize = 80;
 
 /// Number of keys the tuning table covers (MIDI 0..127).
 pub const TUNING_NOTES: usize = 128;
@@ -462,6 +465,8 @@ pub struct Params {
     /// in level. Deliberately not a UI control: it belongs to the patch, not to
     /// the player's master volume.
     pub patch_gain: f32,
+    /// Prefer the imported single-cycle wavetable over the factory banks.
+    pub wt_user: bool,
     pub master_tune: f32,
     /// 0 = poly, 1 = mono (retrigger), 2 = legato.
     pub voice_mode: u32,
@@ -483,6 +488,7 @@ impl Params {
         Self {
             master_volume: 0.75,
             patch_gain: 1.0,
+            wt_user: false,
             master_tune: 0.0,
             voice_mode: 0,
             pitch_bend_range: 2.0,
@@ -598,6 +604,7 @@ impl Params {
         match param_id {
             p::MASTER_VOLUME => self.master_volume = clamp01(value),
             p::PATCH_GAIN => self.patch_gain = value.clamp(0.0, 8.0),
+            p::WT_USER => self.wt_user = value >= 0.5,
             p::MASTER_TUNE => self.master_tune = value.clamp(-24.0, 24.0),
             p::VOICE_MODE => self.voice_mode = (value as u32).min(2),
             p::PITCH_BEND_RANGE => self.pitch_bend_range = value.clamp(0.0, 24.0),

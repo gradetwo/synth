@@ -9,7 +9,8 @@ use crate::engine::engine;
 use crate::params::{MAX_BLOCK_SIZE, MAX_VOICES, SPECTRUM_BINS};
 
 /// 2 added the true-peak / loudness / limiter meters.
-pub const ABI_VERSION: u32 = 2;
+/// 3 added the single-cycle wavetable import.
+pub const ABI_VERSION: u32 = 3;
 
 /// Initialise the engine. Returns 1 on success.
 #[no_mangle]
@@ -67,6 +68,39 @@ pub extern "C" fn gs_max_voices() -> u32 {
 #[no_mangle]
 pub extern "C" fn gs_abi_version() -> u32 {
     ABI_VERSION
+}
+
+// ------------------------------------------------------------ wavetable import
+
+/// Destination for an imported single-cycle waveform: the host writes up to
+/// `gs_wavetable_capacity()` `f32` samples here, then calls
+/// `gs_wavetable_import` with how many it wrote.
+#[no_mangle]
+pub extern "C" fn gs_wavetable_import_ptr() -> *mut f32 {
+    engine().wavetable_scratch_ptr()
+}
+
+#[no_mangle]
+pub extern "C" fn gs_wavetable_capacity() -> u32 {
+    crate::dsp::wavetable::BASE_LEN as u32
+}
+
+/// Build the mipmaps of the staged cycle: 0 = ok, 1 = too short, 2 = silent,
+/// 3 = not finite. Analysis runs on the message path, not inside `process`.
+#[no_mangle]
+pub extern "C" fn gs_wavetable_import(len: u32) -> i32 {
+    engine().import_wavetable(len as usize)
+}
+
+#[no_mangle]
+pub extern "C" fn gs_wavetable_clear() {
+    engine().clear_wavetable();
+}
+
+/// 1 when an imported cycle is loaded.
+#[no_mangle]
+pub extern "C" fn gs_wavetable_has() -> u32 {
+    engine().has_wavetable() as u32
 }
 
 // ------------------------------------------------------------------- controls
