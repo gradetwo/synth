@@ -9,6 +9,13 @@ import { getLang } from '@/i18n';
 import { midiPlayer } from './player';
 import { DEMO_SONGS, specToSong } from './songs';
 import type { MidiSong } from './smf';
+import { unwrap, wrap } from '@/state/persist';
+
+const KEY = 'gs1:library:v1';
+/** Most user tracks kept on disk; the newest win (a phone's storage is finite). */
+const MAX_STORED_TRACKS = 12;
+/** A track whose JSON is larger than this stays in memory for the session. */
+const MAX_STORED_BYTES = 512 * 1024;
 
 export type TrackGroup = 'builtin' | 'imported' | 'clip';
 
@@ -35,14 +42,94 @@ function builtinTracks(): Track[] {
   }));
 }
 
+/** Validate a stored song: a broken one is dropped rather than played. */
+function validSong(value: unknown): value is MidiSong {
+  if (!value || typeof value !== 'object') return false;
+  const song = value as MidiSong;
+  if (!Array.isArray(song.notes) || typeof song.bpm !== 'number' || !Number.isFinite(song.bpm)) return false;
+  return song.notes.every(
+    (note) =>
+      note &&
+      typeof note === 'object' &&
+      Number.isFinite(note.note) &&
+      Number.isFinite(note.start) &&
+      Number.isFinite(note.duration) &&
+      Number.isFinite(note.velocity),
+  );
+}
+
+function readStoredTracks(): Track[] {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return [];
+    const unwrapped = unwrap(JSON.parse(raw));
+    if (!unwrapped) return [];
+    const data = unwrapped.data as { tracks?: unknown };
+    if (!Array.isArray(data.tracks)) return [];
+    const out: Track[] = [];
+    for (const entry of data.tracks) {
+      if (!entry || typeof entry !== 'object') continue;
+      const track = entry as Track;
+      // Built-ins are not stored, and a track without a playable song is not a
+      // track: skip it rather than adding a row that does nothing.
+      if (typeof track.id !== 'string' || track.id.startsWith('demo:')) continue;
+      if (!Array.isArray(track.title) || track.title.length < 2) continue;
+      if (!validSong(track.song)) continue;
+      out.push({ ...track, group: track.id.startsWith('clip') ? 'clip' : 'imported' });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function readStoredId(): string | null {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return null;
+    const unwrapped = unwrap(JSON.parse(raw));
+    const data = unwrapped?.data as { currentId?: unknown };
+    return typeof data?.currentId === 'string' ? data.currentId : null;
+  } catch {
+    return null;
+  }
+}
+
 class MidiLibrary {
   private tracks: Track[] = builtinTracks();
   private currentId: string;
   private listeners = new Set<() => void>();
 
   constructor() {
-    this.currentId = this.tracks.find((track) => track.id === 'demo:arpeggio')?.id ?? this.tracks[0].id;
+    // Imported files and recordings are the player's own work: bringing them
+    // back after a reload is the difference between a toy and a tool. Built-ins
+    // always come from the build, never from storage.
+    this.tracks = [...this.tracks, ...readStoredTracks()];
+    const stored = readStoredId();
+    const fallback = this.tracks.find((track) => track.id === 'demo:arpeggio')?.id ?? this.tracks[0].id;
+    this.currentId = stored && this.tracks.some((track) => track.id === stored) ? stored : fallback;
     midiPlayer.load(this.getCurrent()!.song);
+    // Anything that could not be stored is dropped here rather than lingering
+    // in memory as a track that silently disappears on the next reload.
+    this.persist();
+  }
+
+  private persist(): void {
+    const userTracks = this.tracks.filter((track) => !track.id.startsWith('demo:'));
+    const kept: Track[] = [];
+    let bytes = 0;
+    for (let index = userTracks.length - 1; index >= 0 && kept.length < MAX_STORED_TRACKS; index--) {
+      const track = userTracks[index];
+      const size = JSON.stringify(track.song).length;
+      if (bytes + size > MAX_STORED_BYTES * MAX_STORED_TRACKS) break;
+      bytes += size;
+      kept.unshift(track);
+    }
+    try {
+      localStorage.setItem(KEY, JSON.stringify(wrap({ tracks: kept, currentId: this.currentId })));
+    } catch {
+      // Storage full or unavailable: the library still works for this session.
+    }
   }
 
   subscribe(fn: () => void): () => void {
@@ -76,6 +163,7 @@ class MidiLibrary {
     this.currentId = id;
     midiPlayer.load(track.song);
     if (options.autoplay !== false) midiPlayer.play();
+    this.persist();
     this.emit();
   }
 
@@ -84,6 +172,7 @@ class MidiLibrary {
     this.tracks = [...this.tracks.filter((tr) => tr.id !== track.id), track];
     this.currentId = track.id;
     midiPlayer.load(track.song);
+    this.persist();
     this.emit();
   }
 
@@ -106,6 +195,7 @@ class MidiLibrary {
     const next = this.tracks.find((track) => track.id === currentId) ?? this.tracks[0] ?? null;
     this.currentId = next?.id ?? '';
     midiPlayer.load(next?.song ?? null);
+    this.persist();
     this.emit();
   }
 
@@ -114,7 +204,10 @@ class MidiLibrary {
     if (id.startsWith('demo:')) return;
     this.tracks = this.tracks.filter((tr) => tr.id !== id);
     if (this.currentId === id) this.setCurrent(this.tracks[0]?.id ?? '', { autoplay: false });
-    else this.emit();
+    else {
+      this.persist();
+      this.emit();
+    }
   }
 }
 

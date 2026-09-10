@@ -171,6 +171,14 @@ test.describe('player MIDI import', () => {
     });
     await expect(page.locator('.player-track', { hasText: 'unit-test' })).toHaveCount(1);
     await expect(page.locator('.player-track.current')).toContainText('unit-test');
+
+    // The library is the player's own work: it has to survive a reload.
+    await page.reload();
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(300);
+    await page.locator('.player-open').click();
+    await expect(page.locator('.player-track', { hasText: 'unit-test' })).toHaveCount(1);
+    await expect(page.locator('.player-track.current')).toContainText('unit-test');
   });
 });
 
