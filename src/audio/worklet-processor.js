@@ -205,6 +205,14 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
       case 'modRoute':
         this.wasm.gs_set_mod_route(data.index, data.src, data.dst, data.amount, data.enabled ? 1 : 0);
         break;
+      case 'tuning':
+        // Microtuning: one key's cent offset. Sent as a burst when the
+        // temperament changes, so it is a plain message rather than an
+        // AudioParam.
+        if (this.wasm.gs_set_tuning_note) {
+          this.wasm.gs_set_tuning_note(Number(data.note) | 0, Number(data.cents) || 0);
+        }
+        break;
       case 'setPolyphony': {
         // A host request (the audio-settings panel) becomes the ceiling the
         // load monitor may fall below but never climb back over, and it is

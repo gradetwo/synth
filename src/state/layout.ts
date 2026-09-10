@@ -69,6 +69,8 @@ export interface LayoutState {
   autoCollapsed: ModuleId[];
   /** User-pinned polyphony ceiling; 0 = let the load monitor decide. */
   polyphony: number;
+  /** Microtuning temperament id (see `audio/tuning`). */
+  temperament: string;
 }
 
 export function defaultLayout(): LayoutState {
@@ -89,6 +91,7 @@ export function defaultLayout(): LayoutState {
     phoneDefaults: false,
     autoCollapsed: [],
     polyphony: 0,
+    temperament: 'equal',
   };
 }
 
@@ -150,6 +153,7 @@ export function normalizeLayout(raw: unknown): LayoutState {
     displayExpanded:
       typeof input.displayExpanded === 'boolean' ? input.displayExpanded : null,
     phoneDefaults: input.phoneDefaults === true,
+    temperament: typeof input.temperament === 'string' ? input.temperament : 'equal',
     polyphony: [0, 4, 8, 16, 32].includes(input.polyphony as number)
       ? (input.polyphony as number)
       : 0,

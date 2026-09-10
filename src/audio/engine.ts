@@ -453,6 +453,14 @@ export class AudioEngine {
     this.node?.port.postMessage({ type: 'mute', value: muted });
   }
 
+  /** Push a 128-entry cent table to the core (microtuning). */
+  setTuning(table: Float32Array) {
+    if (!this.node) return;
+    for (let note = 0; note < 128; note++) {
+      this.node.port.postMessage({ type: 'tuning', note, cents: table[note] ?? 0 });
+    }
+  }
+
   setPolyphony(value: number) {
     this.node?.port.postMessage({ type: 'setPolyphony', value });
   }

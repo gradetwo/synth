@@ -102,6 +102,18 @@ const LIMIT_RELEASE_S: f32 = 0.15;
 /// Peak-detector hold: how long the limiter remembers a transient.
 const LIMIT_PEAK_HOLD_S: f32 = 0.05;
 
+/// Frequency of a note number with an explicit master tune and tuning table.
+#[inline]
+fn pitch_hz_with(note: f32, master_tune: f32, tuning: &[f32; crate::params::TUNING_NOTES]) -> f32 {
+    let index = note.round() as i32;
+    let cents = if (0..crate::params::TUNING_NOTES as i32).contains(&index) {
+        tuning[index as usize]
+    } else {
+        0.0
+    };
+    note_to_hz(note + master_tune + cents / 100.0)
+}
+
 fn is_env_param(param_id: u32) -> bool {
     matches!(
         param_id,
@@ -184,6 +196,9 @@ pub struct Engine {
     silent_blocks: u32,
     /// One four-pole low-pass per voice per oscillator side.
     ladders: [[LadderFilter; 2]; MAX_VOICES],
+    /// Per-note tuning offsets in cents. Lives here rather than in `Params` so
+    /// it is an instrument setting that presets do not overwrite.
+    tuning: [f32; crate::params::TUNING_NOTES],
     reverb: Reverb,
     /// One comb resonator per voice, used by the COMB filter type.
     combs: [CombFilter; MAX_VOICES],
@@ -265,6 +280,7 @@ impl Engine {
             poly_request: 16,
             silent_blocks: 0,
             ladders: [[LadderFilter::new(); 2]; MAX_VOICES],
+            tuning: [0.0; crate::params::TUNING_NOTES],
             reverb: Reverb::new(),
             combs: [const { CombFilter::new() }; MAX_VOICES],
             pitch_bend: 0.0,
@@ -424,6 +440,34 @@ impl Engine {
         }
     }
 
+    /// Tuning offset for a (possibly fractional) note number.
+    #[inline]
+    fn tuning_cents(&self, note: f32) -> f32 {
+        let index = note.round() as i32;
+        if (0..crate::params::TUNING_NOTES as i32).contains(&index) {
+            self.tuning[index as usize]
+        } else {
+            0.0
+        }
+    }
+
+    /// Frequency of a note number in Hz, including master tune and microtuning.
+    #[inline]
+    pub fn pitch_hz(&self, note: f32) -> f32 {
+        note_to_hz(note + self.params.master_tune + self.tuning_cents(note) / 100.0)
+    }
+
+    /// Set one key's microtuning offset (cents).
+    pub fn set_tuning_note(&mut self, note: u32, cents: f32) {
+        if (note as usize) < crate::params::TUNING_NOTES {
+            self.tuning[note as usize] = cents.clamp(-1200.0, 1200.0);
+        }
+    }
+
+    pub fn tuning_cents_at(&self, note: usize) -> f32 {
+        self.tuning.get(note).copied().unwrap_or(0.0)
+    }
+
     pub fn set_max_polyphony(&mut self, n: usize) {
         self.poly_request = n.clamp(2, MAX_VOICES);
         self.apply_polyphony_cap();
@@ -467,7 +511,7 @@ impl Engine {
             return;
         }
         let vel = velocity.clamp(0.0, 1.0);
-        let freq = note_to_hz(note as f32 + self.params.master_tune);
+        let freq = self.pitch_hz(note as f32);
         match self.vm.note_on(note, vel, freq) {
             NoteOnResult::Allocated(slot) => self.retrigger(slot),
             NoteOnResult::Queued(victim) => {
@@ -523,7 +567,7 @@ impl Engine {
             self.mono_held[self.mono_len] = note;
             self.mono_len += 1;
         }
-        let freq = note_to_hz(note as f32 + self.params.master_tune);
+        let freq = self.pitch_hz(note as f32);
         // Legato only suppresses the envelope restart when a key is already held.
         let legato = self.params.voice_mode == 2 && was_held > 0;
         let slot = 0usize;
@@ -583,7 +627,7 @@ impl Engine {
             }
         } else {
             let last = self.mono_held[self.mono_len - 1];
-            let freq = note_to_hz(last as f32 + self.params.master_tune);
+            let freq = self.pitch_hz(last as f32);
             self.vm.voices[slot].note = last;
             self.vm.voices[slot].target_freq = freq;
         }
@@ -896,11 +940,12 @@ impl Engine {
     fn flush_pending(&mut self) {
         let sr = self.sample_rate;
         let tune = self.params.master_tune;
+        let tuning = self.tuning;
         let params = self.params.env;
         let fenv_params = self.params.filter_env;
         while let Some((slot, _note, _vel)) = self
             .vm
-            .flush_pending(|note| note_to_hz(note as f32 + tune))
+            .flush_pending(|note| pitch_hz_with(note as f32, tune, &tuning))
         {
             self.ladders[slot][0].reset();
             self.ladders[slot][1].reset();
@@ -2586,6 +2631,28 @@ mod tests {
             worst.0,
             worst.1
         );
+    }
+
+    /// Microtuning: a key offset by +100 cents must sound a semitone higher.
+    #[test]
+    fn microtuning_offsets_a_single_key() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        let base = e.pitch_hz(69.0);
+        assert!((base - 440.0).abs() < 0.01, "A4 should be 440 Hz, got {base}");
+        e.set_tuning_note(69, 100.0);
+        let raised = e.pitch_hz(69.0);
+        assert!(
+            (raised / base - 2.0f32.powf(1.0 / 12.0)).abs() < 1e-4,
+            "100 cents should be a semitone: {base} -> {raised}"
+        );
+        // Other keys are untouched, and master tune still applies on top.
+        assert!((e.pitch_hz(60.0) - 261.6256).abs() < 0.01);
+        e.set_param(id::MASTER_TUNE, 12.0);
+        assert!((e.pitch_hz(60.0) - 523.2511).abs() < 0.05);
+        // Out-of-range keys are ignored rather than panicking.
+        e.set_tuning_note(200, 50.0);
+        assert_eq!(e.tuning_cents_at(200), 0.0);
     }
 
     /// A quiet signal must pass through the limiter untouched (gain exactly 1)

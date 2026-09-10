@@ -176,6 +176,8 @@ const DICT: Record<string, [string, string]> = {
     '设备负载偏高：已自动把复音数降到 {n}（监视器可查看 DSP 负载%）',
     'Device load is high: polyphony dropped to {n} automatically (the monitor shows the DSP load)',
   ],
+  'tuning.title': ['调律', 'Tuning'],
+  'tuning.changed': ['调律已改为 {name}', 'Tuning set to {name}'],
   'audio.title': ['音频设置', 'Audio settings'],
   'audio.sub': ['引擎状态 · 采样率 · 延迟 · 复音数 · 实时负载', 'Engine · sample rate · latency · polyphony · live load'],
   'audio.engine': ['引擎状态', 'Engine'],

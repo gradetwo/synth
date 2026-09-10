@@ -18,6 +18,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.31.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '新增**微调律**（预设库里的「调律」）：**平均律 / 纯律 / 毕达哥拉斯律 / 中庸律**四种，逐键的音分偏移直接送进 DSP 内核，音高、弯音、滑音、曲目播放全部照常工作，只是每个音落在它该在的位置。选择会记住。',
+        'New **microtuning** (Tuning in the preset drawer): **Equal, Just, Pythagorean and quarter-comma meantone**, with per-key cent offsets sent into the DSP core. Pitch bend, glide, the keyboard and file playback all keep working — the notes simply land where the temperament puts them. The choice is remembered.',
+      ],
+      [
+        '纯律/中庸律的念珠三度会明显"甜"起来，代价是某些五度会变窄——这正是历史律法的取舍；偏移一律折算到 ±50 音分以内，读起来才是"略低"而不是"高近半音"。',
+        'Just and meantone make thirds lock in, at the cost of a narrow fifth — which is exactly the historical trade-off. Offsets are folded into ±50 cents so a pitch reads as "slightly flat" rather than "nearly a semitone sharp".',
+      ],
+    ],
+  },
+  {
     version: '1.30.1',
     date: '2026-09-10',
     kind: 'feature',

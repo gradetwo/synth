@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { store } from '@/state/store';
 import { checkForUpdate } from '@/pwa/register';
+import { TEMPERAMENTS } from '@/audio/tuning';
 import { useSynth } from '@/hooks/useSynth';
 import { PRESET_CATEGORIES, type PresetCategory } from '@/state/presets';
 import { WaveIcon } from './controls';
@@ -33,6 +34,11 @@ export function PresetDrawer({
 }) {
   const { userPresets, currentPresetId } = useSynth();
   const lang = useLang();
+  /** Temperament names are bilingual pairs; pick by the current language. */
+  const temperamentLabel = (id: string) => {
+    const temperament = TEMPERAMENTS.find((x) => x.id === id) ?? TEMPERAMENTS[0];
+    return temperament.name[lang === 'zh' ? 0 : 1];
+  };
   const theme = useTheme();
   const contrast = useContrast();
   const hapticsOn = useHaptics();
@@ -192,6 +198,23 @@ export function PresetDrawer({
             >
               {t('drawer.changelog')}
             </button>
+            <label className="d-temperament">
+              <span>{t('tuning.title')}</span>
+              <select
+                value={store.getSnapshot().layout.temperament}
+                onChange={(event) => {
+                  haptic();
+                  store.setTemperament(event.target.value);
+                  toast(t('tuning.changed', { name: temperamentLabel(event.target.value) }));
+                }}
+              >
+                {TEMPERAMENTS.map((temperament) => (
+                  <option key={temperament.id} value={temperament.id}>
+                    {temperamentLabel(temperament.id)}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
               type="button"
               className="d-reset"

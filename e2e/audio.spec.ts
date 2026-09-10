@@ -48,3 +48,26 @@ test.describe('audio settings', () => {
     expect(wasmRequests.length).toBe(1);
   });
 });
+
+test.describe('microtuning', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test('offers temperaments in the drawer and remembers the choice', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(400);
+    await page.getByRole('button', { name: '预设库' }).click();
+    const select = page.locator('.d-temperament select');
+    await expect(select).toBeVisible();
+    await expect(select.locator('option')).toHaveCount(4);
+    await select.selectOption('just');
+    await expect(select).toHaveValue('just');
+
+    // The choice survives a reload, which is what "remembers" means here.
+    await page.reload();
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole('button', { name: '预设库' }).click();
+    await expect(page.locator('.d-temperament select')).toHaveValue('just');
+  });
+});

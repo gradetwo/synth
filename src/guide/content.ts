@@ -983,6 +983,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Export WAV (lossless)**: the same render with no encoder in the path — the way to tell an encoder artefact from a playback-chain one. Export rendering uses the full 32-voice pool (offline has no deadline), so long-release patches are not cut short by voice stealing.',
           ],
           [
+            '**微调律**：预设库里的「调律」可选平均律 / 纯律 / 毕达哥拉斯律 / 中庸律。偏移逐键送进内核，弯音、滑音、曲目播放都不受影响——纯律的三度更"甜"，代价是部分五度变窄，这是历史律法的取舍。选择会记住。',
+            '**Microtuning**: pick Equal, Just, Pythagorean or quarter-comma meantone under Tuning in the preset drawer. The per-key offsets go straight into the core, so bend, glide and file playback are unaffected — just intonation locks thirds in at the cost of a narrow fifth, which is the historical trade-off. The choice is remembered.',
+          ],
+          [
             '**更新记录**：预设库面板里的「更新记录」列出当前版本与历史版本的改动（音质 / 新功能 / 修复三类），随应用离线保存，不需要联网。',
             '**Changelog**: the “Changelog” button in the preset drawer lists what changed in the running build and in earlier ones (tagged sound / feature / fix). It ships with the app and works offline.',
           ],

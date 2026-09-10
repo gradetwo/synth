@@ -97,6 +97,9 @@ pub mod id {
 /// Highest parameter id + 1 (ids are 0..=77).
 pub const PARAM_COUNT: usize = 78;
 
+/// Number of keys the tuning table covers (MIDI 0..127).
+pub const TUNING_NOTES: usize = 128;
+
 /// Continuous parameters are smoothed across blocks (one-pole, ~20 ms) so the
 /// host can drag a knob without producing zipper noise. Discrete/stepped
 /// parameters (waveforms, switches, sync, voice mode) change immediately.

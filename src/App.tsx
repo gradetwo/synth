@@ -23,6 +23,7 @@ import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/reg
 import { setHapticsEnabled } from '@/hooks/useInputMode';
 import { readShareCode } from '@/state/share';
 import { APP_VERSION } from '@/version';
+import { temperamentById, temperamentTable } from '@/audio/tuning';
 import { t } from '@/i18n';
 import { toast } from '@/components/Toast';
 import { midiPlayer } from '@/midi/player';
@@ -191,8 +192,9 @@ export default function App() {
     try {
       // Must run inside the gesture: creates + resumes the AudioContext before
       // the first await (Safari requirement).
-      const pinned = store.getSnapshot().layout.polyphony;
-      await engine.start(pinned || 16, store.getSnapshot().state.routes);
+      const layout = store.getSnapshot().layout;
+      await engine.start(layout.polyphony || 16, store.getSnapshot().state.routes);
+      engine.setTuning(temperamentTable(temperamentById(layout.temperament).cents));
       engine.applyState(store.getSnapshot().state, true);
       engine.setMuted(!store.getSnapshot().state.power);
     } catch (err) {

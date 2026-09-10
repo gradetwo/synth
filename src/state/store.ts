@@ -38,6 +38,7 @@ import {
   type PresetCategory,
 } from './presets';
 import { midiLibrary, type Track } from '@/midi/library';
+import { temperamentById, temperamentTable } from '@/audio/tuning';
 import { decodePatch, downloadText, encodePatch, shareUrl } from './share';
 import { setLang } from '@/i18n';
 
@@ -666,6 +667,15 @@ class SynthStore {
     this.state = { ...this.state, power: on };
     engine.setMuted(!on);
     if (!on) engine.allNotesOff();
+    this.commit();
+  }
+
+  /** Change the microtuning temperament and push it to the engine. */
+  setTemperament(id: string) {
+    this.layout = { ...this.layout, temperament: id };
+    saveJson(LAYOUT_KEY, this.layout);
+    engine.setTuning(temperamentTable(temperamentById(id).cents));
+    this.mark();
     this.commit();
   }
 
