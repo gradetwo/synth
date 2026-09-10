@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { Param } from '@/audio/params';
 import { midiLibrary } from '@/midi/library';
-import { store } from './store';
+import { SynthStore, store } from './store';
 
 describe('synth store', () => {
   beforeEach(() => {
@@ -206,5 +206,22 @@ describe('undo covers the whole document', () => {
     expect(store.undo()).toBe(true);
     expect(midiLibrary.getTracks().some((t) => t.id === 'clip:undo-test')).toBe(true);
     midiLibrary.remove('clip:undo-test');
+  });
+});
+
+describe('the session starts consistent', () => {
+  it('restores the preset name together with the patch', () => {
+    // The patch is persisted; the displayed name used to be a hard default, so
+    // opening the app showed one preset and played another.
+    // Not the first factory preset: with the default the mismatch would be
+    // invisible.
+    store.applyPresetById('wurli');
+    const id = store.getSnapshot().currentPresetId;
+    const params = { ...store.getSnapshot().state.params };
+
+    // Simulate a reload: a fresh store instance reading the same storage.
+    const reloaded = new SynthStore();
+    expect(reloaded.getSnapshot().currentPresetId).toBe(id);
+    expect(reloaded.getParam(Param.FILTER_CUTOFF)).toBeCloseTo(params[Param.FILTER_CUTOFF], 6);
   });
 });

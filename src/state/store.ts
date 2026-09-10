@@ -114,7 +114,7 @@ function saveJson(key: string, value: unknown) {
   }
 }
 
-class SynthStore {
+export class SynthStore {
   private state: SynthState;
   private layout: LayoutState;
   private userPresets: Preset[];
@@ -133,11 +133,18 @@ class SynthStore {
   private snapshot: Snapshot;
 
   constructor() {
-    const persisted = loadJson<SynthState>(STORAGE_KEY);
+    const persisted = loadJson<SynthState & { presetId?: string }>(STORAGE_KEY);
     this.state = persisted && persisted.params ? { ...createDefaultState(), ...persisted } : createDefaultState();
     this.layout = normalizeLayout(loadJson<LayoutState>(LAYOUT_KEY));
     setLang(this.layout.lang);
     this.userPresets = loadJson<Preset[]>(USER_KEY) ?? [];
+    // The patch is restored from storage, so the name shown for it has to be
+    // restored too: opening the app used to display the first factory preset
+    // while the engine held last session's patch, and playing straight away
+    // sounded like neither.
+    if (persisted?.presetId && this.allPresets().some((preset) => preset.id === persisted.presetId)) {
+      this.currentPresetId = persisted.presetId;
+    }
     this.snapshot = this.buildSnapshot();
     // Entry zero is the state the session started from, so the very first
     // action is undoable.
@@ -165,7 +172,7 @@ class SynthStore {
     this.version += 1;
     this.snapshot = this.buildSnapshot();
     for (const fn of this.listeners) fn();
-    saveJson(STORAGE_KEY, this.state);
+    saveJson(STORAGE_KEY, { ...this.state, presetId: this.currentPresetId });
     saveJson(LAYOUT_KEY, this.layout);
   }
 

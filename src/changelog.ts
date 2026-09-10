@@ -4,6 +4,11 @@
  * Newest first. Every entry carries both languages, so the panel follows the
  * current interface language like the rest of the app. Keep the entry for the
  * version in `package.json` at the top — a unit test enforces that.
+ *
+ * House style: say what changed for the person using the synth, in one or two
+ * sentences. No root causes, no measurement tables, no internal names — those
+ * belong in the commit message and `docs/`. "Fixed the crackle on simple
+ * patches" is the entry; *why* it crackled is not.
  */
 
 export type ReleaseKind = 'sound' | 'feature' | 'fix';
@@ -18,17 +23,24 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.35.1',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '修复**刚打开应用时的音色与显示名称不一致**：上次退出时用的音色现在会连名字一起恢复，打开即可直接弹奏且与显示一致。',
+        'Fixed the **patch not matching the name shown right after opening the app**: the preset used last time is restored with its name, so playing straight away sounds like what is displayed.',
+      ],
+    ],
+  },
+  {
     version: '1.35.0',
     date: '2026-09-10',
     kind: 'sound',
     items: [
       [
-        '波形选择新增 **粉噪（Pink）** 与 **棕噪（Brown）**：白噪每个频段能量相同，粉噪每倍频程 −3 dB、棕噪 −6 dB，所以听起来"更厚、更柔"——做风声、海浪、底鼓/军鼓的噪声层都要它们。',
-        'Two new noise colours, **Pink** and **Brown**: white noise is flat per hertz, pink falls 3 dB per octave and brown 6 dB, which is what makes them sound softer and weightier — the usual source for wind, surf and drum noise layers.',
-      ],
-      [
-        '**按频域验证**（延续"音质必须时域+频域双检"的原则）：单元测试用 FFT 测量倍频程斜率，实测**白噪 −0.07 / 粉噪 −3.08 / 棕噪 −5.99 dB/倍频程**（容差分别收紧到 0.5/0.6/0.8 dB）；另有一条引擎级测试确认三个波形 id 真的接到了各自的滤波器上（亮度必须 白 > 粉 > 棕，单看电平是发现不了接错的）。',
-        '**Verified in the frequency domain** (the dual-domain rule this project now follows): unit tests measure the octave slope with an FFT — white **−0.07**, pink **−3.08**, brown **−5.99 dB/octave**, with the tolerances tightened to 0.5/0.6/0.8 dB — plus an engine-level test that the three wave ids really reach their filters (brightness must be white > pink > brown; a level check could never see that wiring mistake).',
+        '波形新增**粉噪（PNK）**与**棕噪（BRN）**，比白噪更厚、更柔，适合风声、海浪与鼓的噪声层。',
+        'New **pink (PNK)** and **brown (BRN)** noise waves: softer and weightier than white, which is what you want for wind, surf and drum noise layers.',
       ],
     ],
   },
@@ -38,8 +50,8 @@ export const CHANGELOG: Release[] = [
     kind: 'fix',
     items: [
       [
-        '**修复"什么都不做时监视器数字还在跳"**：① 引擎里那点 ±1e-15 的防denormal抖动会一直留在输出里，让表头永远有读数——现在 **−120 dBFS 以下一律按静音处理**（表头读到精确的 0）；② 界面原先在静音时显示的是"假的" −60/−120 并且**一位小数的四舍五入**会在边界值上来回跳——现在静音统一显示「— · —」，**读数稳定不再抖动**；③ DSP 负载在 5% 以下不再显示（空转时的 1–4% 只是噪声，显示它就会让整行字变化）。',
-        '**Fixed the monitor readout twitching while nothing plays**: ① the ±1e-15 denormal dither stays in the output, so the meters always had something to read — anything below **−120 dBFS now counts as silence** (they read exactly 0); ② the UI used to show a *fake* −60/−120 in silence, and one-decimal rounding flickered between two strings on a boundary — silence now reads a steady **「— · —」**; ③ the DSP load is hidden below 5% (the 1–4% of an idle engine is noise, and showing it changed the whole line).',
+        '修复**什么都不弹时监视器读数仍在跳动**：静音时读数统一显示「— · —」并保持稳定，DSP 负载低于 5% 时不再显示。',
+        'Fixed the **monitor readout twitching while nothing plays**: silence now reads a steady "— · —", and the DSP load stays hidden below 5%.',
       ],
     ],
   },
@@ -49,8 +61,8 @@ export const CHANGELOG: Release[] = [
     kind: 'fix',
     items: [
       [
-        '**修复"刚进程序/按一个键就提示设备负载偏高"**（截图上监视器只有 4% 负载却在降复音）：负载监控的判定过于敏感——① 预热窗口只有 40 毫秒，手机启动时的编译与首次访问尖峰直接触发了降级；② **单个**慢块就被当成"错过截止时间"；③ 对称平均让一次尖峰在阈值上停留二十个块。现在改为：**按渲染音频时长预热 2 秒**（并丢弃预热期均值）、**连续 3 块**超预算才算错过截止、**连续 12 块**超 35% 才算持续过载，均值改为"慢升快降"。',
-        '**Fixed the false "device overloaded" toast** (the screenshot showed 4% load while voices were being shed): the monitor reacted to noise — a 40 ms warm-up, a *single* slow block counting as a missed deadline, and a symmetric average that a lone spike kept above the threshold for twenty blocks. It now warms up over **2 seconds of rendered audio** (discarding that average), requires **three consecutive** over-budget blocks for a missed deadline and **twelve consecutive** over-35% blocks for sustained overload, and the average rises slowly but falls quickly.',
+        '修复**刚打开程序或按一个键就误报"设备负载偏高"**：现在只有真正持续过载才会自动降低复音数。',
+        'Fixed the false **"device overloaded"** message on startup or after a single key press: voices are only shed under genuinely sustained load.',
       ],
     ],
   },
@@ -60,12 +72,8 @@ export const CHANGELOG: Release[] = [
     kind: 'feature',
     items: [
       [
-        '新增 **MPE 输入**（音频设置里开关）：为每个音提供**独立弯音**。控制器每个音占一个 MIDI 通道时，通道上的弯音只作用于该音，通道压力也随通道记录；关掉 MPE 时所有音立即回到原位（不会留下被弯住的音）。',
-        'New **MPE input** (toggle in Audio settings): **per-note pitch bend**. When a controller gives each note its own channel, a bend on that channel moves only that note, and channel pressure is tracked per channel; turning MPE off releases every bend immediately, so nothing is left detuned.',
-      ],
-      [
-        '音符在通道上「继承」当前弯音与压力：先弯后按也能得到正确音高；每个音结束时先复位弯音，避免复用的通道把下一个音带偏。',
-        'A new note inherits the current bend and pressure of its channel (so bending before pressing works), and every note-off resets its bend first, so a reused channel cannot drag the next note out of tune.',
+        '新增 **MPE 输入**（音频设置里打开）：支持每个音独立弯音，配合 MPE 控制器演奏更自然；关闭时立即复位。',
+        'New **MPE input** (Audio settings): per-note pitch bend for MPE controllers, released immediately when switched off.',
       ],
     ],
   },
@@ -75,8 +83,8 @@ export const CHANGELOG: Release[] = [
     kind: 'feature',
     items: [
       [
-        '调律新增「**导入 .scl**」：支持 **Scala 调律文件**（任意音数、比例或音分、含非八度周期），导入后自动切到该调律并记住。例如 19 平均律这类**非 12 音**音阶会按音数逐键展开，不会像 12 音律法那样被折算进半个半音内（那样会把音阶压坏）。',
-        'Tuning gained **Import .scl**: Scala tuning files are supported (any note count, ratios or cents, non-octave periods included), and importing switches to the scale and remembers it. A non-12-note scale such as 19-EDO spreads across the keys by degree rather than being folded into half a semitone, which would collapse it.',
+        '调律新增「**导入 .scl**」：可导入 Scala 调律文件（任意音数与非八度周期），导入后自动启用并记住。',
+        'Tuning gained **Import .scl**: load Scala tuning files (any note count, non-octave periods included); the scale is applied and remembered.',
       ],
     ],
   },
@@ -86,8 +94,8 @@ export const CHANGELOG: Release[] = [
     kind: 'fix',
     items: [
       [
-        '**根治 wasm 特有的"每块丢样本"隐患**：原因是 vendored 的 C++ 梯形滤波器用了类内成员初始化，使全局声部数组变成"需要动态初始化"；wasm 以 command 模块链接时，**每个导出函数的调用都会重跑一次 C++ 全局构造函数**，把 32 个声部的滤波器状态清零。原生 ELF 只在启动时跑一次，所以同一份代码原生正常。已去掉类内初始化并显式清零，构造函数彻底消失；wasm 门禁新增「**核心中不得存在 C++ 全局构造函数**」断言，防止复发。',
-        '**Removed the wasm-only hazard for good**: the vendored C++ ladder used in-class member initialisers, which made the global voice array require dynamic initialization — and a wasm *command* module re-runs `__wasm_call_ctors` on **every exported call**, zeroing the filter state of all 32 voices. Native ELF runs it once, which is why the same source was clean there. The initialisers are gone, `Init()` clears the state explicitly, and the wasm gate now asserts that **the core contains no C++ global constructors**.',
+        '彻底移除了一类**只在网页版出现**的隐患（滤波器状态被反复清零），并加入构建检查防止再次引入。',
+        'Removed a whole class of **web-build-only** hazard (filter state being reset repeatedly) and added a build check so it cannot come back.',
       ],
     ],
   },
@@ -97,12 +105,8 @@ export const CHANGELOG: Release[] = [
     kind: 'fix',
     items: [
       [
-        '**音质门禁升级为时域 + 频域双重检测**（这次刺啦事件的直接产物）：新增「**渲染块边界不得出现咔哒**」（用已知正弦的物理步进上限去卡，并自检"注入咔哒必须被抓到"）与「**正弦必须是正弦**」（Blackman-Harris 窗 FFT：谐波含量 −125 dB、非谐波宽带能量 −97.6 dB）。整曲测试台也新增**频谱平坦度**指标——咔哒会把每个频段填满，平坦度立刻升高。',
-        'The **audio gate now checks both domains**, as a direct result of the crackle: a **block-boundary click scan** (a known sine cannot step past its physical limit; the detector self-tests by injecting a dropout that must be caught) and **sine purity** (Blackman-Harris FFT: harmonics −125 dB, non-harmonic broadband energy −97.6 dB). The song harness gained **spectral flatness** — a click train fills every bin, so flatness jumps.',
-      ],
-      [
-        '门禁立刻抓到并修掉一个真实问题：新低通的输出饱和级对**正常电平也在压缩**（0.5 信号就被压 3%），在正弦上测得 −46 dB 谐波。改为**拐点以下完全线性**的软限幅后，谐波降到 −125 dB，同时自激仍被限制。',
-        'The new gate immediately caught and fixed a real flaw: the new low-pass compressed **ordinary levels** too (a 0.5 signal was already squashed by 3%), measuring −46 dB of harmonics on a sine. With a soft clipper that is exactly linear below its knee, harmonics fell to −125 dB while self-oscillation stays bounded.',
+        '音质测试升级为**时域 + 频域双重检查**（咔哒、谐波、宽带噪声、混叠），并修复低通在正常音量下也会染色的问题。',
+        'Audio testing now checks **both the time and frequency domain** (clicks, harmonics, broadband noise, aliasing), and the low-pass no longer colours ordinary levels.',
       ],
     ],
   },
@@ -160,16 +164,12 @@ export const CHANGELOG: Release[] = [
     kind: 'fix',
     items: [
       [
-        '**修复"纯正弦主音"等简单音色弹单音时的刺啦声**（根因找到）：LP 低通滤波器在 **WebAssembly 构建下每 128 采样丢一个样本**（等于每秒 375 次的咔哒声，听感就是刺啦），而同一份 C++ 编译成原生代码是干净的。已用 Rust 自己实现的 **24 dB/oct 梯形低通（零延迟反馈 + tanh 饱和）** 替换，跨平台行为一致。',
-        '**Fixed the crackle on simple patches** such as Pure Sine Lead, with the root cause identified: the low-pass filter **dropped one sample at every 128-sample block boundary in the WebAssembly build** (375 clicks per second — exactly the "crackle" reported), while the same C++ compiled natively was clean. It is replaced by our own **24 dB/oct ladder low-pass in Rust** (zero-delay feedback with tanh saturation), so every target behaves the same.',
+        '修复**简单音色（如纯正弦主音）弹单音时的刺啦声**——低通滤波器已重写，波形更干净，实时负载也明显下降。',
+        'Fixed the **crackle on simple patches** such as Pure Sine Lead: the low-pass filter was rewritten, which cleaned up the waveform and lowered CPU load.',
       ],
       [
-        '顺带的三项实测改善：同一段音频的**最大样本跳变从 0.055–0.111 降到 0.012**（波形干净得多）、**锯齿波混叠从 −57.7 dB 降到 −130.2 dB**（原来那些咔哒声就是宽带噪声）、**电钢+致爱丽丝的实时负载从约 19% 降到 8%**。',
-        'Three measured side effects: the worst sample-to-sample step in a song fell from 0.055–0.111 to **0.012**, saw-wave aliasing improved from −57.7 dB to **−130.2 dB** (those clicks were broadband noise), and the electric-piano + Für Elise CPU load dropped from about 19% to **8%**.',
-      ],
-      [
-        '低通现在是标准的单位通带响应，因此部分音色会比原来**低 1–3 dB**（导出仍会自动归一化到 −1 dBFS，不受影响）。',
-        'The low-pass now has a standard unity passband, so some patches sit **1–3 dB lower** than before (exports are still normalised to −1 dBFS, so files are unaffected).',
+        '部分音色音量会**略低 1–3 dB**（导出的文件仍会归一化，不受影响）。',
+        'Some patches now sit **1–3 dB lower** (exported files are normalised, so they are unaffected).',
       ],
     ],
   },
@@ -213,12 +213,12 @@ export const CHANGELOG: Release[] = [
     kind: 'fix',
     items: [
       [
-        '修复**导出音频过轻**（电钢 + 致爱丽丝实测峰值仅 **−23.4 dBFS**）：导出改为**双向归一化**，现在会把安静的音色提升到 −1 dBFS 附近（提升上限 +24 dB）。过轻的文件会逼着播放端大幅加增益（手机响度自动补偿、蓝牙编解码、功放底噪都会被一起推起来），这正是"听起来有刺啦"的常见来源。',
-        'Fixed **exports that were far too quiet** (the electric piano + Für Elise export peaked at **−23.4 dBFS**): exports are now normalised **in both directions**, lifting quiet patches to about −1 dBFS (boost capped at +24 dB). A too-quiet file forces the playback chain to add 20+ dB — the phone loudness normaliser, a Bluetooth codec, the amplifier noise floor — which is a common source of "crackling" that the synth never produced.',
+        '修复**导出音量过轻**：安静的音色现在也会被提升到正常导出音量，不再需要把播放音量开得很大。',
+        'Fixed **exports coming out far too quiet**: quiet patches are now lifted to a normal export level, so playback no longer needs the volume cranked up.',
       ],
       [
-        'MP3 导出码率 192 → **256 kbps**：音色起音快时编码预回声（pre-echo）更不容易被听到。',
-        'MP3 exports now encode at **256 kbps** instead of 192, which keeps pre-echo away from sharp attacks.',
+        'MP3 导出码率提高，快起音的音色更干净。',
+        'Higher MP3 export bitrate for cleaner sharp attacks.',
       ],
     ],
   },
