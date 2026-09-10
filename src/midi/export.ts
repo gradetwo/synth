@@ -7,9 +7,12 @@
 
 import { store } from '@/state/store';
 import { downloadBlob } from '@/state/share';
-import { renderPatchToBuffer } from '@/audio/render';
+import { renderPatchToBuffer, normalizePeak } from '@/audio/render';
 import { encodeMp3 } from '@/audio/mp3';
 import { writeMidi, type MidiSong } from './smf';
+
+/** Target peak for rendered exports: -1 dBFS, the usual streaming headroom. */
+const EXPORT_CEILING = 0.891;
 
 const safeName = (s: string) => s.replace(/[^\w\u4e00-\u9fa5-]+/g, '_').slice(0, 48) || 'gs1';
 
@@ -26,6 +29,9 @@ export async function exportSongMp3(song: MidiSong, name: string): Promise<void>
     notes,
     seconds: song.duration + 1.6,
   });
+  const channels = [];
+  for (let c = 0; c < buffer.numberOfChannels; c++) channels.push(buffer.getChannelData(c));
+  normalizePeak(channels, EXPORT_CEILING);
   const blob = await encodeMp3(buffer);
   downloadBlob(`${safeName(name)}.mp3`, blob);
 }

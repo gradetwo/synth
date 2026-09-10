@@ -263,6 +263,7 @@ export function FilterCurve() {
 // -------------------------------------------------------------------- VU
 
 export function VuMeter() {
+  const caption = useRef<HTMLSpanElement | null>(null);
   const ref = useRafCanvas((ctx, w, h) => {
     ctx.clearRect(0, 0, w, h);
     const segs = 12;
@@ -284,12 +285,29 @@ export function VuMeter() {
       ctx.fillRect(0, y, w, sh);
     }
   });
+  // Peak / loudness / limiter readout, updated without re-rendering React.
+  useEffect(
+    () =>
+      subscribeFrame(() => {
+        const el = caption.current;
+        if (!el) return;
+        const peak = Math.max(analysis.truePeak, 1e-6);
+        const db = 20 * Math.log10(peak);
+        const lufs = analysis.loudness > 1e-6 ? 20 * Math.log10(analysis.loudness) : -60;
+        const gr = analysis.limit < 0.999 ? ` · GR ${(20 * Math.log10(analysis.limit)).toFixed(1)}` : '';
+        el.textContent = `${db > -0.1 ? 'PEAK' : `${db.toFixed(1)}`} · ${lufs.toFixed(0)}${gr}`;
+        el.classList.toggle('hot', db > -0.5);
+      }),
+    [],
+  );
+
   return (
     <div className="vu">
       <div className="vu-track" style={{ padding: 4 }}>
         <canvas ref={ref} style={{ width: '100%', height: '100%' }} aria-label={t('canvas.vuAria')} />
       </div>
       <span className="vu-cap">VU</span>
+      <span className="vu-meter" ref={caption} />
     </div>
   );
 }

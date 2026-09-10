@@ -46,7 +46,9 @@ const peak = (ptr, frames) => {
 
 console.log('[verify] WASM core');
 
-check('ABI version', ex.gs_abi_version() === 1);
+// Bump this together with `ABI_VERSION` in crates/synth-core/src/abi.rs.
+check('ABI version', ex.gs_abi_version() === 2, `v${ex.gs_abi_version()}`);
+check('exposes the meter exports', typeof ex.gs_take_true_peak === 'function' && typeof ex.gs_loudness_rms === 'function');
 check('max block size is 1024', ex.gs_max_block_size() === 1024);
 check('voice pool is 32', ex.gs_max_voices() === 32);
 check('spectrum exposes 36 bins', ex.gs_spectrum_bins() === 36);

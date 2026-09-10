@@ -15,6 +15,12 @@ export const analysis = {
   peakR: 0,
   voices: 0,
   violations: 0,
+  /** True-peak estimate of the last analysis window (linear). */
+  truePeak: 0,
+  /** Short-term output RMS (linear). */
+  loudness: 0,
+  /** Limiter gain reduction, 1.0 = none. */
+  limit: 1,
   frames: 0,
 };
 
@@ -29,6 +35,9 @@ export function wireAnalysis() {
     analysis.peakR = frame.peakR;
     analysis.voices = frame.voices;
     analysis.violations = frame.violations;
+    analysis.truePeak = frame.truePeak;
+    analysis.loudness = frame.loudness;
+    analysis.limit = frame.limit;
     analysis.frames += 1;
     for (let i = 0; i < analysis.spectrum.length; i++) {
       const v = analysis.spectrum[i];

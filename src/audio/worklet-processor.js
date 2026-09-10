@@ -280,6 +280,10 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
           peakR: this.wasm.gs_peak_r(),
           voices: this.wasm.gs_active_voices(),
           violations: this.wasm.gs_alloc_violations(),
+          // True-peak / loudness / limiter meters (ABI 2+).
+          truePeak: this.wasm.gs_take_true_peak ? this.wasm.gs_take_true_peak() : 0,
+          loudness: this.wasm.gs_loudness_rms ? this.wasm.gs_loudness_rms() : 0,
+          limit: this.wasm.gs_limit_reduction ? this.wasm.gs_limit_reduction() : 1,
         },
         [],
       );

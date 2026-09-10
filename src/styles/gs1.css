@@ -1501,3 +1501,8 @@ input,textarea,[contenteditable='true']{
   .app .roll-kbd .vel-btn{min-height:26px;padding:0 10px}
   .app .roll-kbd-toggle{width:30px;height:24px}
 }
+
+/* VU panel: peak / loudness / gain-reduction readout under the meter. */
+.vu-meter{font:600 8px/1 var(--mono);letter-spacing:.04em;color:var(--txt-dim);
+  white-space:nowrap;min-height:9px}
+.vu-meter.hot{color:#ff6b6b}

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { encodeWav, encodeWavBuffer } from './render';
+import { encodeWav, encodeWavBuffer, normalizePeak } from './render';
+
+function peakOf(data: Float32Array[]): number {
+  let peak = 0;
+  for (const channel of data) {
+    for (const v of channel) peak = Math.max(peak, Math.abs(v));
+  }
+  return peak;
+}
 
 function fakeBuffer(channels: Float32Array[], sampleRate = 44100) {
   return {
@@ -38,5 +46,29 @@ describe('WAV encoder', () => {
   it('clamps out-of-range samples', () => {
     const buf = encodeWavBuffer(fakeBuffer([new Float32Array([2, -2])], 48000));
     expect(buf.byteLength).toBe(44 + 2 * 2);
+  });
+});
+
+describe('export normalisation', () => {
+  it('scales a hot render down to the ceiling', () => {
+    const data = [Float32Array.from([0, 0.5, -1.4, 0.2]), Float32Array.from([1.2, 0, 0, 0])];
+    const peak = normalizePeak(data, 0.891);
+    expect(peak).toBeCloseTo(1.4, 4);
+    expect(peakOf(data)).toBeCloseTo(0.891, 4);
+    // Shape is preserved: the ratio between samples is unchanged.
+    expect(data[0][1] / data[0][2]).toBeCloseTo(0.5 / -1.4, 4);
+  });
+
+  it('leaves a quiet render alone', () => {
+    const data = [Float32Array.from([0, 0.2, -0.3])];
+    expect(normalizePeak(data, 0.891)).toBeCloseTo(0.3, 5);
+    expect(data[0][2]).toBeCloseTo(-0.3, 5);
+  });
+
+  it('survives silence and non-finite samples', () => {
+    const silent = [Float32Array.from([0, 0, 0])];
+    expect(normalizePeak(silent)).toBe(0);
+    const broken = [Float32Array.from([Number.NaN, 0.1])];
+    expect(() => normalizePeak(broken)).not.toThrow();
   });
 });

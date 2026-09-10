@@ -117,6 +117,30 @@ function writeString(view: DataView, offset: number, text: string) {
 }
 
 /** Encode an AudioBuffer (or anything AudioBuffer-like) as a 16-bit PCM WAV. */
+/**
+ * Scale a rendered buffer so its highest sample sits at `ceiling`.
+ *
+ * Exports bypass the live master limiter's metering, so a patch that is loud
+ * enough to be limited live would otherwise leave the render pinned near full
+ * scale. Normalising keeps every export at a predictable level (and only ever
+ * turns things *down*: quiet renders are left alone).
+ */
+export function normalizePeak(data: Float32Array[], ceiling = 0.891): number {
+  let peak = 0;
+  for (const channel of data) {
+    for (let i = 0; i < channel.length; i++) {
+      const v = Math.abs(channel[i]);
+      if (v > peak) peak = v;
+    }
+  }
+  if (!Number.isFinite(peak) || peak <= ceiling) return peak;
+  const gain = ceiling / peak;
+  for (const channel of data) {
+    for (let i = 0; i < channel.length; i++) channel[i] *= gain;
+  }
+  return peak;
+}
+
 export function encodeWav(buffer: WavSource): Blob {
   return new Blob([encodeWavBuffer(buffer)], { type: 'audio/wav' });
 }

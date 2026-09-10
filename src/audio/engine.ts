@@ -32,6 +32,12 @@ export interface AnalysisFrame {
   peakR: number;
   voices: number;
   violations: number;
+  /** True-peak estimate since the previous frame (linear, 1.0 = 0 dBFS). */
+  truePeak: number;
+  /** Short-term output RMS (linear). */
+  loudness: number;
+  /** Limiter gain reduction, 1.0 = none. */
+  limit: number;
 }
 
 type AnalysisListener = (frame: AnalysisFrame) => void;
@@ -255,6 +261,9 @@ export class AudioEngine {
               peakR: data.peakR as number,
               voices: data.voices as number,
               violations: data.violations as number,
+              truePeak: (data.truePeak as number) ?? 0,
+              loudness: (data.loudness as number) ?? 0,
+              limit: (data.limit as number) ?? 1,
             };
             for (const fn of this.listeners) fn(frame);
           } else if (data.type === 'polyphony') {
