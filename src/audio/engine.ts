@@ -205,9 +205,18 @@ export class AudioEngine {
     this.sampleRate = this.ctx.sampleRate;
     this.ctx.onstatechange = () => {
       const state = this.ctx?.state as string | undefined;
-      if (state === 'running') this.setStatus('running');
-      // iOS reports `interrupted` during calls/Siri; treat it as suspended.
-      else if (state === 'suspended' || state === 'interrupted') this.setStatus('suspended');
+      // A running *context* is not a started engine: `preload` creates the
+      // context before any gesture, and Chrome may hand it back already running.
+      // Trusting the context state alone made the app hide the start gate while
+      // no AudioWorkletNode existed — silence, dead meters, and no way back in,
+      // because nothing would build the graph and refreshing repeated it. Only a
+      // built graph may call itself running.
+      if (state === 'running') {
+        if (this.node) this.setStatus('running');
+      } else if (state === 'suspended' || state === 'interrupted') {
+        // iOS reports `interrupted` during calls/Siri; treat it as suspended.
+        this.setStatus(this.node ? 'suspended' : 'idle');
+      }
     };
     return this.ctx;
   }
@@ -727,6 +736,14 @@ export class AudioEngine {
 
   getState(): EngineStatus {
     return this.status;
+  }
+
+  /**
+   * Whether the engine is genuinely playing: the graph exists *and* the context
+   * is running. The UI gates on this, not on the context alone.
+   */
+  isReady(): boolean {
+    return this.node !== null && this.ctx !== null && (this.ctx.state as string) === 'running';
   }
 }
 

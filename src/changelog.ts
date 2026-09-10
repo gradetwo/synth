@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.53.2',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '修复「关掉标签页再打开后没有声音、刷新也没用」：浏览器有时会在你还没点任何按钮时就把音频上下文标记为「已运行」，程序据此以为引擎已经启动，于是藏起了启动按钮——但此时声音引擎其实根本没建起来，于是没有声音、示波器与频谱全黑，刷新还会重复同样的状态。现在只有引擎**真正启动完成**才会收起启动按钮。',
+        'Fixed "no sound after closing and reopening the tab, and refreshing does not help": the browser can mark the audio context as running before any tap, and the app took that as "the engine is started" and hid the start button — while no sound engine had actually been built. The result was silence, black scope and spectrum, and a refresh that repeated the same state. The start button is now only dismissed once the engine has genuinely started.',
+      ],
+      [
+        '如果你现在遇到这个状态：强刷一次（Mac ⌘⇧R / Windows Ctrl+Shift+R）后点一下「启动音频引擎」即可恢复。',
+        'If you are in that state right now: hard-refresh once (⌘⇧R on macOS, Ctrl+Shift+R on Windows) and tap Start Audio Engine — that is all it takes.',
+      ],
+    ],
+  },
+  {
     version: '1.53.1',
     date: '2026-09-10',
     kind: 'fix',

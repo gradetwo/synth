@@ -105,6 +105,8 @@ export default function App() {
   const [playerOpen, setPlayerOpen] = useState(false);
   const [rollOpen, setRollOpen] = useState(false);
   const [status, setStatus] = useState(engine.getState());
+  /** True once the engine has actually played in this session. */
+  const [everRan, setEverRan] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const layout = useLayout();
@@ -126,7 +128,9 @@ export default function App() {
 
   useEffect(() => {
     const off = engine.onStatus(() => {
-      setStatus(engine.getState());
+      const next = engine.getState();
+      setStatus(next);
+      if (next === 'running') setEverRan(true);
       if (engine.error) setError(engine.error);
     });
     void registerServiceWorker();
@@ -275,7 +279,13 @@ export default function App() {
     };
   }, []);
 
-  const running = status === 'running' || status === 'suspended';
+  // A context that exists is not a started engine (`engine.isReady()`): the
+  // worklet may still be unbuilt, and gating on the context state hid the start
+  // button over a silent app.
+  const running = status === 'running';
+  // Once it has genuinely run, a later interruption (iOS call, device change)
+  // shows the resume hint instead of throwing the start gate back over the UI.
+  const showGate = !running && (!everRan || status === 'error');
 
   /**
    * Open the piano-roll editor for the current track. Any running take is
@@ -327,7 +337,7 @@ export default function App() {
 
       <KeyboardDock />
 
-      {status === 'suspended' ? (
+      {status === 'suspended' && everRan ? (
         <button type="button" className="audio-hint" onClick={() => void engine.resumeIfSuspended()}>
           {t('app.suspended')}
         </button>
@@ -373,7 +383,7 @@ export default function App() {
       />
       <ToastHost />
       <UpdateBanner />
-      {!running ? <StartOverlay onStart={start} error={error} busy={busy} /> : null}
+      {showGate ? <StartOverlay onStart={start} error={error} busy={busy} /> : null}
     </div>
   );
 }
