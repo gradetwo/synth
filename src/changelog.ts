@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.41.0',
+    date: '2026-09-10',
+    kind: 'sound',
+    items: [
+      [
+        '新增 **波表振荡器（WT）**：波形列表最后一项。它由**谐波配方**生成五张表（风琴 / 中空 / 人声 / 金属 / 玻璃），每张表按八度分层的**抗混叠波表**——高音自动用更少谐波，**不会产生混叠**（门禁实测：谐波之间的混叠能量低于基频 60 dB 以上）。**用 `PW` 旋钮选表**（0.05 起依次五张），因为波表本身没有脉宽。',
+        'New **wavetable oscillator (WT)**, last in the wave list: five tables generated from harmonic recipes (organ, hollow, vocal, metallic, glass), each stored as **anti-aliased tables per octave**, so high notes use fewer harmonics and cannot alias (the gate measures between-harmonic energy more than 60 dB below the fundamental). The **PW knob picks the table**, since a table has no pulse width of its own.',
+      ],
+    ],
+  },
+  {
     version: '1.40.1',
     date: '2026-09-10',
     kind: 'sound',

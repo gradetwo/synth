@@ -258,6 +258,8 @@ const WAVE_ICONS: Record<Wave, string> = {
   noise: 'M2 10 L4.5 4 L7 14 L10 3 L12.5 16 L15 6 L18 11',
   pink: 'M2 8 L5 5 L7 12 L10 7 L13 14 L15 9 L18 11',
   brown: 'M2 12 C 5 4, 8 16, 11 8 S 16 12, 18 10',
+  // A stepped, table-like shape.
+  wavetable: 'M2 15 L5 5 L5 15 L9 5 L9 15 L13 5 L13 15 L18 5',
 };
 
 export function WaveSelect({

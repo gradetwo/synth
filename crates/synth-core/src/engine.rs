@@ -200,6 +200,11 @@ pub struct Engine {
     silent_blocks: u32,
     /// Noise colour state, per voice and oscillator.
     noise: [[NoiseGen; 2]; MAX_VOICES],
+    /// Wavetable phase, per voice and oscillator (one cycle each).
+    wt_phase: [[f32; 2]; MAX_VOICES],
+    /// Band-limited harmonic tables, one bank per recipe. Filled in `init`:
+    /// building them is not const-constructible, and they never change after.
+    tables: Vec<crate::dsp::wavetable::Table>,
     /// One four-pole low-pass per voice per oscillator side.
     ladders: [[LadderFilter; 2]; MAX_VOICES],
     /// Per-note tuning offsets in cents. Lives here rather than in `Params` so
@@ -289,6 +294,8 @@ impl Engine {
             poly_request: 16,
             silent_blocks: 0,
             noise: [[NoiseGen::new(); 2]; MAX_VOICES],
+            wt_phase: [[0.0; 2]; MAX_VOICES],
+            tables: Vec::new(),
             ladders: [[LadderFilter::new(); 2]; MAX_VOICES],
             tuning: [0.0; crate::params::TUNING_NOTES],
             bends: [0.0; crate::params::TUNING_NOTES],
@@ -330,6 +337,10 @@ impl Engine {
         } else {
             48000.0
         };
+        self.tables = crate::dsp::wavetable::RECIPES
+            .iter()
+            .map(|(_, recipe)| crate::dsp::wavetable::Table::from_recipe(recipe))
+            .collect();
         unsafe {
             gs_daisy_init(self.sample_rate);
             gs_sp_init(self.sample_rate);
@@ -613,6 +624,7 @@ impl Engine {
             self.ladders[slot][1].reset();
             self.noise[slot][0].reset();
             self.noise[slot][1].reset();
+            self.wt_phase[slot] = [0.0; 2];
             unsafe { gs_voice_reset(slot as i32) };
             let (p0, p1) = self.next_phases();
             unsafe { gs_voice_phase(slot as i32, p0, p1) };
@@ -985,6 +997,7 @@ impl Engine {
             self.ladders[slot][1].reset();
             self.noise[slot][0].reset();
             self.noise[slot][1].reset();
+            self.wt_phase[slot] = [0.0; 2];
             unsafe { gs_voice_reset(slot as i32) };
             let (p0, p1) = self.next_phases();
             unsafe { gs_voice_phase(slot as i32, p0, p1) };
@@ -1158,6 +1171,8 @@ impl Engine {
                 out,
                 &mut self.rng,
                 &mut self.noise[slot][which],
+                &self.tables,
+                &mut self.wt_phase[slot][which],
                 sr,
                 &mut scratch[..],
             );
@@ -1611,6 +1626,8 @@ fn render_oscillator(
     out: &mut [f32],
     rng: &mut Rng,
     noise: &mut NoiseGen,
+    tables: &[crate::dsp::wavetable::Table],
+    wt_phase: &mut f32,
     sample_rate: f32,
     scratch: &mut [f32],
 ) {
@@ -1662,6 +1679,26 @@ fn render_oscillator(
             // Noise. White has no state; pink and brown are filtered, and the
             // filters live per voice so a stolen voice cannot inherit a tail
             // from the note that was using the slot.
+            if params.wave == crate::params::Wave::Wavetable && !tables.is_empty() {
+                // The pulse-width control picks the recipe: 0.05..0.95 maps onto
+                // the five banks, so one knob covers "which table" without a new
+                // parameter and without a new UI control.
+                let recipe = ((pw.clamp(0.0, 1.0) * 4.0).round() as usize)
+                    .min(crate::dsp::wavetable::RECIPES.len() - 1);
+                let table = &tables[recipe];
+                let level = table.level_for(freq, sample_rate);
+                let step = freq / sample_rate;
+                let mut phase = *wt_phase;
+                for sample in out.iter_mut() {
+                    *sample = table.sample(level, phase);
+                    phase += step;
+                    if phase >= 1.0 {
+                        phase -= 1.0;
+                    }
+                }
+                *wt_phase = phase;
+                return;
+            }
             let colour = match params.wave {
                 crate::params::Wave::Pink => crate::dsp::noise::NoiseColour::Pink,
                 crate::params::Wave::Brown => crate::dsp::noise::NoiseColour::Brown,
@@ -2845,6 +2882,64 @@ mod tests {
         }
         assert_eq!(e.take_true_peak(), 0.0, "tail should settle to exact silence");
         assert_eq!(e.loudness_rms(), 0.0, "loudness should settle to zero");
+    }
+
+    /// The wavetable oscillator must be band-limited: at a high pitch there
+    /// must be no energy *between* the table's harmonics, which is where an
+    /// aliased partial would land. Measured from the audio, in the frequency
+    /// domain, because that is the only place this is visible.
+    #[test]
+    fn wavetable_is_band_limited_at_high_pitches() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Wavetable as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.9);
+        // The pulse-width control picks the recipe; the brightest one is last.
+        e.set_param(id::OSC1_PW, 1.0);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        for index in 0..crate::params::MOD_ROUTES {
+            e.set_route(index, 0, 0, 0.0, false);
+        }
+        e.note_on(93, 1.0); // A6, high enough that the bank must choose a short table
+        let frames = 24_000;
+        let mut buffer = vec![0.0f32; frames];
+        for chunk in buffer.chunks_mut(128) {
+            e.process(128);
+            chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+        }
+        let f0 = note_to_hz(93.0);
+        // Probe halfway between harmonics: a band-limited table has nothing
+        // there, an aliased one does.
+        let magnitude = |freq: f32| {
+            let w = core::f32::consts::TAU * freq / 48_000.0;
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (index, value) in buffer.iter().enumerate().skip(frames / 2) {
+                re += (*value as f64) * (w * index as f32).cos() as f64;
+                im -= (*value as f64) * (w * index as f32).sin() as f64;
+            }
+            (re * re + im * im).sqrt() / (frames / 2) as f64
+        };
+        let fundamental = magnitude(f0);
+        let mut worst = 0.0f64;
+        let mut k = 1;
+        while f0 * (k as f32 + 0.5) < 20_000.0 {
+            worst = worst.max(magnitude(f0 * (k as f32 + 0.5)));
+            k += 1;
+        }
+        let ratio = 20.0 * (worst / fundamental).log10();
+        assert!(
+            ratio < -60.0,
+            "wavetable aliases: between-harmonic energy {ratio:.1} dB below the fundamental"
+        );
     }
 
     /// The noise wave ids must actually reach the coloured-noise filters: white

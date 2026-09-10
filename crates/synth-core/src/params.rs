@@ -174,6 +174,9 @@ pub enum Wave {
     Pink,
     /// Brown noise (-6 dB/octave), generated in Rust.
     Brown,
+    /// Harmonic-table oscillator (A6.2). The pulse-width control picks the
+    /// recipe, since a table has no pulse width of its own.
+    Wavetable,
 }
 
 impl Wave {
@@ -186,6 +189,7 @@ impl Wave {
             5 => Wave::Noise,
             6 => Wave::Pink,
             7 => Wave::Brown,
+            8 => Wave::Wavetable,
             _ => Wave::Sine,
         }
     }
@@ -199,7 +203,7 @@ impl Wave {
             Wave::Saw => Some(6),                     // WAVE_POLYBLEP_SAW
             Wave::Square => Some(7),                  // WAVE_POLYBLEP_SQUARE
             Wave::Pulse => Some(7),                   // POLYBLEP_SQUARE + narrow pw
-            Wave::Noise | Wave::Pink | Wave::Brown => None,
+            Wave::Noise | Wave::Pink | Wave::Brown | Wave::Wavetable => None,
         }
     }
 

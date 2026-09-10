@@ -355,6 +355,7 @@ const DICT: Record<string, [string, string]> = {
   'wave.noise': ['白噪', 'White'],
   'wave.pink': ['粉噪', 'Pink'],
   'wave.brown': ['棕噪', 'Brown'],
+  'wave.wavetable': ['波表（PW 选表）', 'Wavetable (PW picks it)'],
 
   // --- errors / diagnostics ------------------------------------------------
   'err.wasmFetch': ['WASM 下载失败 (HTTP {status})', 'WASM download failed (HTTP {status})'],
