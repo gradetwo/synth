@@ -311,6 +311,44 @@ mod tests {
         ));
     }
 
+    /// The stealing policy decides what a player hears when the pool is full:
+    /// a released, quiet voice must go before a held or loud one, and age only
+    /// breaks ties.
+    #[test]
+    fn stealing_prefers_released_and_quiet_voices() {
+        let mut vm = VoiceManager::new();
+        vm.set_max_polyphony(4);
+        for (index, note) in [60u8, 62, 64, 65].into_iter().enumerate() {
+            vm.note_on(note, 1.0, freq(note));
+            // Give every voice a distinct envelope level so "quiet" is testable.
+            vm.voices[index].env_value = 0.2 + index as f32 * 0.2;
+        }
+
+        // Nothing is released: the quietest voice (72, the oldest at 0.2) goes.
+        let victim = vm.find_victim();
+        assert_eq!(vm.voices[victim].note, 60, "quietest voice should be stolen");
+
+        // A held voice is never preferred over a released one, even a loud one.
+        vm.voices[3].released = true;
+        vm.voices[3].env_value = 0.95;
+        let victim = vm.find_victim();
+        assert_eq!(
+            vm.voices[victim].note, 65,
+            "a released voice should be stolen before a held one"
+        );
+
+        // With everything released and equally loud, the *oldest* goes first:
+        // `age` counts allocations, so the smallest number is the oldest.
+        for (index, voice) in vm.voices.iter_mut().enumerate() {
+            voice.released = true;
+            voice.env_value = 1.0;
+            voice.age = 5 + index as u32;
+        }
+        vm.voices[1].age = 0;
+        let victim = vm.find_victim();
+        assert_eq!(vm.voices[victim].note, 62, "the oldest voice should be stolen first");
+    }
+
     #[test]
     fn pending_note_is_promoted_when_slot_frees() {
         let mut vm = VoiceManager::new();

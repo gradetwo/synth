@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.38.1',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '声部被抢占时（同时按键超过复音数）的取舍规则做了测试固化：优先抢占**已经松开且最轻**的声部，只有并列时才按"谁最旧"决定，所以长时间按住的和弦不会被新音随手抢掉。',
+        'The rule for what gets cut when you play more notes than the polyphony allows is now covered by a test: a **released and quiet** voice goes first, and "oldest" only breaks ties — so a chord you are holding is not stolen out from under you.',
+      ],
+    ],
+  },
+  {
     version: '1.38.0',
     date: '2026-09-10',
     kind: 'feature',
