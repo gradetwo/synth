@@ -42,6 +42,13 @@ import { midi } from '@/audio/midi';
 import { temperamentById, temperamentTable } from '@/audio/tuning';
 import { scalaTable, type ScalaScale } from '@/audio/scala';
 import { bindCc, unbindParam } from '@/audio/ccmap';
+import {
+  applyScene as applySceneToLayout,
+  makeScene,
+  normalizeScenes,
+  SCENES_KEY,
+  type Scene,
+} from './scenes';
 import { decodePatch, downloadText, encodePatch, shareUrl } from './share';
 import { setLang } from '@/i18n';
 
@@ -58,6 +65,8 @@ interface Snapshot {
   canRedo: boolean;
   /** Parameter waiting for a MIDI CC while CC Learn is armed. */
   midiLearn: number | null;
+  /** Saved workspace scenes. */
+  scenes: Scene[];
   activeSlot: 'a' | 'b';
   slotFilled: { a: boolean; b: boolean };
   version: number;
@@ -123,6 +132,7 @@ export class SynthStore {
   private history: HistoryEntry[] = [];
   /** Parameter waiting for a CC, or null (transient: not part of the document). */
   private midiLearn: number | null = null;
+  private scenes: Scene[] = [];
   private historyIndex = -1;
   private historyTimer: number | undefined;
   private slots: { a: SynthState | null; b: SynthState | null } = { a: null, b: null };
@@ -145,6 +155,7 @@ export class SynthStore {
     if (persisted?.presetId && this.allPresets().some((preset) => preset.id === persisted.presetId)) {
       this.currentPresetId = persisted.presetId;
     }
+    this.scenes = normalizeScenes(loadJson<Scene[]>(SCENES_KEY));
     this.snapshot = this.buildSnapshot();
     // Entry zero is the state the session started from, so the very first
     // action is undoable.
@@ -160,6 +171,7 @@ export class SynthStore {
       currentPresetId: this.currentPresetId,
       userPresets: this.userPresets,
       midiLearn: this.midiLearn,
+      scenes: this.scenes,
       canUndo: this.historyIndex > 0,
       canRedo: this.historyIndex >= 0 && this.historyIndex < this.history.length - 1,
       activeSlot: this.activeSlot,
@@ -720,6 +732,33 @@ export class SynthStore {
     this.layout = { ...this.layout, temperament: id };
     saveJson(LAYOUT_KEY, this.layout);
     engine.setTuning(this.tuningTableFor(id));
+    this.mark();
+    this.commit();
+  }
+
+  /** Save the current workspace as a named scene. */
+  saveScene(name: string) {
+    const scene = makeScene(`scene-${Date.now()}`, name, this.layout);
+    this.scenes = [...this.scenes, scene];
+    saveJson(SCENES_KEY, this.scenes);
+    this.mark();
+    this.commit();
+    return scene;
+  }
+
+  /** Recall a scene's workspace, leaving preferences alone. */
+  applyScene(id: string) {
+    const scene = this.scenes.find((entry) => entry.id === id);
+    if (!scene) return;
+    this.layout = applySceneToLayout(this.layout, scene);
+    saveJson(LAYOUT_KEY, this.layout);
+    this.mark();
+    this.commit();
+  }
+
+  deleteScene(id: string) {
+    this.scenes = this.scenes.filter((entry) => entry.id !== id);
+    saveJson(SCENES_KEY, this.scenes);
     this.mark();
     this.commit();
   }

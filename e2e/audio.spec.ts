@@ -165,3 +165,27 @@ test.describe('velocity curve', () => {
     await expect(page.locator('.d-velocity select')).toHaveValue('soft');
   });
 });
+
+test.describe('workspace scenes', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('saves a scene, changes the workspace, and recalls it', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(400);
+    await page.getByRole('button', { name: '预设库' }).click();
+    // Save the current workspace (modules view, all expanded).
+    await page.locator('.d-scene button', { hasText: '保存当前' }).click();
+    await page.locator('.drawer .d-close').click();
+
+    // Change it: switch to the signal-flow view.
+    await page.getByRole('button', { name: '信号流' }).click();
+    await expect(page.locator('.app')).toHaveAttribute('data-view', 'flow');
+
+    // Recall the scene through the drawer and the view comes back.
+    await page.getByRole('button', { name: '预设库' }).click();
+    await page.locator('.d-scene select').selectOption({ index: 1 });
+    await page.locator('.drawer .d-close').click();
+    await expect(page.locator('.app')).toHaveAttribute('data-view', 'modules');
+  });
+});

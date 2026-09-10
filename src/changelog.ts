@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.40.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '新增「**场景**」（预设库里）：把当前**工作区**存成一个命名场景，之后一键切回——包含模块顺序与折叠、当前视图、信号流节点位置与隐藏项。**语言、配色、触感、MIDI 映射等个人偏好不会被场景改动**，场景只管"工作台长什么样"。适合"演奏 / 调音 / iPad"等不同用途来回切。',
+        'New **scenes** (in the preset drawer): save the current **workspace** under a name and switch back to it in one tap — module order and which ones are collapsed, the current view, and the signal-flow node positions and hidden nodes. Personal preferences (language, colours, haptics, MIDI mappings) are never touched: a scene describes the workbench, not the person.',
+      ],
+    ],
+  },
+  {
     version: '1.39.0',
     date: '2026-09-10',
     kind: 'feature',

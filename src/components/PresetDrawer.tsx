@@ -264,6 +264,52 @@ export function PresetDrawer({
             >
               {t('audio.title')}
             </button>
+            <label className="d-scene">
+              <span>{t('scene.title')}</span>
+              <select
+                value=""
+                onChange={(event) => {
+                  if (!event.target.value) return;
+                  haptic();
+                  store.applyScene(event.target.value);
+                  toast(t('scene.applied'));
+                }}
+              >
+                <option value="">{t('scene.pick')}</option>
+                {store.getSnapshot().scenes.map((scene) => (
+                  <option key={scene.id} value={scene.id}>
+                    {scene.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="d-reset"
+                onClick={() => {
+                  haptic();
+                  const scene = store.saveScene(
+                    `${t('scene.defaultName')} ${store.getSnapshot().scenes.length + 1}`,
+                  );
+                  toast(t('scene.saved', { name: scene.name }));
+                }}
+              >
+                {t('scene.save')}
+              </button>
+              <button
+                type="button"
+                className="d-reset"
+                disabled={store.getSnapshot().scenes.length === 0}
+                onClick={() => {
+                  const scenes = store.getSnapshot().scenes;
+                  if (!scenes.length) return;
+                  haptic();
+                  store.deleteScene(scenes[scenes.length - 1].id);
+                  toast(t('scene.deleted'));
+                }}
+              >
+                {t('scene.delete')}
+              </button>
+            </label>
             <label className="d-velocity">
               <span>{t('velocity.title')}</span>
               <select

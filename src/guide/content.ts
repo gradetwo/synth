@@ -983,6 +983,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Export WAV (lossless)**: the same render with no encoder in the path — the way to tell an encoder artefact from a playback-chain one. Export rendering uses the full 32-voice pool (offline has no deadline), so long-release patches are not cut short by voice stealing.',
           ],
           [
+            '**场景**：预设库里的「场景」可把当前工作区（模块顺序与折叠、视图、信号流节点位置）存成命名场景并一键切回；语言/配色/触感/MIDI 映射等个人偏好不会被改动。',
+            '**Scenes**: save the current workspace (module order and collapse, view, signal-flow node positions) under a name and recall it in one tap; personal preferences such as language, colours, haptics and MIDI mappings are never changed.',
+          ],
+          [
             '**力度曲线**：预设库里的「力度曲线」可选线性 / 柔和 / 强硬，只影响实时演奏（触摸屏、MIDI 键盘）；曲目播放保持原谱力度，不会被改写。',
             '**Velocity curves**: pick Linear, Soft or Hard under Velocity curve in the preset drawer. They shape live playing only (touchscreen, MIDI keyboard); song playback keeps the dynamics in the file.',
           ],
