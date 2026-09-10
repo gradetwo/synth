@@ -51,6 +51,12 @@ function StartOverlay({
           <span>{busy ? t('app.starting') : t('app.start')}</span>
           <small>{t('app.startHint')}</small>
         </button>
+        {/* The running version, up front: an offline-first app can be serving a
+            cached build, and "which version am I actually on?" has to be
+            answerable without digging. */}
+        <p className="start-version">
+          GS-1 v{APP_VERSION} · {t('app.built')}
+        </p>
         {error ? (
           <div className="start-error" role="alert">
             <b>{t('app.startFailed')}</b>

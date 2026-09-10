@@ -18,6 +18,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.30.1',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '启动界面直接显示**当前版本号**：离线优先的应用可能一直在跑缓存里的旧版本，这样"我到底跑的是哪一版"一眼可见（若显示的不是最新版，用预设库里的「检查更新」）。',
+        'The start screen now shows the **running version**: an offline-first app can keep serving a cached build, so "which version am I actually on?" is answerable at a glance (use Check for updates in the preset drawer if it is not the latest).',
+      ],
+    ],
+  },
+  {
     version: '1.30.0',
     date: '2026-09-10',
     kind: 'fix',

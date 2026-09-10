@@ -171,6 +171,7 @@ const DICT: Record<string, [string, string]> = {
   'player.stop': ['停止', 'Stop'],
   'player.loop': ['循环', 'Loop'],
   'player.seek': ['播放进度', 'Seek'],
+  'app.built': ['版本号（更新记录里可查看是否有新版）', 'current build (see Changelog for newer)'],
   'app.overload': [
     '设备负载偏高：已自动把复音数降到 {n}（监视器可查看 DSP 负载%）',
     'Device load is high: polyphony dropped to {n} automatically (the monitor shows the DSP load)',

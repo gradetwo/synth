@@ -1684,3 +1684,7 @@ input,textarea,[contenteditable='true']{
 .audio-poly-seg .seg-btn{flex:1}
 .audio-note{margin:0;font:500 10.5px/1.5 var(--grot);color:var(--txt-dim)}
 .audio-resume{align-self:flex-start;margin-top:12px}
+
+/* Running version on the start card. */
+.start-version{margin:14px 0 0;font:600 10.5px/1.4 var(--mono);letter-spacing:.06em;
+  color:var(--txt-dim);text-align:center}
