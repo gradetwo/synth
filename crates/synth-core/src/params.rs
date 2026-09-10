@@ -114,6 +114,13 @@ pub mod id {
     /// Output trim for the impulse-response reverb, whose level depends on the
     /// response rather than on a `SIZE` control.
     pub const FX_CONV_TRIM: u32 = 95;
+    /// Sampler: the MIDI note at which the imported sample plays at its recorded
+    /// pitch (A).
+    pub const SMP_ROOT: u32 = 96;
+    /// Sampler: 0 = one-shot, 1 = loop, 2 = ping-pong.
+    pub const SMP_MODE: u32 = 97;
+    pub const SMP_LOOP_START: u32 = 98;
+    pub const SMP_LOOP_END: u32 = 99;
     /// 1 = the effect at that position runs as a *send* (its wet output is added
     /// to the unprocessed signal) instead of an insert.
     pub const FX_PARALLEL1: u32 = 88;
@@ -124,8 +131,8 @@ pub mod id {
     pub const FX_PARALLEL6: u32 = 93;
 }
 
-/// Highest parameter id + 1 (ids are 0..=95).
-pub const PARAM_COUNT: usize = 96;
+/// Highest parameter id + 1 (ids are 0..=99).
+pub const PARAM_COUNT: usize = 100;
 
 /// Positions in the effect chain (A5). Six is one per effect: the chain is a
 /// permutation, so reordering can never lose an effect or double one up.
@@ -245,6 +252,9 @@ pub enum Wave {
     /// Harmonic-table oscillator (A6.2). The pulse-width control picks the
     /// recipe, since a table has no pulse width of its own.
     Wavetable,
+    /// Imported sample, played back at the note's rate (A). Needs a file: with
+    /// nothing imported it is silent rather than a factory sound.
+    Sample,
 }
 
 impl Wave {
@@ -258,6 +268,7 @@ impl Wave {
             6 => Wave::Pink,
             7 => Wave::Brown,
             8 => Wave::Wavetable,
+            9 => Wave::Sample,
             _ => Wave::Sine,
         }
     }
@@ -271,7 +282,7 @@ impl Wave {
             Wave::Saw => Some(6),                     // WAVE_POLYBLEP_SAW
             Wave::Square => Some(7),                  // WAVE_POLYBLEP_SQUARE
             Wave::Pulse => Some(7),                   // POLYBLEP_SQUARE + narrow pw
-            Wave::Noise | Wave::Pink | Wave::Brown | Wave::Wavetable => None,
+            Wave::Noise | Wave::Pink | Wave::Brown | Wave::Wavetable | Wave::Sample => None,
         }
     }
 
@@ -541,6 +552,12 @@ pub struct Params {
     pub patch_gain: f32,
     /// Prefer the imported single-cycle wavetable over the factory banks.
     pub wt_user: bool,
+    /// Sampler settings (A): the note the imported sample plays at its recorded
+    /// pitch, how it loops, and where the loop sits inside it.
+    pub sample_root: f32,
+    pub sample_mode: u32,
+    pub sample_loop_start: f32,
+    pub sample_loop_end: f32,
     pub master_tune: f32,
     /// 0 = poly, 1 = mono (retrigger), 2 = legato.
     pub voice_mode: u32,
@@ -563,6 +580,12 @@ impl Params {
             master_volume: 0.75,
             patch_gain: 1.0,
             wt_user: false,
+            // C4 is the note most one-shots are played at, and the default loop
+            // covers the whole sample.
+            sample_root: 60.0,
+            sample_mode: 0,
+            sample_loop_start: 0.0,
+            sample_loop_end: 1.0,
             master_tune: 0.0,
             voice_mode: 0,
             pitch_bend_range: 2.0,
@@ -741,6 +764,10 @@ impl Params {
             p::FX_REVERB_PREDELAY => self.fx.reverb_predelay = value.clamp(0.0, 0.1),
             p::FX_REVERB_MODE => self.fx.reverb_mode = if value >= 0.5 { 1 } else { 0 },
             p::FX_CONV_TRIM => self.fx.conv_trim = value.clamp(0.0, 4.0),
+            p::SMP_ROOT => self.sample_root = value.clamp(0.0, 127.0),
+            p::SMP_MODE => self.sample_mode = (value as u32).min(2),
+            p::SMP_LOOP_START => self.sample_loop_start = clamp01(value),
+            p::SMP_LOOP_END => self.sample_loop_end = clamp01(value),
             p::FX_DELAY_ON => self.fx.delay_on = value > 0.5,
             p::FX_DELAY_SYNC => self.fx.delay_sync = (value as u32).min(3),
             p::FX_DELAY_FB => self.fx.delay_fb = value.clamp(0.0, 0.95),

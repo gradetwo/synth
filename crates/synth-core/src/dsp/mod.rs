@@ -10,5 +10,6 @@ pub mod wavetable;
 pub mod fmath;
 pub mod lfo;
 pub mod reverb;
+pub mod sampler;
 pub mod simd;
 pub mod util;

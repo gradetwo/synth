@@ -647,6 +647,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Reverb**: Soundpipe’s `reverbsc` (Sean Costello’s eight-delay-line feedback network). `SIZE` maps feedback 0.70–0.97 and a low-pass from 4–14 kHz; `MIX` sets the dry/wet balance.',
           ],
           [
+            '**采样（SMP）**：波形最后第二项。导入一段音频（WAV/AIFF/FLAC/MP3，建议 ≤4 秒）后按音高变速播放：`ROOT` 是这段音频原本的音高，`ONE/LOOP/P-P` 选一次性 / 循环 / 乒乓循环（后两者可调 `LOOP A/B`）。它按八度分层抗混叠，所以高音不折叠；没有导入文件时 `SMP` 是静音。',
+            '**Sample (SMP)**: the second-to-last wave. Import audio (WAV/AIFF/FLAC/MP3, up to 4 s is typical) and it plays back pitch-shifted: `ROOT` is the pitch it was recorded at and `ONE/LOOP/P-P` picks one-shot, loop or ping-pong (the last two have `LOOP A/B` points). It is band-limited per octave, so high notes do not fold; with nothing imported, `SMP` is silent by design.',
+          ],
+          [
             '**存档兼容性**：音色、分享链接、工作区、场景、导入的波形与 IR 都带格式版本号。升级后旧数据自动按新格式读取；来自更新版本的存档会被保留副本并回退到初始状态，不会被读坏。',
             '**Save compatibility**: patches, share links, the workspace, scenes, imported waves and impulse responses all carry a format version. Older data is migrated on load; a document from a newer build is kept aside and the app falls back to its initial state rather than reading it wrong.',
           ],

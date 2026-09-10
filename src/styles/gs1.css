@@ -177,8 +177,10 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 .led.on{border-color:var(--mc)}
 .led.on::after{left:10.5px;background:var(--mc);box-shadow:0 0 8px var(--mc)}
 
-.wave-select{display:flex;gap:6px;margin-bottom:12px}
-.wave-btn{flex:1;height:32px;border-radius:7px;cursor:pointer;
+/* Ten waves now, so the row wraps into two of five instead of squeezing the
+   buttons until the last one is a sliver. */
+.wave-select{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.wave-btn{flex:1 1 calc(20% - 6px);min-width:28px;height:32px;border-radius:7px;cursor:pointer;
   background:var(--bg-socket);border:1px solid var(--line-3);display:grid;place-items:center;
   transition:.15s;touch-action:none}
 .wave-btn svg{display:block;stroke:var(--stroke-dim);transition:.15s}
@@ -218,6 +220,9 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
   background:var(--bg-socket);border:1px solid var(--line-soft-2);border-radius:7px}
 .mini-label{font:600 7.5px/1 var(--mono);letter-spacing:.18em;color:var(--txt-dim);
   margin-top:5px;text-align:right}
+/* Sampler controls under the wave selector (A). */
+.smp-controls{display:flex;align-items:flex-start;gap:10px;margin-top:8px;flex-wrap:wrap}
+.smp-controls .seg{flex:1;min-width:96px}
 /* Effect chain reorder row (A5). */
 .fx-chain{margin-bottom:10px}
 .fx-chain-head{font:600 8px/1 var(--mono);letter-spacing:.16em;color:var(--txt-dim);margin-bottom:6px}

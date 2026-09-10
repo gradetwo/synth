@@ -260,6 +260,8 @@ const WAVE_ICONS: Record<Wave, string> = {
   brown: 'M2 12 C 5 4, 8 16, 11 8 S 16 12, 18 10',
   // A stepped, table-like shape.
   wavetable: 'M2 15 L5 5 L5 15 L9 5 L9 15 L13 5 L13 15 L18 5',
+  // A sampled envelope: a hit that decays.
+  sample: 'M2 10 L4 3 L6 13 L8 8 L11 12 L14 10 L18 11',
 };
 
 export function WaveSelect({

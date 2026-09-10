@@ -233,9 +233,19 @@ export function parseWav(bytes: ArrayBuffer): DecodedWave | null {
 
 /** Mono samples of any file the browser can decode, without cycle analysis. */
 export async function decodeSamples(file: Blob): Promise<Float32Array> {
+  return (await decodeSampleFile(file)).samples;
+}
+
+/**
+ * As [`decodeSamples`], but keeping the rate the file was recorded at.
+ *
+ * A sampler needs it: playing a 22 kHz file through a 48 kHz engine at rate 1
+ * would run it more than twice as fast and two octaves sharp.
+ */
+export async function decodeSampleFile(file: Blob): Promise<DecodedWave> {
   const bytes = await file.arrayBuffer();
   const wav = parseWav(bytes.slice(0));
-  if (wav) return wav.samples;
+  if (wav) return wav;
 
   const Offline =
     (globalThis as { OfflineAudioContext?: typeof OfflineAudioContext }).OfflineAudioContext ??
@@ -253,7 +263,7 @@ export async function decodeSamples(file: Blob): Promise<Float32Array> {
     channels.push(buffer.getChannelData(channel));
   }
   if (channels.length === 0) throw new WaveImportError('decode', 'the file has no audio');
-  return loudestChannel(channels);
+  return { sampleRate: buffer.sampleRate, samples: loudestChannel(channels) };
 }
 
 /** One cycle from any file the browser can decode, WAV or not. */

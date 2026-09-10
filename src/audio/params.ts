@@ -105,6 +105,12 @@ export const Param = {
   FX_REVERB_MODE: 94,
   /** Output trim for the impulse-response reverb. */
   FX_CONV_TRIM: 95,
+  /** Sampler: the MIDI note at which the imported sample plays at its own pitch (A). */
+  SMP_ROOT: 96,
+  /** Sampler: 0 = one-shot, 1 = loop, 2 = ping-pong. */
+  SMP_MODE: 97,
+  SMP_LOOP_START: 98,
+  SMP_LOOP_END: 99,
   /** 1 = that position is a send (parallel) instead of an insert (A5). */
   FX_PARALLEL1: 88,
   FX_PARALLEL2: 89,
@@ -186,6 +192,10 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.FX_DELAY_PINGPONG]: 'fxDelayPingpong',
   [Param.FX_REVERB_MODE]: 'fxReverbMode',
   [Param.FX_CONV_TRIM]: 'fxConvTrim',
+  [Param.SMP_ROOT]: 'smpRoot',
+  [Param.SMP_MODE]: 'smpMode',
+  [Param.SMP_LOOP_START]: 'smpLoopStart',
+  [Param.SMP_LOOP_END]: 'smpLoopEnd',
   [Param.FX_CHAIN1]: 'fxChain1',
   [Param.FX_CHAIN2]: 'fxChain2',
   [Param.FX_CHAIN3]: 'fxChain3',
@@ -286,7 +296,8 @@ export type Wave =
   | 'noise'
   | 'pink'
   | 'brown'
-  | 'wavetable';
+  | 'wavetable'
+  | 'sample';
 export type FilterType = 'lp' | 'hp' | 'bp' | 'nt' | 'comb' | 'formant';
 export type LfoWave = 'sine' | 'triangle' | 'square' | 'saw';
 export type LfoTarget = 'cutoff' | 'pitch' | 'volume' | 'pwm';
@@ -302,6 +313,9 @@ export type ModSrc =
 export type ModDst = 'cutoff' | 'pitch' | 'volume' | 'pwm' | 'pan' | 'res';
 export type DelaySync = '1/4' | '1/8.' | '1/8' | '1/16';
 
+/** Note names for the sampler's root note readout. */
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
 export const WAVES: Wave[] = [
   'sine',
   'triangle',
@@ -313,6 +327,8 @@ export const WAVES: Wave[] = [
   'brown',
   // Harmonic table; the PW knob picks which one (see dsp/wavetable).
   'wavetable',
+  // Imported sample, played back at the note's rate (see dsp/sampler).
+  'sample',
 ];
 export const WAVE_CN: Record<Wave, string> = {
   sine: '正弦',
@@ -324,6 +340,7 @@ export const WAVE_CN: Record<Wave, string> = {
   pink: '粉噪',
   brown: '棕噪',
   wavetable: '波表',
+  sample: '采样',
 };
 export const FILTER_TYPES: FilterType[] = ['lp', 'hp', 'bp', 'nt', 'comb', 'formant'];
 export const LFO_WAVES: LfoWave[] = ['sine', 'triangle', 'square', 'saw'];
@@ -440,6 +457,11 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.FX_DELAY_PINGPONG]: 0,
   [Param.FX_REVERB_MODE]: 0,
   [Param.FX_CONV_TRIM]: 1,
+  // C4 is the note most one-shots are played at; the loop covers the whole file.
+  [Param.SMP_ROOT]: 60,
+  [Param.SMP_MODE]: 0,
+  [Param.SMP_LOOP_START]: 0,
+  [Param.SMP_LOOP_END]: 1,
   // The order effects have always run in, so every existing patch keeps its sound.
   [Param.FX_CHAIN1]: 1,
   [Param.FX_CHAIN2]: 2,
@@ -648,6 +670,11 @@ export const PARAM_SPECS: ParamSpec[] = [
   spec(Param.FX_REVERB_WIDTH, 'WIDTH', 0, 1, 0.8, fmt.pct),
   spec(Param.FX_REVERB_PREDELAY, 'PRE', 0, 0.1, 0.012, (v) => `${Math.round(v * 1000)} ms`),
   spec(Param.FX_CONV_TRIM, 'TRIM', 0, 4, 1, (v) => `${v.toFixed(2)}×`),
+  spec(Param.SMP_ROOT, 'ROOT', 0, 127, 60, (v) => NOTE_NAMES[Math.round(v) % 12] + (Math.floor(v / 12) - 1), {
+    discrete: true,
+  }),
+  spec(Param.SMP_LOOP_START, 'LOOP A', 0, 1, 0, fmt.pct),
+  spec(Param.SMP_LOOP_END, 'LOOP B', 0, 1, 1, fmt.pct),
   spec(Param.FX_DELAY_FB, 'FDBK', 0, 0.9, 0.35, fmt.pct),
   spec(Param.FX_DELAY_MIX, 'MIX', 0, 1, 0.22, fmt.pct),
   spec(Param.FX_DELAY_DAMP, 'DAMP', 0, 1, 0.35, fmt.pct),

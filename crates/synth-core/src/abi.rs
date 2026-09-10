@@ -11,7 +11,8 @@ use crate::params::{MAX_BLOCK_SIZE, MAX_VOICES, SPECTRUM_BINS};
 /// 2 added the true-peak / loudness / limiter meters.
 /// 3 added the single-cycle wavetable import.
 /// 4 added the impulse-response import.
-pub const ABI_VERSION: u32 = 4;
+/// 5 added the sample import.
+pub const ABI_VERSION: u32 = 5;
 
 /// Initialise the engine. Returns 1 on success.
 #[no_mangle]
@@ -102,6 +103,38 @@ pub extern "C" fn gs_wavetable_clear() {
 #[no_mangle]
 pub extern "C" fn gs_wavetable_has() -> u32 {
     engine().has_wavetable() as u32
+}
+
+// ------------------------------------------------------------ sample import
+
+/// Destination for an imported sample: the host writes up to
+/// `gs_sample_capacity()` `f32` samples here, then calls `gs_sample_import`.
+#[no_mangle]
+pub extern "C" fn gs_sample_import_ptr() -> *mut f32 {
+    engine().sample_scratch_ptr()
+}
+
+#[no_mangle]
+pub extern "C" fn gs_sample_capacity() -> u32 {
+    engine().sample_capacity() as u32
+}
+
+/// Analyse the staged sample: 0 = ok, 1 = too short, 2 = silent, 3 = not
+/// finite. `source_rate` is the rate the file was recorded at.
+#[no_mangle]
+pub extern "C" fn gs_sample_import(len: u32, source_rate: f32) -> i32 {
+    engine().import_sample(len as usize, source_rate)
+}
+
+#[no_mangle]
+pub extern "C" fn gs_sample_clear() {
+    engine().clear_sample();
+}
+
+/// 1 when a sample is loaded.
+#[no_mangle]
+pub extern "C" fn gs_sample_has() -> u32 {
+    engine().has_sample() as u32
 }
 
 // ----------------------------------------------------- impulse response import

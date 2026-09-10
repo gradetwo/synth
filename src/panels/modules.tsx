@@ -42,6 +42,7 @@ import { FilterCurve, LfoRateLabel, MiniWave } from '@/components/canvas';
 import { AdsrEditor } from '@/components/AdsrEditor';
 import { ModuleShell } from '@/components/Module';
 import { UserWavePicker } from '@/components/UserWavePicker';
+import { UserSamplePicker } from '@/components/UserSamplePicker';
 import { t } from '@/i18n';
 
 function ParamWaveSelect({ id, waves }: { id: number; waves: Wave[] }) {
@@ -111,6 +112,7 @@ function OscModule({ which }: { which: 1 | 2 }) {
         <Knob spec={spread} />
       </div>
       {wave === 'wavetable' && <UserWavePicker which={which} />}
+      {wave === 'sample' && <UserSamplePicker which={which} />}
       <MiniWave which={which} color={color} />
       <div className="mini-label">WAVE PREVIEW</div>
     </ModuleShell>

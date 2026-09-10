@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { engine } from '@/audio/engine';
 import { installUserWave } from '@/audio/userWave';
 import { installUserIr } from '@/audio/ir';
+import { installUserSample } from '@/audio/userSample';
 import { store } from '@/state/store';
 import { useContrast, useLayout, usePower, useTheme, useView } from '@/hooks/useSynth';
 import { useViewport } from '@/hooks/useViewport';
@@ -204,6 +205,7 @@ export default function App() {
       // until the worklet is ready).
       void installUserWave();
       void installUserIr();
+      void installUserSample();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

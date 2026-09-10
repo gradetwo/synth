@@ -15,6 +15,7 @@ use crate::dsp::delay::{Delay, DelayParams};
 use crate::dsp::ladder::LadderFilter;
 use crate::dsp::noise::NoiseGen;
 use crate::dsp::reverb::{Reverb, ReverbParams};
+use crate::dsp::sampler::{LoopMode, ReadState, Sample, SampleError, SampleParams};
 use crate::dsp::wavetable::{CycleError, Table, BASE_LEN as WT_BASE_LEN};
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_limit, Rng};
 use crate::fft::Spectrum;
@@ -244,6 +245,13 @@ pub struct Engine {
     convolver: Convolver,
     /// Where an imported impulse response is staged before analysis.
     ir_scratch: Vec<f32>,
+    /// The imported sample, if any (A). Like the wavetable it is instrument
+    /// state, not patch state: patches choose to play it, not what it is.
+    user_sample: Sample,
+    /// Where a sample is staged before analysis.
+    sample_scratch: Vec<f32>,
+    /// Where each voice's sampler is in the sample, and which way it is going.
+    smp_state: [[ReadState; 2]; MAX_VOICES],
     initialised: bool,
 }
 
@@ -320,6 +328,9 @@ impl Engine {
             delay: Delay::new(),
             convolver: Convolver::new(),
             ir_scratch: Vec::new(),
+            user_sample: Sample::new(),
+            sample_scratch: Vec::new(),
+            smp_state: [[ReadState::new(); 2]; MAX_VOICES],
             initialised: false,
         }
     }
@@ -474,6 +485,44 @@ impl Engine {
     /// ceiling, so it is answerable before anything is allocated.
     pub fn ir_capacity(&self) -> usize {
         Convolver::max_ir_samples()
+    }
+
+    /// Where the host stages an imported sample, then calls
+    /// [`Engine::import_sample`].
+    pub fn sample_scratch_ptr(&mut self) -> *mut f32 {
+        if self.sample_scratch.len() != crate::dsp::sampler::MAX_BASE_SAMPLES {
+            self.sample_scratch.clear();
+            self.sample_scratch.resize(crate::dsp::sampler::MAX_BASE_SAMPLES, 0.0);
+        }
+        self.sample_scratch.as_mut_ptr()
+    }
+
+    /// How many samples can be staged. A compile-time ceiling, so the host can
+    /// ask before anything is allocated.
+    pub fn sample_capacity(&self) -> usize {
+        crate::dsp::sampler::MAX_BASE_SAMPLES
+    }
+
+    /// Analyse a staged sample. `source_rate` is the rate it was recorded at, so
+    /// it can be resampled to the engine's. Returns 0 on success or the numeric
+    /// [`SampleError`] code (1 = too short, 2 = silent, 3 = not finite).
+    pub fn import_sample(&mut self, len: usize, source_rate: f32) -> i32 {
+        let len = len.min(self.sample_scratch.len());
+        let samples = self.sample_scratch[..len].to_vec();
+        match self.user_sample.load(&samples, source_rate, self.sample_rate) {
+            Ok(()) => 0,
+            Err(SampleError::TooShort) => 1,
+            Err(SampleError::Silent) => 2,
+            Err(SampleError::NotFinite) => 3,
+        }
+    }
+
+    pub fn clear_sample(&mut self) {
+        self.user_sample.clear();
+    }
+
+    pub fn has_sample(&self) -> bool {
+        self.user_sample.is_loaded()
     }
 
     /// Analyse a staged impulse response. Returns 0 on success, or the numeric
@@ -697,6 +746,7 @@ impl Engine {
             self.noise[slot][0].reset();
             self.noise[slot][1].reset();
             self.wt_phase[slot] = [0.0; 2];
+            self.smp_state[slot] = [ReadState::new(); 2];
             unsafe { gs_voice_reset(slot as i32) };
             let (p0, p1) = self.next_phases();
             unsafe { gs_voice_phase(slot as i32, p0, p1) };
@@ -1070,6 +1120,7 @@ impl Engine {
             self.noise[slot][0].reset();
             self.noise[slot][1].reset();
             self.wt_phase[slot] = [0.0; 2];
+            self.smp_state[slot] = [ReadState::new(); 2];
             unsafe { gs_voice_reset(slot as i32) };
             let (p0, p1) = self.next_phases();
             unsafe { gs_voice_phase(slot as i32, p0, p1) };
@@ -1247,6 +1298,14 @@ impl Engine {
                 self.user_table.as_ref(),
                 self.params.wt_user,
                 &mut self.wt_phase[slot][which],
+                &self.user_sample,
+                &mut self.smp_state[slot][which],
+                SampleParams {
+                    root_hz: note_to_hz(self.params.sample_root),
+                    mode: LoopMode::from_u32(self.params.sample_mode),
+                    loop_start: self.params.sample_loop_start,
+                    loop_end: self.params.sample_loop_end,
+                },
                 sr,
                 &mut scratch[..],
             );
@@ -1735,6 +1794,9 @@ fn render_oscillator(
     user_table: Option<&Table>,
     use_user_table: bool,
     wt_phase: &mut f32,
+    sample: &Sample,
+    sample_state: &mut ReadState,
+    sampler: SampleParams,
     sample_rate: f32,
     scratch: &mut [f32],
 ) {
@@ -1809,6 +1871,21 @@ fn render_oscillator(
                     }
                 }
                 *wt_phase = phase;
+                return;
+            }
+            if params.wave == crate::params::Wave::Sample {
+                // An imported sample, played at this note's rate. With nothing
+                // imported there is nothing to play: silence is the honest
+                // answer, and the UI is where the player finds out why.
+                if !sample.is_loaded() {
+                    out.fill(0.0);
+                    return;
+                }
+                let root = sampler.root_hz.max(1.0);
+                let rate = (freq / root).clamp(0.01, 64.0);
+                let level = sample.level_for(rate);
+                let step = rate / (1usize << level) as f32;
+                sample.render(level, out, step, &sampler, sample_state);
                 return;
             }
             let colour = match params.wave {
@@ -3608,6 +3685,155 @@ mod tests {
         e.clear_ir();
         assert!(!e.has_ir());
         assert_eq!(e.import_ir(0), 1, "an empty response is refused");
+    }
+
+    // -------------------------------------------------------------- sampler (A)
+
+    /// Stage a sample the way the worklet does and analyse it.
+    fn import_sample(e: &mut Engine, samples: &[f32], rate: f32) -> i32 {
+        let ptr = e.sample_scratch_ptr();
+        let len = samples.len().min(e.sample_capacity());
+        unsafe {
+            core::ptr::copy_nonoverlapping(samples.as_ptr(), ptr, len);
+        }
+        e.import_sample(len, rate)
+    }
+
+    /// Render one note of a sampler patch and hand back the left channel.
+    fn render_sample_note(e: &mut Engine, note: u8, seconds: f32) -> Vec<f32> {
+        let frames = (48_000.0 * seconds) as usize;
+        e.note_on(note, 1.0);
+        let mut out = vec![0.0f32; frames];
+        for chunk in 0..frames.div_ceil(128) {
+            e.process(128);
+            let at = chunk * 128;
+            let take = 128.min(frames - at);
+            out[at..at + take].copy_from_slice(&e.out_l[..take]);
+        }
+        out
+    }
+
+    fn sampler_engine() -> Box<Engine> {
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Sample as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.9);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::FX_REVERB_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        e.set_param(id::SMP_ROOT, 69.0); // A4
+        e
+    }
+
+    /// An imported 440 Hz tone plays at the note it was recorded for, an octave
+    /// above it, and an octave below it.
+    #[test]
+    fn an_imported_sample_follows_the_note() {
+        let _guard = lock_engine();
+        let source: Vec<f32> = (0..24_000)
+            .map(|i| (core::f32::consts::TAU * 440.0 * i as f32 / 48_000.0).sin() * 0.8)
+            .collect();
+
+        let measure = |note: u8| -> f32 {
+            let mut e = sampler_engine();
+            assert_eq!(import_sample(&mut e, &source, 48_000.0), 0, "the sample should import");
+            let buffer = render_sample_note(&mut e, note, 0.2);
+            // Steady state only: the attack is not a pitch.
+            let slice = &buffer[4_800..9_600];
+            let magnitude = |freq: f32| {
+                let (mut re, mut im) = (0.0f64, 0.0f64);
+                for (i, value) in slice.iter().enumerate() {
+                    let win = 0.5 - 0.5 * (core::f64::consts::TAU * i as f64 / slice.len() as f64).cos();
+                    let v = *value as f64 * win;
+                    let phase = core::f64::consts::TAU * freq as f64 * i as f64 / 48_000.0;
+                    re += v * phase.cos();
+                    im -= v * phase.sin();
+                }
+                ((re * re + im * im).sqrt() / slice.len() as f64) as f32
+            };
+            let probes: Vec<f32> = (5..=80).map(|k| k as f32 * 15.0).collect();
+            probes
+                .into_iter()
+                .max_by(|a, b| magnitude(*a).partial_cmp(&magnitude(*b)).unwrap())
+                .unwrap()
+        };
+
+        let at_root = measure(69);
+        assert!((at_root - 440.0).abs() < 20.0, "root note gave {at_root} Hz");
+        let octave_up = measure(81);
+        assert!((octave_up - 880.0).abs() < 40.0, "an octave up gave {octave_up} Hz");
+        let octave_down = measure(57);
+        assert!((octave_down - 220.0).abs() < 15.0, "an octave down gave {octave_down} Hz");
+    }
+
+    /// The sampler must be silent, not noisy, when a patch asks for a sample and
+    /// none is loaded: falling through to the noise generator would be a bug the
+    /// player would hear as "the sample is broken".
+    #[test]
+    fn a_sampler_patch_without_a_sample_is_silent() {
+        let _guard = lock_engine();
+        let mut e = sampler_engine();
+        assert!(!e.has_sample());
+        let buffer = render_sample_note(&mut e, 60, 0.1);
+        let peak = buffer.iter().fold(0.0f32, |peak, value| peak.max(value.abs()));
+        assert!(peak < 1e-6, "an empty sampler should be silent, peak {peak}");
+    }
+
+    /// The loop mode is audible: with it on, the note outlives the sample.
+    #[test]
+    fn a_looped_sample_keeps_playing_past_its_end() {
+        let _guard = lock_engine();
+        let source: Vec<f32> = (0..2_400)
+            .map(|i| (core::f32::consts::TAU * 220.0 * i as f32 / 48_000.0).sin() * 0.8)
+            .collect();
+
+        let energy_after_the_sample = |mode: f32| {
+            let mut e = sampler_engine();
+            assert_eq!(import_sample(&mut e, &source, 48_000.0), 0);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::SMP_MODE, mode);
+            let buffer = render_sample_note(&mut e, 69, 0.5);
+            // 0.3 s in is well past the 50 ms sample.
+            buffer[14_400..24_000].iter().map(|v| v * v).sum::<f32>().sqrt()
+        };
+
+        let one_shot = energy_after_the_sample(0.0);
+        let looped = energy_after_the_sample(1.0);
+        // Not exactly zero: the low-pass keeps ringing for a few milliseconds
+        // after the sample stops. The gap to the looped case is ~50 dB.
+        assert!(one_shot < 0.01, "a one-shot should have stopped, got {one_shot}");
+        assert!(looped > 1.0, "a loop should still be sounding, got {looped}");
+    }
+
+    /// Refusals, and clearing: the oscillator stays usable afterwards.
+    #[test]
+    fn a_bad_sample_is_refused_and_clearing_keeps_the_patch_working() {
+        let _guard = lock_engine();
+        let mut e = sampler_engine();
+        assert_eq!(import_sample(&mut e, &[0.0; 4], 48_000.0), 1, "too short");
+        assert_eq!(import_sample(&mut e, &[0.0; 4_800], 48_000.0), 2, "silent");
+        let mut broken = vec![0.0f32; 4_800];
+        broken[7] = f32::NAN;
+        assert_eq!(import_sample(&mut e, &broken, 48_000.0), 3, "not finite");
+        assert!(!e.has_sample());
+
+        let source: Vec<f32> = (0..4_800)
+            .map(|i| (core::f32::consts::TAU * 440.0 * i as f32 / 48_000.0).sin() * 0.8)
+            .collect();
+        assert_eq!(import_sample(&mut e, &source, 48_000.0), 0);
+        assert!(e.has_sample());
+        e.clear_sample();
+        assert!(!e.has_sample());
+        // And the patch is silent rather than broken.
+        let buffer = render_sample_note(&mut e, 69, 0.05);
+        assert!(buffer.iter().all(|v| v.is_finite()));
     }
 
     /// The noise wave ids must actually reach the coloured-noise filters: white

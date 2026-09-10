@@ -95,6 +95,10 @@ const PARAMS = [
   ['wtUser', 79, 0, 0, 1],
   ['fxDelayDamp', 80, 0.35, 0, 1],
   ['fxDelayPingpong', 81, 0, 0, 1],
+  ['smpRoot', 96, 60, 0, 127],
+  ['smpMode', 97, 0, 0, 2],
+  ['smpLoopStart', 98, 0, 0, 1],
+  ['smpLoopEnd', 99, 1, 0, 1],
   ['fxReverbMode', 94, 0, 0, 1],
   ['fxConvTrim', 95, 1, 0, 4],
   ['fxChain1', 82, 1, 0, 6],
@@ -316,6 +320,38 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
         this.port.postMessage(reply);
         break;
       }
+      case 'sample': {
+        // Sample import (A). `sampleRate` is the file's own rate: playing it at
+        // the right pitch is the whole point, so the core resamples it to the
+        // engine rate rather than assuming the two match.
+        const samples = data.samples;
+        const sourceRate = Number(data.sampleRate) || sampleRate;
+        const reply = { type: 'sample', request: data.request, has: false, code: 0 };
+        if (typeof this.wasm.gs_sample_import === 'function') {
+          const capacity = this.wasm.gs_sample_capacity();
+          const count = Math.min(samples ? samples.length : 0, capacity);
+          if (count > 0) {
+            const scratch = new Float32Array(
+              this.memory.buffer,
+              this.wasm.gs_sample_import_ptr(),
+              capacity,
+            );
+            scratch.set(samples.subarray(0, count));
+            reply.code = this.wasm.gs_sample_import(count, sourceRate);
+          } else {
+            reply.code = 1;
+          }
+          reply.has = this.wasm.gs_sample_has() === 1;
+        } else {
+          reply.code = -1;
+        }
+        this.port.postMessage(reply);
+        break;
+      }
+      case 'sampleClear':
+        if (this.wasm.gs_sample_clear) this.wasm.gs_sample_clear();
+        this.port.postMessage({ type: 'sample', request: data.request, has: false, code: 0 });
+        break;
       case 'irClear':
         if (this.wasm.gs_ir_clear) this.wasm.gs_ir_clear();
         this.port.postMessage({ type: 'ir', request: data.request, has: false, code: 0 });

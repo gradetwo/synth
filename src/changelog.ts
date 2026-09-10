@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.50.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '波形新增 **SMP 采样**：导入一段自己的音频（WAV/AIFF/FLAC/MP3）当作振荡器音源，鼓、音效、人声切片、真实乐器单音都能直接用。选 `SMP` 后会出现「导入采样」以及 `ROOT`（这段音频原本的音高）与 `ONE / LOOP / P-P`（一次性 / 循环 / 乒乓循环，后两者还能调循环起止点）。',
+        'A new **SMP** wave plays your own audio (WAV/AIFF/FLAC/MP3) as an oscillator source, so drums, effects, vocal chops and real instrument notes can be played from the keyboard. Pick `SMP` and an Import row appears with `ROOT` (the pitch the file was recorded at) and `ONE / LOOP / P-P` (one-shot, loop, ping-pong, the last two with loop points).',
+      ],
+      [
+        '采样按音高变速播放并**按八度分层抗混叠**（高音不会出现折叠噪声），文件超过 4 秒会截断，导入的音频保存在本机、重开仍在、导出会一并渲染。',
+        'Samples are pitch-shifted and **band-limited per octave**, so high notes do not fold; files over 4 s are truncated, and the imported audio is kept on the device, survives a reload and is rendered by export.',
+      ],
+    ],
+  },
+  {
     version: '1.49.0',
     date: '2026-09-10',
     kind: 'fix',

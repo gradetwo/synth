@@ -9,6 +9,7 @@ import { meterCaption, meterIsHot, scopeGain, spectrumDisplay, vuDisplay } from 
 import { t } from '@/i18n';
 import { canvasInk } from '@/state/theme';
 import { getUserWave } from '@/audio/userWave';
+import { getUserSample } from '@/audio/userSample';
 
 const TAU = Math.PI * 2;
 
@@ -95,6 +96,17 @@ function userWaveShape(p: number): number | null {
   const second = (first + 1) % cycle.length;
   const fraction = position - Math.floor(position);
   return cycle[first] * (1 - fraction) + cycle[second] * fraction;
+}
+
+/**
+ * The imported sample at `p`, downsampled to a few hundred points: the preview
+ * shows the actual audio rather than an icon.
+ */
+function sampleShape(p: number): number | null {
+  const sample = getUserSample()?.samples;
+  if (!sample || sample.length === 0) return null;
+  const t = ((p % 1) + 1) % 1;
+  return sample[Math.min(sample.length - 1, Math.floor(t * sample.length))];
 }
 
 function lfoShape(type: ReturnType<typeof intToLfoWave>, p: number): number {
@@ -227,7 +239,11 @@ export function MiniWave({
     ctx.beginPath();
     for (let x = 0; x <= w; x += 1.5) {
       const phase = (x / w) * 2.2;
-      const imported = lfo ? null : userWaveShape(phase);
+      const imported = lfo
+        ? null
+        : wave === 'sample'
+          ? sampleShape(phase)
+          : userWaveShape(phase);
       const v =
         imported ?? (lfo ? lfoShape(wave as never, phase) : waveShape(wave as Wave, phase));
       const y = h / 2 - v * h * 0.36;
