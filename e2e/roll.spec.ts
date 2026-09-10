@@ -199,8 +199,13 @@ test.describe('piano roll editing rules', () => {
     const shown = await monitor.textContent();
     await page.mouse.up();
 
+    // Poll for the note's own label too: React commits the move a frame or two
+    // after the pointer is released, and reading it once made this test the
+    // flakiest one under a busy machine.
+    await expect
+      .poll(async () => note.getAttribute('aria-label'), { timeout: 5000 })
+      .not.toBe(before);
     const after = (await note.getAttribute('aria-label'))!;
-    expect(after).not.toBe(before);
     expect(shown).toBe(after.split(' · ')[0]);
   });
 

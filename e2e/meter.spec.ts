@@ -26,7 +26,14 @@ test('idle meter is stable and reads silence', async ({ page }) => {
   }
   expect([...seen]).toEqual(['— · —']);
 
-  // Playing a note makes it a measurement again.
-  await page.locator('.bkey').nth(4).click();
-  await expect.poll(async () => meter.textContent(), { timeout: 5000 }).not.toBe('— · —');
+  // Holding a key makes it a measurement again. Hold rather than click: a
+  // short click can decay before the poll's first sample.
+  const key = page.locator('.bkey').nth(4);
+  const box = (await key.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await expect
+    .poll(async () => meter.textContent(), { timeout: 5000 })
+    .not.toMatch(/^— · —/);
+  await page.mouse.up();
 });

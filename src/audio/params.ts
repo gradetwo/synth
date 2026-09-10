@@ -172,7 +172,7 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.LFO2_TARGET]: 'lfo2Target',
 };
 
-export type Wave = 'sine' | 'triangle' | 'saw' | 'square' | 'pulse' | 'noise';
+export type Wave = 'sine' | 'triangle' | 'saw' | 'square' | 'pulse' | 'noise' | 'pink' | 'brown';
 export type FilterType = 'lp' | 'hp' | 'bp' | 'nt' | 'comb' | 'formant';
 export type LfoWave = 'sine' | 'triangle' | 'square' | 'saw';
 export type LfoTarget = 'cutoff' | 'pitch' | 'volume' | 'pwm';
@@ -188,14 +188,16 @@ export type ModSrc =
 export type ModDst = 'cutoff' | 'pitch' | 'volume' | 'pwm' | 'pan' | 'res';
 export type DelaySync = '1/4' | '1/8.' | '1/8' | '1/16';
 
-export const WAVES: Wave[] = ['sine', 'triangle', 'saw', 'square', 'pulse', 'noise'];
+export const WAVES: Wave[] = ['sine', 'triangle', 'saw', 'square', 'pulse', 'noise', 'pink', 'brown'];
 export const WAVE_CN: Record<Wave, string> = {
   sine: '正弦',
   triangle: '三角',
   saw: '锯齿',
   square: '方波',
   pulse: '脉冲',
-  noise: '噪声',
+  noise: '白噪',
+  pink: '粉噪',
+  brown: '棕噪',
 };
 export const FILTER_TYPES: FilterType[] = ['lp', 'hp', 'bp', 'nt', 'comb', 'formant'];
 export const LFO_WAVES: LfoWave[] = ['sine', 'triangle', 'square', 'saw'];

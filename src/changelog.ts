@@ -18,6 +18,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.35.0',
+    date: '2026-09-10',
+    kind: 'sound',
+    items: [
+      [
+        '波形选择新增 **粉噪（Pink）** 与 **棕噪（Brown）**：白噪每个频段能量相同，粉噪每倍频程 −3 dB、棕噪 −6 dB，所以听起来"更厚、更柔"——做风声、海浪、底鼓/军鼓的噪声层都要它们。',
+        'Two new noise colours, **Pink** and **Brown**: white noise is flat per hertz, pink falls 3 dB per octave and brown 6 dB, which is what makes them sound softer and weightier — the usual source for wind, surf and drum noise layers.',
+      ],
+      [
+        '**按频域验证**（延续"音质必须时域+频域双检"的原则）：单元测试用 FFT 测量倍频程斜率，实测**白噪 −0.07 / 粉噪 −3.08 / 棕噪 −5.99 dB/倍频程**（容差分别收紧到 0.5/0.6/0.8 dB）；另有一条引擎级测试确认三个波形 id 真的接到了各自的滤波器上（亮度必须 白 > 粉 > 棕，单看电平是发现不了接错的）。',
+        '**Verified in the frequency domain** (the dual-domain rule this project now follows): unit tests measure the octave slope with an FFT — white **−0.07**, pink **−3.08**, brown **−5.99 dB/octave**, with the tolerances tightened to 0.5/0.6/0.8 dB — plus an engine-level test that the three wave ids really reach their filters (brightness must be white > pink > brown; a level check could never see that wiring mistake).',
+      ],
+    ],
+  },
+  {
     version: '1.34.2',
     date: '2026-09-10',
     kind: 'fix',

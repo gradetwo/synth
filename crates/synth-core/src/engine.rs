@@ -11,6 +11,7 @@ use crate::dsp::lfo::Lfo;
 use crate::dsp::simd;
 use crate::dsp::comb::CombFilter;
 use crate::dsp::ladder::LadderFilter;
+use crate::dsp::noise::{NoiseColour, NoiseGen};
 use crate::dsp::reverb::{Reverb, ReverbParams};
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_limit, Rng};
 use crate::fft::Spectrum;
@@ -197,6 +198,8 @@ pub struct Engine {
     poly_request: usize,
     /// Blocks a voice spent in its silent release tail (filter skipped).
     silent_blocks: u32,
+    /// Noise colour state, per voice and oscillator.
+    noise: [[NoiseGen; 2]; MAX_VOICES],
     /// One four-pole low-pass per voice per oscillator side.
     ladders: [[LadderFilter; 2]; MAX_VOICES],
     /// Per-note tuning offsets in cents. Lives here rather than in `Params` so
@@ -285,6 +288,7 @@ impl Engine {
             random_seed: 0,
             poly_request: 16,
             silent_blocks: 0,
+            noise: [[NoiseGen::new(); 2]; MAX_VOICES],
             ladders: [[LadderFilter::new(); 2]; MAX_VOICES],
             tuning: [0.0; crate::params::TUNING_NOTES],
             bends: [0.0; crate::params::TUNING_NOTES],
@@ -607,6 +611,8 @@ impl Engine {
         if !legato {
             self.ladders[slot][0].reset();
             self.ladders[slot][1].reset();
+            self.noise[slot][0].reset();
+            self.noise[slot][1].reset();
             unsafe { gs_voice_reset(slot as i32) };
             let (p0, p1) = self.next_phases();
             unsafe { gs_voice_phase(slot as i32, p0, p1) };
@@ -977,6 +983,8 @@ impl Engine {
         {
             self.ladders[slot][0].reset();
             self.ladders[slot][1].reset();
+            self.noise[slot][0].reset();
+            self.noise[slot][1].reset();
             unsafe { gs_voice_reset(slot as i32) };
             let (p0, p1) = self.next_phases();
             unsafe { gs_voice_phase(slot as i32, p0, p1) };
@@ -1149,6 +1157,8 @@ impl Engine {
                 frames,
                 out,
                 &mut self.rng,
+                &mut self.noise[slot][which],
+                sr,
                 &mut scratch[..],
             );
         }
@@ -1584,6 +1594,7 @@ impl Engine {
 
 /// Render one oscillator into `out` (block ABI, noise handled in Rust).
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn render_oscillator(
     slot: usize,
     which: usize,
@@ -1593,6 +1604,8 @@ fn render_oscillator(
     frames: usize,
     out: &mut [f32],
     rng: &mut Rng,
+    noise: &mut NoiseGen,
+    sample_rate: f32,
     scratch: &mut [f32],
 ) {
     match params.wave.daisy_id() {
@@ -1640,9 +1653,18 @@ fn render_oscillator(
             }
         },
         None => {
-            // White noise: no oscillator state to preserve.
+            // Noise. White has no state; pink and brown are filtered, and the
+            // filters live per voice so a stolen voice cannot inherit a tail
+            // from the note that was using the slot.
+            let colour = match params.wave {
+                crate::params::Wave::Pink => crate::dsp::noise::NoiseColour::Pink,
+                crate::params::Wave::Brown => crate::dsp::noise::NoiseColour::Brown,
+                _ => crate::dsp::noise::NoiseColour::White,
+            };
+            noise.set_colour(colour);
             for sample in out.iter_mut() {
-                *sample = rng.next_bipolar() * 0.5;
+                let white = rng.next_bipolar() * 0.5;
+                *sample = noise.process(white, sample_rate);
             }
         }
     }
@@ -2817,6 +2839,57 @@ mod tests {
         }
         assert_eq!(e.take_true_peak(), 0.0, "tail should settle to exact silence");
         assert_eq!(e.loudness_rms(), 0.0, "loudness should settle to zero");
+    }
+
+    /// The noise wave ids must actually reach the coloured-noise filters: white
+    /// is brighter than pink, which is brighter than brown. A mis-wiring (pink
+    /// playing white, say) keeps the level identical and only shows up as
+    /// brightness, so measure that.
+    #[test]
+    fn noise_colours_get_progressively_darker() {
+        let _guard = lock_engine();
+        let brightness = |wave: crate::params::Wave| -> f32 {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_ON, 1.0);
+            e.set_param(id::OSC1_WAVE, wave as u32 as f32);
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_CUTOFF, 18000.0);
+            e.set_param(id::FILTER_DRIVE, 0.0);
+            e.set_param(id::FILTER_ENV_AMT, 0.0);
+            e.set_param(id::ENV_ATTACK, 0.001);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::LFO_ON, 0.0);
+            e.set_param(id::MASTER_VOLUME, 0.75);
+            e.note_on(60, 0.9);
+            for _ in 0..40 {
+                e.process(128);
+            }
+            // Mean absolute first difference: a high-pass of sorts, so brighter
+            // noise scores higher.
+            let mut sum = 0.0f32;
+            let mut previous = e.out_l[0];
+            let mut count = 0.0f32;
+            for _ in 0..200 {
+                e.process(128);
+                for sample in e.out_l[..128].iter() {
+                    sum += (sample - previous).abs();
+                    previous = *sample;
+                    count += 1.0;
+                }
+            }
+            sum / count
+        };
+        let white = brightness(crate::params::Wave::Noise);
+        let pink = brightness(crate::params::Wave::Pink);
+        let brown = brightness(crate::params::Wave::Brown);
+        assert!(
+            white > pink && pink > brown,
+            "noise colours are not ordered: white {white:.5} pink {pink:.5} brown {brown:.5}"
+        );
+        // Not a subtle difference either: pink is measurably darker than white.
+        assert!(pink < white * 0.75, "pink is too close to white: {pink:.5} vs {white:.5}");
     }
 
     /// A quiet signal must pass through the limiter untouched (gain exactly 1)

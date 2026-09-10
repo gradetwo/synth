@@ -168,6 +168,10 @@ pub enum Wave {
     Square,
     Pulse,
     Noise,
+    /// Pink noise (-3 dB/octave), generated in Rust.
+    Pink,
+    /// Brown noise (-6 dB/octave), generated in Rust.
+    Brown,
 }
 
 impl Wave {
@@ -178,6 +182,8 @@ impl Wave {
             3 => Wave::Square,
             4 => Wave::Pulse,
             5 => Wave::Noise,
+            6 => Wave::Pink,
+            7 => Wave::Brown,
             _ => Wave::Sine,
         }
     }
@@ -191,7 +197,7 @@ impl Wave {
             Wave::Saw => Some(6),                     // WAVE_POLYBLEP_SAW
             Wave::Square => Some(7),                  // WAVE_POLYBLEP_SQUARE
             Wave::Pulse => Some(7),                   // POLYBLEP_SQUARE + narrow pw
-            Wave::Noise => None,
+            Wave::Noise | Wave::Pink | Wave::Brown => None,
         }
     }
 

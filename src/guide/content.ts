@@ -983,6 +983,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Export WAV (lossless)**: the same render with no encoder in the path — the way to tell an encoder artefact from a playback-chain one. Export rendering uses the full 32-voice pool (offline has no deadline), so long-release patches are not cut short by voice stealing.',
           ],
           [
+            '**噪声颜色**：波形里的 `PNK`（粉噪，每倍频程 −3 dB）与 `BRN`（棕噪，−6 dB）在合成噪声层（风声、海浪、鼓）时比白噪自然得多；白噪保留在 `NOI`。',
+            '**Noise colours**: `PNK` (pink, −3 dB per octave) and `BRN` (brown, −6 dB) are far more natural than white for wind, surf and drum layers; white stays on `NOI`.',
+          ],
+          [
             '**MPE 输入**：在「音频设置」开启后，每个音拥有独立弯音——控制器每音一通道时，通道弯音只作用于该音；关闭时所有弯音立即复位。通道压力仍作用于整体（每音压力需要每声部调制源，属后续项）。',
             '**MPE input**: with it on (Audio settings) every note bends on its own — a bend on a note\'s channel moves only that note, and switching MPE off releases them all. Channel pressure still applies globally (per-note pressure needs a per-voice modulation source, which is a later item).',
           ],

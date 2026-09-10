@@ -253,7 +253,11 @@ const WAVE_ICONS: Record<Wave, string> = {
   saw: 'M2 17 L10 3 L10 17 L18 3',
   square: 'M2 16 L2 4 L10 4 L10 16 L18 16 L18 4',
   pulse: 'M2 16 L2 4 L6 4 L6 16 L18 16 L18 4',
+  // White noise is a jagged line; the coloured noises get progressively
+  // smoother glyphs, which is what they sound like.
   noise: 'M2 10 L4.5 4 L7 14 L10 3 L12.5 16 L15 6 L18 11',
+  pink: 'M2 8 L5 5 L7 12 L10 7 L13 14 L15 9 L18 11',
+  brown: 'M2 12 C 5 4, 8 16, 11 8 S 16 12, 18 10',
 };
 
 export function WaveSelect({
