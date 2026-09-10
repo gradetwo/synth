@@ -101,6 +101,15 @@ const ANALYSIS_INTERVAL = 6; // blocks between analysis messages (~16 ms @ 48k/1
  * spec (Safari does not expose it). Fall back to `Date.now()` so the load
  * monitor never throws on the audio thread.
  */
+/** Rendered-audio warm-up before the load monitor is allowed to act. */
+const WARMUP_MS = 2000;
+/** Consecutive over-budget blocks before it counts as a missed deadline. */
+const MISS_STREAK = 3;
+/** Fraction of the quantum budget that counts as "too much". */
+const OVER_LOAD = 0.35;
+/** Consecutive blocks over that fraction before voices are shed (~32 ms). */
+const OVER_BLOCKS = 12;
+
 const nowMs = () =>
   typeof performance !== 'undefined' && typeof performance.now === 'function'
     ? performance.now()
@@ -128,8 +137,11 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     this.currentPoly = this.maxPoly;
     // 0 = the load monitor decides; otherwise a ceiling the user pinned.
     this.manualPoly = 0;
+    this.renderedMs = 0;
+    this.missStreak = 0;
+    this.overStreak = 0;
     this.costAvg = 0;
-    this.lastDowngrade = 0;
+    this.lastDowngrade = -Infinity;
     this.lastUpgrade = 0;
     this.port.onmessage = (event) => this.handleMessage(event.data);
 
@@ -243,21 +255,48 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
   }
 
   monitorLoad(frames, cost, rate) {
-    if (this.blockCount < 15) return; // ignore JIT warm-up
     const budget = (frames / rate) * 1000;
-    // A faster average (about twelve blocks) so a patch that is too heavy is
-    // caught in ~15 ms rather than after a visible stumble.
-    this.costAvg = this.costAvg ? this.costAvg * 0.92 + cost * 0.08 : cost;
+    // Warm-up is measured in *rendered audio*, not blocks: the first second
+    // after start (and after the first notes on a phone) is full of first-touch
+    // costs and JIT compilation, and the old 15-block (40 ms) guard let those
+    // spikes trigger a downgrade — which is why the app reported "device
+    // overloaded" at 4% load, on the very first key press.
+    this.renderedMs += (frames / rate) * 1000;
+    // Asymmetric follower: rises slowly (only *sustained* load counts) and
+    // falls quickly. A symmetric average let a single slow block — a GC pause,
+    // a page fault on a phone — keep the estimate above the threshold for
+    // twenty blocks, which is how a 4%-load device ended up shedding voices.
+    if (!this.costAvg) {
+      this.costAvg = cost;
+    } else {
+      const alpha = cost > this.costAvg ? 0.05 : 0.35;
+      this.costAvg += (cost - this.costAvg) * alpha;
+    }
+    if (this.renderedMs < WARMUP_MS) {
+      // Discard the warm-up average rather than keeping the last sample: a slow
+      // startup must not decide the first verdict as soon as the window closes.
+      this.costAvg = 0;
+      this.missStreak = 0;
+      this.overStreak = 0;
+      return;
+    }
     const now = nowMs();
     const load = this.costAvg / budget;
-    // A block that ate the whole quantum has *already* glitched: the audio
-    // thread missed its deadline. Shed voices at once rather than waiting for
-    // the average to catch up, and shed more when the overshoot is large.
-    const missed = cost > budget;
-    const step = load > 0.85 || missed ? 8 : 4;
+    // Decisions are made on *repetition*, not on single blocks:
+    //
+    //  * a missed deadline (a block that ate the whole quantum) counts after
+    //    three in a row — one is a GC pause, a page fault or another tab;
+    //  * high load counts after a sustained stretch — a single spike used to
+    //    drag the average over the threshold for twenty blocks, which is how a
+    //    phone at 4% load reported "device overloaded" on the first key press.
+    this.missStreak = cost > budget ? this.missStreak + 1 : 0;
+    this.overStreak = cost > budget * OVER_LOAD ? this.overStreak + 1 : 0;
+    const missed = this.missStreak >= MISS_STREAK;
+    const overloaded = this.overStreak >= OVER_BLOCKS;
+    const step = missed || load > 0.85 ? 8 : 4;
     const cooldown = missed ? 250 : 900;
     if (
-      (load > 0.35 || missed) &&
+      (overloaded || missed) &&
       this.currentPoly > 4 &&
       now - this.lastDowngrade > cooldown
     ) {

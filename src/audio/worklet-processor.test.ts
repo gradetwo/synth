@@ -76,6 +76,61 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
+  /**
+   * Drive one render block with a chosen cost, by faking the clock the monitor
+   * reads. `cost` is what the board measures for this block, in ms.
+   */
+  const tick = (processor: ReturnType<typeof instantiate>, cost: number) => {
+    const outputs = [[new Float32Array(128), new Float32Array(128)]];
+    let clock = 0;
+    const realNow = performance.now.bind(performance);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (performance as any).now = () => {
+      clock += cost;
+      return clock;
+    };
+    try {
+      processor.process([], outputs, {});
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (performance as any).now = realNow;
+    }
+  };
+
+  it('does not shed voices for warm-up spikes or a single slow block', async () => {
+    messages.length = 0;
+    const processor = instantiate();
+    await waitReady();
+    const budget = (128 / 48000) * 1000;
+    // Startup: blocks that cost several times the budget while the core is
+    // still warming up (400 blocks ≈ 1.1 s of audio, inside the 2 s window).
+    // The reported bug was a downgrade toast at 4% load on the first key press.
+    for (let i = 0; i < 400; i++) tick(processor, budget * 6);
+    // The app settles — this is the comfortable machine the screenshot showed.
+    for (let i = 0; i < 430; i++) tick(processor, budget * 0.1);
+    tick(processor, budget * 8);
+    tick(processor, budget * 0.1);
+    tick(processor, budget * 8);
+    // Recovery bumps are fine; shedding voices for a spike is not.
+    const shed = messages.filter(
+      (m) => (m as { reason?: string }).reason === 'overload',
+    );
+    expect(shed).toEqual([]);
+  });
+
+  it('sheds voices once deadlines are actually being missed', async () => {
+    messages.length = 0;
+    const processor = instantiate();
+    await waitReady();
+    const budget = (128 / 48000) * 1000;
+    for (let i = 0; i < 900; i++) tick(processor, budget * 0.2);
+    // Sustained: every block over the threshold for a stretch.
+    for (let i = 0; i < 20; i++) tick(processor, budget * 4);
+    const shed = messages.filter((m) => (m as { type?: string }).type === 'polyphony');
+    expect(shed.length).toBeGreaterThan(0);
+    expect(shed[0]).toMatchObject({ reason: 'overload' });
+  });
+
   it('reports ready and renders audio for a note-on packet', async () => {
     messages.length = 0;
     const proc = instantiate();

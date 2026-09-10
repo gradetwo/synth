@@ -18,6 +18,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.34.1',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '**修复"刚进程序/按一个键就提示设备负载偏高"**（截图上监视器只有 4% 负载却在降复音）：负载监控的判定过于敏感——① 预热窗口只有 40 毫秒，手机启动时的编译与首次访问尖峰直接触发了降级；② **单个**慢块就被当成"错过截止时间"；③ 对称平均让一次尖峰在阈值上停留二十个块。现在改为：**按渲染音频时长预热 2 秒**（并丢弃预热期均值）、**连续 3 块**超预算才算错过截止、**连续 12 块**超 35% 才算持续过载，均值改为"慢升快降"。',
+        '**Fixed the false "device overloaded" toast** (the screenshot showed 4% load while voices were being shed): the monitor reacted to noise — a 40 ms warm-up, a *single* slow block counting as a missed deadline, and a symmetric average that a lone spike kept above the threshold for twenty blocks. It now warms up over **2 seconds of rendered audio** (discarding that average), requires **three consecutive** over-budget blocks for a missed deadline and **twelve consecutive** over-35% blocks for sustained overload, and the average rises slowly but falls quickly.',
+      ],
+    ],
+  },
+  {
     version: '1.34.0',
     date: '2026-09-10',
     kind: 'feature',

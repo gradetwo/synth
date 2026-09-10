@@ -185,20 +185,23 @@ test.describe('piano roll editing rules', () => {
     await note.scrollIntoViewIfNeeded();
     await page.waitForTimeout(200);
     const before = (await note.getAttribute('aria-label'))!;
+    const monitor = page.locator('.nd-val');
+    const monitorBefore = await monitor.textContent();
     const box = (await note.boundingBox())!;
 
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 40, { steps: 4 });
-    await page.waitForTimeout(60);
     // The monitor shows the pitch being auditioned while the note is dragged
-    // (the audition note is released again shortly after).
-    const monitor = await page.locator('.nd-val').textContent();
+    // (the audition note is released again shortly after). Poll rather than
+    // sample once: on a busy machine the update lands a few frames later.
+    await expect.poll(async () => monitor.textContent(), { timeout: 5_000 }).not.toBe(monitorBefore);
+    const shown = await monitor.textContent();
     await page.mouse.up();
 
     const after = (await note.getAttribute('aria-label'))!;
     expect(after).not.toBe(before);
-    expect(monitor).toBe(after.split(' · ')[0]);
+    expect(shown).toBe(after.split(' · ')[0]);
   });
 
   test('drawing over a note replaces it instead of stacking', async ({ page }) => {
