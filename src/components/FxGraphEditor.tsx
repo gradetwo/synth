@@ -43,15 +43,26 @@ import { toast } from './Toast';
 const CARD_W = 208;
 const CARD_H = 132;
 const CARD_GAP = 14;
+const DRY_W = 176;
 const COL_X = [12, 292, 572];
-const CANVAS_W = COL_X[2] + 190;
-const CANVAS_H = 12 + FX_SLOTS * (CARD_H + CARD_GAP);
+const PAD = 14;
 
 /** Vertical offset of the two input ports inside a card. */
 const IN_PORT_Y = [64, 92];
 const OUT_PORT_Y = CARD_H / 2;
 
-const cardY = (slot: number) => 12 + slot * (CARD_H + CARD_GAP);
+const NODES_H = FX_SLOTS * (CARD_H + CARD_GAP) - CARD_GAP;
+
+/** Where a card sits when the user has never moved it. */
+function defaultPos(key: string): [number, number] {
+  if (key === 'dry') return [COL_X[0], 12];
+  if (key === 'out') return [COL_X[2], 12 + Math.round((NODES_H - CARD_H) / 2)];
+  const slot = Number(key.slice(4)) - 1;
+  return [COL_X[1], 12 + (Number.isFinite(slot) ? slot : 0) * (CARD_H + CARD_GAP)];
+}
+
+const isDry = (key: string) => key === 'dry';
+const cardWidth = (key: string) => (isDry(key) ? DRY_W : CARD_W);
 
 /** A source code that can feed an input: the dry bus, or an earlier node. */
 function sourcesFor(slot: number): number[] {
@@ -120,6 +131,12 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
    * gesture into a wire drag. Keeping them together is what stops a tap from
    * being seen twice (once as a drag, once as a click).
    */
+  /** The card being moved, and where the pointer grabbed it. */
+  const [moving, setMoving] = useState<{
+    key: string;
+    dx: number;
+    dy: number;
+  } | null>(null);
   const [armed, setArmed] = useState<{
     src: number;
     x: number;
@@ -131,6 +148,22 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
   const graphOn = (params[Param.FX_GRAPH] ?? 0) >= 0.5;
+  const savedPos = snapshot.layout.fxGraphPos;
+  const posOf = useCallback(
+    (key: string): [number, number] => savedPos[key] ?? defaultPos(key),
+    [savedPos],
+  );
+  /** The board grows with the cards, so a dragged card is never out of reach. */
+  const canvasSize = useMemo(() => {
+    let w = 720;
+    let h = 420;
+    for (const key of ['dry', 'out', ...Array.from({ length: FX_SLOTS }, (_, i) => `node${i + 1}`)]) {
+      const [x, y] = posOf(key);
+      w = Math.max(w, x + cardWidth(key) + PAD);
+      h = Math.max(h, y + CARD_H + PAD);
+    }
+    return { w, h };
+  }, [posOf]);
   const nodes = useMemo(
     () =>
       Array.from({ length: FX_SLOTS }, (_, slot) => ({
@@ -168,7 +201,11 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
   const ensureGraph = useCallback(() => {
     if (graphOn) return;
     const values = graphFromChain((id) => store.getParam(id as ParamId));
-    GRAPH_FROM_CHAIN_IDS.forEach((id, index) => store.setParam(id, values[index], { immediate: true }));
+    // One change, not 37: see SynthStore.setParams.
+    store.setParams(
+      GRAPH_FROM_CHAIN_IDS.map((id, index) => [id, values[index]] as [ParamId, number]),
+      { immediate: true },
+    );
   }, [graphOn]);
 
   const connect = useCallback(
@@ -191,10 +228,36 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
 
   const rebuildFromChain = useCallback(() => {
     const values = graphFromChain((id) => store.getParam(id as ParamId));
-    GRAPH_FROM_CHAIN_IDS.forEach((id, index) => store.setParam(id, values[index], { immediate: true }));
+    store.setParams(
+      GRAPH_FROM_CHAIN_IDS.map((id, index) => [id, values[index]] as [ParamId, number]),
+      { immediate: true },
+    );
     toast(t('fxg.rebuilt'));
   }, []);
 
+
+  /** Grab a card by its title strip and move it around the board. */
+  const dragCard = (key: string) => (event: React.PointerEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const canvas = canvasOf(event);
+    const point = pointIn(canvas, event);
+    const [left, top] = posOf(key);
+    setMoving({ key, dx: point.x - left, dy: point.y - top });
+    setArmed(null);
+    // Capture on the board, so a fast drag that leaves the card (or the board)
+    // for a moment keeps arriving here instead of stopping dead.
+    canvas?.setPointerCapture?.(event.pointerId);
+  };
+
+  const moveCard = (event: React.PointerEvent) => {
+    if (!moving) return;
+    const point = pointIn(canvasOf(event), event);
+    store.setFxGraphPosition(moving.key, [
+      Math.round(point.x - moving.dx),
+      Math.round(point.y - moving.dy),
+    ]);
+  };
 
   /**
    * Pointer down on a source port: tap the armed source again to put it down,
@@ -362,13 +425,13 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
       .map((which) => ({ which, input: which === 0 ? node.in1 : node.in2 }))
       .filter(({ input }) => input.src !== 0)
       .map(({ which, input }) => {
-        const fromX = input.src === GRAPH_DRY ? COL_X[0] + 176 : COL_X[1] + CARD_W;
-        const fromY =
-          input.src === GRAPH_DRY
-            ? 12 + CARD_H / 2
-            : cardY(input.src - 2) + OUT_PORT_Y;
-        const toX = COL_X[1];
-        const toY = cardY(node.slot) + IN_PORT_Y[which];
+        const fromKey = input.src === GRAPH_DRY ? 'dry' : `node${input.src - 1}`;
+        const [fromLeft, fromTop] = posOf(fromKey);
+        const [toLeft, toTop] = posOf(`node${node.slot + 1}`);
+        const fromX = fromLeft + cardWidth(fromKey);
+        const fromY = fromTop + OUT_PORT_Y;
+        const toX = toLeft;
+        const toY = toTop + IN_PORT_Y[which];
         return { key: `${node.slot}-${which}`, fromX, fromY, toX, toY, src: input.src, slot: node.slot, which };
       }),
   );
@@ -406,12 +469,25 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
           <button type="button" className="fxg-rebuild" data-act="rebuild" onClick={rebuildFromChain}>
             {t('fxg.rebuild')}
           </button>
+          {view === 'canvas' ? (
+            <button
+              type="button"
+              className="fxg-rebuild"
+              data-act="reset-layout"
+              onClick={() => store.resetFxGraphLayout()}
+            >
+              {t('fxg.resetLayout')}
+            </button>
+          ) : null}
           <button type="button" className="fxg-close" data-act="close" aria-label={t('fxg.close')} onClick={onClose}>
             ✕
           </button>
         </div>
 
-        <div className="fxg-hint">{graphOn ? t('fxg.hintOn') : t('fxg.hintOff')}</div>
+        <div className="fxg-hint">
+          {graphOn ? t('fxg.hintOn') : t('fxg.hintOff')}
+          {view === 'canvas' ? ` · ${t('fxg.dragHint')}` : ''}
+        </div>
 
         {view === 'list' ? (
           <div className="fxg-list" data-view="list">
@@ -458,9 +534,13 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
             <div
               className="fxg-canvas"
               ref={canvasRef}
-              style={{ width: CANVAS_W, height: CANVAS_H }}
+              style={{ width: canvasSize.w, height: canvasSize.h }}
               data-view="canvas-area"
               onPointerMove={(event) => {
+                if (moving) {
+                  moveCard(event);
+                  return;
+                }
                 if (!armed) return;
                 const point = pointIn(canvasOf(event), event);
                 const moved =
@@ -468,9 +548,17 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
                   Math.hypot(point.x - armed.fromX, point.y - armed.fromY) > 6;
                 setArmed({ ...armed, x: point.x, y: point.y, moved });
               }}
-              onPointerUp={releasePointer}
+              onPointerUp={(event) => {
+                if (moving) {
+                  moveCard(event);
+                  haptic(HAPTIC.light);
+                  setMoving(null);
+                  return;
+                }
+                releasePointer(event);
+              }}
             >
-              <svg className="fxg-wires" width={CANVAS_W} height={CANVAS_H}>
+              <svg className="fxg-wires" width={canvasSize.w} height={canvasSize.h}>
                 {wires.map((wire) => (
                   <path
                     key={wire.key}
@@ -483,22 +571,27 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
                 {armed?.moved ? (
                   <path
                     className="fxg-wire ghost"
-                    d={wirePath(
-                      armed.src === GRAPH_DRY ? COL_X[0] + 176 : COL_X[1] + CARD_W,
-                      armed.src === GRAPH_DRY ? 12 + CARD_H / 2 : cardY(armed.src - 2) + OUT_PORT_Y,
-                      armed.x,
-                      armed.y,
-                    )}
+                    d={(() => {
+                      const key = armed.src === GRAPH_DRY ? 'dry' : `node${armed.src - 1}`;
+                      const [left, top] = posOf(key);
+                      return wirePath(left + cardWidth(key), top + OUT_PORT_Y, armed.x, armed.y);
+                    })()}
                   />
                 ) : null}
               </svg>
 
               {/* DRY source */}
               <div
-                className="fxg-card fxg-dry"
-                style={{ left: COL_X[0], top: 12, width: 176, height: CARD_H }}
+                className={`fxg-card fxg-dry${moving?.key === 'dry' ? ' moving' : ''}`}
+                style={{ left: posOf('dry')[0], top: posOf('dry')[1], width: DRY_W, height: CARD_H }}
               >
-                <div className="fxg-card-title">{t('fxg.dry')}</div>
+                <div
+                  className="fxg-card-title fxg-drag"
+                  data-act="drag-dry"
+                  onPointerDown={dragCard('dry')}
+                >
+                  {t('fxg.dry')}
+                </div>
                 <div className="fxg-card-sub">{t('fxg.dryHint')}</div>
                 <button
                   type="button"
@@ -512,12 +605,24 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
 
               {nodes.map((node) => (
                 <div
-                  className={`fxg-card${pending !== null && !sourcesFor(node.slot).includes(pending) ? ' dim' : ''}`}
+                  className={`fxg-card${pending !== null && !sourcesFor(node.slot).includes(pending) ? ' dim' : ''}${
+                    moving?.key === `node${node.slot + 1}` ? ' moving' : ''
+                  }`}
                   key={node.slot}
                   data-node={node.slot}
-                  style={{ left: COL_X[1], top: cardY(node.slot), width: CARD_W, height: CARD_H }}
+                  style={{
+                    left: posOf(`node${node.slot + 1}`)[0],
+                    top: posOf(`node${node.slot + 1}`)[1],
+                    width: CARD_W,
+                    height: CARD_H,
+                  }}
                 >
-                  <div className="fxg-card-title">
+                  <div
+                    className="fxg-card-title fxg-drag"
+                    data-act="drag-node"
+                    data-node={node.slot}
+                    onPointerDown={dragCard(`node${node.slot + 1}`)}
+                  >
                     {t('fxg.node')} {node.slot + 1}
                   </div>
                   {cardBody(node.slot)}
@@ -558,15 +663,24 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
 
               {/* OUT bus */}
               <div
-                className="fxg-card fxg-out"
-                style={{ left: COL_X[2], top: 12 + (CANVAS_H - 24 - CARD_H) / 2, width: 176, height: CARD_H }}
+                className={`fxg-card fxg-out${moving?.key === 'out' ? ' moving' : ''}`}
+                style={{ left: posOf('out')[0], top: posOf('out')[1], width: DRY_W, height: CARD_H }}
               >
-                <div className="fxg-card-title">OUT</div>
+                <div
+                  className="fxg-card-title fxg-drag"
+                  data-act="drag-out"
+                  onPointerDown={dragCard('out')}
+                >
+                  OUT
+                </div>
                 <div className="fxg-card-sub">{t('fxg.outHint')}</div>
               </div>
 
               {/* Output routing: which nodes reach the bus. */}
-              <div className="fxg-out-list">
+              <div
+                className="fxg-out-list"
+                style={{ left: posOf('out')[0], top: posOf('out')[1] + CARD_H + 8 }}
+              >
                 {nodes.map((node) => (
                   <div className="fxg-out-row" key={node.slot} data-node={node.slot}>
                     <label className="fxg-out-label">

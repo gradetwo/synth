@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, memo, useCallback, useEffect, useRef, useState } from 'react';
 import { engine } from '@/audio/engine';
 import { installUserWave } from '@/audio/userWave';
 import { installUserIr } from '@/audio/ir';
@@ -131,6 +131,35 @@ function UpdateBanner() {
   );
 }
 
+/**
+ * The module grid, on its own.
+ *
+ * Opening a drawer is App state, and before this every such change re-rendered
+ * the whole tree — eight module panels with their canvases, the monitor strip,
+ * the keyboard and the player's track list. On a slow engine that was seconds
+ * (measured: opening the preset library took 8.5 s under WebKit, against 160 ms
+ * in Chromium). Reading the layout here and memoising means an overlay toggle
+ * re-renders the overlay.
+ */
+const ModulesView = memo(function ModulesView() {
+  const layout = useLayout();
+  return (
+    <main className="modules">
+      <ModulesGrid>
+        {layout.order.map((id) => (
+          <ModuleFor key={id} id={id} />
+        ))}
+      </ModulesGrid>
+    </main>
+  );
+});
+
+/** The pieces of chrome that only depend on their own hooks. */
+const TopBarView = memo(TopBar);
+const DisplayRowView = memo(DisplayRow);
+const KeyboardView = memo(KeyboardDock);
+const PlayerPanelView = memo(PlayerPanel);
+
 export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
@@ -148,6 +177,32 @@ export default function App() {
   const view = useView();
   const viewport = useViewport();
   const power = usePower();
+
+  /**
+   * Once the engine is running, fetch the panels a player is most likely to
+   * open next while the browser is idle. They stay lazy chunks — the first paint
+   * does not wait for them and the bundle budget is untouched — but the first
+   * open no longer pays for a parse: on a slow engine opening the preset library
+   * for the first time took 5.4 s, and it is the chunk arriving that costs it.
+   */
+  useEffect(() => {
+    if (!everRan) return;
+    const warm = () => {
+      void import('@/components/PresetDrawer');
+      void import('@/components/PianoRoll');
+      void import('@/components/FxGraphEditor');
+    };
+    const idle = (window as Window & typeof globalThis & {
+      requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    });
+    if (typeof idle.requestIdleCallback === 'function') {
+      const id = idle.requestIdleCallback(warm, { timeout: 4000 });
+      return () => idle.cancelIdleCallback?.(id);
+    }
+    const timer = setTimeout(warm, 2500);
+    return () => clearTimeout(timer);
+  }, [everRan]);
   const theme = useTheme();
   const contrast = useContrast();
   const [systemDark, setSystemDark] = useState(true);
@@ -334,7 +389,27 @@ export default function App() {
    * finished and saved first so opening the editor never loses a recording.
    */
   const fxGraphOpenNow = useFxGraphOpen();
-  const closeFxGraph = () => fxGraphOpen.set(false);
+  const closeFxGraph = useCallback(() => fxGraphOpen.set(false), []);
+  const openDrawer = useCallback(() => setDrawerOpen(true), []);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const openPlayer = useCallback(() => setPlayerOpen(true), []);
+  const closePlayer = useCallback(() => setPlayerOpen(false), []);
+  const closeRoll = useCallback(() => setRollOpen(false), []);
+  const changeView = useCallback((next: 'modules' | 'flow') => store.setView(next), []);
+  const openGuide = useCallback(() => {
+    setSettingsOpen(false);
+    setGuideOpen(true);
+  }, []);
+  const openChangelog = useCallback(() => {
+    setSettingsOpen(false);
+    setChangelogOpen(true);
+  }, []);
+  const openAudio = useCallback(() => {
+    setSettingsOpen(false);
+    setAudioOpen(true);
+  }, []);
 
   const openRoll = () => {
     if (recorder.getState().recording) {
@@ -359,31 +434,25 @@ export default function App() {
 
   return (
     <div className="app" data-device={viewport.device} data-view={view}>
-      <TopBar
-        onBrowse={() => setDrawerOpen(true)}
-        onSettings={() => setSettingsOpen(true)}
+      <TopBarView
+        onBrowse={openDrawer}
+        onSettings={openSettings}
         onRoll={openRoll}
         view={view}
-        onView={(next) => store.setView(next)}
+        onView={changeView}
       />
 
-      <DisplayRow onOpenPlayer={() => setPlayerOpen(true)} />
+      <DisplayRowView onOpenPlayer={openPlayer} />
 
       {view === 'flow' ? (
         <Suspense fallback={null}>
           <SignalFlow />
         </Suspense>
       ) : (
-        <main className="modules">
-          <ModulesGrid>
-            {layout.order.map((id) => (
-              <ModuleFor key={id} id={id} />
-            ))}
-          </ModulesGrid>
-        </main>
+        <ModulesView />
       )}
 
-      <KeyboardDock />
+      <KeyboardView />
 
       {status === 'suspended' && everRan ? (
         <button type="button" className="audio-hint" onClick={() => void engine.resumeIfSuspended()}>
@@ -392,7 +461,7 @@ export default function App() {
       ) : null}
 
       <Suspense fallback={null}>
-        <PianoRoll open={rollOpen} onClose={() => setRollOpen(false)} />
+        <PianoRoll open={rollOpen} onClose={closeRoll} />
       </Suspense>
 
       {/* Mounted only while it is open, so a closed editor keeps no state. */}
@@ -403,24 +472,15 @@ export default function App() {
       ) : null}
 
       <Suspense fallback={null}>
-        <PresetDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+        <PresetDrawer open={drawerOpen} onClose={closeDrawer} />
       </Suspense>
 
       <SettingsDrawer
         open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-          onOpenGuide={() => {
-            setSettingsOpen(false);
-            setGuideOpen(true);
-          }}
-          onOpenChangelog={() => {
-            setSettingsOpen(false);
-            setChangelogOpen(true);
-          }}
-          onOpenAudio={() => {
-            setSettingsOpen(false);
-            setAudioOpen(true);
-          }}
+        onClose={closeSettings}
+        onOpenGuide={openGuide}
+        onOpenChangelog={openChangelog}
+        onOpenAudio={openAudio}
       />
       {guideOpen ? (
         <Suspense fallback={null}>
@@ -437,11 +497,7 @@ export default function App() {
           <AudioSettings open onClose={() => setAudioOpen(false)} />
         </Suspense>
       ) : null}
-      <PlayerPanel
-        open={playerOpen}
-        onClose={() => setPlayerOpen(false)}
-        onEdit={openRoll}
-      />
+      <PlayerPanelView open={playerOpen} onClose={closePlayer} onEdit={openRoll} />
       <ToastHost />
       <UpdateBanner />
       {showGate ? <StartOverlay onStart={start} error={error} busy={busy} /> : null}

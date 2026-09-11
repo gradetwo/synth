@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.76.0',
+    date: '2026-09-11',
+    kind: 'feature',
+    items: [
+      [
+        '**效果路由图的卡片可以拖动摆放**：拖卡片标题就能挪位置，连线会跟着走；摆放属于工作区（不进音色），换曲目/换音色都在，重开也还在；「重置布局」一键回到默认排布。',
+        '**The routing-graph cards can be arranged**: drag a card by its title and the wires follow. The arrangement belongs to the workspace rather than to the patch, so it survives switching patches and reloading, and “Reset layout” puts the board back.',
+      ],
+      [
+        '顺带把路由图的批量改动做成**一次提交**（重建/首次连线要写 37 个参数）：界面不再为了一个动作重绘几十次，慢设备上明显更跟手。',
+        'Bulk changes to the graph now land as **one change** (a rebuild or the first edit writes 37 parameters), so the interface no longer redraws dozens of times for one action — noticeably smoother on slow devices.',
+      ],
+    ],
+  },
+  {
     version: '1.75.0',
     date: '2026-09-11',
     kind: 'feature',

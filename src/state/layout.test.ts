@@ -60,6 +60,29 @@ describe('layout model', () => {
     expect(normalizeLayout({}).haptics).toBe(true);
   });
 
+  it('keeps the effect-graph card positions it recognises, and repairs the rest', () => {
+    const layout = normalizeLayout({
+      fxGraphPos: {
+        dry: [40, 60],
+        node3: [300.4, 120.6],
+        out: [9999, -9999],
+        nope: [10, 10],
+        node9: [10, 10],
+        node2: ['x', 12],
+      },
+    });
+    expect(layout.fxGraphPos.dry).toEqual([40, 60]);
+    expect(layout.fxGraphPos.node3).toEqual([300, 121]);
+    // A card dragged off the board is pulled back to where it can be grabbed.
+    expect(layout.fxGraphPos.out).toEqual([2400, -400]);
+    // Unknown keys and malformed pairs are dropped, not trusted.
+    expect(layout.fxGraphPos.nope).toBeUndefined();
+    expect(layout.fxGraphPos.node9).toBeUndefined();
+    expect(layout.fxGraphPos.node2).toBeUndefined();
+    // A layout from before the graph existed simply has none.
+    expect(normalizeLayout({}).fxGraphPos).toEqual({});
+  });
+
   it('falls back to defaults for garbage input', () => {
     expect(normalizeLayout(null).order).toEqual(MODULE_IDS);
     expect(normalizeLayout('nope').order).toEqual(MODULE_IDS);

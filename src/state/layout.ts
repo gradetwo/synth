@@ -61,6 +61,8 @@ export interface LayoutState {
   view: ViewMode;
   /** Signal-flow node positions in canvas pixels. */
   flowPos: Record<string, [number, number]>;
+  /** Effect-graph card positions, when the user has arranged them (A1). */
+  fxGraphPos: Record<string, [number, number]>;
   /** Nodes removed from the signal-flow canvas. */
   flowHidden: string[];
   /** `null` = automatic (collapsed on phones/tablets, expanded on desktop). */
@@ -108,6 +110,7 @@ export function defaultLayout(): LayoutState {
     haptics: true,
     view: 'modules',
     flowPos: {},
+    fxGraphPos: {},
     flowHidden: [],
     displayExpanded: null,
     phoneDefaults: false,
@@ -125,6 +128,12 @@ export function defaultLayout(): LayoutState {
     customTuning: null,
     mpe: false,
   };
+}
+
+/** Canvas coordinates a card may sit at: big enough to arrange, small enough
+ * that a corrupt save cannot push a card out of reach. */
+function clampCanvas(value: number): number {
+  return Math.max(-400, Math.min(2400, Math.round(value)));
 }
 
 /** Repair persisted layout data (unknown/duplicate ids, missing modules). */
@@ -159,6 +168,19 @@ export function normalizeLayout(raw: unknown): LayoutState {
       }
     }
   }
+  // The graph cards share the flow canvas's rules: finite numbers, clamped to a
+  // range a canvas can actually show, and unknown keys dropped rather than
+  // trusted.
+  const fxGraphPos: Record<string, [number, number]> = {};
+  if (input.fxGraphPos && typeof input.fxGraphPos === 'object') {
+    for (const [id, pos] of Object.entries(input.fxGraphPos as Record<string, unknown>)) {
+      if (!/^(dry|out|node[1-6])$/.test(id)) continue;
+      if (Array.isArray(pos) && pos.length === 2 && pos.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+        fxGraphPos[id] = [clampCanvas(pos[0]), clampCanvas(pos[1])];
+      }
+    }
+  }
+
   const flowHidden = Array.isArray(input.flowHidden)
     ? input.flowHidden.filter((id): id is string => typeof id === 'string')
     : [];
@@ -181,6 +203,7 @@ export function normalizeLayout(raw: unknown): LayoutState {
     haptics: input.haptics !== false,
     view: input.view === 'flow' ? 'flow' : 'modules',
     flowPos,
+    fxGraphPos,
     flowHidden,
     displayExpanded:
       typeof input.displayExpanded === 'boolean' ? input.displayExpanded : null,

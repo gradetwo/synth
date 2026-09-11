@@ -81,6 +81,22 @@ check('runs the Firefox project', engines.includes('--project=firefox'));
 check('builds the app before the browser run', engines.includes('npm run build'));
 check('keeps failure artefacts', engines.includes('test-results'));
 
+// The nightly job is a promise too: a scheduled run that quietly disappears is
+// how a WebKit-only regression survives for days.
+const nightly = body('nightly');
+check('a nightly job exists', text.includes('  nightly:'));
+check('it is scheduled', /cron:\s*'[^']+'/.test(text));
+// The `if:` sits on the job, not inside its steps, so it is read from the whole
+// file rather than from the step list.
+check(
+  'it only runs on the schedule',
+  /nightly:\n\s+if:\s*github\.event_name\s*==\s*'schedule'/.test(text),
+);
+check('it runs WebKit', nightly.includes('--engines=webkit'));
+check('it runs Firefox', nightly.includes('--engines=firefox'));
+check('it runs the long benchmark', nightly.includes('npm run bench:long'));
+check('it keeps its logs', nightly.includes('nightly-logs'));
+
 if (failures.length) {
   console.error(`[ci] FAIL — ${failures.join(', ')}`);
   process.exit(1);

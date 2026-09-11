@@ -99,6 +99,9 @@ function cloneLayout(layout: LayoutState): LayoutState {
     collapsed: { ...layout.collapsed },
     autoCollapsed: [...layout.autoCollapsed],
     flowPos: Object.fromEntries(Object.entries(layout.flowPos).map(([k, v]) => [k, [...v] as [number, number]])),
+    fxGraphPos: Object.fromEntries(
+      Object.entries(layout.fxGraphPos).map(([k, v]) => [k, [...v] as [number, number]]),
+    ),
     flowHidden: [...layout.flowHidden],
   };
 }
@@ -268,6 +271,34 @@ export class SynthStore {
     this.state = { ...this.state, [key]: { ...set, [id]: value } };
     if (this.activeInstance === 2) engine.setParamB(id, value);
     else engine.setParam(id, value, opts.immediate);
+    this.scheduleHistory();
+    this.commit();
+  }
+
+  /**
+   * Apply a batch of parameters as one change.
+   *
+   * Rebuilding the routing graph writes 37 of them at once. Committing each
+   * separately meant 37 rounds of notifications and 74 storage writes for one
+   * user action — slow everywhere and seconds of frozen interface on a slow
+   * WebKit, so a rebuild that touches many parameters lands as a single change.
+   */
+  setParams(entries: [ParamId, number][], opts: { immediate?: boolean } = {}) {
+    const key = this.activeInstance === 2 ? 'params2' : 'params';
+    let next = this.state[key];
+    let changed = false;
+    for (const [id, value] of entries) {
+      if (next[id] === value) continue;
+      if (!changed) {
+        next = { ...next };
+        changed = true;
+      }
+      next[id] = value;
+      if (this.activeInstance === 2) engine.setParamB(id, value);
+      else engine.setParam(id, value, opts.immediate);
+    }
+    if (!changed) return;
+    this.state = { ...this.state, [key]: next };
     this.scheduleHistory();
     this.commit();
   }
@@ -860,6 +891,19 @@ export class SynthStore {
     // Dragging a node fires continuously: coalesce like a knob sweep.
     this.scheduleHistory();
     this.layout = { ...this.layout, flowPos: { ...this.layout.flowPos, [id]: pos } };
+    this.commit();
+  }
+
+  /** Move one card of the effect routing graph (coalesced like a node drag). */
+  setFxGraphPosition(id: string, pos: [number, number]) {
+    this.scheduleHistory();
+    this.layout = { ...this.layout, fxGraphPos: { ...this.layout.fxGraphPos, [id]: pos } };
+    this.commit();
+  }
+
+  resetFxGraphLayout() {
+    this.layout = { ...this.layout, fxGraphPos: {} };
+    this.mark();
     this.commit();
   }
 

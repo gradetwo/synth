@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the GS-1 nightly browser E2E at 03:00
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+# Catch up after a machine that was asleep, and spread the load a little.
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

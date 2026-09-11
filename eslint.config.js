@@ -23,6 +23,11 @@ export default tseslint.config(
     },
   },
   {
+    // The scripts run in Node, not the browser.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: { ...globals.node } },
+  },
+  {
     files: ['src/**/*.{ts,tsx}'],
     languageOptions: {
       globals: { ...globals.browser, __APP_VERSION__: 'readonly' },

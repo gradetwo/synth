@@ -104,8 +104,14 @@
 > 初始 JS 从 167.3 KB gzip 降到 151.7 KB；初始 JS 预算据此从 150 KB 调整到 165 KB（其余预算不变），
 > 依据写在 `scripts/verify-budget.mjs` 里。
 
-1. ✅ **本地 WebKit E2E**：用户装好系统库后本机可跑，新增 `npm run test:e2e:webkit`（`--workers=1`）；
-   现状与待查项记在 `docs/notes/compat.md`（整包连跑仍有大量点击超时，疑似 WebKit 音频线程抢主线程）。
+1. ✅ **本地 WebKit E2E + 夜间跑**（v1.75.0 → v1.76.0）：
+   - 定位并修掉三个本地坑：headless WebKit 不触发 rAF（改有头 + Xvfb）、装饰性动画让 Playwright 的稳定性检查
+     永远等不到（WebKit/Firefox 项目显式 `reducedMotion: 'reduce'`）、引擎运行中 `reload()` 会长时间卡住
+     （持久化用例改成「新开页面 + 等新引擎起来再关旧页」）。
+   - 产品侧顺带改进：`store.setParams` 让路由图的一次重建只提交一次（原来 37 次 commit + 74 次 localStorage 写入）。
+   - **真正的夜间跑**：仓库新增 `nightly` 作业（`on.schedule`，由 `verify-ci` 守住）+ 本机 `npm run nightly`
+     （WebKit 核心子集、锁、日志轮转、`docs/notes/nightly.md` 记录）+ `scripts/install-nightly.sh` 与
+     systemd 用户定时器模板。详见 `docs/notes/compat.md` 第 4 节。
 2. ✅ **季度长时基准**：`npm run bench:long`（60 s + 内存/arena 断言），结果追加 `docs/notes/performance.md`。
 3. ✅ **`cargo clippy` 门禁**：`npm run verify:clippy`（`-D correctness -D suspicious -D perf`，FFI 的
    `not_unsafe_ptr_arg_deref` 与移植常数的 `approx_constant` 显式豁免）已进 `verify` 与 CI。
@@ -117,8 +123,9 @@
 
 1. **节点图续（收益中，成本中）**：自由布局画布（位置进工作区）、每个效果节点可多实例、
    边增益的可视化编辑（当前只有输入增益）、连接的键盘/读屏完全可达（当前列表视图可用，但画布只有 aria-label）。
-2. **本地 WebKit 稳定化（收益中，成本中）**：先做「不启动引擎只测 UI」的隔离跑法，定位点击后主线程停顿；
-   稳定后把 iPhone/iPad 视口用例纳入本地夜间跑（`npm run test:e2e:webkit` 已就位）。
+2. ~~**本地 WebKit 稳定化**~~ ✅ 已查清（v1.76.0）：本机 WebKit 只有约 1 fps（Xvfb + 软件渲染），
+   Playwright 每次点击等两帧 → 慢与超时；已用「有头 + Xvfb + `reducedMotion` + 放宽超时 + 单文件/核心子集」
+   把可跑范围做到最大，并把全量交给 CI 的 nightly 作业（`docs/notes/compat.md` 第 3、4 节）。
 3. **曲目随分享码的压缩（收益中，成本中）**：当前是 base64 MIDI，5 分钟曲目接近上限；
    可加 LZ 压缩或只发「层混音 + 曲目哈希」+ 曲库匹配。
 4. **`songs.ts` 懒加载（收益低，成本中）**：30 KB 的内置曲库数据仍在初始 chunk，拆出去可再省约 4 KB gzip。
@@ -132,7 +139,7 @@
 | 双实例/多轨的 CPU 与复音预算 | 每批都跑性能门禁；实例数上限 + 负载监视降级沿用现有机制 |
 | ~~卷积混响跳边界尖峰~~ | ✅ v1.69.0：分段乘加摊平到 hop 内的块，基准新增 IR 行并断言其余 7 块成本接近 |
 | 大块 UI 改动破坏移动端 | 每批跑手机/平板视口 E2E（现有 620/900 断点用例），触屏交互单独写用例 |
-| 本机缺 webkit/firefox 系统库 | 已确认缺 `libicu74 / libxml2 / libmanette-0.2-0 / libenchant-2-2`：本地判据仍以 Chromium 为准，WebKit 走 CI；装了系统库后按 C1 纳入夜间跑 |
+| 本机 WebKit 的帧/主线程调度与 Chromium 差异大 | 依赖已装、核心子集可跑通；三个坑的成因与绕法写进 `docs/notes/compat.md`，WebKit/Firefox 项目单独放宽超时并开 `reducedMotion`；本地判据仍以 Chromium 为准，全量 WebKit 交给 CI 的 nightly 作业 |
 | 节点图把状态扩张到拓扑 | 拓扑进音色、位置进工作区；加载旧音色时自动映射为等价链，并用 bit 级比对测试兜底 |
 
 ## 六、完成定义（每批通用）

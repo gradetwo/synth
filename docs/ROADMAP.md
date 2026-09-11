@@ -56,6 +56,9 @@
 | A1a | **节点图引擎（A1）**：6 个效果节点 + 干声源 + 输出汇的前馈图（每节点 2 路输入、带增益、可扇出），索引序即拓扑序、回向连线忽略即无环；`FX_GRAPH=1` 时走图、默认仍走旧链，`gs_fx_graph_sync` 从旧链自动映射且**逐样本一致**（Rust + WASM 门禁） | ✅ v1.72.0 |
 | A2a | **路由图编辑器（A2）**：画布（端口拖线 / 点输出再点输入 / 点线断开）+ 列表视图（手机默认，键盘可达）、节点内联（效果类型/开关/并联/混合/增益）、三处入口、随音色保存（含 E2E 与手机视口） | ✅ v1.73.0 |
 | B5 | **整首编曲随分享码**：曲目以 MIDI 字节随码传输、层混音一并带上；过长自动降级为 `.gs1song` 文件（可被预设库导入）；顺带修复「外部改混音后层条不刷新」 | ✅ v1.74.0 |
+| A2b | **路由图卡片可拖动摆放**（位置进工作区、连线跟随、重置布局；参数批量提交减少重绘） | ✅ v1.76.0 |
+| C9 | **门禁在繁忙机器上不再假红**：`bench` 按 `loadavg` 判定宿主是否过载（过载只报正确性、跳过计时并说明原因）；Playwright 默认超时 45→60 s；WebKit/Firefox 项目开 `reducedMotion` + 单独超时 + 重试；修掉两个跨引擎测试缺陷（Chromium 专用启动参数害 WebKit 起不来、浮动键盘挡住模块按钮） | ✅ v1.76.0 |
+| C8 | **真正的夜间跑**：仓库新增 `nightly` 作业（`on.schedule`，`verify-ci` 守住它）+ 本机 `npm run nightly`（WebKit 核心子集 + `xvfb-run --headed`、锁、日志轮转、`docs/notes/nightly.md` 记录）+ systemd 用户定时器模板 | ✅ v1.76.0 |
 | C7 | **本机 WebKit 可跑**：依赖装好后定位到「headless WebKit 不触发 rAF → Playwright 点击稳定性检查挂死」，给出 `xvfb-run … --headed` 跑法（`npm run test:e2e:webkit:headed`），记录在 `docs/notes/compat.md` | ✅ v1.75.0 |
 | C6 | **工程项收尾**：`cargo clippy` 门禁（correctness/suspicious/perf，CI 同步）、`npm run bench:long` 60 秒长时基准（含内存/arena 断言）、更新提示显示本次更新内容 | ✅ v1.75.0 |
 | G4 | **Firefox 启动卡死修复**：`resume()` 可能永不 settle，启动改为限时等待 + 「点按恢复」提示（含回归 E2E 与 `docs/notes/compat.md`） | ✅ v1.72.0 |

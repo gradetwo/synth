@@ -440,6 +440,8 @@ const DICT: Record<string, [string, string]> = {
   'fxg.canvas': ['画布', 'Canvas'],
   'fxg.list': ['列表', 'List'],
   'fxg.rebuild': ['从信号链重建', 'Rebuild from chain'],
+  'fxg.resetLayout': ['重置布局', 'Reset layout'],
+  'fxg.dragHint': ['拖动卡片标题可移动位置', 'Drag a card by its title to move it'],
   'fxg.rebuilt': ['已按当前信号链重建路由', 'Routing rebuilt from the current chain'],
   'fxg.close': ['关闭路由图', 'Close routing'],
   'fxg.hintOn': [

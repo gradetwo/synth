@@ -50,11 +50,16 @@ test('shares a song with its mix, and the link opens it', async ({ page, browser
   await receiver.locator('.player-open').click();
   const received = receiver.locator('.layer-strip');
   await expect(received).toHaveAttribute('data-layers', '2');
-  await expect(received.locator('[data-layer="0"] [data-act="mute"]')).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
-  await expect(received.locator('[data-layer="1"] .layer-pan')).toHaveValue('60');
+  // The mix arrives with the song and is applied just after it loads, so poll
+  // rather than reading once (slow engines need a moment longer).
+  await expect
+    .poll(async () => received.locator('[data-layer="0"] [data-act="mute"]').getAttribute('aria-pressed'), {
+      timeout: 30_000,
+    })
+    .toBe('true');
+  await expect
+    .poll(async () => received.locator('[data-layer="1"] .layer-pan').inputValue(), { timeout: 30_000 })
+    .toBe('60');
   // Playable: the transport knows the song's length.
   const max = await receiver
     .locator('.player-seek')

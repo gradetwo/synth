@@ -23,6 +23,43 @@ describe('synth store', () => {
     expect(store.getParam(Param.FILTER_CUTOFF)).toBe(1234);
   });
 
+  it('applies a batch of parameters as one change', () => {
+    // A routing-graph rebuild writes 37 parameters at once; committing each on
+    // its own redrew the whole interface 37 times (and wrote storage twice per
+    // parameter), which was seconds of frozen UI on a slow engine.
+    store.setParam(Param.FILTER_CUTOFF, 1000);
+    let notified = 0;
+    const stop = store.subscribe(() => {
+      notified += 1;
+    });
+    const before = store.getParam(Param.FX_GRAPH);
+    store.setParams(
+      [
+        [Param.FX_GRAPH, 1],
+        [Param.FX_NODE1_IN1, 1],
+        [Param.FX_NODE1_IN1_GAIN, 0.5],
+        [Param.FILTER_CUTOFF, 4000],
+      ],
+      { immediate: true },
+    );
+    stop();
+    expect(notified).toBe(1);
+    expect(store.getParam(Param.FX_GRAPH)).toBe(1);
+    expect(store.getParam(Param.FX_NODE1_IN1)).toBe(1);
+    expect(store.getParam(Param.FX_NODE1_IN1_GAIN)).toBeCloseTo(0.5, 6);
+    expect(store.getParam(Param.FILTER_CUTOFF)).toBe(4000);
+
+    // A batch that changes nothing does not notify at all.
+    let again = 0;
+    const stop2 = store.subscribe(() => {
+      again += 1;
+    });
+    store.setParams([[Param.FX_GRAPH, 1]]);
+    stop2();
+    expect(again).toBe(0);
+    expect(before === 0 || before === 1).toBe(true);
+  });
+
   it('steps through the preset list in both directions', () => {
     const first = store.currentPreset()?.id;
     store.stepPreset(1);

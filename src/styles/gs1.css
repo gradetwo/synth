@@ -271,6 +271,9 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 .fxg-card{position:absolute;box-sizing:border-box;border:1px solid var(--border);border-radius:11px;
   background:var(--bg-inset);padding:6px 8px;display:flex;flex-direction:column;gap:4px}
 .fxg-card.dim{opacity:.45}
+.fxg-card.moving{border-color:var(--accent-dim);box-shadow:0 10px 26px var(--shadow-2);z-index:3}
+.fxg-drag{cursor:grab;touch-action:none;user-select:none}
+.fxg-drag:active{cursor:grabbing}
 .fxg-dry,.fxg-out{justify-content:center}
 .fxg-card-title{font:700 9px/1 var(--grot);letter-spacing:.1em;color:var(--txt-2);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -297,7 +300,7 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 .fxg-port.wired{background:var(--accent)}
 .fxg-port.ready{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint)}
 .fxg-port.pending{background:var(--accent);border-color:var(--accent)}
-.fxg-out-list{position:absolute;left:572px;bottom:8px;right:8px;display:flex;flex-direction:column;gap:3px}
+.fxg-out-list{position:absolute;width:320px;display:flex;flex-direction:column;gap:3px}
 .fxg-out-row{display:flex;align-items:center;gap:6px}
 .fxg-out-label{display:flex;align-items:center;gap:5px;font:600 9px/1 var(--mono);color:var(--txt-2);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -475,7 +478,11 @@ body.drawer-open .drawer-mask{opacity:1;pointer-events:auto}
    presets. */
 .d-list{flex:none;padding:10px 16px;display:flex;flex-direction:column;gap:8px}
 .pcard{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px;
-  cursor:pointer;background:var(--bg-module);border:1px solid var(--line-soft);transition:.15s}
+  cursor:pointer;background:var(--bg-module);border:1px solid var(--line-soft);transition:.15s;
+  /* 81 cards at once is a lot of layout and paint for a list only a screenful
+     of which is visible: let the browser skip the off-screen ones. Ignored by
+     engines without support, so nothing depends on it. */
+  content-visibility:auto;contain-intrinsic-size:auto 64px}
 .pcard:hover{border-color:var(--border-hi);transform:translateX(-2px)}
 .pcard.current{border-color:var(--accent-dim);background:var(--accent-tint)}
 .pcard .sw{width:30px;height:30px;border-radius:8px;flex:none;

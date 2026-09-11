@@ -4,6 +4,11 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  schedule:
+    # Nightly at 19:00 UTC (03:00 Beijing): the engines that are not worth a run
+    # on every commit, plus the long benchmark. Waiting for a push let a
+    # WebKit-only start-button regression sit unnoticed for days.
+    - cron: '0 19 * * *'
 
 jobs:
   verify:
@@ -113,3 +118,51 @@ jobs:
           name: e2e-engines-failures
           path: test-results
           retention-days: 7
+
+  # The scheduled run: the same engines, the whole suite, plus the long
+  # benchmark. It reports rather than blocks — a nightly that goes red for a
+  # flaky click teaches everyone to ignore it — but its artefacts are kept.
+  nightly:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install clang and Xvfb
+        run: sudo apt-get update && sudo apt-get install -y clang llvm xvfb
+
+      - run: npm ci
+
+      - name: Production build (WASM + SW)
+        run: npm run build
+
+      - name: Install Playwright WebKit + Firefox
+        run: npx playwright install --with-deps webkit firefox
+
+      - name: Browser E2E (WebKit, headed under Xvfb)
+        run: npm run nightly -- --engines=webkit --all
+
+      - name: Browser E2E (Firefox)
+        run: npm run nightly -- --engines=firefox
+
+      - name: Long sustained-load benchmark
+        run: npm run bench:long
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-logs
+          path: |
+            .tmp/nightly
+            test-results
+          retention-days: 14

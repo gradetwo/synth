@@ -13,6 +13,7 @@
  * the history is visible in git.
  */
 import { existsSync, appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -78,10 +79,39 @@ function measure(seconds) {
   };
 }
 
+/**
+ * How busy the host is, relative to its cores.
+ *
+ * The numbers here are wall-clock times of a real-time workload, so they are
+ * only meaningful on a machine that is not oversubscribed. Run on a loaded
+ * host — another container, a build, a thermal throttle — and every block
+ * "misses the deadline" while the DSP has not changed at all, which is exactly
+ * what a gate must not report as a regression. When that is the case the timing
+ * checks are reported as inconclusive, and the correctness ones still run.
+ */
+function hostLoad() {
+  try {
+    const [one, , ] = readFileSync('/proc/loadavg', 'utf8').trim().split(/\s+/);
+    const cpus = os.cpus().length || 1;
+    return { load: Number(one), cpus, busy: Number(one) > cpus * 0.75 };
+  } catch {
+    return { load: 0, cpus: 1, busy: false };
+  }
+}
+
 const failures = [];
 const check = (name, ok, detail = '') => {
   if (!ok) failures.push(name);
   console.log(`  ${ok ? '✓' : '✗'} ${name}${detail ? ` — ${detail}` : ''}`);
+};
+
+const host = hostLoad();
+const timed = (name, ok, detail = '') => {
+  if (host.busy) {
+    console.log(`  ~ ${name} — skipped, host is loaded (load ${host.load.toFixed(1)} on ${host.cpus} cpus)`);
+    return;
+  }
+  check(name, ok, detail);
 };
 
 // A dense, worst-case patch: two saws with unison, the whole effect chain on,
@@ -119,13 +149,14 @@ check('no non-finite samples', nonFinite === 0, `${nonFinite} bad samples`);
 check('output stays in range', peak <= 1.0, `peak ${peak.toFixed(3)}`);
 check('no allocation on the audio thread', violations === 0, `${violations} violations`);
 check('the voice pool is in use', voices >= 8, `${voices} voices`);
-check('average load fits the budget', load < 60, `${load.toFixed(1)}% of the quantum`);
+timed('average load fits the budget', load < 60, `${load.toFixed(1)}% of the quantum`);
 if (LONG) {
+  // Memory is a fact, not a timing: it stays gated even on a loaded host.
   check('the arena still has room after the run', arenaFreeKb > 512, `${arenaFreeKb.toFixed(0)} KB free`);
   check('wasm memory stays bounded', memoryMb < 32, `${memoryMb.toFixed(1)} MB`);
   console.log(`[bench] memory: ${memoryMb.toFixed(1)} MB wasm, ${arenaFreeKb.toFixed(0)} KB arena free`);
 }
-check(
+timed(
   'most blocks fit the budget',
   overBudget <= blocks * 0.02,
   `${overBudget}/${blocks} blocks over ${BUDGET_US.toFixed(0)} µs (worst ${worst.toFixed(0)} µs)`,
@@ -155,7 +186,7 @@ console.log('[bench] sustained load with an imported impulse response');
 check('the response is in use', irCode === 0 && ex.gs_ir_has() === 1, `import code ${irCode}`);
 // The same tolerance as the dry run: one late block on a busy desktop is the
 // scheduler, not the DSP.
-check('the IR path stays inside the budget', irRun.overBudget <= irRun.blocks * 0.02,
+timed('the IR path stays inside the budget', irRun.overBudget <= irRun.blocks * 0.02,
   `${irRun.overBudget}/${irRun.blocks} blocks over ${BUDGET_US.toFixed(0)} µs ` +
   `(worst ${irRun.worst.toFixed(0)} µs, mean ${irRun.mean.toFixed(0)} µs)`);
 // Spread, not spiky. Every call is the same 128 frames and the convolver's hop
@@ -180,7 +211,7 @@ const others = ranked.slice(0, -1);
 const typical = others[Math.floor(others.length / 2)];
 const busiest = others[others.length - 1];
 const spread = busiest / Math.max(1, typical);
-check('the convolution work is spread across the hop', spread < 1.35,
+timed('the convolution work is spread across the hop', spread < 1.35,
   `apart from the transform block, the busiest of ${HOP_BLOCKS - 1} blocks averages ` +
   `${busiest.toFixed(0)} µs against ${typical.toFixed(0)} µs (${spread.toFixed(2)}×): ` +
   `${phaseMedian.map((v) => v.toFixed(0)).join('/')}`);
@@ -208,4 +239,10 @@ if (failures.length) {
   console.error(`[bench] FAIL — ${failures.join(', ')}`);
   process.exit(1);
 }
-console.log('[bench] PASS');
+if (host.busy) {
+  console.log(
+    `[bench] PASS (correctness only) — timing checks skipped: host load ${host.load.toFixed(1)} on ${host.cpus} cpus`,
+  );
+} else {
+  console.log('[bench] PASS');
+}

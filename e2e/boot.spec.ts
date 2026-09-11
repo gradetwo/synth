@@ -10,8 +10,6 @@ import { expect, test } from '@playwright/test';
  * the same state. These tests run with Chrome's real autoplay policy so the
  * running-context-without-a-graph case actually happens.
  */
-test.use({ launchOptions: { args: ['--autoplay-policy=user-gesture-required'] } });
-
 const kernelLine = async (page: import('@playwright/test').Page) => {
   await page.locator('[data-act="settings"]').click();
   await page.getByRole('button', { name: '打开音频设置' }).click();
@@ -46,6 +44,13 @@ test('a resume that is never answered still leaves a usable app', async ({ page 
   await expect(page.locator('.player-open')).toBeVisible();
 });
 
+/**
+ * Chrome's real autoplay policy is what makes this one interesting: the context
+ * comes back *running* with no graph in it. WebKit rejects the flag outright
+ * ("Failed to parse 'user-gesture-required' as an autoplay policy"), which killed
+ * the whole file there, so the policy lives in the Chromium project's launch
+ * options (playwright.config.ts) and this file stays engine-neutral.
+ */
 test('the gate stays up until the graph exists, and a reload is never a dead end', async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto('/');
