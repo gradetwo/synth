@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.60.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '**多轨 MIDI 分轨导出**：如果当前曲目是多轨文件（导入的格式 1），导出的 `.mid` 现在是 **format 1** —— 一条指挥轨（速度 + 曲名）加上每层一条轨道（带轨道名），在 DAW 里会分成独立轨道而不是合成一坨；单轨曲目仍导出 format 0，与以前完全一致。',
+        '**Multi-track MIDI export**: when the current song has layers (an imported format-1 file), the exported `.mid` is now **format 1** — a conductor track (tempo and title) plus one named track per layer, so a DAW imports them as separate tracks instead of one merged blob. Single-track songs still export as format 0, unchanged.',
+      ],
+    ],
+  },
+  {
     version: '1.59.0',
     date: '2026-09-10',
     kind: 'fix',

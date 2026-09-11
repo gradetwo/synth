@@ -260,48 +260,64 @@ function writeVlq(value: number): number[] {
 /** Encode a flat note list as a format-0 SMF. */
 export function writeMidi(
   notes: MidiNote[],
-  options: { bpm?: number; division?: number; name?: string } = {},
+  options: { bpm?: number; division?: number; name?: string; tracks?: MidiTrack[] } = {},
 ): Uint8Array {
   const bpm = Math.max(20, Math.min(300, options.bpm ?? 120));
   const division = options.division ?? 480;
   const usPerQuarter = Math.round(60_000_000 / bpm);
   const tickOf = (seconds: number) => Math.max(0, Math.round((seconds * division * bpm) / 60));
 
-  const events: { tick: number; order: number; bytes: number[] }[] = [];
-  for (const n of notes) {
-    const note = Math.max(0, Math.min(127, Math.round(n.note)));
-    const velocity = Math.max(1, Math.min(127, Math.round(n.velocity * 127)));
-    const start = tickOf(n.start);
-    const end = Math.max(start + 1, tickOf(n.start + n.duration));
-    events.push({ tick: start, order: 0, bytes: [0x90, note, velocity] });
-    events.push({ tick: end, order: 1, bytes: [0x80, note, 0] });
-  }
-  events.sort((a, b) => a.tick - b.tick || a.order - b.order);
+  /** One MTrk body: an optional tempo, an optional name, then the notes. */
+  const encodeTrack = (list: MidiNote[], trackName: string | undefined, withTempo: boolean): number[] => {
+    const events: { tick: number; order: number; bytes: number[] }[] = [];
+    for (const n of list) {
+      const note = Math.max(0, Math.min(127, Math.round(n.note)));
+      const velocity = Math.max(1, Math.min(127, Math.round(n.velocity * 127)));
+      const start = tickOf(n.start);
+      const endTick = Math.max(start + 1, tickOf(n.start + n.duration));
+      events.push({ tick: start, order: 0, bytes: [0x90, note, velocity] });
+      events.push({ tick: endTick, order: 1, bytes: [0x80, note, 0] });
+    }
+    events.sort((a, b) => a.tick - b.tick || a.order - b.order);
 
-  const track: number[] = [];
-  // Tempo meta.
-  track.push(0x00, 0xff, 0x51, 0x03, (usPerQuarter >> 16) & 0xff, (usPerQuarter >> 8) & 0xff, usPerQuarter & 0xff);
-  if (options.name) {
-    const text = [...options.name].slice(0, 60).map((c) => c.charCodeAt(0) & 0x7f);
-    track.push(0x00, 0xff, 0x03, ...writeVlq(text.length), ...text);
-  }
-  let last = 0;
-  for (const event of events) {
-    track.push(...writeVlq(event.tick - last), ...event.bytes);
-    last = event.tick;
-  }
-  track.push(0x00, 0xff, 0x2f, 0x00);
+    const track: number[] = [];
+    if (withTempo) {
+      track.push(0x00, 0xff, 0x51, 0x03, (usPerQuarter >> 16) & 0xff, (usPerQuarter >> 8) & 0xff, usPerQuarter & 0xff);
+    }
+    if (trackName) {
+      const text = [...trackName].slice(0, 60).map((c) => c.charCodeAt(0) & 0x7f);
+      track.push(0x00, 0xff, 0x03, ...writeVlq(text.length), ...text);
+    }
+    let last = 0;
+    for (const event of events) {
+      track.push(...writeVlq(event.tick - last), ...event.bytes);
+      last = event.tick;
+    }
+    track.push(0x00, 0xff, 0x2f, 0x00);
+    return track;
+  };
 
-  const out: number[] = [
-    0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6,
-    (0 >> 8) & 0xff, 0 & 0xff, // format 0
-    (1 >> 8) & 0xff, 1 & 0xff, // one track
-    (division >> 8) & 0xff, division & 0xff,
+  const chunk = (body: number[]): number[] => [
     0x4d, 0x54, 0x72, 0x6b,
-    (track.length >> 24) & 0xff, (track.length >> 16) & 0xff, (track.length >> 8) & 0xff, track.length & 0xff,
-    ...track,
+    (body.length >> 24) & 0xff, (body.length >> 16) & 0xff, (body.length >> 8) & 0xff, body.length & 0xff,
+    ...body,
   ];
-  return new Uint8Array(out);
+
+  // A multi-layer song exports as format 1: a conductor track carrying tempo and
+  // title, then one track per layer — which is what a DAW expects to import as
+  // separate tracks rather than one merged blob.
+  const layers = options.tracks && options.tracks.length > 1 ? options.tracks : null;
+  const bodies = layers
+    ? [encodeTrack([], options.name, true), ...layers.map((layer) => encodeTrack(layer.notes, layer.name, false))]
+    : [encodeTrack(notes, options.name, true)];
+
+  const header = [
+    0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6,
+    ((layers ? 1 : 0) >> 8) & 0xff, (layers ? 1 : 0) & 0xff, // format 1 when layered, else 0
+    (bodies.length >> 8) & 0xff, bodies.length & 0xff,
+    (division >> 8) & 0xff, division & 0xff,
+  ];
+  return new Uint8Array([...header, ...bodies.flatMap(chunk)]);
 }
 
 /** Total length of a note list in seconds. */

@@ -112,6 +112,43 @@ describe('multi-track files', () => {
     expect(song.notes.map((note) => note.note)).toEqual([48, 60, 64]);
   });
 
+  it('writes a layered song as format 1 and reads its tracks back', () => {
+    const layered = {
+      name: 'Round Trip',
+      bpm: 100,
+      duration: 2,
+      notes: [
+        { note: 48, velocity: 0.8, start: 0, duration: 0.5 },
+        { note: 60, velocity: 0.8, start: 0.5, duration: 0.5 },
+      ],
+      tracks: [
+        { name: 'Bass', notes: [{ note: 48, velocity: 0.8, start: 0, duration: 0.5 }] },
+        { name: 'Lead', notes: [{ note: 60, velocity: 0.8, start: 0.5, duration: 0.5 }] },
+      ],
+    };
+    const bytes = writeMidi(layered.notes, {
+      bpm: layered.bpm,
+      name: layered.name,
+      tracks: layered.tracks,
+    });
+    // Format 1, three tracks: conductor + two layers.
+    expect(bytes[8]).toBe(0);
+    expect(bytes[9]).toBe(1);
+    expect((bytes[10] << 8) | bytes[11]).toBe(3);
+
+    const back = parseMidi(bytes, 'round-trip');
+    expect(songTracks(back).map((layer) => layer.name)).toEqual(['Bass', 'Lead']);
+    expect(songTracks(back)[0].notes.map((note) => note.note)).toEqual([48]);
+    expect(songTracks(back)[1].notes.map((note) => note.note)).toEqual([60]);
+    expect(back.notes).toHaveLength(2);
+
+    // A single-layer song stays format 0 with one track.
+    const plain = writeMidi(layered.tracks[0].notes, { bpm: 100, name: 'One' });
+    expect(plain[8]).toBe(0);
+    expect(plain[9]).toBe(0);
+    expect((plain[10] << 8) | plain[11]).toBe(1);
+  });
+
   it('gives a hand-built song exactly one layer', () => {
     const song = parseMidi(singleTrackFile(), 'one');
     expect(songTracks(song)).toHaveLength(1);

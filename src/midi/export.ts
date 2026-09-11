@@ -24,7 +24,13 @@ const EXPORT_KBPS = 320;
 const safeName = (s: string) => s.replace(/[^\w\u4e00-\u9fa5-]+/g, '_').slice(0, 48) || 'gs1';
 
 export function exportSongMidi(song: MidiSong, name: string): void {
-  const bytes = writeMidi(song.notes, { bpm: song.bpm, name });
+  // Layers go out as separate tracks (format 1); a single-layer song stays
+  // format 0 exactly as before.
+  const bytes = writeMidi(song.notes, {
+    bpm: song.bpm,
+    name,
+    tracks: song.tracks && song.tracks.length > 1 ? song.tracks : undefined,
+  });
   downloadBlob(`${safeName(name)}.mid`, new Blob([bytes.buffer as ArrayBuffer], { type: 'audio/midi' }));
 }
 
