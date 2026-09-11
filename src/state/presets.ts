@@ -44,6 +44,14 @@ export interface Preset {
   wave: Wave;
   params: Partial<Record<number, number>>;
   routes?: ModRoute[];
+  /**
+   * The second layer, when the patch uses one. Optional and additive: a preset
+   * without it leaves the player's own layer alone.
+   */
+  params2?: Partial<Record<number, number>>;
+  /** How notes reached the two instances when the patch was saved. */
+  instanceMode?: 'single' | 'layer' | 'split';
+  splitNote?: number;
   user?: boolean;
 }
 

@@ -334,9 +334,20 @@ export class SynthStore {
     if (preset.id !== this.transientPreset?.id) this.transientPreset = null;
     const params = presetParams(preset);
     const routes = presetRoutes(preset);
-    // A preset describes instance 1. The second layer is left alone: it is the
-    // player's own second timbre, not part of somebody else's patch.
-    this.state = { params, params2: this.state.params2, routes, power: this.state.power };
+    // A patch with a layer brings it (and its routing); one without leaves the
+    // player's own second timbre alone.
+    // The merge fills every gap the saved layer left, so the cast is safe.
+    const params2: Record<number, number> = preset.params2
+      ? { ...DEFAULT_PARAMS, ...(preset.params2 as Record<number, number>) }
+      : this.state.params2;
+    this.state = { params, params2, routes, power: this.state.power };
+    if (preset.params2 && preset.instanceMode) {
+      this.layout = {
+        ...this.layout,
+        instanceMode: preset.instanceMode,
+        splitNote: preset.splitNote ?? this.layout.splitNote,
+      };
+    }
     this.currentPresetId = preset.id;
     engine.applyState(this.state, opts.immediate ?? true);
     this.recordHistory();
@@ -382,12 +393,21 @@ export class SynthStore {
   exportCurrentPreset() {
     const preset = this.currentPreset();
     const name = (preset?.name ?? 'GS1 Patch').split(' · ')[0].replace(/[^\w\u4e00-\u9fa5-]+/g, '_');
+    const layered = this.usesLayer();
     const payload = {
       format: 'gs1-preset',
       version: 1,
       name: preset?.name ?? 'GS1 Patch',
       params: this.state.params,
       routes: this.state.routes,
+      // Same rule as a saved preset: the layer travels only when it is used.
+      ...(layered
+        ? {
+            params2: this.state.params2,
+            instanceMode: this.layout.instanceMode,
+            splitNote: this.layout.splitNote,
+          }
+        : {}),
     };
     downloadText(`${name || 'gs1-patch'}.gs1.json`, JSON.stringify(payload, null, 2));
   }
@@ -399,6 +419,9 @@ export class SynthStore {
       name?: unknown;
       params?: Record<string, unknown>;
       routes?: { src?: unknown; dst?: unknown; amount?: unknown; enabled?: unknown }[];
+      params2?: Record<string, unknown>;
+      instanceMode?: unknown;
+      splitNote?: unknown;
     };
     try {
       parsed = JSON.parse(text);
@@ -425,6 +448,25 @@ export class SynthStore {
             enabled: Boolean(r.enabled),
           }))
       : DEFAULT_ROUTES.map((r) => ({ ...r }));
+    // A patch file from a layered patch carries the layer and its routing.
+    const params2: Record<number, number> = { ...DEFAULT_PARAMS };
+    let layered = false;
+    if (parsed.params2 && typeof parsed.params2 === 'object') {
+      for (const [key, value] of Object.entries(parsed.params2)) {
+        const id = Number(key);
+        if (Number.isFinite(id) && typeof value === 'number' && Number.isFinite(value)) {
+          params2[id] = value;
+          layered = true;
+        }
+      }
+    }
+    const instanceMode =
+      parsed.instanceMode === 'layer' || parsed.instanceMode === 'split' ? parsed.instanceMode : undefined;
+    const splitNote =
+      typeof parsed.splitNote === 'number' && parsed.splitNote >= 0 && parsed.splitNote <= 127
+        ? Math.round(parsed.splitNote)
+        : undefined;
+
     const preset: Preset = {
       id: `file-${Date.now()}`,
       name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name : 'Imported Patch · 导入音色',
@@ -433,6 +475,7 @@ export class SynthStore {
       wave: intToWave(params[2] ?? 0),
       params,
       routes: routes.length ? routes : DEFAULT_ROUTES.map((r) => ({ ...r })),
+      ...(layered ? { params2, instanceMode, splitNote } : {}),
     };
     this.transientPreset = preset;
     this.applyPreset(preset);
@@ -476,8 +519,17 @@ export class SynthStore {
   }
 
   /** Persist the current patch as a user preset. */
+  /** Whether the current patch actually uses the second layer. */
+  private usesLayer(): boolean {
+    if (this.layout.instanceMode !== 'single') return true;
+    return Object.keys(DEFAULT_PARAMS).some(
+      (key) => (this.state.params2[Number(key)] ?? DEFAULT_PARAMS[Number(key)]) !== this.state.params[Number(key)],
+    );
+  }
+
   savePreset(name?: string) {
     const n = this.userPresets.length + 1;
+    const layered = this.usesLayer();
     const preset: Preset = {
       id: `user-${Date.now()}`,
       name: name?.trim() || `MY PRESET ${n} · 我的音色`,
@@ -486,6 +538,15 @@ export class SynthStore {
       wave: intToWave(this.getParam(2)),
       params: { ...this.state.params },
       routes: this.state.routes.map((r) => ({ ...r })),
+      // A layer is part of the sound, so a saved or shared patch carries it —
+      // and the routing that decides which keys reach which layer.
+      ...(layered
+        ? {
+            params2: { ...this.state.params2 },
+            instanceMode: this.layout.instanceMode,
+            splitNote: this.layout.splitNote,
+          }
+        : {}),
       user: true,
     };
     this.userPresets = [preset, ...this.userPresets];

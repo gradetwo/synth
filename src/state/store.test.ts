@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_PARAMS, Param } from '@/audio/params';
 import { midiLibrary } from '@/midi/library';
+import { FACTORY_PRESETS } from './presets';
 import { SynthStore, store } from './store';
 import { unwrap } from './persist';
 
@@ -270,5 +271,40 @@ describe('two instances', () => {
     expect(reloaded.getSnapshot().layout.splitNote).toBe(64);
     s.setInstanceRouting({ mode: 'single' });
     expect(s.getSnapshot().layout.instanceMode).toBe('single');
+  });
+});
+
+describe('layered patches', () => {
+  it('saves and recalls the second layer with the patch', () => {
+    const s = new SynthStore();
+    // Build a layered patch: instance 2 a square, routed as a layer.
+    s.setActiveInstance(2);
+    s.setParam(Param.OSC1_WAVE, 3);
+    s.setActiveInstance(1);
+    s.setInstanceRouting({ mode: 'layer', splitNote: 60 });
+    const saved = s.savePreset('Layer Test');
+
+    // Change everything, then recall: layer and routing come back with it.
+    s.setActiveInstance(2);
+    s.setParam(Param.OSC1_WAVE, 0);
+    s.setInstanceRouting({ mode: 'single' });
+    s.setActiveInstance(1);
+
+    s.applyPreset(saved);
+    expect(s.getSnapshot().state.params2[Param.OSC1_WAVE]).toBe(3);
+    expect(s.getSnapshot().layout.instanceMode).toBe('layer');
+  });
+
+  it('leaves the player’s own layer alone for a patch without one', () => {
+    const s = new SynthStore();
+    s.setActiveInstance(2);
+    s.setParam(Param.OSC1_WAVE, 3);
+    s.setActiveInstance(1);
+    s.setInstanceRouting({ mode: 'single' });
+
+    // A factory preset has no layer, so instance 2 keeps what the player set.
+    s.applyPreset(FACTORY_PRESETS[0]);
+    expect(s.getSnapshot().state.params2[Param.OSC1_WAVE]).toBe(3);
+    void DEFAULT_PARAMS;
   });
 });

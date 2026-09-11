@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.65.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '**分层音色可以存成预设 / 导出 / 分享了**：用了第二层的音色保存时会把第二层与「按键分配（单层 / 叠加 / 分区 + 分界音）」一起带上——导出成 `.gs1.json`、分享链接、预设库都完整还原；没有用第二层的音色仍然和以前一样短。',
+        '**A layered patch can now be saved, exported and shared**: when a patch uses the second layer, saving it carries the layer *and* the key routing (single / layer / split, with the split note) — the `.gs1.json` export, the share link and the preset library all restore it. A patch without a layer is exactly as small as before.',
+      ],
+      [
+        '反过来的照顾：加载一个**没有**第二层的音色（例如内置预设）时，不会动你自己的第二层；分享链接里没有第二层时，也不会覆盖对方的。',
+        'And the other way round: loading a patch with **no** layer (a factory preset, say) leaves your own second layer alone, and a share link without one does not overwrite the recipient\'s.',
+      ],
+    ],
+  },
+  {
     version: '1.64.0',
     date: '2026-09-10',
     kind: 'fix',

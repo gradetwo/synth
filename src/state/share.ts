@@ -36,11 +36,17 @@ export interface PatchPayload {
   params: Record<number, number>;
   /** The second layer, when the code carries one that differs from the default. */
   params2: Record<number, number> | null;
+  /** Layer / split routing, when the code carries a layer. */
+  instanceMode: 'single' | 'layer' | 'split' | null;
+  splitNote: number | null;
   routes: ModRoute[];
 }
 
 /** Encode the current patch into a shareable code. */
-export function encodePatch(state: SynthState): string {
+export function encodePatch(
+  state: SynthState,
+  options?: { routing?: { mode: 'single' | 'layer' | 'split'; splitNote: number } },
+): string {
   const ids = Object.keys(DEFAULT_PARAMS)
     .map(Number)
     .sort((a, b) => a - b);
@@ -57,13 +63,22 @@ export function encodePatch(state: SynthState): string {
   const layered = ids.some(
     (id) => Math.round((state.params2[id] ?? DEFAULT_PARAMS[id]) * 10000) / 10000 !== values[ids.indexOf(id)],
   );
+  // The routing travels with the layer, or the recipient gets the sound but
+  // plays it as a single instance.
+  const route = options?.routing;
   const second = layered
     ? ids.map((id) => Math.round((state.params2[id] ?? DEFAULT_PARAMS[id]) * 10000) / 10000)
     : undefined;
   // `s` is the schema: a code from a newer build is refused rather than decoded
   // positionally into the wrong parameters.
   return PREFIX + base64UrlEncode(
-    JSON.stringify({ s: SCHEMA_VERSION, v: values, r: routes, ...(second ? { p2: second } : {}) }),
+    JSON.stringify({
+      s: SCHEMA_VERSION,
+      v: values,
+      r: routes,
+      ...(second ? { p2: second } : {}),
+      ...(second && route ? { m: route.mode === 'layer' ? 1 : route.mode === 'split' ? 2 : 0, sn: route.splitNote } : {}),
+    }),
   );
 }
 
@@ -72,7 +87,7 @@ export function decodePatch(code: string): PatchPayload | null {
   if (!code.startsWith(PREFIX)) return null;
   const json = base64UrlDecode(code.slice(PREFIX.length));
   if (!json) return null;
-  let parsed: { s?: unknown; v?: unknown; r?: unknown; p2?: unknown };
+  let parsed: { s?: unknown; v?: unknown; r?: unknown; p2?: unknown; m?: unknown; sn?: unknown };
   try {
     parsed = JSON.parse(json);
   } catch {
@@ -117,7 +132,11 @@ export function decodePatch(code: string): PatchPayload | null {
       });
     }
   }
-  return { params, params2, routes };
+  const mode = parsed.m === 1 ? 'layer' : parsed.m === 2 ? 'split' : parsed.m === 0 ? 'single' : null;
+  const splitNote =
+    typeof parsed.sn === 'number' && parsed.sn >= 0 && parsed.sn <= 127 ? Math.round(parsed.sn) : null;
+
+  return { params, params2, instanceMode: params2 ? mode : null, splitNote: params2 ? splitNote : null, routes };
 }
 
 /** Full share URL for the current page. */

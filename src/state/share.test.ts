@@ -4,14 +4,20 @@ import { decodePatch, encodePatch } from './share';
 
 describe('patch share codec', () => {
   it('carries the second layer only when a patch actually uses one', () => {
-    const plain = encodePatch(createDefaultState());
+    const plain = encodePatch(createDefaultState(), { routing: { mode: 'layer', splitNote: 60 } });
     expect(decodePatch(plain)!.params2).toBeNull();
+    // A code with no layer carries no routing either: there is nothing to route.
+    expect(decodePatch(plain)!.instanceMode).toBeNull();
     // A code with no layer must not be longer than it needs to be either.
     expect(plain.length).toBeLessThan(1200);
 
     const layered = createDefaultState();
     layered.params2 = { ...layered.params2, [Param.OSC1_WAVE]: 3, [Param.FILTER_CUTOFF]: 700 };
-    const decoded = decodePatch(encodePatch(layered))!;
+    const decoded = decodePatch(
+      encodePatch(layered, { routing: { mode: 'layer', splitNote: 57 } }),
+    )!;
+    expect(decoded.instanceMode).toBe('layer');
+    expect(decoded.splitNote).toBe(57);
     expect(decoded.params2?.[Param.OSC1_WAVE]).toBe(3);
     expect(decoded.params2?.[Param.FILTER_CUTOFF]).toBeCloseTo(700, 3);
     // Instance 1 is untouched by the layer's values.

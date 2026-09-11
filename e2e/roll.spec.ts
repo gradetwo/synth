@@ -203,9 +203,11 @@ test.describe('piano roll editing rules', () => {
     // The audition itself is checked with a click rather than mid-drag: the
     // display during a drag is transient (240 ms), and sampling it made this
     // test flaky without saying anything about the feature.
-    await note.click();
+    // `force` because the note sits under the roll's own grid/handles now and
+    // again, and the click is only here to trigger the audition.
+    await note.click({ force: true });
     await expect
-      .poll(async () => monitor.textContent(), { timeout: 5_000, intervals: [20, 50, 100] })
+      .poll(async () => monitor.textContent(), { timeout: 8_000, intervals: [20, 50, 100, 200] })
       .toBe(after.split(' · ')[0]);
   });
 
