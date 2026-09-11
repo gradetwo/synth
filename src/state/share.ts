@@ -18,6 +18,9 @@ import { SCHEMA_VERSION } from './persist';
 
 const PREFIX = 'gs1.1.';
 
+/** The code prefix, for tests that build a historical payload by hand. */
+export const PREFIX_FOR_TEST = PREFIX;
+
 function base64UrlEncode(text: string): string {
   const base64 = btoa(unescape(encodeURIComponent(text)));
   return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');

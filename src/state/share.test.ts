@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createDefaultState, Param } from '@/audio/params';
-import { decodePatch, encodePatch } from './share';
+import { DEFAULT_PARAMS, createDefaultState, Param } from '@/audio/params';
+import { PREFIX_FOR_TEST, decodePatch, encodePatch } from './share';
 
 describe('patch share codec', () => {
   it('carries the second layer only when a patch actually uses one', () => {
@@ -67,6 +67,31 @@ describe('patch share codec', () => {
     expect(decodePatch('nope')).toBeNull();
     expect(decodePatch('gs1.1.%%%')).toBeNull();
     expect(decodePatch('gs1.1.' + btoa('{"v":"nope"}'))).toBeNull();
+  });
+
+  it('carries the routing graph, and an old code leaves it switched off', () => {
+    // The graph is ordinary patch data, so it travels with the patch — and a
+    // code written before it existed must not silently switch it on.
+    const state = createDefaultState();
+    state.params[Param.FX_GRAPH] = 1;
+    state.params[Param.FX_NODE3_IN2] = 2;
+    state.params[Param.FX_NODE3_IN2_GAIN] = 0.5;
+    state.params[Param.FX_NODE1_TO_OUT] = 1;
+    const decoded = decodePatch(encodePatch(state));
+    expect(decoded!.params[Param.FX_GRAPH]).toBe(1);
+    expect(decoded!.params[Param.FX_NODE3_IN2]).toBe(2);
+    expect(decoded!.params[Param.FX_NODE3_IN2_GAIN]).toBeCloseTo(0.5, 3);
+    expect(decoded!.params[Param.FX_NODE1_TO_OUT]).toBe(1);
+
+    // A code with only the ids that existed before keeps the defaults.
+    const short = encodePatch(createDefaultState());
+    const ids = Object.keys(DEFAULT_PARAMS).map(Number).sort((a, b) => a - b);
+    const values = ids.filter((id) => id < Param.FX_GRAPH).map((id) => DEFAULT_PARAMS[id]);
+    const old = PREFIX_FOR_TEST + btoa(JSON.stringify({ s: 2, v: values, r: [] }));
+    const back = decodePatch(old);
+    expect(back).not.toBeNull();
+    expect(back!.params[Param.FX_GRAPH]).toBe(0);
+    expect(short.length).toBeGreaterThan(0);
   });
 
   it('fills missing parameters from the defaults', () => {
