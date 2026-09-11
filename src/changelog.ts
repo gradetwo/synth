@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.67.0',
+    date: '2026-09-11',
+    kind: 'feature',
+    items: [
+      [
+        '多轨曲目的轨道条每层多了一条**缩略时间线**：该层音符按时间排成小块，播放时有一条跟着走的播放头，一眼就能看出哪层在什么时候有内容（时间线的第一步，之后再做可拖拽的编辑）。',
+        'Each layer in a multi-track song now has a **mini timeline**: its notes as blocks laid out in time, with a playhead that follows the transport, so it is obvious at a glance which layer plays when. The first step of the timeline; dragging comes later.',
+      ],
+    ],
+  },
+  {
     version: '1.66.0',
     date: '2026-09-11',
     kind: 'feature',

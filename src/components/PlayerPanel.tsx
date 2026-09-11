@@ -4,7 +4,8 @@ import { toast } from './Toast';
 import { haptic, HAPTIC } from '@/hooks/useInputMode';
 import { midiPlayer, type PlayerState } from '@/midi/player';
 import { recorder, type RecorderState } from '@/midi/recorder';
-import { parseMidi } from '@/midi/smf';
+import { parseMidi, songTracks } from '@/midi/smf';
+import { layoutNotes, playheadPercent } from '@/midi/timeline';
 import { midiLibrary, trackTitle, type TrackGroup } from '@/midi/library';
 import { store } from '@/state/store';
 import { exportSongMidi, exportSongMp3, exportSongWav } from '@/midi/export';
@@ -87,6 +88,12 @@ export function PlayerPanel({
 
   const tracks = midiLibrary.getTracks();
   const current = midiLibrary.getCurrent();
+  // Note geometry per layer, recomputed only when the song changes.
+  const maps = useMemo(() => {
+    const song = current?.song ?? null;
+    if (!song) return [];
+    return songTracks(song).map((track) => layoutNotes(track.notes, song.duration));
+  }, [current]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -258,6 +265,20 @@ export function PlayerPanel({
           <div className="layer-strip" data-layers={layers.length}>
             {layers.map((layer, index) => (
               <div className="layer-row" key={`${layer.name}-${index}`} data-layer={index}>
+                {/* The layer's notes as a bar: the arrangement at a glance. */}
+                <div className="layer-map" data-act="map" aria-hidden="true">
+                  {(maps[index] ?? []).map((block, blockIndex) => (
+                    <span
+                      key={blockIndex}
+                      className="layer-note"
+                      style={{ left: `${block.left}%`, width: `${block.width}%` }}
+                    />
+                  ))}
+                  <span
+                    className="layer-playhead"
+                    style={{ left: `${playheadPercent(player.time, player.duration)}%` }}
+                  />
+                </div>
                 <span className="layer-name">{layer.name}</span>
                 <input
                   type="range"

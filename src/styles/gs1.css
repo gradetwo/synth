@@ -915,6 +915,7 @@ body.module-dragging .module-grip{cursor:grabbing}
   .settings-inline select{min-height:44px}
   .layer-btn{width:44px;height:44px;font-size:12px}
   .layer-vol{width:104px;height:44px}
+  .layer-map{height:20px}
   .layer-row{gap:10px}
   .d-reset{min-height:40px}
   .d-theme-btn{min-height:40px}
@@ -1222,6 +1223,13 @@ input,textarea,[contenteditable='true']{
 .layer-btn.on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
 .layer-vol{width:74px;height:20px;flex:none;accent-color:var(--accent);
   touch-action:pan-y;background:none}
+/* Layer mini-map: the arrangement as a bar of note blocks plus a playhead. */
+.layer-map{position:relative;flex:1 1 auto;min-width:0;height:14px;border-radius:4px;
+  background:var(--bg-socket);border:1px solid var(--line-soft-2);overflow:hidden}
+.layer-note{position:absolute;top:3px;bottom:3px;border-radius:2px;
+  background:color-mix(in srgb,var(--accent) 65%,transparent)}
+.layer-playhead{position:absolute;top:0;bottom:0;width:1.5px;background:var(--accent);
+  box-shadow:0 0 4px var(--accent)}
 .player-list{flex:1;overflow-y:auto;padding:0 12px 12px;display:flex;flex-direction:column;gap:4px}
 .player-list::-webkit-scrollbar{width:8px}
 .player-list::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:4px}

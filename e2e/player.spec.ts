@@ -200,6 +200,10 @@ test.describe('player MIDI import', () => {
     });
     const strip = page.locator('.layer-strip');
     await expect(strip).toHaveAttribute('data-layers', '2');
+    // Each layer shows its notes as blocks on a bar, with a playhead.
+    await expect(strip.locator('[data-layer="0"] .layer-note')).toHaveCount(1);
+    await expect(strip.locator('[data-layer="1"] .layer-note')).toHaveCount(1);
+    await expect(strip.locator('[data-layer="0"] .layer-playhead')).toHaveCount(1);
     const mute = strip.locator('[data-layer="0"] [data-act="mute"]');
     await expect(mute).toHaveAttribute('aria-pressed', 'false');
     await mute.click();
