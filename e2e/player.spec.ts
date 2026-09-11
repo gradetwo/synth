@@ -211,6 +211,16 @@ test.describe('player MIDI import', () => {
     await volume.fill('40');
     await expect(volume).toHaveValue('40');
 
+    // The mix belongs to the song, so it survives a reload.
+    await page.reload();
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(400);
+    await page.locator('.player-open').click();
+    const again = page.locator('.layer-strip');
+    await expect(again).toHaveAttribute('data-layers', '2');
+    await expect(again.locator('[data-layer="0"] .layer-vol')).toHaveValue('40');
+    await expect(again.locator('[data-layer="0"] [data-act="mute"]')).toHaveAttribute('aria-pressed', 'true');
+
   });
 });
 

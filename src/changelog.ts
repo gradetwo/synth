@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.62.0',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '多轨曲目的**混音设置会跟着曲目保存**：调好的静音/独奏/每层音量在重开页面、切换曲目再切回来之后都还在（以前一刷新就回到默认）。',
+        'A multi-track song\'s **mix is saved with the song**: the mute, solo and per-layer levels you set survive a reload and switching away and back (they used to reset on every refresh).',
+      ],
+    ],
+  },
+  {
     version: '1.61.0',
     date: '2026-09-10',
     kind: 'feature',

@@ -268,6 +268,7 @@ export function PlayerPanel({
                   aria-label={`${t('layer.volume')} ${layer.name}`}
                   onChange={(event) => {
                     midiPlayer.setLayer(index, { volume: Number(event.target.value) / 100 });
+                    midiLibrary.saveMix();
                     setLayers(midiPlayer.getLayers());
                   }}
                 />
@@ -280,6 +281,7 @@ export function PlayerPanel({
                   onClick={() => {
                     haptic();
                     midiPlayer.setLayer(index, { muted: !layer.muted });
+                    midiLibrary.saveMix();
                     setLayers(midiPlayer.getLayers());
                   }}
                 >
@@ -294,6 +296,7 @@ export function PlayerPanel({
                   onClick={() => {
                     haptic();
                     midiPlayer.setLayer(index, { soloed: !layer.soloed });
+                    midiLibrary.saveMix();
                     setLayers(midiPlayer.getLayers());
                   }}
                 >

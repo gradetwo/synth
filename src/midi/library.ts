@@ -26,6 +26,11 @@ export interface Track {
   composer: string;
   song: MidiSong;
   group: TrackGroup;
+  /**
+   * Per-layer mute/solo/level for a multi-track song. A mix is part of the
+   * song you loaded, not of this listening session, so it is stored with it.
+   */
+  mix?: { muted?: boolean; soloed?: boolean; volume?: number }[];
 }
 
 export function trackTitle(track: Track): string {
@@ -75,7 +80,19 @@ function readStoredTracks(): Track[] {
       if (typeof track.id !== 'string' || track.id.startsWith('demo:')) continue;
       if (!Array.isArray(track.title) || track.title.length < 2) continue;
       if (!validSong(track.song)) continue;
-      out.push({ ...track, group: track.id.startsWith('clip') ? 'clip' : 'imported' });
+      const mix = Array.isArray(track.mix)
+        ? track.mix
+            .filter((entry) => entry && typeof entry === 'object')
+            .map((entry) => ({
+              muted: entry.muted === true,
+              soloed: entry.soloed === true,
+              volume:
+                typeof entry.volume === 'number' && Number.isFinite(entry.volume)
+                  ? Math.max(0, Math.min(1, entry.volume))
+                  : 1,
+            }))
+        : undefined;
+      out.push({ ...track, mix, group: track.id.startsWith('clip') ? 'clip' : 'imported' });
     }
     return out;
   } catch {
@@ -108,7 +125,10 @@ class MidiLibrary {
     const stored = readStoredId();
     const fallback = this.tracks.find((track) => track.id === 'demo:arpeggio')?.id ?? this.tracks[0].id;
     this.currentId = stored && this.tracks.some((track) => track.id === stored) ? stored : fallback;
-    midiPlayer.load(this.getCurrent()!.song);
+    const current = this.getCurrent();
+    midiPlayer.load(current?.song ?? null);
+    // The song's mix comes back with the song, not with the session.
+    if (current) this.applyMix(current);
     // Anything that could not be stored is dropped here rather than lingering
     // in memory as a track that silently disappears on the next reload.
     this.persist();
@@ -162,6 +182,7 @@ class MidiLibrary {
     if (!track) return;
     this.currentId = id;
     midiPlayer.load(track.song);
+    this.applyMix(track);
     if (options.autoplay !== false) midiPlayer.play();
     this.persist();
     this.emit();
@@ -172,8 +193,29 @@ class MidiLibrary {
     this.tracks = [...this.tracks.filter((tr) => tr.id !== track.id), track];
     this.currentId = track.id;
     midiPlayer.load(track.song);
+    this.applyMix(track);
     this.persist();
     this.emit();
+  }
+
+  /** Put a song's stored layer mix back onto the player. */
+  private applyMix(track: Track): void {
+    track.mix?.forEach((entry, index) => midiPlayer.setLayer(index, entry));
+  }
+
+  /** Save the player's current layer mix into the selected track. */
+  saveMix(): void {
+    const layers = midiPlayer.getLayers();
+    if (layers.length < 2) return;
+    const mix = layers.map((layer) => ({
+      muted: layer.muted,
+      soloed: layer.soloed,
+      volume: layer.volume,
+    }));
+    this.tracks = this.tracks.map((track) =>
+      track.id === this.currentId ? { ...track, mix } : track,
+    );
+    this.persist();
   }
 
   /**

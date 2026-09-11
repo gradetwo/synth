@@ -67,6 +67,43 @@ describe('MIDI library persistence', () => {
     expect(reloaded.getTracks().some((entry) => entry.id === 'clip')).toBe(false);
   });
 
+  it('keeps a multi-track song\'s layer mix across a reload', async () => {
+    const layered = {
+      id: 'file:two-track.mid:1',
+      title: ['two', 'two'] as [string, string],
+      composer: 'imported',
+      group: 'imported' as const,
+      song: {
+        name: 'two',
+        bpm: 120,
+        duration: 1,
+        notes: [
+          { note: 48, velocity: 0.8, start: 0, duration: 0.5 },
+          { note: 60, velocity: 0.8, start: 0, duration: 0.5 },
+        ],
+        tracks: [
+          { name: 'Bass', notes: [{ note: 48, velocity: 0.8, start: 0, duration: 0.5 }] },
+          { name: 'Lead', notes: [{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }] },
+        ],
+      },
+    };
+    const library = await loadLibrary();
+    library.put(layered);
+    // Balance it like a player would…
+    const { midiPlayer } = await import('./player');
+    midiPlayer.setLayer(0, { muted: true, volume: 0.4 });
+    library.saveMix();
+
+    // …and a reload brings the mix back with the song.
+    vi.resetModules();
+    const reloaded = await loadLibrary();
+    const { midiPlayer: player2 } = await import('./player');
+    reloaded.setCurrent(layered.id, { autoplay: false });
+    expect(player2.getLayers()[0].muted).toBe(true);
+    expect(player2.getLayers()[0].volume).toBeCloseTo(0.4, 6);
+    expect(player2.getLayers()[1].muted).toBe(false);
+  });
+
   it('never stores the built-in songs', async () => {
     const library = await loadLibrary();
     library.put(track);
