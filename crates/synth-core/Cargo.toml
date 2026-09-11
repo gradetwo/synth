@@ -11,6 +11,11 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 
+[lints.clippy]
+# The exported ABI is a C surface: it takes raw pointers from the host by
+# design, and marking every entry point `unsafe` would only restate that.
+not_unsafe_ptr_arg_deref = "allow"
+
 [profile.release]
 opt-level = 3
 lto = "fat"

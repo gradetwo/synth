@@ -8,29 +8,42 @@ import { useContrast, useLayout, usePower, useTheme, useView } from '@/hooks/use
 import { useViewport } from '@/hooks/useViewport';
 import { wireAnalysis } from '@/audio/analysis';
 import { TopBar, DisplayRow, KeyboardDock } from '@/panels/layout';
-import { PianoRoll } from '@/components/PianoRoll';
-import { FxGraphEditor } from '@/components/FxGraphEditor';
+import { CHANGELOG } from '@/changelog';
 import { fxGraphOpen, useFxGraphOpen } from '@/state/overlays';
 import { ModuleFor } from '@/panels/modules';
 import { ModulesGrid } from '@/components/Module';
-import { PresetDrawer } from '@/components/PresetDrawer';
-import { SettingsDrawer } from '@/components/SettingsDrawer';
 // The three dialogs carry a lot of copy (the guide alone is tens of KB) and
 // ship as their own chunks: the synth itself should not wait for a manual.
 const Guide = lazy(() => import('@/components/Guide').then((m) => ({ default: m.Guide })));
+// The routing editor is a whole canvas: it belongs in a chunk of its own, not in
+// the bundle every visitor downloads.
+// The piano roll is a canvas editing surface behind a button: a chunk of its
+// own, loaded when it is first opened.
+import { SettingsDrawer } from '@/components/SettingsDrawer';
+
+const PianoRoll = lazy(() => import('@/components/PianoRoll').then((m) => ({ default: m.PianoRoll })));
+// The preset drawer and the flow canvas are behind a click or a view switch too.
+// The settings drawer stays in the main chunk: it is the panel the shell test
+// renders through, and keeping it eager keeps that test honest.
+const PresetDrawer = lazy(() =>
+  import('@/components/PresetDrawer').then((m) => ({ default: m.PresetDrawer })),
+);
+const SignalFlow = lazy(() => import('@/components/SignalFlow').then((m) => ({ default: m.SignalFlow })));
+const FxGraphEditor = lazy(() =>
+  import('@/components/FxGraphEditor').then((m) => ({ default: m.FxGraphEditor })),
+);
 const Changelog = lazy(() => import('@/components/Changelog').then((m) => ({ default: m.Changelog })));
 const AudioSettings = lazy(() =>
   import('@/components/AudioSettings').then((m) => ({ default: m.AudioSettings })),
 );
 import { PlayerPanel } from '@/components/PlayerPanel';
-import { SignalFlow } from '@/components/SignalFlow';
 import { ToastHost } from '@/components/Toast';
 import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/register';
 import { setHapticsEnabled } from '@/hooks/useInputMode';
 import { readShareCode } from '@/state/share';
 import { APP_VERSION } from '@/version';
 
-import { t } from '@/i18n';
+import { getLang, t } from '@/i18n';
 import { toast } from '@/components/Toast';
 import { midiPlayer } from '@/midi/player';
 import { recorder } from '@/midi/recorder';
@@ -91,13 +104,23 @@ function StartOverlay({
 
 function UpdateBanner() {
   const [available, setAvailable] = useState(false);
+  const lang = getLang();
   useEffect(() => {
     onUpdateAvailable(() => setAvailable(true));
   }, []);
   if (!available) return null;
+  // Say what arrived, not just that something did: the newest release's first
+  // line is what a returning player wants to know before reloading.
+  const newest = CHANGELOG[0];
+  const headline = newest?.items[0]?.[lang === 'zh' ? 0 : 1].replace(/\*\*/g, '') ?? '';
   return (
     <div className="update-banner" role="status">
       <span>🚀 {t('app.updateReady')}</span>
+      {headline ? (
+        <span className="update-what" data-act="update-what">
+          v{newest.version} · {headline}
+        </span>
+      ) : null}
       <button type="button" onClick={() => applyUpdate()}>
         {t('app.updateNow')}
       </button>
@@ -347,7 +370,9 @@ export default function App() {
       <DisplayRow onOpenPlayer={() => setPlayerOpen(true)} />
 
       {view === 'flow' ? (
-        <SignalFlow />
+        <Suspense fallback={null}>
+          <SignalFlow />
+        </Suspense>
       ) : (
         <main className="modules">
           <ModulesGrid>
@@ -366,28 +391,36 @@ export default function App() {
         </button>
       ) : null}
 
-      <PianoRoll open={rollOpen} onClose={() => setRollOpen(false)} />
+      <Suspense fallback={null}>
+        <PianoRoll open={rollOpen} onClose={() => setRollOpen(false)} />
+      </Suspense>
 
       {/* Mounted only while it is open, so a closed editor keeps no state. */}
-      {fxGraphOpenNow ? <FxGraphEditor onClose={closeFxGraph} /> : null}
+      {fxGraphOpenNow ? (
+        <Suspense fallback={null}>
+          <FxGraphEditor onClose={closeFxGraph} />
+        </Suspense>
+      ) : null}
 
-      <PresetDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <Suspense fallback={null}>
+        <PresetDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      </Suspense>
 
       <SettingsDrawer
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onOpenGuide={() => {
-          setSettingsOpen(false);
-          setGuideOpen(true);
-        }}
-        onOpenChangelog={() => {
-          setSettingsOpen(false);
-          setChangelogOpen(true);
-        }}
-        onOpenAudio={() => {
-          setSettingsOpen(false);
-          setAudioOpen(true);
-        }}
+          onClose={() => setSettingsOpen(false)}
+          onOpenGuide={() => {
+            setSettingsOpen(false);
+            setGuideOpen(true);
+          }}
+          onOpenChangelog={() => {
+            setSettingsOpen(false);
+            setChangelogOpen(true);
+          }}
+          onOpenAudio={() => {
+            setSettingsOpen(false);
+            setAudioOpen(true);
+          }}
       />
       {guideOpen ? (
         <Suspense fallback={null}>

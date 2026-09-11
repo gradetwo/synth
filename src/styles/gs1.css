@@ -668,7 +668,12 @@ button{touch-action:manipulation}
 .update-banner{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));
   transform:translateX(-50%);z-index:75;display:flex;align-items:center;gap:12px;
   background:var(--bg-pop);border:1px solid var(--border-hi);border-radius:12px;padding:11px 14px;
+  font:600 11.5px/1 var(--grot);color:var(--txt-1);box-shadow:0 12px 34px var(--shadow-2)}.update-banner{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));
+  transform:translateX(-50%);z-index:75;display:flex;align-items:center;gap:12px;
+  background:var(--bg-pop);border:1px solid var(--border-hi);border-radius:12px;padding:11px 14px;
   font:600 11.5px/1 var(--grot);color:var(--txt-1);box-shadow:0 12px 34px var(--shadow-2)}
+.update-what{max-width:min(70vw,620px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font:500 10px/1.2 var(--grot);color:var(--txt-2)}
 .update-banner button{font:700 11px/1 var(--grot);color:#1a1206;background:linear-gradient(180deg,#ffc76a,#e69a24);
   border:none;border-radius:8px;padding:8px 14px;cursor:pointer}
 .update-banner button.ghost{background:none;color:var(--txt-2);border:1px solid var(--border);padding:8px 10px}

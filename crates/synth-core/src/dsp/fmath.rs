@@ -11,6 +11,9 @@
 //! unit-tested against `std` on the host.
 
 #![allow(clippy::excessive_precision)]
+// The constants below are the ones the C originals use, written out so they can
+// be checked against the reference; `core::f32::consts` would hide that.
+#![allow(clippy::approx_constant)]
 
 const PI: f32 = 3.141592653589793;
 const FRAC_2_PI: f32 = 0.6366197723675814;

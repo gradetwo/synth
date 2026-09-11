@@ -1,7 +1,7 @@
 {
   "name": "groove-synth-gs1",
   "private": true,
-  "version": "1.74.0",
+  "version": "1.75.0",
   "type": "module",
   "description": "GROOVE SYNTH GS-1 — industrial-grade WebAssembly polyphonic synthesizer with a Rust DSP core, AudioWorklet rendering and a fully offline PWA shell.",
   "license": "MIT",
@@ -21,14 +21,16 @@
     "verify:dist": "node scripts/verify-dist.mjs",
     "verify:budget": "node scripts/verify-budget.mjs",
     "verify:audio": "node scripts/verify-audio.mjs",
-    "verify": "npm run test:rust && npm run test && npm run lint && npm run build && npm run test:wasm && npm run verify:ci && npm run verify:dist && npm run verify:budget && npm run verify:audio && npm run verify:bench && npm run test:dsp",
+    "verify:clippy": "cargo clippy --manifest-path crates/synth-core/Cargo.toml --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::perf -A clippy::not_unsafe_ptr_arg_deref",
+    "verify": "npm run verify:clippy && npm run test:rust && npm run test && npm run lint && npm run build && npm run test:wasm && npm run verify:ci && npm run verify:dist && npm run verify:budget && npm run verify:audio && npm run verify:bench && npm run test:dsp",
     "test:dsp": "node scripts/dsp-baseline.mjs",
     "test:e2e:webkit": "playwright test --project=webkit --workers=1",
     "lint": "eslint src --max-warnings=999",
     "test:e2e": "playwright test",
     "verify:ci": "node scripts/verify-ci.mjs",
     "bench": "node scripts/bench.mjs --update",
-    "verify:bench": "node scripts/bench.mjs"
+    "verify:bench": "node scripts/bench.mjs",
+    "bench:long": "node scripts/bench.mjs --long"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",

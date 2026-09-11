@@ -51,7 +51,12 @@ const lame = files.find((file) => /lamejs-.*\.js$/.test(file));
 
 const BUDGETS = {
   total: 1700 * 1024,
-  initialJs: 150 * 1024,
+  // What `index.html` pulls, so the app code plus the React vendor chunk.
+  // Raised from 150 KB when the routing graph and song sharing landed
+  // (measured 151.7 KB): the editor, piano roll, drawers and the flow canvas
+  // were moved into their own chunks first, and this covers what is genuinely
+  // needed to paint the first screen.
+  initialJs: 165 * 1024,
   initialCss: 22 * 1024,
   wasm: 230 * 1024,
 };

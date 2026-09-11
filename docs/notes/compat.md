@@ -39,6 +39,8 @@ Chromium 下同一个上下文往往自己就变成 `running`，所以本地 Chr
 需要单独用一个快速开关（例如不启动引擎只测 UI）来隔离，暂记为待查。
 
 实践建议：本地用 `npm run test:e2e:webkit`（`--workers=1`）逐个 spec 跑，或分文件跑；整包的判据仍然放在 CI。
+已有的本地记录：`e2e/fxgraph.spec.ts`、`e2e/smoke.spec.ts` 单独跑通过（引擎启动 11 s），
+`share.spec.ts`/`fxgraph` 在 WebKit 下也能跑完。
 
 ## 4. Firefox 仍未追平的用例（待查，非启动阻塞）
 

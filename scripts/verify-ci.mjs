@@ -55,6 +55,7 @@ check('has a verify job and a cross-engine E2E job', jobs.has('verify') && jobs.
 
 const verify = body('verify');
 const required = [
+  ['clippy (correctness / suspicious / perf)', 'npm run verify:clippy'],
   ['Rust DSP tests', 'npm run test:rust'],
   ['unit + worklet tests', 'npm test'],
   ['lint', 'npm run lint'],

@@ -26,6 +26,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Clippy (correctness / suspicious / perf)
+        run: npm run verify:clippy
+
       - name: Rust DSP tests
         run: npm run test:rust
 

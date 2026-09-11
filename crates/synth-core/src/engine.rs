@@ -2241,7 +2241,6 @@ impl Engine {
 
 /// Render one oscillator into `out` (block ABI, noise handled in Rust).
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn render_oscillator(
     slot: usize,
     which: usize,

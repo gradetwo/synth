@@ -30,7 +30,10 @@ if (!existsSync(wasmPath)) {
 const ex = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(wasmPath)), {}).exports;
 const SR = 48000;
 const BLOCK = 128;
-const SECONDS = 6;
+// `--long` is the quarterly run: ten times the audio, plus the memory picture
+// that only shows up over minutes (arena growth, wasm memory pages).
+const LONG = process.argv.includes('--long');
+const SECONDS = LONG ? 60 : 6;
 const BUDGET_US = (BLOCK / SR) * 1e6;
 /** Blocks per convolution hop: the phases a spread schedule rotates through. */
 const HOP_BLOCKS = 8;
@@ -109,19 +112,26 @@ const load = (mean / BUDGET_US) * 100;
 const voices = ex.gs_active_voices();
 const violations = ex.gs_alloc_violations();
 
-console.log('[bench] sustained load');
+const arenaFreeKb = ex.gs_arena_free_bytes() / 1024;
+const memoryMb = ex.memory.buffer.byteLength / (1024 * 1024);
+console.log(`[bench] sustained load${LONG ? ' (long run)' : ''}`);
 check('no non-finite samples', nonFinite === 0, `${nonFinite} bad samples`);
 check('output stays in range', peak <= 1.0, `peak ${peak.toFixed(3)}`);
 check('no allocation on the audio thread', violations === 0, `${violations} violations`);
 check('the voice pool is in use', voices >= 8, `${voices} voices`);
 check('average load fits the budget', load < 60, `${load.toFixed(1)}% of the quantum`);
+if (LONG) {
+  check('the arena still has room after the run', arenaFreeKb > 512, `${arenaFreeKb.toFixed(0)} KB free`);
+  check('wasm memory stays bounded', memoryMb < 32, `${memoryMb.toFixed(1)} MB`);
+  console.log(`[bench] memory: ${memoryMb.toFixed(1)} MB wasm, ${arenaFreeKb.toFixed(0)} KB arena free`);
+}
 check(
   'most blocks fit the budget',
   overBudget <= blocks * 0.02,
   `${overBudget}/${blocks} blocks over ${BUDGET_US.toFixed(0)} µs (worst ${worst.toFixed(0)} µs)`,
 );
 
-const row = `| ${new Date().toISOString().slice(0, 10)} | ${SECONDS}s · ${notes.length} notes | ${mean.toFixed(0)} | ${p50.toFixed(0)} | ${p99.toFixed(0)} | ${worst.toFixed(0)} | ${load.toFixed(1)}% | ${voices} |`;
+const row = `| ${new Date().toISOString().slice(0, 10)} | ${SECONDS}s${LONG ? ' (long)' : ''} · ${notes.length} notes | ${mean.toFixed(0)} | ${p50.toFixed(0)} | ${p99.toFixed(0)} | ${worst.toFixed(0)} | ${load.toFixed(1)}% | ${voices} |`;
 
 // ---- the same load with the IR reverb, which is the engine's heaviest path ---
 // A 2 s response is 96 partitions, and the hop's partition work is what has to

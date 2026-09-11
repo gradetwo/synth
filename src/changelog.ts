@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.75.0',
+    date: '2026-09-11',
+    kind: 'feature',
+    items: [
+      [
+        '**更新提示会说更新了什么**：检测到新版本时，提示条里除了「立即更新」，还会显示新版本的**第一条更新内容**，先看清楚再刷新也不迟。',
+        '**The update banner says what changed**: when a new build is ready it now shows the first line of that release\'s notes next to the update button, so you can see what you are getting before reloading.',
+      ],
+    ],
+  },
+  {
     version: '1.74.0',
     date: '2026-09-11',
     kind: 'feature',
