@@ -271,3 +271,38 @@ describe('layers', () => {
     expect(player.getLayers().every((layer) => !layer.muted)).toBe(true);
   });
 });
+
+describe('reloading a song for an editor preview', () => {
+  it('keeps the layer mix when asked, and resets it otherwise', () => {
+    const midiPlayer = new MidiPlayer();
+    const two: MidiSong = {
+      name: 'two',
+      bpm: 120,
+      duration: 2,
+      notes: [{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }],
+      tracks: [
+        { name: 'A', notes: [{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }] },
+        { name: 'B', notes: [{ note: 64, velocity: 0.8, start: 0.5, duration: 0.5 }] },
+      ],
+    };
+    midiPlayer.load(two);
+    midiPlayer.setLayer(1, { muted: true, volume: 0.25, offset: 1.5, pan: -0.5 });
+    midiPlayer.load(two, { keepMix: true });
+    const kept = midiPlayer.getLayers();
+    expect(kept).toHaveLength(2);
+    expect(kept[1]).toMatchObject({ muted: true, volume: 0.25, offset: 1.5, pan: -0.5 });
+    expect(kept[0]).toMatchObject({ muted: false, volume: 1, offset: 0, pan: 0 });
+    // The default stays what it always was: a fresh load is a fresh mix.
+    midiPlayer.load(two);
+    expect(midiPlayer.getLayers()[1]).toMatchObject({ muted: false, volume: 1, offset: 0, pan: 0 });
+    // The mix follows the layer *position*: a reload that drops the first layer
+    // leaves the surviving one wearing the first layer's mix, never a shifted
+    // one, because position is the only thing two loads can agree on.
+    midiPlayer.load(two, { keepMix: true });
+    midiPlayer.setLayer(0, { volume: 0.5 });
+    midiPlayer.load({ ...two, tracks: [two.tracks![1]] }, { keepMix: true });
+    expect(midiPlayer.getLayers()).toHaveLength(1);
+    expect(midiPlayer.getLayers()[0].name).toBe('B');
+    expect(midiPlayer.getLayers()[0].volume).toBe(0.5);
+  });
+});

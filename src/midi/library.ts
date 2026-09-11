@@ -218,6 +218,54 @@ class MidiLibrary {
     track.mix?.forEach((entry, index) => midiPlayer.setLayer(index, entry));
   }
 
+  /**
+   * Store an edited song on the current track.
+   *
+   * The piano roll and the layer strip edit a song in place, so this is the
+   * write half of that loop: the track keeps its id, its mix and its place in
+   * the list. A built-in demo cannot be edited — it comes from the build — so
+   * an edit to one becomes a copy, the same trade the roll's save button makes.
+   *
+   * The player is deliberately *not* reloaded here: the caller is mid-gesture
+   * and owns the transport, so a reload would stop playback and reset the
+   * playhead on every drag.
+   */
+  putSong(song: MidiSong, options: { copyOf?: string } = {}): string {
+    const current = this.getCurrent();
+    const copy = options.copyOf !== undefined || !current || current.id.startsWith('demo:');
+    if (!copy && current) {
+      this.tracks = this.tracks.map((track) => (track.id === current.id ? { ...track, song } : track));
+      this.persist();
+      this.emit();
+      return current.id;
+    }
+    const layers = midiPlayer.getLayers();
+    const name = options.copyOf ?? song.name;
+    const track: Track = {
+      id: `clip:${Date.now()}`,
+      title: [name, name],
+      composer: current?.composer ?? 'GS-1',
+      song,
+      group: 'clip',
+      // The arrangement you were listening to comes along with the copy.
+      mix:
+        layers.length > 1
+          ? layers.map((layer) => ({
+              muted: layer.muted,
+              soloed: layer.soloed,
+              volume: layer.volume,
+              offset: layer.offset,
+              pan: layer.pan,
+            }))
+          : undefined,
+    };
+    this.tracks = [...this.tracks, track];
+    this.currentId = track.id;
+    this.persist();
+    this.emit();
+    return track.id;
+  }
+
   /** Save the player's current layer mix into the selected track. */
   saveMix(): void {
     const layers = midiPlayer.getLayers();

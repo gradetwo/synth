@@ -16,7 +16,6 @@ import { midiPlayer, type PlayerState } from '@/midi/player';
 import { midi } from '@/audio/midi';
 import { noteBus, noteName } from '@/audio/noteBus';
 import { midiLibrary, trackTitle, type Track } from '@/midi/library';
-import { store } from '@/state/store';
 import { useResolvedTheme } from '@/state/theme';
 import { exportSongMidi } from '@/midi/export';
 import {
@@ -35,12 +34,13 @@ import {
   setLengthBeats,
   SNAP_OPTIONS,
   snapBeat,
-  songToRoll,
   transposeDoc,
   updateNote,
   type RollDoc,
   type RollNote,
 } from '@/midi/roll';
+import { rollSession, useRollSession } from '@/state/roll';
+import { songTracks } from '@/midi/smf';
 import { Keyboard } from './Keyboard';
 import { TransportIcon } from './TransportIcon';
 
@@ -48,8 +48,6 @@ import { TransportIcon } from './TransportIcon';
 const ROW_H = 20;
 /** Horizontal zoom steps, in pixels per beat. */
 const ZOOMS = [24, 36, 48, 64, 88, 120, 160];
-
-const emptyDoc = (): RollDoc => ({ name: '', bpm: 120, beats: 4, notes: [] });
 
 const snapLabel = (beats: number): string =>
   ({ 0.125: '1/32', 0.25: '1/16', 0.5: '1/8', 1: '1/4' })[beats] ?? `${beats}`;
@@ -76,28 +74,30 @@ type Gesture =
     };
 
 export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [doc, setDoc] = useState<RollDoc>(emptyDoc);
+  /**
+   * The document and its undo history live in the shared session, not here: the
+   * layer strip edits the same song, so both views have to see one document and
+   * one history. This component only renders it and forwards gestures.
+   */
+  const session = useRollSession();
+  const doc = session.doc;
+  const snap = session.snap;
   const [track, setTrack] = useState<Track | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [snap, setSnap] = useState(0.25);
   const [zoom, setZoom] = useState(88);
   const [input, setInput] = useState(true);
   const [velocity, setVelocity] = useState(0.85);
   const [player, setPlayer] = useState<PlayerState>(midiPlayer.getState());
   const [midiState, setMidiState] = useState(midi.snapshot());
-  const [history, setHistory] = useState({ undo: false, redo: false });
   const [pending, setPending] = useState<{ note: number; start: number } | null>(null);
   const [keysOpen, setKeysOpen] = useState(true);
 
-  const docRef = useRef(doc);
   const snapRef = useRef(snap);
   const zoomRef = useRef(zoom);
   const velocityRef = useRef(velocity);
   const selectedRef = useRef<string | null>(null);
   const gesture = useRef<Gesture | null>(null);
   const lastPitch = useRef<number | null>(null);
-  const past = useRef<RollDoc[]>([]);
-  const future = useRef<RollDoc[]>([]);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const auditionTimer = useRef(0);
@@ -108,9 +108,6 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   /** Notes currently held on an input source, waiting for note-off to size them. */
   const heldInput = useRef(new Map<number, { start: number; velocity: number; wall: number }>());
 
-  useEffect(() => {
-    docRef.current = doc;
-  }, [doc]);
   useEffect(() => {
     snapRef.current = snap;
   }, [snap]);
@@ -133,40 +130,14 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   const playBeats = player.time / secondsPerBeat(doc.bpm);
   const selectedNote = doc.notes.find((n) => n.id === selected) ?? null;
 
-  const markHistory = useCallback(() => {
-    setHistory({ undo: past.current.length > 0, redo: future.current.length > 0 });
+  /** Replace the document: one history entry, written out, previewed. */
+  const commit = useCallback((next: RollDoc, record = true) => {
+    rollSession.commit(next, { record });
   }, []);
-
-  /** Replace the document and (optionally) record it for undo. */
-  const commit = useCallback(
-    (next: RollDoc, record = true) => {
-      if (next === docRef.current) return;
-      if (record) {
-        past.current.push(docRef.current);
-        if (past.current.length > 80) past.current.shift();
-        future.current = [];
-      }
-      docRef.current = next;
-      setDoc(next);
-      markHistory();
-    },
-    [markHistory],
-  );
 
   /** Live drag update: no history entry (pointerup commits one). */
   const commitLive = useCallback((next: RollDoc) => {
-    docRef.current = next;
-    setDoc(next);
-  }, []);
-
-  const syncPlayer = useCallback((next: RollDoc, seekBeats?: number) => {
-    const state = midiPlayer.getState();
-    const wasPlaying = state.playing;
-    const time = seekBeats === undefined ? state.time : seekBeats * secondsPerBeat(next.bpm);
-    midiPlayer.load(rollToSong(next));
-    const duration = midiPlayer.getState().duration;
-    if (time > 0) midiPlayer.seek(Math.min(time, duration));
-    if (wasPlaying) midiPlayer.play();
+    rollSession.live(next);
   }, []);
 
   /** Scroll a freshly written note into view (step input can land off-screen). */
@@ -175,7 +146,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
     requestAnimationFrame(() => {
       const el = scrollRef.current;
       if (!el) return;
-      const [, hi] = pitchRange(docRef.current);
+      const [, hi] = pitchRange(rollSession.getDoc());
       const y = (hi - pitch) * ROW_H;
       if (y < el.scrollTop + 8 || y + ROW_H > el.scrollTop + el.clientHeight - 8) {
         el.scrollTop = Math.max(0, y - el.clientHeight / 2 + ROW_H / 2);
@@ -215,90 +186,60 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   useEffect(() => stopAudition, [stopAudition]);
 
   const undo = useCallback(() => {
-    const prev = past.current.pop();
-    if (!prev) return;
-    future.current.push(docRef.current);
-    docRef.current = prev;
-    setDoc(prev);
-    markHistory();
+    if (!rollSession.undo()) return;
     haptic();
-  }, [markHistory]);
+  }, []);
 
   const redo = useCallback(() => {
-    const next = future.current.pop();
-    if (!next) return;
-    past.current.push(docRef.current);
-    docRef.current = next;
-    setDoc(next);
-    markHistory();
+    if (!rollSession.redo()) return;
     haptic();
-  }, [markHistory]);
+  }, []);
 
   const deleteSelected = useCallback(() => {
     const id = selectedRef.current;
     if (!id) return;
-    commit(removeNote(docRef.current, id));
+    commit(removeNote(rollSession.getDoc(), id));
     setSelected(null);
     haptic();
   }, [commit]);
 
-  /** Load the current library track as a fresh document (called on open). */
-  const loadCurrent = useCallback(() => {
+  /**
+   * Adopt the library's current track. An editing session that is already on
+   * this track is left alone: the layer strip may have edits in it, and those
+   * are exactly the undo steps the user expects to still be there.
+   */
+  useEffect(() => {
+    if (!open) return;
     const current = midiLibrary.getCurrent();
+    if (current && rollSession.getTrackId() !== current.id) rollSession.open(0);
+    // Adopting the track when the editor opens is the point of the effect; the
+    // session owns the document itself and syncs the transport on its own.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTrack(current);
-    const next = current ? { ...songToRoll(current.song), name: trackTitle(current) } : emptyDoc();
-    past.current = [];
-    future.current = [];
-    docRef.current = next;
-    setDoc(next);
+
     setSelected(null);
     setInput(true);
-    markHistory();
-    midiPlayer.load(rollToSong(next));
-  }, [markHistory]);
+  }, [open]);
 
   const save = useCallback(() => {
     if (!track) return;
-    const next = docRef.current;
+    const next = rollSession.getDoc();
     const builtin = track.id.startsWith('demo:');
     const name = builtin ? t('roll.copyOf', { name: next.name || t('roll.title') }) : next.name;
-    const song = rollToSong({ ...next, name });
-    midiLibrary.put({
-      id: builtin ? `clip:${Date.now()}` : track.id,
-      title: [name, name],
-      composer: builtin ? t('player.recordedBy') : track.composer,
-      song,
-      group: 'clip',
-    })
-      store.mark();
+    rollSession.setName(name);
+    rollSession.saveNow();
     setTrack(midiLibrary.getCurrent());
-    toast(t('roll.saved', { name, n: song.notes.length }));
+    toast(t('roll.saved', { name, n: rollSession.getDoc().notes.length }));
     haptic(HAPTIC.medium);
   }, [track]);
-
-  useEffect(() => {
-    if (!open) return;
-    // Loading the document when the modal opens is the point of the effect;
-    // the state it sets is the editor's working copy, not derived render data.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadCurrent();
-  }, [open, loadCurrent]);
-
-  // Debounced preview refresh: one reload after a drag settles, not one per
-  // pointermove.
-  useEffect(() => {
-    if (!open) return;
-    const id = window.setTimeout(() => syncPlayer(docRef.current), 140);
-    return () => window.clearTimeout(id);
-  }, [doc, open, syncPlayer]);
 
   // Centre the notes the first time the editor opens on a clip.
   useEffect(() => {
     if (!open) return;
     const el = scrollRef.current;
     if (!el) return;
-    const notes = docRef.current.notes;
-    const [lo, hi] = pitchRange(docRef.current);
+    const notes = rollSession.getDoc().notes;
+    const [lo, hi] = pitchRange(rollSession.getDoc());
     const target = notes.length ? notes.reduce((sum, n) => sum + n.note, 0) / notes.length : (lo + hi) / 2;
     el.scrollTop = Math.max(0, (hi - target) * ROW_H - el.clientHeight / 2 + ROW_H);
     el.scrollLeft = 0;
@@ -363,7 +304,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       // Ignore the audition echo from a note the editor just played.
       const auditioned = auditionRef.current;
       if (event.on && auditioned?.note === event.note && performance.now() < auditioned.until) return;
-      const bpm = docRef.current.bpm;
+      const bpm = rollSession.getDoc().bpm;
       if (event.on) {
         const beats = midiPlayer.getState().time / secondsPerBeat(bpm);
         const start = snapBeat(beats, snapRef.current);
@@ -377,21 +318,20 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       setPending(null);
       const heldBeats = (performance.now() - open_.wall) / 1000 / secondsPerBeat(bpm);
       const length = Math.max(MIN_LENGTH, heldBeats);
-      const added = addNote(docRef.current, event.note, open_.start, length, open_.velocity);
+      const added = addNote(rollSession.getDoc(), event.note, open_.start, length, open_.velocity);
       const next = resolveOverlaps(added.doc, added.id);
       const id = added.id;
-      commit(next);
       setSelected(id);
       revealNote(event.note, open_.start);
       // Step forward past the written note.
-      syncPlayer(next, open_.start + length);
+      rollSession.commit(next, { seekBeats: open_.start + length });
     });
     return () => {
       off();
       held.clear();
       setPending(null);
     };
-  }, [open, input, commit, syncPlayer, revealNote]);
+  }, [open, input, commit, revealNote]);
 
   const beatAt = (clientX: number): number => {
     const el = gridRef.current;
@@ -409,7 +349,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     const noteEl = (event.target as HTMLElement).closest('.roll-note') as HTMLElement | null;
     if (noteEl?.dataset.note) {
-      const orig = docRef.current.notes.find((n) => n.id === noteEl.dataset.note);
+      const orig = rollSession.getDoc().notes.find((n) => n.id === noteEl.dataset.note);
       if (!orig) return;
       const handle = (event.target as HTMLElement).dataset.handle;
       setSelected(orig.id);
@@ -447,7 +387,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       }
       commitLive(
         resolveOverlaps(
-          updateNote(docRef.current, g.id, {
+          updateNote(rollSession.getDoc(), g.id, {
             start: snapBeat(g.orig.start + dx / zoom, snap),
             note: pitch,
           }),
@@ -460,7 +400,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       const start = Math.min(latest, snapBeat(g.orig.start + dx / zoom, snap));
       commitLive(
         resolveOverlaps(
-          updateNote(docRef.current, g.id, {
+          updateNote(rollSession.getDoc(), g.id, {
             start,
             length: g.orig.length + (g.orig.start - start),
           }),
@@ -471,7 +411,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       const snapped = snapBeat(g.orig.length + dx / zoom, snap);
       commitLive(
         resolveOverlaps(
-          updateNote(docRef.current, g.id, { length: Math.max(MIN_LENGTH, snapped) }),
+          updateNote(rollSession.getDoc(), g.id, { length: Math.max(MIN_LENGTH, snapped) }),
           g.id,
         ),
       );
@@ -490,7 +430,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       }
       const start = snapBeat(beatAt(event.clientX), snap);
       const note = pitchAt(event.clientY);
-      const added = addNote(docRef.current, note, start, snap, velocityRef.current);
+      const added = addNote(rollSession.getDoc(), note, start, snap, velocityRef.current);
       const next = resolveOverlaps(added.doc, added.id);
       const id = added.id;
       commit(next);
@@ -508,15 +448,13 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       }
       return;
     }
-    // The drag always derived from `g.orig`, so that is the pre-drag document.
-    past.current.push({
-      ...docRef.current,
-      notes: docRef.current.notes.map((n) => (n.id === g.id ? g.orig : n)),
+    // The drag always derived from `g.orig`, so that is the pre-drag document:
+    // settling on it records one undo step and writes the result out.
+    const now = rollSession.getDoc();
+    rollSession.settle({
+      ...now,
+      notes: now.notes.map((n) => (n.id === g.id ? g.orig : n)),
     });
-    if (past.current.length > 80) past.current.shift();
-    future.current = [];
-    markHistory();
-    syncPlayer(docRef.current);
   };
 
   const zoomBy = (dir: number) => {
@@ -525,6 +463,8 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   };
 
   const bars = Math.max(1, Math.round(doc.beats / 4));
+  // Multi-track files are edited one layer at a time, exactly like the strip.
+  const tracksInSong = track ? songTracks(track.song) : [];
   const touch = useInputMode() === 'touch';
   const light = useResolvedTheme() === 'light';
 
@@ -593,6 +533,26 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
             </span>
           </div>
 
+          {tracksInSong.length > 1 ? (
+            <label className="roll-field" title={t('roll.layerHint')}>
+              {t('roll.layer')}
+              <select
+                value={session.layerIndex}
+                data-act="roll-layer"
+                onChange={(event) => {
+                  haptic();
+                  rollSession.setLayer(Number(event.target.value));
+                  setSelected(null);
+                }}
+              >
+                {tracksInSong.map((layer, index) => (
+                  <option key={`${layer.name}-${index}`} value={index}>
+                    {layer.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label className="roll-field">
             {t('roll.bpm')}
             <input
@@ -602,13 +562,17 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
               value={doc.bpm}
               onChange={(event) => {
                 const value = Number(event.target.value);
-                if (Number.isFinite(value) && value > 0) commit(setBpm(docRef.current, value));
+                if (Number.isFinite(value) && value > 0) commit(setBpm(rollSession.getDoc(), value));
               }}
             />
           </label>
           <label className="roll-field">
             {t('roll.snap')}
-            <select value={snap} onChange={(event) => setSnap(Number(event.target.value))}>
+            <select
+              value={snap}
+              data-act="roll-snap"
+              onChange={(event) => rollSession.setSnap(Number(event.target.value))}
+            >
               {SNAP_OPTIONS.map((option) => (
                 <option key={option} value={option}>
                   {snapLabel(option)}
@@ -626,7 +590,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
               onChange={(event) => {
                 const value = Number(event.target.value);
                 if (Number.isFinite(value) && value >= 1) {
-                  commit(setLengthBeats(docRef.current, Math.max(1, value) * 4));
+                  commit(setLengthBeats(rollSession.getDoc(), Math.max(1, value) * 4));
                 }
               }}
             />
@@ -638,8 +602,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
               className="roll-btn wide"
               onClick={() => {
                 haptic();
-                commit(quantizeDoc(docRef.current, snap));
-                syncPlayer(docRef.current);
+                commit(quantizeDoc(rollSession.getDoc(), snap));
               }}
               title={t('roll.quantize')}
             >
@@ -652,8 +615,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
               aria-label={t('roll.octaveDown')}
               onClick={() => {
                 haptic();
-                commit(transposeDoc(docRef.current, -12));
-                syncPlayer(docRef.current);
+                commit(transposeDoc(rollSession.getDoc(), -12));
               }}
             >
               −12
@@ -665,8 +627,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
               aria-label={t('roll.octaveUp')}
               onClick={() => {
                 haptic();
-                commit(transposeDoc(docRef.current, 12));
-                syncPlayer(docRef.current);
+                commit(transposeDoc(rollSession.getDoc(), 12));
               }}
             >
               +12
@@ -731,7 +692,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
             <button
               type="button"
               className="roll-btn"
-              disabled={!history.undo}
+              disabled={!session.canUndo}
               onClick={undo}
               aria-label={t('roll.undo')}
               title={t('roll.undo')}
@@ -741,7 +702,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
             <button
               type="button"
               className="roll-btn"
-              disabled={!history.redo}
+              disabled={!session.canRedo}
               onClick={redo}
               aria-label={t('roll.redo')}
               title={t('roll.redo')}
@@ -763,9 +724,8 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
               className="roll-btn wide"
               onClick={() => {
                 haptic(HAPTIC.medium);
-                commit(clearNotes(docRef.current));
+                commit(clearNotes(rollSession.getDoc()));
                 setSelected(null);
-                syncPlayer(docRef.current);
               }}
             >
               {t('roll.clear')}
@@ -799,7 +759,9 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
               className="roll-btn wide"
               disabled={!track}
               onClick={() => {
-                if (track) exportSongMidi(rollToSong(docRef.current), trackTitle(track));
+                if (track) {
+                  exportSongMidi(rollSession.getSong() ?? rollToSong(rollSession.getDoc()), trackTitle(track));
+                }
               }}
             >
               {t('player.exportMidi')}
@@ -823,7 +785,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                 onChange={(event) => {
                   const value = Number(event.target.value);
                   if (Number.isFinite(value)) {
-                    commit(updateNote(docRef.current, selectedNote.id, { start: Math.max(0, value) }));
+                    commit(updateNote(rollSession.getDoc(), selectedNote.id, { start: Math.max(0, value) }));
                   }
                 }}
               />
@@ -838,7 +800,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                 onChange={(event) => {
                   const value = Number(event.target.value);
                   if (Number.isFinite(value)) {
-                    commit(updateNote(docRef.current, selectedNote.id, { length: Math.max(MIN_LENGTH, value) }));
+                    commit(updateNote(rollSession.getDoc(), selectedNote.id, { length: Math.max(MIN_LENGTH, value) }));
                   }
                 }}
               />
@@ -853,7 +815,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                 value={selectedNote.velocity}
                 onChange={(event) =>
                   commit(
-                    updateNote(docRef.current, selectedNote.id, { velocity: Number(event.target.value) }),
+                    updateNote(rollSession.getDoc(), selectedNote.id, { velocity: Number(event.target.value) }),
                   )
                 }
               />
@@ -894,7 +856,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
               className="roll-ruler"
               onPointerDown={(event) => {
                 const beats = beatAt(event.clientX);
-                midiPlayer.seek(beats * secondsPerBeat(docRef.current.bpm));
+                midiPlayer.seek(beats * secondsPerBeat(rollSession.getDoc().bpm));
               }}
               role="slider"
               aria-label={t('roll.seek')}
@@ -960,13 +922,13 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                         setSelected(note.id);
                       } else if (event.key === 'Delete' || event.key === 'Backspace') {
                         event.preventDefault();
-                        commit(removeNote(docRef.current, note.id));
+                        commit(removeNote(rollSession.getDoc(), note.id));
                       }
                     }}
-                    onDoubleClick={() => commit(removeNote(docRef.current, note.id))}
+                    onDoubleClick={() => commit(removeNote(rollSession.getDoc(), note.id))}
                     onContextMenu={(event) => {
                       event.preventDefault();
-                      commit(removeNote(docRef.current, note.id));
+                      commit(removeNote(rollSession.getDoc(), note.id));
                     }}
                     title={`${noteName(note.note)} · ${note.length.toFixed(2)} ${t('roll.beats')}`}
                   >

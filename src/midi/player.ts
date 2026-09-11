@@ -178,18 +178,25 @@ export class MidiPlayer {
   /** Called when a non-looping song reaches its end. */
   onEnded: (() => void) | null = null;
 
-  load(song: MidiSong | null): void {
+  load(song: MidiSong | null, options: { keepMix?: boolean } = {}): void {
+    // An editor preview re-loads the song on every keystroke-sized change; the
+    // layer mix the user set is part of the arrangement, not of the load, so it
+    // survives a reload that asks for it. Index order is the only link between
+    // two loads, which is exactly how the strip identifies a layer.
+    const mix = options.keepMix
+      ? this.layers.map(({ muted, soloed, volume, offset, pan }) => ({ muted, soloed, volume, offset, pan }))
+      : null;
     this.stop();
     this.song = song;
     // Layer state is per song: a fresh load starts with everything audible.
     this.layers = song
-      ? songTracks(song).map((layer) => ({
+      ? songTracks(song).map((layer, index) => ({
           name: layer.name,
-          muted: false,
-          soloed: false,
-          volume: 1,
-          offset: 0,
-          pan: 0,
+          muted: mix?.[index]?.muted ?? false,
+          soloed: mix?.[index]?.soloed ?? false,
+          volume: mix?.[index]?.volume ?? 1,
+          offset: mix?.[index]?.offset ?? 0,
+          pan: mix?.[index]?.pan ?? 0,
         }))
       : [];
     this.events = buildEvents(song, this.layers);

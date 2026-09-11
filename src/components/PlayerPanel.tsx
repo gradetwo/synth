@@ -1,11 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getLang, t } from '@/i18n';
+import { noteName } from '@/audio/noteBus';
 import { toast } from './Toast';
 import { haptic, HAPTIC } from '@/hooks/useInputMode';
 import { midiPlayer, type PlayerState } from '@/midi/player';
 import { recorder, type RecorderState } from '@/midi/recorder';
 import { parseMidi, songTracks } from '@/midi/smf';
-import { layoutNotes, playheadPercent } from '@/midi/timeline';
+import {
+  EDGE_PX,
+  dragSeconds,
+  gridSeconds,
+  hitNote,
+  layoutNotes,
+  moveNote,
+  playheadPercent,
+  resizeNote,
+} from '@/midi/timeline';
+import { MIN_LENGTH, removeNote, rollToSeconds, updateNote, type RollDoc } from '@/midi/roll';
+import { rollSession, useRollSession } from '@/state/roll';
 import { midiLibrary, trackTitle, type TrackGroup } from '@/midi/library';
 import { store } from '@/state/store';
 import { exportSongMidi, exportSongMp3, exportSongWav } from '@/midi/export';
@@ -50,13 +62,42 @@ export function PlayerPanel({
   const [player, setPlayer] = useState<PlayerState>(midiPlayer.getState());
   const [layers, setLayers] = useState(midiPlayer.getLayers());
   const [rec, setRec] = useState<RecorderState>(recorder.getState());
+  const roll = useRollSession();
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
   const fileRef = useRef<HTMLInputElement | null>(null);
-  /** In-flight drag on a layer's mini timeline. */
+  /** Which note of the edited layer is selected, so the nudge bar can act on it. */
+  const [selected, setSelected] = useState<string | null>(null);
+  /**
+   * Whether the strip edits notes or arranges the layer.
+   *
+   * A strip is a few pixels tall and a busy song covers all of it, so one
+   * gesture cannot mean both "move this layer" and "move this note". Arrange is
+   * the default — it is what the strip always did — and note editing is one tap
+   * away, with the nudge bar as the touch-friendly half of it.
+   */
+  const [editNotes, setEditNotes] = useState(false);
+  /** In-flight drag on a layer's mini timeline (the layer itself). */
   const drag = useRef<{ x: number; offset: number; width: number; duration: number; moved: boolean } | null>(
     null,
   );
+  /**
+   * In-flight drag on a single note. The document the gesture started from is
+   * kept whole: every pointermove recomputes from it, so a drag is absolute and
+   * cannot accumulate rounding, and `settle` can record exactly one undo step.
+   */
+  const noteDrag = useRef<{
+    id: string;
+    kind: 'move' | 'tail';
+    x: number;
+    width: number;
+    duration: number;
+    snap: number;
+    /** Seconds per beat of the document the gesture started from. */
+    spb: number;
+    from: RollDoc;
+    moved: boolean;
+  } | null>(null);
   // Timestamp of the last track *change*, so a double-click on a new track does
   // not immediately pause the playback it just started.
   const lastSelect = useRef(0);
@@ -71,6 +112,14 @@ export function PlayerPanel({
   );
   useEffect(() => midiPlayer.subscribe(setPlayer), []);
   useEffect(() => recorder.subscribe(setRec), []);
+
+  // An edit to a built-in demo becomes a copy; say so once, because the track
+  // list switching under the user's finger is otherwise a mystery.
+  useEffect(() => {
+    if (!roll.justCopied) return;
+    toast(t('layer.copied', { name: roll.copiedName }));
+    rollSession.acknowledgeCopy();
+  }, [roll.justCopied, roll.copiedName]);
 
   // Keyboard transport while the panel is open: Space toggles, Esc closes.
   useEffect(() => {
@@ -92,14 +141,51 @@ export function PlayerPanel({
 
   const tracks = midiLibrary.getTracks();
   const current = midiLibrary.getCurrent();
-  // Note geometry per layer, recomputed only when the song changes.
+  /** True when the editing session is looking at this track's layer `index`. */
+  const editingLayer = (index: number): boolean =>
+    roll.trackId !== null && roll.trackId === current?.id && roll.layerIndex === index;
+  const spb = 60 / (roll.doc.bpm || 120);
+  // Note geometry per layer. The layer being edited reads from the session, not
+  // from the library, because a drag updates the working copy long before it is
+  // written out; every other layer is read straight from the song.
   const maps = useMemo(() => {
     const song = current?.song ?? null;
     if (!song) return [];
+    const worked = roll.trackId === current?.id ? rollToSeconds(roll.doc) : null;
     return songTracks(song).map((track, index) =>
-      layoutNotes(track.notes, song.duration, layers[index]?.offset ?? 0),
+      layoutNotes(
+        worked && index === roll.layerIndex ? worked : track.notes,
+        song.duration,
+        layers[index]?.offset ?? 0,
+      ),
     );
-  }, [current, layers]);
+  }, [current, layers, roll]);
+
+  /** Width of the resize handle in bar-percent units, from the pixel width. */
+  const edgePercent = (width: number): number => Math.min(12, (EDGE_PX / Math.max(1, width)) * 100);
+
+  const selectedNote = roll.doc.notes.find((n) => n.id === selected) ?? null;
+
+  /**
+   * The nudge bar: a move or resize of one grid step per press. Drags are the
+   * fast path on a desktop, but a phone has no hover and no precise pointer, so
+   * the same edit has to be reachable by tapping buttons.
+   */
+  const nudgeSelected = (kind: 'start' | 'length', steps: number) => {
+    const note = rollSession.getDoc().notes.find((n) => n.id === selected);
+    if (!note) return;
+    haptic();
+    if (kind === 'length') {
+      rollSession.nudge(note.id, { length: Math.max(MIN_LENGTH, note.length + steps * roll.snap) });
+      return;
+    }
+    // Moving stops at the song's edges: the strip is a whole-song view, so a
+    // note pushed past the end would simply leave the picture.
+    const longest = Math.max(0, (current?.song.duration ?? 0) - note.length * spb) / spb;
+    rollSession.nudge(note.id, {
+      start: Math.min(Math.max(0, note.start + steps * roll.snap), longest),
+    });
+  };
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -265,31 +351,112 @@ export function PlayerPanel({
           />
         </div>
 
-        {/* Multi-track songs get a strip: one row per layer with its own mute
-            and solo, so a two-track file can be auditioned part by part. */}
-        {layers.length > 1 ? (
-          <div className="layer-strip" data-layers={layers.length}>
-            {layers.map((layer, index) => (
+        {/* One row per layer: the arrangement at a glance, and a place to edit a
+            note without opening the piano roll. Edits go through the shared
+            editing session, so this strip and the roll are one document and one
+            undo history — a note moved here is moved there. */}
+        {current ? (
+          <>
+            <div className="layer-tools">
+              <button
+                type="button"
+                className={`layer-mode${editNotes ? ' on' : ''}`}
+                data-act="strip-mode"
+                aria-pressed={editNotes}
+                title={editNotes ? t('layer.modeHintNote') : t('layer.modeHintArrange')}
+                onClick={() => {
+                  haptic();
+                  setEditNotes((was) => {
+                    if (was) setSelected(null);
+                    return !was;
+                  });
+                }}
+              >
+                {editNotes ? t('layer.modeNote') : t('layer.modeArrange')}
+              </button>
+            </div>
+            <div className="layer-strip" data-layers={layers.length} data-mode={editNotes ? 'notes' : 'arrange'}>
+              {layers.map((layer, index) => (
               <div className="layer-row" key={`${layer.name}-${index}`} data-layer={index}>
-                {/* The layer's notes as a bar: the arrangement at a glance. */}
+                {/* The layer's notes as a bar. Drag a note to move it, drag its
+                    right edge to resize, double-click to delete; drag the
+                    background to move the whole layer, tap it to scrub. */}
                 <div
-                  className="layer-map"
+                  className={`layer-map${editNotes ? ' notes' : ''}${editingLayer(index) ? ' editing' : ''}`}
                   data-act="map"
                   role="group"
                   aria-label={`${t('layer.map')} ${layer.name}`}
-                  title={t('layer.mapHint')}
+                  title={editNotes ? t('layer.modeHintNote') : t('layer.mapHint')}
                   onPointerDown={(event) => {
                     const rect = event.currentTarget.getBoundingClientRect();
+                    const width = Math.max(1, rect.width);
+                    const fraction = (event.clientX - rect.left) / width;
+                    const hit = editNotes
+                      ? hitNote(maps[index] ?? [], fraction * 100, edgePercent(width))
+                      : null;
+                    if (hit) {
+                      // Editing a row means editing that layer: point the session
+                      // at it first, then act on the note that was grabbed. The
+                      // note order is the same in both, so the index survives.
+                      if (!editingLayer(index)) {
+                        rollSession.setCopyTitle(t('roll.copyOf', { name: trackTitle(current) }));
+                        rollSession.open(index);
+                      }
+                      const note = rollSession.getDoc().notes[hit.index];
+                      if (!note) return;
+                      setSelected(note.id);
+                      noteDrag.current = {
+                        id: note.id,
+                        kind: hit.edge === 'tail' ? 'tail' : 'move',
+                        x: event.clientX,
+                        width,
+                        duration: current.song.duration,
+                        snap: gridSeconds(roll.snap, roll.doc.bpm),
+                        spb: 60 / (roll.doc.bpm || 120),
+                        from: rollSession.getDoc(),
+                        moved: false,
+                      };
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                      haptic();
+                      return;
+                    }
                     drag.current = {
                       x: event.clientX,
                       offset: layer.offset,
-                      width: rect.width,
+                      width,
                       duration: player.duration || 1,
                       moved: false,
                     };
                     event.currentTarget.setPointerCapture(event.pointerId);
                   }}
                   onPointerMove={(event) => {
+                    const nd = noteDrag.current;
+                    if (nd) {
+                      const dx = event.clientX - nd.x;
+                      if (Math.abs(dx) < 3) return;
+                      nd.moved = true;
+                      const original = nd.from.notes.find((n) => n.id === nd.id);
+                      if (!original) return;
+                      // The drag is measured in seconds, the document in beats.
+                      const seconds = {
+                        note: original.note,
+                        velocity: original.velocity,
+                        start: original.start * nd.spb,
+                        duration: original.length * nd.spb,
+                      };
+                      const delta = dragSeconds(dx, nd.width, nd.duration);
+                      const edit =
+                        nd.kind === 'tail'
+                          ? resizeNote(seconds, delta, nd.snap, nd.duration)
+                          : moveNote(seconds, delta, nd.snap, nd.duration);
+                      rollSession.live(
+                        updateNote(nd.from, nd.id, {
+                          start: edit.start / nd.spb,
+                          length: edit.duration / nd.spb,
+                        }),
+                      );
+                      return;
+                    }
                     const d = drag.current;
                     if (!d) return;
                     const dx = event.clientX - d.x;
@@ -299,6 +466,17 @@ export function PlayerPanel({
                     setLayers(midiPlayer.getLayers());
                   }}
                   onPointerUp={(event) => {
+                    const nd = noteDrag.current;
+                    if (nd) {
+                      noteDrag.current = null;
+                      // One gesture, one undo step: the drags in between only
+                      // updated the working copy.
+                      if (nd.moved) {
+                        rollSession.settle(nd.from);
+                        haptic(HAPTIC.medium);
+                      }
+                      return;
+                    }
                     const d = drag.current;
                     drag.current = null;
                     if (!d) return;
@@ -307,19 +485,36 @@ export function PlayerPanel({
                       midiLibrary.saveMix();
                       return;
                     }
-                    // A tap is a scrub: jump the transport to that point.
+                    // A tap on the background is a scrub: jump the transport there.
+                    setSelected(null);
                     const rect = event.currentTarget.getBoundingClientRect();
                     const fraction = (event.clientX - rect.left) / Math.max(1, rect.width);
                     midiPlayer.seek(Math.max(0, Math.min(1, fraction)) * (player.duration || 0));
                   }}
+                  onDoubleClick={(event) => {
+                    if (!editNotes || !editingLayer(index)) return;
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const fraction = (event.clientX - rect.left) / Math.max(1, rect.width);
+                    const hit = hitNote(maps[index] ?? [], fraction * 100, edgePercent(rect.width));
+                    if (!hit) return;
+                    const note = rollSession.getDoc().notes[hit.index];
+                    if (!note) return;
+                    rollSession.commit(removeNote(rollSession.getDoc(), note.id), { sync: true });
+                    setSelected(null);
+                    haptic(HAPTIC.medium);
+                  }}
                 >
-                  {(maps[index] ?? []).map((block, blockIndex) => (
-                    <span
-                      key={blockIndex}
-                      className="layer-note"
-                      style={{ left: `${block.left}%`, width: `${block.width}%` }}
-                    />
-                  ))}
+                  {(maps[index] ?? []).map((block, blockIndex) => {
+                    const id = editingLayer(index) ? roll.doc.notes[block.index]?.id : null;
+                    return (
+                      <span
+                        key={id ?? `${index}-${blockIndex}`}
+                        className={`layer-note${id && id === selected ? ' selected' : ''}`}
+                        data-act="note"
+                        style={{ left: `${block.left}%`, width: `${block.width}%` }}
+                      />
+                    );
+                  })}
                   <span
                     className="layer-playhead"
                     style={{ left: `${playheadPercent(player.time, player.duration)}%` }}
@@ -385,7 +580,80 @@ export function PlayerPanel({
                   S
                 </button>
               </div>
-            ))}
+                ))}
+            </div>
+          </>
+        ) : null}
+
+        {/* Only shown with a note selected: nothing to nudge otherwise. */}
+        {editNotes && selectedNote ? (
+          <div
+            className="layer-edit"
+            data-act="note-edit"
+            role="group"
+            aria-label={t('layer.editHint')}
+          >
+            <span className="layer-edit-sel" data-act="note-info">
+              {t('layer.selected', {
+                note: noteName(selectedNote.note),
+                start: (selectedNote.start * spb).toFixed(2),
+                length: (selectedNote.length * spb).toFixed(2),
+              })}
+            </span>
+            <button
+              type="button"
+              className="layer-edit-btn"
+              data-act="note-earlier"
+              aria-label={t('layer.earlier')}
+              title={t('layer.earlier')}
+              onClick={() => nudgeSelected('start', -1)}
+            >
+              ◀
+            </button>
+            <button
+              type="button"
+              className="layer-edit-btn"
+              data-act="note-later"
+              aria-label={t('layer.later')}
+              title={t('layer.later')}
+              onClick={() => nudgeSelected('start', 1)}
+            >
+              ▶
+            </button>
+            <button
+              type="button"
+              className="layer-edit-btn"
+              data-act="note-shorter"
+              aria-label={t('layer.shorter')}
+              title={t('layer.shorter')}
+              onClick={() => nudgeSelected('length', -1)}
+            >
+              −
+            </button>
+            <button
+              type="button"
+              className="layer-edit-btn"
+              data-act="note-longer"
+              aria-label={t('layer.longer')}
+              title={t('layer.longer')}
+              onClick={() => nudgeSelected('length', 1)}
+            >
+              +
+            </button>
+            <button
+              type="button"
+              className="layer-edit-btn del"
+              data-act="note-delete"
+              aria-label={t('layer.delete')}
+              title={t('layer.delete')}
+              onClick={() => {
+                rollSession.commit(removeNote(rollSession.getDoc(), selectedNote.id), { sync: true });
+                setSelected(null);
+                haptic(HAPTIC.medium);
+              }}
+            >
+              ✕
+            </button>
           </div>
         ) : null}
 

@@ -1329,8 +1329,14 @@ input,textarea,[contenteditable='true']{
 .player-search input{width:100%;background:var(--bg-socket);border:1px solid var(--border);
   border-radius:9px;color:var(--txt-1);font:500 12px/1 var(--grot);padding:10px 12px;outline:none}
 .player-search input:focus{border-color:var(--accent-dim)}
-/* Mute/solo strip for multi-track songs. */
-.layer-strip{display:flex;flex-direction:column;gap:4px;padding:8px 16px 0}
+/* Layer strip: one row per layer, plus a mode switch between arranging the
+   layer and editing single notes. */
+.layer-tools{display:flex;align-items:center;gap:8px;padding:8px 16px 0}
+.layer-mode{height:24px;padding:0 10px;border-radius:7px;border:1px solid var(--border);
+  background:var(--bg-inset);color:var(--txt-dim);font:700 10px/1 var(--grot);cursor:pointer}
+.layer-mode:hover{border-color:var(--border-hi);color:var(--txt-1)}
+.layer-mode.on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
+.layer-strip{display:flex;flex-direction:column;gap:4px;padding:6px 16px 0}
 /* Wraps rather than crushes: a long track name or an extra control moves to a
    second line instead of squeezing the sliders to nothing. */
 .layer-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -1344,8 +1350,22 @@ input,textarea,[contenteditable='true']{
 /* Layer mini-map: the arrangement as a bar of note blocks plus a playhead. */
 .layer-map{position:relative;flex:1 1 auto;min-width:0;height:14px;border-radius:4px;
   background:var(--bg-socket);border:1px solid var(--line-soft-2);overflow:hidden}
-.layer-note{position:absolute;top:3px;bottom:3px;border-radius:2px;
+.layer-note{position:absolute;top:3px;bottom:3px;border-radius:2px;pointer-events:none;
   background:color-mix(in srgb,var(--accent) 65%,transparent)}
+.layer-note.selected{background:var(--accent);box-shadow:0 0 0 1px var(--accent-hi)}
+/* In note mode the bar grows a little so a 14 px target is easier to grab. */
+.layer-strip[data-mode='notes'] .layer-map{height:20px;cursor:grab}
+.layer-strip[data-mode='notes'] .layer-note{top:4px;bottom:4px}
+/* The nudge bar: the same edit as a drag, one tap at a time. */
+.layer-edit{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 16px 0;
+  font:500 10px/1.3 var(--mono);color:var(--txt-2)}
+.layer-edit-sel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:var(--txt-1)}
+.layer-edit-btn{width:28px;height:26px;flex:none;border-radius:7px;border:1px solid var(--border);
+  background:var(--bg-inset);color:var(--txt-1);font:700 12px/1 var(--grot);cursor:pointer}
+.layer-edit-btn:hover{border-color:var(--accent-dim);color:var(--accent)}
+.layer-edit-btn.del{color:var(--txt-dim)}
+.layer-edit-btn.del:hover{border-color:var(--danger,#e2554f);color:var(--danger,#e2554f)}
 .layer-playhead{position:absolute;top:0;bottom:0;width:1.5px;background:var(--accent);
   box-shadow:0 0 4px var(--accent)}
 .player-list{flex:1;overflow-y:auto;padding:0 12px 12px;display:flex;flex-direction:column;gap:4px}

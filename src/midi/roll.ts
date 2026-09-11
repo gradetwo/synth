@@ -107,24 +107,96 @@ export function songToRoll(song: MidiSong): RollDoc {
   };
 }
 
-export function rollToSong(doc: RollDoc): MidiSong {
-  const bpm = clamp(doc.bpm, MIN_BPM, MAX_BPM);
-  const spb = secondsPerBeat(bpm);
-  const notes: MidiNote[] = [...doc.notes]
+/**
+ * The document's notes in seconds, in document order, keeping the id of each
+ * one. An editor draws from this so a note stays the same note while it moves.
+ */
+export function rollToSeconds(doc: RollDoc): (MidiNote & { id: string })[] {
+  const spb = secondsPerBeat(clamp(doc.bpm, MIN_BPM, MAX_BPM));
+  return doc.notes.map((n) => ({
+    id: n.id,
+    note: clamp(Math.round(n.note), MIN_NOTE, MAX_NOTE),
+    velocity: clamp(n.velocity, 0.05, 1),
+    start: tidy(n.start * spb),
+    duration: tidy(Math.max(MIN_LENGTH, n.length) * spb),
+  }));
+}
+
+/** The document's notes in seconds, sorted the way the player expects. */
+export function rollToNotes(doc: RollDoc): MidiNote[] {
+  return rollToSeconds(doc)
     .sort((a, b) => a.start - b.start || a.note - b.note)
-    .map((n) => ({
-      note: clamp(Math.round(n.note), MIN_NOTE, MAX_NOTE),
-      velocity: clamp(n.velocity, 0.05, 1),
-      start: tidy(n.start * spb),
-      duration: tidy(Math.max(MIN_LENGTH, n.length) * spb),
-    }));
-  let duration = 0;
-  for (const n of notes) duration = Math.max(duration, n.start + n.duration);
+    .map((n) => ({ note: n.note, velocity: n.velocity, start: n.start, duration: n.duration }));
+}
+
+/** Total length in seconds a note list needs, with the same tail a save adds. */
+function notesDuration(notes: MidiNote[]): number {
+  let end = 0;
+  for (const n of notes) end = Math.max(end, n.start + n.duration);
+  return tidy(end + 0.4);
+}
+
+export function rollToSong(doc: RollDoc): MidiSong {
+  const notes = rollToNotes(doc);
   return {
     name: doc.name,
-    bpm,
-    duration: tidy(duration + 0.4),
+    bpm: clamp(doc.bpm, MIN_BPM, MAX_BPM),
+    duration: notesDuration(notes),
     notes,
+  };
+}
+
+/**
+ * The notes of one layer, in seconds. A song without an explicit track list has
+ * exactly one layer, which is its flat note list — the same fallback the player
+ * uses, so what the editor edits is what is heard.
+ */
+export function layerNotes(song: MidiSong, layerIndex: number): MidiNote[] {
+  const tracks = song.tracks && song.tracks.length ? song.tracks : [{ name: 'Track 1', notes: song.notes }];
+  return tracks[layerIndex]?.notes ?? [];
+}
+
+/** Open one layer of a song as an editable document. */
+/** An empty document, for a library with no track in it. */
+export function emptyDoc(): RollDoc {
+  return { name: '', bpm: 120, beats: 4, notes: [] };
+}
+
+export function songLayerToRoll(song: MidiSong, layerIndex = 0): RollDoc {
+  const bpm = clamp(Math.round(song.bpm || 120), MIN_BPM, MAX_BPM);
+  const spb = secondsPerBeat(bpm);
+  const notes: RollNote[] = layerNotes(song, layerIndex).map((n) => ({
+    id: nextId(),
+    note: clamp(Math.round(n.note), MIN_NOTE, MAX_NOTE),
+    start: tidy(n.start / spb),
+    length: Math.max(MIN_LENGTH, tidy(n.duration / spb)),
+    velocity: clamp(n.velocity, 0.05, 1),
+  }));
+  return { name: song.name, bpm, beats: fitBeats(notes), notes };
+}
+
+/**
+ * Write an edited layer back into its song, keeping every other layer and the
+ * flat note list in sync. The piano roll edits one layer at a time, so saving a
+ * multi-track file must not collapse it into a single track.
+ */
+export function withLayerNotes(song: MidiSong, layerIndex: number, doc: RollDoc): MidiSong {
+  const tracks = (song.tracks && song.tracks.length
+    ? song.tracks
+    : [{ name: 'Track 1', notes: song.notes }]
+  ).map((track) => ({ ...track, notes: [...track.notes] }));
+  // An index past the end means the layer disappeared (an undo removed the
+  // track); editing then belongs to the first layer rather than to nothing.
+  const index = layerIndex >= 0 && layerIndex < tracks.length ? layerIndex : 0;
+  tracks[index] = { ...tracks[index], notes: rollToNotes(doc) };
+  const notes = tracks.flatMap((track) => track.notes).sort((a, b) => a.start - b.start || a.note - b.note);
+  return {
+    ...song,
+    name: doc.name || song.name,
+    bpm: clamp(doc.bpm, MIN_BPM, MAX_BPM),
+    duration: notesDuration(notes),
+    notes,
+    tracks,
   };
 }
 

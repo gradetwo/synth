@@ -330,3 +330,191 @@ test.describe('piano roll on phone', () => {
     await expect(page.locator('.roll-kbd')).toBeVisible();
   });
 });
+
+/**
+ * The layer strip is the other half of the same editor: it edits one layer of
+ * the same document the roll shows, in the same undo history. These tests pin
+ * that down, plus the two things the plan promised for a phone — a selectable
+ * note and buttons instead of dragging.
+ */
+const leftOf = (locator: ReturnType<Page['locator']>) =>
+  locator.evaluate((el) => Number.parseFloat((el as HTMLElement).style.left));
+const widthOf = (locator: ReturnType<Page['locator']>) =>
+  locator.evaluate((el) => Number.parseFloat((el as HTMLElement).style.width));
+
+test.describe('layer strip note editing', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('nudges a note, shares its undo with the roll, and keeps it', async ({ page }) => {
+    await boot(page);
+    await page.locator('.player-open').click();
+    const strip = page.locator('.layer-strip');
+    await expect(strip).toHaveAttribute('data-layers', '1');
+    // Arranging is the default, because that is what the strip always did.
+    await expect(strip).toHaveAttribute('data-mode', 'arrange');
+    await page.locator('[data-act="strip-mode"]').click();
+    await expect(strip).toHaveAttribute('data-mode', 'notes');
+
+    const first = strip.locator('[data-layer="0"] .layer-note').first();
+    const box = (await first.boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    const note = strip.locator('[data-layer="0"] .layer-note.selected');
+    await expect(note).toHaveCount(1);
+    const info = page.locator('[data-act="note-info"]');
+    await expect(info).toBeVisible();
+    const before = await leftOf(note);
+
+    // One grid step per press. The first edit of a built-in song becomes a
+    // copy, and the panel says so rather than switching tracks silently.
+    // (The bar can sit below the fold once the panel is scrolled.)
+    const nudge = async (act: string) => {
+      const button = page.locator(`[data-act="${act}"]`);
+      await button.scrollIntoViewIfNeeded();
+      await button.click();
+    };
+    await nudge('note-later');
+    await expect(page.locator('.toast')).toContainText('副本');
+    await nudge('note-later');
+    await expect.poll(() => leftOf(note)).toBeGreaterThan(before);
+    const moved = await leftOf(note);
+    // The label follows the edit: it is the same document, not a stale copy.
+    await expect(info).toContainText('秒起');
+
+    // The roll is the same document and the same history: undoing there takes
+    // the strip's nudge back here.
+    await page.locator('.player-btn.wide', { hasText: '编辑' }).click();
+    await expect(page.locator('.roll')).toBeVisible();
+    await page.waitForTimeout(500);
+    // Two nudges are two undo steps, inside the roll and outside it.
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+z');
+    await page.locator('.roll-head .d-close').click();
+    await expect(page.locator('.roll.open')).toHaveCount(0);
+    // Opening the roll closes the panel; bring it back to reach the strip.
+    await page.locator('.player-open').click();
+    // The share of the bar drifts a little — the song's length is remeasured
+    // from its notes — but the note's own position is exactly where it was.
+    await expect.poll(() => leftOf(note)).toBeCloseTo(before, 1);
+    await expect(page.locator('[data-act="note-info"]')).toContainText('0.90 秒起');
+
+    // An edit is the song, not the session: it comes back after a reload.
+    await nudge('note-later');
+    await nudge('note-later');
+    await expect.poll(() => leftOf(note)).toBeGreaterThan(before);
+    await page.reload();
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(400);
+    await page.locator('.player-open').click();
+    // The note that was moved is still moved — same left, in the whole song.
+    await expect
+      .poll(() =>
+        page
+          .locator('.layer-strip [data-layer="0"] .layer-note')
+          .evaluateAll(
+            (els, want) =>
+              els.some((el) => Math.abs(Number.parseFloat((el as HTMLElement).style.left) - want) < 0.2),
+            moved,
+          ),
+      )
+      .toBe(true);
+  });
+});
+
+test.describe('layer strip note editing on phone', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('selects a note and edits it with the buttons', async ({ page }) => {
+    await boot(page, true);
+    await page.locator('.player-open').tap();
+    await page.locator('[data-act="strip-mode"]').tap();
+    const first = page.locator('.layer-strip [data-layer="0"] .layer-note').first();
+    const box = (await first.boundingBox())!;
+    await page.touchscreen.tap(box.x + Math.min(5, box.width / 2), box.y + box.height / 2);
+    const note = page.locator('.layer-strip [data-layer="0"] .layer-note.selected');
+    await expect(page.locator('[data-act="note-info"]')).toBeVisible();
+    await expect(note).toHaveCount(1);
+
+    // Longer and shorter are the touch-friendly replacements for the resize
+    // drag, and they widen the block on screen.
+    const widthBefore = await widthOf(note);
+    await page.locator('[data-act="note-longer"]').scrollIntoViewIfNeeded();
+    await page.locator('[data-act="note-longer"]').tap();
+    await expect.poll(() => widthOf(note)).toBeGreaterThan(widthBefore);
+    const wider = await widthOf(note);
+    await page.locator('[data-act="note-shorter"]').scrollIntoViewIfNeeded();
+    await page.locator('[data-act="note-shorter"]').tap();
+    await expect.poll(() => widthOf(note)).toBeLessThan(wider);
+
+    // A phone is the narrowest place the bar has to work: it must not push the
+    // panel wider than the screen.
+    const overflow = await page.evaluate(() => {
+      const panel = document.querySelector('.player') as HTMLElement;
+      return panel.scrollWidth - panel.clientWidth;
+    });
+    expect(overflow).toBeLessThanOrEqual(1);
+  });
+});
+
+/**
+ * A two-note song with room either side: notes at 0 and 1.5 s in a 2 s song, so
+ * there is a note to grab, a tail to drag and empty bar in between.
+ */
+const twoNoteSong = () =>
+  Buffer.from([
+    0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0,
+    0x4d, 0x54, 0x72, 0x6b, 0, 0, 0, 26,
+    0x00, 0xff, 0x51, 0x03, 0x07, 0xa1, 0x20,
+    0x00, 0x90, 0x3c, 0x64,
+    0x83, 0x60, 0x80, 0x3c, 0x40,
+    0x87, 0x40, 0x90, 0x3e, 0x64,
+    0x83, 0x60, 0x80, 0x3e, 0x40,
+    0x00, 0xff, 0x2f, 0x00,
+  ]);
+
+test.describe('layer strip note dragging', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('moves, resizes and deletes a note, and the app undo brings it back', async ({ page }) => {
+    await boot(page);
+    await page.locator('.player-open').click();
+    await page.locator('.player input[type=file]').setInputFiles({
+      name: 'two-notes.mid',
+      mimeType: 'audio/midi',
+      buffer: twoNoteSong(),
+    });
+    await page.locator('[data-act="strip-mode"]').click();
+
+    const notes = page.locator('.layer-strip [data-layer="0"] .layer-note');
+    await expect(notes).toHaveCount(2);
+    const map = (await page.locator('.layer-strip [data-layer="0"] .layer-map').boundingBox())!;
+    const first = (await notes.first().boundingBox())!;
+    const startLeft = await leftOf(notes.first());
+    const startWidth = await widthOf(notes.first());
+
+    // Drag the note's body to the right: it moves, and stays on the grid.
+    await page.mouse.move(first.x + first.width / 2, first.y + first.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(first.x + first.width / 2 + map.width * 0.3, first.y + first.height / 2, { steps: 10 });
+    await page.mouse.up();
+    const selected = page.locator('.layer-strip [data-layer="0"] .layer-note.selected');
+    await expect.poll(() => leftOf(selected)).toBeGreaterThan(startLeft);
+
+    // Drag its right edge: the same note gets longer.
+    const before = (await selected.boundingBox())!;
+    await page.mouse.move(before.x + before.width - 2, before.y + before.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(before.x + before.width + map.width * 0.12, before.y + before.height / 2, { steps: 10 });
+    await page.mouse.up();
+    await expect.poll(() => widthOf(selected)).toBeGreaterThan(startWidth);
+
+    // Double-click deletes it…
+    const target = (await selected.boundingBox())!;
+    await page.mouse.dblclick(target.x + target.width / 2, target.y + target.height / 2);
+    await expect(notes).toHaveCount(1);
+
+    // …and the app-wide undo, which recorded the edit, brings it back: an edit
+    // on the strip is a document change, not a private editor state.
+    await page.keyboard.press('Control+z');
+    await expect(notes).toHaveCount(2);
+  });
+});

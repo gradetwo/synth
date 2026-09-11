@@ -9,13 +9,17 @@ import {
   quantizeDoc,
   removeNote,
   resolveOverlaps,
+  layerNotes,
+  rollToNotes,
   rollToSong,
   setBpm,
   setLengthBeats,
+  songLayerToRoll,
   songToRoll,
   snapBeat,
   transposeDoc,
   updateNote,
+  withLayerNotes,
   type RollDoc,
 } from './roll';
 
@@ -181,5 +185,63 @@ describe('piano-roll model', () => {
     expect(isBlackKey(61)).toBe(true);
     expect(isBlackKey(60)).toBe(false);
     expect(isBlackKey(66)).toBe(true);
+  });
+});
+
+describe('one layer at a time', () => {
+  const layered = (): MidiSong => ({
+    name: 'two layers',
+    bpm: 120,
+    duration: 2.4,
+    notes: [
+      { note: 60, velocity: 0.8, start: 0, duration: 0.5 },
+      { note: 67, velocity: 0.8, start: 0.5, duration: 0.5 },
+    ],
+    tracks: [
+      { name: 'Lead', notes: [{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }] },
+      { name: 'Bass', notes: [{ note: 67, velocity: 0.8, start: 0.5, duration: 0.5 }] },
+    ],
+  });
+
+  it('reads the requested layer, and falls back to the flat list', () => {
+    expect(layerNotes(layered(), 0).map((n) => n.note)).toEqual([60]);
+    expect(layerNotes(layered(), 1).map((n) => n.note)).toEqual([67]);
+    // A song without tracks has exactly one layer: its flat notes.
+    expect(layerNotes(song(), 0)).toHaveLength(3);
+    expect(layerNotes(song(), 7)).toEqual([]);
+  });
+
+  it('edits one layer without touching the others', () => {
+    const roll = songLayerToRoll(layered(), 1);
+    expect(roll.notes.map((n) => n.note)).toEqual([67]);
+    const moved = updateNote(roll, roll.notes[0].id, { start: 1, length: 2 });
+    const back = withLayerNotes(layered(), 1, moved);
+    // The other layer is untouched…
+    expect(back.tracks?.[0].notes.map((n) => [n.note, n.start])).toEqual([[60, 0]]);
+    // …the edited one moved (1 beat at 120 BPM = 0.5 s)…
+    expect(back.tracks?.[1].notes.map((n) => [n.note, n.start, n.duration])).toEqual([[67, 0.5, 1]]);
+    // …and the flat list the player schedules from is the merge of both.
+    expect(back.notes.map((n) => n.note)).toEqual([60, 67]);
+    expect(back.notes).toHaveLength(2);
+    expect(back.duration).toBeCloseTo(1.9, 5);
+  });
+
+  it('writes an index past the end into the first layer instead of dropping it', () => {
+    // A layer that an undo removed: editing layer 3 of a one-layer song has to
+    // land somewhere, and the first layer is the only honest answer.
+    const roll = songLayerToRoll(layered(), 0);
+    const added = { ...roll, notes: [...roll.notes, { id: 'x', note: 72, start: 4, length: 1, velocity: 0.5 }] };
+    const back = withLayerNotes({ ...layered(), tracks: [layered().tracks![1]] }, 3, added);
+    expect(back.tracks).toHaveLength(1);
+    expect(back.tracks?.[0].notes.map((n) => n.note)).toEqual([60, 72]);
+  });
+
+  it('keeps the flat list sorted and round-trips through the layer helpers', () => {
+    const flat = rollToNotes(songLayerToRoll(layered(), 1));
+    expect(flat).toHaveLength(1);
+    expect(flat[0].note).toBe(67);
+    const back = withLayerNotes(layered(), 0, songLayerToRoll(layered(), 0));
+    expect(back.notes.map((n) => n.note)).toEqual([60, 67]);
+    expect(back.name).toBe('two layers');
   });
 });
