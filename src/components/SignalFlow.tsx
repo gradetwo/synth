@@ -14,6 +14,7 @@ import { midiLibrary, trackTitle } from '@/midi/library';
 import { ModuleFor } from '@/panels/modules';
 import { PlainModules } from '@/components/Module';
 import { toast } from './Toast';
+import { fxGraphOpen } from '@/state/overlays';
 import { Transport } from './PlayerPanel';
 
 type NodeType = 'source' | 'filter' | 'mod' | 'effect' | 'output';
@@ -861,6 +862,19 @@ export function SignalFlow() {
               ⤢
             </button>
           </div>
+          <button
+            type="button"
+            className="flow-bar-btn"
+            data-act="fx-graph"
+            aria-label={t('fxg.title')}
+            title={t('fxg.title')}
+            onClick={() => {
+              haptic();
+              fxGraphOpen.set(true);
+            }}
+          >
+            ⌗
+          </button>
           <button
             type="button"
             className="flow-bar-btn flow-reset"

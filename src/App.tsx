@@ -9,6 +9,8 @@ import { useViewport } from '@/hooks/useViewport';
 import { wireAnalysis } from '@/audio/analysis';
 import { TopBar, DisplayRow, KeyboardDock } from '@/panels/layout';
 import { PianoRoll } from '@/components/PianoRoll';
+import { FxGraphEditor } from '@/components/FxGraphEditor';
+import { fxGraphOpen, useFxGraphOpen } from '@/state/overlays';
 import { ModuleFor } from '@/panels/modules';
 import { ModulesGrid } from '@/components/Module';
 import { PresetDrawer } from '@/components/PresetDrawer';
@@ -308,6 +310,9 @@ export default function App() {
    * Open the piano-roll editor for the current track. Any running take is
    * finished and saved first so opening the editor never loses a recording.
    */
+  const fxGraphOpenNow = useFxGraphOpen();
+  const closeFxGraph = () => fxGraphOpen.set(false);
+
   const openRoll = () => {
     if (recorder.getState().recording) {
       const clip = recorder.stop();
@@ -362,6 +367,9 @@ export default function App() {
       ) : null}
 
       <PianoRoll open={rollOpen} onClose={() => setRollOpen(false)} />
+
+      {/* Mounted only while it is open, so a closed editor keeps no state. */}
+      {fxGraphOpenNow ? <FxGraphEditor onClose={closeFxGraph} /> : null}
 
       <PresetDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
 

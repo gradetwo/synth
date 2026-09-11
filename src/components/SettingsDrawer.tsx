@@ -18,6 +18,7 @@ import { TEMPERAMENTS } from '@/audio/tuning';
 import { VELOCITY_CURVES, velocityCurveLabel } from '@/audio/velocity';
 import { parseScala } from '@/audio/scala';
 import { toast } from './Toast';
+import { fxGraphOpen } from '@/state/overlays';
 import { LANG_LABELS, t } from '@/i18n';
 import { useHaptics, useLang, useTheme, useContrast } from '@/hooks/useSynth';
 import { canVibrate, haptic, HAPTIC } from '@/hooks/useInputMode';
@@ -131,6 +132,23 @@ export function SettingsDrawer({
                   }}
                 >
                   {t('scene.delete')}
+                </button>
+              </div>
+
+              <div className="settings-row" data-setting="fxGraph">
+                <span className="settings-label">{t('fxg.title')}</span>
+                <button
+                  type="button"
+                  className="roll-btn"
+                  data-act="fx-graph-open"
+                  title={t('fxg.hintOn')}
+                  onClick={() => {
+                    haptic();
+                    fxGraphOpen.set(true);
+                    onClose();
+                  }}
+                >
+                  {t('fxg.open')}
                 </button>
               </div>
             </section>

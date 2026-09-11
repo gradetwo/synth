@@ -232,7 +232,88 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 .smp-controls .seg{flex:1;min-width:96px}
 /* Effect chain reorder row (A5). */
 .fx-chain{margin-bottom:10px}
-.fx-chain-head{font:600 8px/1 var(--mono);letter-spacing:.16em;color:var(--txt-dim);margin-bottom:6px}
+.fx-chain-head{display:flex;align-items:center;gap:8px;font:600 8px/1 var(--mono);
+  letter-spacing:.16em;color:var(--txt-dim);margin-bottom:6px}
+.fx-graph-open{height:22px;padding:0 8px;border-radius:6px;border:1px solid var(--border);
+  background:var(--bg-inset);color:var(--txt-2);font:600 8.5px/1 var(--mono);letter-spacing:.08em;
+  cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:132px}
+.fx-graph-open:hover{border-color:var(--accent-dim);color:var(--accent)}
+
+/* ---------------------------------------------------------- routing graph */
+/* Full-screen editor for the effect graph (A1/A2). The canvas is a fixed-size
+   board that scrolls, so wires are drawn from arithmetic rather than from
+   measured positions. */
+.fxg-mask{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
+  background:var(--mask);backdrop-filter:blur(3px);padding:12px}
+.fxg-panel{display:flex;flex-direction:column;width:min(1100px,100%);height:min(760px,100%);
+  background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+.fxg-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);
+  flex-wrap:wrap}
+.fxg-title{font:700 11px/1 var(--grot);letter-spacing:.14em;color:var(--accent);margin-right:auto;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fxg-head .seg{display:inline-flex;gap:2px}
+.fxg-view button{height:26px;min-width:52px;border-radius:7px;border:1px solid var(--border);
+  background:var(--bg-inset);color:var(--txt-dim);font:600 9px/1 var(--mono);cursor:pointer}
+.fxg-view button.on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
+.fxg-rebuild,.fxg-close{height:26px;padding:0 10px;border-radius:7px;border:1px solid var(--border);
+  background:var(--bg-inset);color:var(--txt-2);font:600 9px/1 var(--mono);cursor:pointer;flex:none}
+.fxg-close{min-width:34px;padding:0 8px}
+.fxg-rebuild:hover,.fxg-close:hover{border-color:var(--accent-dim);color:var(--accent)}
+.fxg-hint{padding:8px 12px;font:500 9.5px/1.5 var(--grot);color:var(--txt-dim);
+  border-bottom:1px solid var(--line-soft-2)}
+.fxg-scroll{flex:1;overflow:auto;padding:10px}
+.fxg-canvas{position:relative;min-width:100%}
+.fxg-wires{position:absolute;inset:0;pointer-events:none}
+.fxg-wire{fill:none;stroke:color-mix(in srgb,var(--accent) 70%,transparent);stroke-width:2;
+  pointer-events:stroke;cursor:pointer}
+.fxg-wire:hover{stroke:#ff6b6b}
+.fxg-wire.ghost{stroke-dasharray:5 4;opacity:.8}
+.fxg-card{position:absolute;box-sizing:border-box;border:1px solid var(--border);border-radius:11px;
+  background:var(--bg-inset);padding:6px 8px;display:flex;flex-direction:column;gap:4px}
+.fxg-card.dim{opacity:.45}
+.fxg-dry,.fxg-out{justify-content:center}
+.fxg-card-title{font:700 9px/1 var(--grot);letter-spacing:.1em;color:var(--txt-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fxg-card-sub{font:500 8.5px/1.35 var(--grot);color:var(--txt-dim);
+  overflow:hidden;text-overflow:ellipsis}
+.fxg-card-head{display:flex;align-items:center;gap:4px}
+.fxg-kind{flex:1;min-width:0;height:22px;border-radius:6px;border:1px solid var(--border);
+  background:var(--bg-socket);color:var(--txt-2);font:600 9px/1 var(--mono);padding:0 4px}
+.fxg-on,.fxg-par{width:24px;height:22px;flex:none;border-radius:6px;border:1px solid var(--border);
+  background:var(--bg-socket);color:var(--txt-dim);font:700 10px/1 var(--mono);cursor:pointer}
+.fxg-on.on,.fxg-par.on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
+.fxg-mix{display:flex;align-items:center;gap:6px}
+.fxg-mix-label{font:600 8px/1 var(--mono);color:var(--txt-dim);letter-spacing:.08em;flex:none}
+.fxg-rows{display:flex;flex-direction:column;gap:3px}
+.fxg-row{display:flex;align-items:center;gap:5px}
+.fxg-src{flex:1;min-width:0;height:22px;border-radius:6px;border:1px solid var(--border);
+  background:var(--bg-socket);color:var(--txt-2);font:600 9px/1 var(--mono);padding:0 3px}
+.fxg-gain{width:56px;flex:none;height:18px;accent-color:var(--accent);background:none}
+.fxg-gain-val{width:30px;flex:none;font:600 8px/1 var(--mono);color:var(--txt-dim);text-align:right}
+.fxg-port{position:absolute;width:18px;height:18px;border-radius:50%;border:1px solid var(--accent-dim);
+  background:var(--bg-panel);cursor:crosshair;padding:0}
+.fxg-port.in{left:-9px}
+.fxg-port.out{right:-9px}
+.fxg-port.wired{background:var(--accent)}
+.fxg-port.ready{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint)}
+.fxg-port.pending{background:var(--accent);border-color:var(--accent)}
+.fxg-out-list{position:absolute;left:572px;bottom:8px;right:8px;display:flex;flex-direction:column;gap:3px}
+.fxg-out-row{display:flex;align-items:center;gap:6px}
+.fxg-out-label{display:flex;align-items:center;gap:5px;font:600 9px/1 var(--mono);color:var(--txt-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fxg-list{flex:1;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.fxg-list-node{border:1px solid var(--border);border-radius:11px;background:var(--bg-inset);
+  padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.fxg-list-title{font:700 9px/1 var(--grot);letter-spacing:.1em;color:var(--txt-dim)}
+@media (pointer: coarse){
+  .fx-graph-open{height:32px;max-width:160px;font-size:10px}
+  .fxg-view button,.fxg-rebuild,.fxg-close{height:40px;min-width:64px;font-size:10px}
+  .fxg-kind,.fxg-src{height:40px;font-size:10px}
+  .fxg-on,.fxg-par{width:40px;height:40px}
+  .fxg-gain{width:110px;height:34px}
+  .fxg-port{width:30px;height:30px}
+  .fxg-list-node{padding:10px}
+}
 .fx-chain-list{display:flex;gap:4px;flex-wrap:wrap}
 .fx-chip{display:inline-flex;align-items:center;gap:2px;background:var(--bg-inset);
   border:1px solid var(--border);border-radius:7px;padding:2px 3px}

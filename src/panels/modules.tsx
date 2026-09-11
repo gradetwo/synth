@@ -1,5 +1,6 @@
 import { useRef, useSyncExternalStore } from 'react';
 import { store } from '@/state/store';
+import { fxGraphOpen } from '@/state/overlays';
 import { useLang, useParam, useRoutes } from '@/hooks/useSynth';
 import { WaveImportError } from '@/audio/wavefile';
 import { clearUserIr, getUserIr, importUserIr, subscribeUserIr } from '@/audio/ir';
@@ -348,6 +349,16 @@ function FxChain() {
     <div className="fx-chain" data-unit="chain">
       <div className="fx-chain-head" title={t('fx.chainHint')}>
         {t('fx.chain')}
+        <button
+          type="button"
+          className="fx-graph-open"
+          data-act="fx-graph"
+          aria-label={t('fxg.title')}
+          title={t('fxg.hintOn')}
+          onClick={() => fxGraphOpen.set(true)}
+        >
+          {t('fxg.title')}
+        </button>
       </div>
       <div className="fx-chain-list">
         {chain.map((kind, slot) => (

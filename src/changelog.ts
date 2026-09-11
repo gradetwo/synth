@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.73.0',
+    date: '2026-09-11',
+    kind: 'feature',
+    items: [
+      [
+        '新增**效果路由图**：六个效果位置现在不只是顺序，而是可以连线的节点。每个节点最多两路输入（可以取干声或任一更靠前节点的输出，各自带增益），任一节点都能送到输出，于是串联、并联送出、一分多路、两路求和都能做。入口在 FX 模块的「效果路由图」、信号流视图工具栏，以及设置抽屉；手机默认是列表式的连接编辑，桌面上可以拖线（点输出再点输入也行）。',
+        'A **routing graph** for the effects: the six positions are no longer only an order but nodes you can wire. Each node sums up to two inputs (the dry signal or any earlier node, each with its own gain) and any node can reach the output, so series, parallel sends, fan-out and two-into-one summing are all possible. Open it from the FX module, the signal-flow toolbar or the settings drawer; phones get a list editor, desktops can drag wires (tap output then input works too).',
+      ],
+      [
+        '路由图改动前，声音还是原来的信号链；开始连线时会自动切到路由图、并以当前信号链为起点，所以不会突然变声。想回去就按「从信号链重建」。',
+        'Until you change something, the sound is still the old chain; the first edit switches to the graph seeded from that chain, so nothing jumps. “Rebuild from chain” puts it back.',
+      ],
+    ],
+  },
+  {
     version: '1.72.0',
     date: '2026-09-11',
     kind: 'fix',
