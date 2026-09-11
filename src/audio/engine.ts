@@ -16,6 +16,7 @@
 
 import simdWasmUrl from '@/generated/synth_core.wasm?url';
 import scalarWasmUrl from '@/generated/synth_core_scalar.wasm?url';
+import { settleWithin } from './settle';
 import processorUrl from './worklet-processor.js?url';
 import { recoverFromStaleBuild } from '@/pwa/register';
 import { fetchCoreBytes } from './wasmFetch';
@@ -230,10 +231,14 @@ export class AudioEngine {
     const resume = ctx.state === 'running' ? Promise.resolve() : ctx.resume();
     try {
       await this.load(ctx, maxPolyphony, routes);
-      await resume;
+      // Bounded: Firefox can leave `resume()` pending forever for a context it
+      // considers blocked, and a start button that never comes back is worse
+      // than a suspended one that says so. Every later gesture tries again.
+      await settleWithin(resume, RESUME_GRACE_MS);
       // iOS can re-suspend while the graph is being built; nudge it again.
-      await this.resumeIfSuspended();
+      await settleWithin(this.resumeIfSuspended(), RESUME_GRACE_MS);
       if (ctx.state === 'running') this.setStatus('running');
+      else this.setStatus('suspended');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.setStatus('error', message);
@@ -762,6 +767,18 @@ export class AudioEngine {
   isReady(): boolean {
     return this.node !== null && this.ctx !== null && (this.ctx.state as string) === 'running';
   }
+
+  /** Whether the graph has been built, whatever the context is doing. */
+  hasGraph(): boolean {
+    return this.node !== null;
+  }
 }
+
+/**
+ * How long startup waits for `AudioContext.resume()` before carrying on. Long
+ * enough that a slow phone is not cut off, short enough that a promise nobody
+ * is going to answer does not hold the start button hostage.
+ */
+const RESUME_GRACE_MS = 2500;
 
 export const engine = new AudioEngine();

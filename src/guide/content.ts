@@ -772,6 +772,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
         kind: 'ul',
         items: [
           [
+            '**启动**：第一次点「启动音频引擎」后即可使用；若浏览器当时不让出声（Firefox 的自动播放策略、iOS 被通话或其他 App 占用），会出现「点按恢复声音」提示——点一下，或直接弹琴/播放，都会自动再试一次。',
+            '**Starting**: the first tap on the start button is all it takes. If the browser is holding the audio back (Firefox autoplay policy, or iOS with another app owning the session) a “tap to restore sound” hint appears — one tap, or simply playing, retries it.',
+          ],
+          [
             '**顶栏**：预设切换、A/B 音色槽、撤销/重做、MIDI、钢琴卷帘、键盘显示、随机、保存、预设库（手机/平板竖屏把次要操作收进「⋯」）。',
             '**Top bar**: preset stepper, A/B slots, undo/redo, MIDI, piano roll, keyboard toggle, randomize, save, preset library (phones and portrait tablets keep the secondary actions under “⋯”).',
           ],

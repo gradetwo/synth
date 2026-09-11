@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.72.0',
+    date: '2026-09-11',
+    kind: 'fix',
+    items: [
+      [
+        '修复 **Firefox 里点「启动音频引擎」后一直停在「正在启动…」、界面进不去**的问题。现在会正常进入；如果浏览器当时还不让出声，会出现「点按恢复声音」的提示，点一下即可，之后弹琴、播放都会再自动尝试恢复。',
+        'Fixed **Firefox getting stuck on “Starting…” after tapping the start button**, which left the interface unreachable. Startup now completes; if the browser is still holding the audio back you get a “tap to restore sound” hint, and playing or starting playback retries automatically.',
+      ],
+    ],
+  },
+  {
     version: '1.71.0',
     date: '2026-09-11',
     kind: 'fix',

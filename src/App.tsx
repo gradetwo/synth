@@ -211,6 +211,10 @@ export default function App() {
       // the first await (Safari requirement).
       const layout = store.getSnapshot().layout;
       await engine.start(layout.polyphony || 16, store.getSnapshot().state.routes);
+      // The graph exists from here on, even if the context refused to start
+      // (Firefox can sit on `resume()`): treat that as a run so the suspended
+      // hint is offered instead of an endless start gate.
+      if (engine.hasGraph()) setEverRan(true);
       engine.setTuning(store.tuningTableFor(layout.temperament));
       // Layer/split routing lives in the workspace, so a restarted engine has to
       // be told about it (the params arrive with `applyState`).

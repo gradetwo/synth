@@ -20,6 +20,32 @@ const kernelLine = async (page: import('@playwright/test').Page) => {
   return panel.replace(/\s+/g, ' ');
 };
 
+test('a resume that is never answered still leaves a usable app', async ({ page }) => {
+  test.setTimeout(60_000);
+  // Firefox leaves `AudioContext.resume()` pending for a context it considers
+  // blocked, and iOS can do the same when another app owns the session. The
+  // start button must not sit on "starting…" for ever: the graph gets built,
+  // the gate lifts, and the suspended hint offers the way back in.
+  await page.addInitScript(() => {
+    AudioContext.prototype.resume = function resume() {
+      return new Promise(() => {});
+    };
+  });
+  await page.goto('/');
+  await page.waitForTimeout(800);
+  await expect(page.locator('.start-overlay')).toHaveCount(1);
+
+  await page.locator('.start-btn').click();
+  // Bounded wait (the engine gives up after ~2.5 s), then the app is usable —
+  // either the context started on its own or the suspended hint is offered.
+  await expect(page.locator('.start-overlay')).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.locator('.start-error')).toHaveCount(0);
+  // The keyboard is there: the app is not a dead page.
+  await expect(page.locator('.kbd-dock')).toBeVisible();
+  // Whichever way it went, the transport is reachable: the synth is not gated.
+  await expect(page.locator('.player-open')).toBeVisible();
+});
+
 test('the gate stays up until the graph exists, and a reload is never a dead end', async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto('/');
