@@ -66,6 +66,7 @@
 | A2d | **效果节点多实例**：算法混响与四个插入效果**每个节点一套状态**（C 桥接层加 slot 维度、混响改为每节点一份）；延迟/卷积因内存上限仍单实例，第二个同类节点直通、编辑器标「已占用」并禁用；修掉「同一效果两个节点共用状态」的隐患 | ✅ v1.78.0 |
 | C11 | **界面每帧成本**：画布改为按需重绘（示波器/频谱/迷你波形/滤波曲线/电平表只在数据或参数变化时重画、渐变缓存、DOM 只在文本变化时写）、去掉 7 处全屏 `backdrop-filter`、启动页动画改用 opacity 与静态光晕；Chromium 空闲 7.5 → 60 fps（音频运行中同样 60 fps），本机全量 E2E 8.7 → 4.2 分钟，并新增「音频运行时 > 20 fps」的 E2E 守卫 | ✅ v1.79.0 |
 | C12 | **本机 WebKit 标准跑法定为 headless Weston**（`npm run test:e2e:webkit:wayland`，比 Xvfb 快一倍、有 `/dev/dri` 时走 GPU），nightly 自动按 Weston → Xvfb → headless 选择并记录显示栈；同时更正早期结论：慢的根因是应用页每帧成本，不是内核（空白页三内核均 60 fps） | ✅ v1.79.0 |
+| C13 | **一键发布**：`npm run release -- <version>`（版本与更新记录校验 → `verify` → E2E → 打包 → 部署 → 线上 hash 核对并重试 → 打 tag，失败即停，`--dry-run` 可演练）；同一校验作为 `verify:release` 进本地门禁与 CI，杜绝「版本与更新记录脱节」进 main（见 `docs/notes/release.md`） | ✅ v1.79.0 |
 | C10 | **体积继续拆分**：播放器面板改为按需 chunk 且首次打开才挂载（初始 JS 153.3 → **150.8 KB gzip**） | ✅ v1.78.0 |
 | C9 | **门禁在繁忙机器上不再假红**：`bench` 按 `loadavg` 判定宿主是否过载（过载只报正确性、跳过计时并说明原因）；Playwright 默认超时 45→60 s；WebKit/Firefox 项目开 `reducedMotion` + 单独超时 + 重试；修掉两个跨引擎测试缺陷（Chromium 专用启动参数害 WebKit 起不来、浮动键盘挡住模块按钮） | ✅ v1.76.0 |
 | C8 | **真正的夜间跑**：仓库新增 `nightly` 作业（`on.schedule`，`verify-ci` 守住它）+ 本机 `npm run nightly`（WebKit 核心子集 + `xvfb-run --headed`、锁、日志轮转、`docs/notes/nightly.md` 记录）+ systemd 用户定时器模板 | ✅ v1.76.0 |

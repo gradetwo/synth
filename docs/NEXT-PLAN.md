@@ -109,9 +109,10 @@ C 多轨与时间线、B 分层与分享、A 效果路由图（引擎 + 编辑�
 - 要点：初始 JS 150.8 → **140 KB gzip**（`songs.ts` 按需化或改曲包、指南/更新记录再拆）；新增「首屏可交互时间」预算（E2E 用 PerformanceObserver 测）。
 - 验收：收紧后 `verify:budget` 仍绿；启动耗时不回退。
 
-**P8.6 一键发布**（1 批）
-- 要点：`npm run release -- <version>`：版本与 changelog 校验 → `verify` → `package` → `deploy` → 线上 hash 核对 → 打 tag；任一步失败即停。
-- 验收：dry-run 演练一次。
+**P8.6 一键发布** — ✅ v1.79.0 完成
+- 已做：`scripts/release.mjs` + `npm run release -- <version>`：发布前校验（版本/changelog 日期与中英双份/版本倒序/工作区干净）→ `verify` → Chromium E2E → `package` → `wrangler deploy` → 线上 `assets/index-*.js` hash 核对（含「边缘挂着旧清单就再部署一次」的重试）→ 附注 tag；任一失败即停，`--dry-run` 可演练。
+- 同一套校验以 `npm run verify:release` 进本地 `verify` 与 CI verify 作业（CI 侧只要求日期真实且不在未来），文档见 `docs/notes/release.md`。
+- 验收：dry-run 演练；失败路径（版本不符）实测退出码 1。
 
 ## 三、建议执行顺序（每批独立可交付）
 

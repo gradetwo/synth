@@ -49,6 +49,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Release preflight (version / changelog)
+        run: npm run verify:release
+
       - name: Dist integrity
         run: npm run verify:dist
 

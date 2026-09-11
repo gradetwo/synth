@@ -61,6 +61,7 @@ const required = [
   ['lint', 'npm run lint'],
   ['production build', 'npm run build'],
   ['WASM gates (both cores)', 'verify-wasm.mjs'],
+  ['release preflight', 'npm run verify:release'],
   ['dist integrity', 'npm run verify:dist'],
   ['payload budget', 'npm run verify:budget'],
   ['audio quality gates', 'npm run verify:audio'],
