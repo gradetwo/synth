@@ -19,9 +19,12 @@
 //! * The wet signal is delayed by [`HOP`] samples (~21 ms at 48 kHz). A reverb
 //!   tail arriving 21 ms late is a pre-delay, not a smear, and the dry path is
 //!   untouched, so nothing combs.
-//! * The whole hop's work happens once per [`HOP`] samples rather than being
-//!   spread evenly. At 48 kHz that is a ~1 ms spike every 21 ms, which the load
-//!   monitor tolerates by design (it acts on sustained cost, not one block).
+//! * The hop's partition work is **spread over the hop** rather than landing in
+//!   the block that happens to close it. Every spectrum older than the newest
+//!   one is already in the delay line, so the partitions that multiply them are
+//!   pre-accumulated a group at a time as the hop fills; only the newest
+//!   spectrum, which cannot exist before the hop ends, is handled at the
+//!   boundary. That keeps the transform itself as the only spike left.
 //!
 //! The IR is normalised to **unit energy**, so an IR recorded quietly and one
 //! recorded hot produce the same wet level and the mix knob means the same
@@ -40,6 +43,11 @@ pub const MAX_PARTITIONS: usize = 96;
 pub const MAX_IR_SAMPLES: usize = MAX_PARTITIONS * HOP;
 /// Shortest IR that is worth convolving; below this it is a click, not a space.
 pub const MIN_IR_SAMPLES: usize = 32;
+
+/// How many slices a hop's partition work is broken into. Eight matches the
+/// usual 128-frame render quantum, so with a long IR every block of the hop
+/// carries its share instead of one block carrying all of it.
+const SPREAD: usize = 8;
 
 /// Why an impulse response was refused.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -73,8 +81,11 @@ pub struct Convolver {
     /// Transform scratch.
     re: Vec<f64>,
     im: Vec<f64>,
+    /// Partial sums under construction, one slice of [`BINS`] per channel.
     acc_re: Vec<f64>,
     acc_im: Vec<f64>,
+    /// Slices of the hop's partition work already accumulated.
+    spread_group: usize,
     fdl_pos: usize,
     partitions: usize,
     fill: usize,
@@ -82,6 +93,10 @@ pub struct Convolver {
     /// Unit-energy normalisation of the loaded IR.
     normalisation: f32,
     ready: bool,
+    /// Partition MACs done since the last [`Convolver::take_partitions`]; only
+    /// the tests need to see where the hop's work actually landed.
+    #[cfg(test)]
+    partitions_accumulated: u64,
 }
 
 impl Convolver {
@@ -100,13 +115,22 @@ impl Convolver {
             im: Vec::new(),
             acc_re: Vec::new(),
             acc_im: Vec::new(),
+            spread_group: 0,
             fdl_pos: 0,
             partitions: 0,
             fill: 0,
             emitted: HOP,
             normalisation: 1.0,
             ready: false,
+            #[cfg(test)]
+            partitions_accumulated: 0,
         }
+    }
+
+    /// Partition MACs performed since the previous call (test instrumentation).
+    #[cfg(test)]
+    pub fn take_partitions(&mut self) -> u64 {
+        core::mem::take(&mut self.partitions_accumulated)
     }
 
     /// Allocate the working set. Idempotent, and called from `Engine::init` so
@@ -126,8 +150,8 @@ impl Convolver {
         self.scratch = vec![0.0; MAX_IR_SAMPLES];
         self.re = vec![0.0; FFT_SIZE];
         self.im = vec![0.0; FFT_SIZE];
-        self.acc_re = vec![0.0; BINS];
-        self.acc_im = vec![0.0; BINS];
+        self.acc_re = vec![0.0; 2 * BINS];
+        self.acc_im = vec![0.0; 2 * BINS];
     }
 
     /// Longest IR the loaded impulse response can be, in samples.
@@ -215,6 +239,9 @@ impl Convolver {
         self.emitted = HOP;
         self.fdl_re.fill(0.0);
         self.fdl_im.fill(0.0);
+        self.acc_re.fill(0.0);
+        self.acc_im.fill(0.0);
+        self.spread_group = SPREAD;
         self.fdl_pos = 0;
     }
 
@@ -247,6 +274,8 @@ impl Convolver {
                 self.emitted = 0;
                 self.in_l.copy_within(HOP..FFT_SIZE, 0);
                 self.in_r.copy_within(HOP..FFT_SIZE, 0);
+            } else {
+                self.spread();
             }
 
             left[i] = dry_l + wet_l * wet_gain;
@@ -266,13 +295,72 @@ impl Convolver {
                 self.emitted = 0;
                 self.in_l.copy_within(HOP..FFT_SIZE, 0);
                 self.in_r.copy_within(HOP..FFT_SIZE, 0);
+            } else {
+                self.spread();
             }
         }
     }
 
-    /// Transform the block that just filled, accumulate the partitions and
-    /// produce the next hop of wet signal.
+    /// Release whichever slices of the next boundary's partition work have come
+    /// round, given how far the hop has filled. Cheap enough to call per sample:
+    /// it is one multiply and a compare until a slice is actually due.
+    fn spread(&mut self) {
+        let target = (self.fill * SPREAD).div_ceil(HOP).min(SPREAD);
+        self.spread_upto(target);
+    }
+
+    /// Accumulate the partition slices up to `target` (idempotent). The oldest
+    /// partitions are the cheap ones to postpone — the delay line already holds
+    /// every spectrum they need — so they are what gets spread.
+    fn spread_upto(&mut self, target: usize) {
+        while self.spread_group < target {
+            let group = self.spread_group;
+            let total = self.partitions.saturating_sub(1);
+            let lo = 1 + total * group / SPREAD;
+            let hi = 1 + total * (group + 1) / SPREAD;
+            for partition in lo..hi {
+                for channel in 0..2 {
+                    self.accumulate(channel, partition);
+                }
+            }
+            self.spread_group += 1;
+        }
+    }
+
+    /// Add one partition's contribution to one channel's accumulator. The
+    /// partition meets the input spectrum written `partition` hops before the
+    /// one the boundary is about to close.
+    fn accumulate(&mut self, channel: usize, partition: usize) {
+        if self.partitions == 0 {
+            return;
+        }
+        let index = (self.fdl_pos + self.partitions - partition) % self.partitions;
+        let ir_base = partition * BINS;
+        let x_base = index * BINS;
+        let acc_re = &mut self.acc_re[channel * BINS..(channel + 1) * BINS];
+        let acc_im = &mut self.acc_im[channel * BINS..(channel + 1) * BINS];
+        for bin in 0..BINS {
+            let hr = self.ir_re[ir_base + bin] as f64;
+            let hi = self.ir_im[ir_base + bin] as f64;
+            let xr = self.fdl_re[x_base + bin] as f64;
+            let xi = self.fdl_im[x_base + bin] as f64;
+            acc_re[bin] += hr * xr - hi * xi;
+            acc_im[bin] += hr * xi + hi * xr;
+        }
+        #[cfg(test)]
+        {
+            self.partitions_accumulated += 1;
+        }
+    }
+
+    /// Transform the block that just filled, finish the accumulated partitions
+    /// and produce the next hop of wet signal.
     fn run_hop(&mut self) {
+        // Whatever the spread schedule has not released yet (a bypass gap, a
+        // block that jumped over several slices) is finished here: the sum has
+        // to be complete before it can be transformed back.
+        self.spread_upto(SPREAD);
+
         let last = self.fdl_pos;
         for channel in 0..2 {
             self.re.fill(0.0);
@@ -287,34 +375,23 @@ impl Convolver {
                 self.fdl_re[base + bin] = self.re[bin] as f32;
                 self.fdl_im[base + bin] = self.im[bin] as f32;
             }
-
-            // Σ h_i · x_{n-i}: the newest spectrum against the first partition,
-            // walking backwards through the delay line.
-            self.acc_re.fill(0.0);
-            self.acc_im.fill(0.0);
-            let mut index = last;
-            for partition in 0..self.partitions {
-                let ir_base = partition * BINS;
-                let x_base = index * BINS;
-                for bin in 0..BINS {
-                    let (hr, hi) = (self.ir_re[ir_base + bin] as f64, self.ir_im[ir_base + bin] as f64);
-                    let (xr, xi) = (self.fdl_re[x_base + bin] as f64, self.fdl_im[x_base + bin] as f64);
-                    self.acc_re[bin] += hr * xr - hi * xi;
-                    self.acc_im[bin] += hr * xi + hi * xr;
-                }
-                index = if index == 0 { self.partitions - 1 } else { index - 1 };
-            }
+            // Σ h_i · x_{n-i}, completed: the newest spectrum is the one term
+            // that could not be prepared earlier, everything else is already in
+            // the accumulator from the hop's own blocks.
+            self.accumulate(channel, 0);
 
             // Back to the time domain: with a 2-hop transform and a 1-hop filter
             // the valid part of the circular convolution is the second half.
             self.re.fill(0.0);
             self.im.fill(0.0);
+            let acc_re = &self.acc_re[channel * BINS..(channel + 1) * BINS];
+            let acc_im = &self.acc_im[channel * BINS..(channel + 1) * BINS];
             for bin in 0..BINS {
-                self.re[bin] = self.acc_re[bin];
-                self.im[bin] = self.acc_im[bin];
+                self.re[bin] = acc_re[bin];
+                self.im[bin] = acc_im[bin];
                 if bin > 0 && bin < FFT_SIZE - bin {
-                    self.re[FFT_SIZE - bin] = self.acc_re[bin];
-                    self.im[FFT_SIZE - bin] = -self.acc_im[bin];
+                    self.re[FFT_SIZE - bin] = acc_re[bin];
+                    self.im[FFT_SIZE - bin] = -acc_im[bin];
                 }
             }
             fft(&mut self.re, &mut self.im, true);
@@ -323,6 +400,10 @@ impl Convolver {
                 out[i] = self.re[HOP + i] as f32;
             }
         }
+        // Start building the next hop's sum as soon as its first samples land.
+        self.acc_re.fill(0.0);
+        self.acc_im.fill(0.0);
+        self.spread_group = 0;
         self.fdl_pos = (last + 1) % self.partitions.max(1);
     }
 }
@@ -417,6 +498,119 @@ mod tests {
             worst = worst.max((wet[i] - expected).abs());
         }
         assert!(worst < 2e-3, "partitioned convolution differs from the direct sum by {worst}");
+    }
+
+    /// Load: the hop's partition work has to be spread across the hop, not
+    /// dumped into the block that happens to close it. A spike is a dropout
+    /// risk on a machine that is already busy, and the load monitor only
+    /// averages over the window it is given.
+    #[test]
+    fn the_hop_work_is_spread_over_the_blocks_of_the_hop() {
+        let mut convolver = Convolver::new();
+        // The worst case the engine allows: a full-length response.
+        let ir = noise(MAX_IR_SAMPLES, 5);
+        convolver.set_ir(&ir).expect("noise IR");
+        assert_eq!(convolver.partitions(), MAX_PARTITIONS);
+
+        let quantum = 128;
+        let mut left = noise(quantum * 16, 9);
+        let mut right = left.clone();
+        let mut per_block = Vec::new();
+        for start in (0..left.len()).step_by(quantum) {
+            let end = (start + quantum).min(left.len());
+            convolver.process(&mut left[start..end], &mut right[start..end], end - start, 1.0);
+            per_block.push(convolver.take_partitions());
+        }
+
+        // Steady state: the first hop is the one that fills the delay line.
+        let steady = &per_block[SPREAD..];
+        let total: u64 = steady.iter().sum();
+        let worst = *steady.iter().max().expect("blocks");
+        assert!(total >= MAX_PARTITIONS as u64 * 2, "no work was accounted for");
+        assert!(
+            worst * 4 <= total,
+            "a single block did {worst} of {total} partition MACs: {per_block:?}"
+        );
+        // …and every block of the hop does part of it, rather than a few doing
+        // everything and the rest idling.
+        let busy = steady.iter().filter(|count| **count > 0).count();
+        assert!(busy * 2 >= steady.len(), "only {busy} of {} blocks worked", steady.len());
+    }
+
+    /// Whatever the hop's work is broken into, the result may not depend on how
+    /// the caller cuts the stream into blocks: the ABI allows anything from 128
+    /// to 1024 frames and the host is free to change its mind mid-stream.
+    #[test]
+    fn the_wet_signal_does_not_depend_on_the_block_size() {
+        let ir = noise(HOP * 5 + 11, 31);
+        let input = noise(20_000, 13);
+
+        let render = |frames: usize| {
+            let mut convolver = Convolver::new();
+            convolver.set_ir(&ir).expect("noise IR");
+            let mut left = input.clone();
+            let mut right = input.clone();
+            for start in (0..input.len()).step_by(frames) {
+                let end = (start + frames).min(input.len());
+                convolver.process(&mut left[start..end], &mut right[start..end], end - start, 1.0);
+            }
+            left
+        };
+
+        let reference = render(128);
+        for frames in [256, 512, 1024, 333] {
+            let other = render(frames);
+            let worst = reference
+                .iter()
+                .zip(other.iter())
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            assert!(worst < 1e-4, "block size {frames} changed the wet signal by {worst}");
+        }
+    }
+
+    /// Frequency domain, on the worst case the engine allows: the wet output of
+    /// an impulse has to be the (normalised) impulse response itself, so the
+    /// spread schedule may move the work around but not the transfer function.
+    #[test]
+    fn a_full_length_ir_keeps_its_transfer_function() {
+        let mut convolver = Convolver::new();
+        let ir = noise(MAX_IR_SAMPLES, 17);
+        convolver.set_ir(&ir).expect("noise IR");
+        assert_eq!(convolver.partitions(), MAX_PARTITIONS);
+        let gain = convolver.normalisation() as f64;
+
+        // An impulse in, the response out: the wet path is a delay of one hop.
+        let mut left = vec![0.0f32; MAX_IR_SAMPLES + 4 * HOP];
+        let mut right = left.clone();
+        left[0] = 1.0;
+        right[0] = 1.0;
+        for start in (0..left.len()).step_by(128) {
+            let end = (start + 128).min(left.len());
+            convolver.process(&mut left[start..end], &mut right[start..end], end - start, 1.0);
+        }
+
+        // Compare a handful of probe frequencies against the analytic response.
+        // A wrong partition pairing (the failure this schedule can introduce)
+        // shows up as a phase or magnitude error here, not as a level change.
+        for freq in [55.0f64, 220.0, 1000.0, 4000.0, 12000.0, 17000.0] {
+            let (mut wr, mut wi, mut hr, mut hi) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+            for (i, h) in ir.iter().enumerate() {
+                let phase = core::f64::consts::TAU * freq * i as f64 / 48_000.0;
+                hr += *h as f64 * phase.cos();
+                hi -= *h as f64 * phase.sin();
+                let wet = left[HOP + i] as f64;
+                wr += wet * phase.cos();
+                wi -= wet * phase.sin();
+            }
+            let (want_re, want_im) = (hr * gain, hi * gain);
+            let error = ((wr - want_re).powi(2) + (wi - want_im).powi(2)).sqrt();
+            let magnitude = (want_re * want_re + want_im * want_im).sqrt();
+            assert!(
+                error < magnitude * 0.02 + 1e-3,
+                "at {freq} Hz the wet response is off by {error} against {magnitude}"
+            );
+        }
     }
 
     /// Frequency domain: an IR that rings at one frequency has to leave its mark

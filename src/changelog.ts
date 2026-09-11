@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.69.0',
+    date: '2026-09-11',
+    kind: 'sound',
+    items: [
+      [
+        '导入脉冲响应（IR）的卷积混响改为**把每个 hop 的运算摊到整段时间里**：以前是每约 21 毫秒集中算一次长 IR，最忙的那一个音频块明显更重，机器一忙就容易被顶掉；现在这部分工作分散到 hop 内的各个块，峰值明显下降（2 秒 IR 实测最差块从约 1.5 毫秒降到约 1.2 毫秒），声音与之前完全一致——只是更稳。',
+        'Convolution reverb with an imported impulse response now **spreads each hop\'s work across the hop** instead of doing it all at once every ~21 ms. That single heavy block was the first thing a busy machine would drop; the work is now distributed over the blocks inside the hop, which cuts the peak noticeably (a 2 s IR measured ~1.5 ms worst block before, ~1.2 ms now) with the identical sound — just steadier.',
+      ],
+    ],
+  },
+  {
     version: '1.68.0',
     date: '2026-09-11',
     kind: 'feature',
