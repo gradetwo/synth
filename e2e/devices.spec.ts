@@ -57,22 +57,26 @@ test.describe('iPhone portrait', () => {
     await page.locator('.preset-drawer .d-close').click();
     await expect(page.locator('.drawer.open')).toHaveCount(0);
 
-    // The preset stepper shares the top row on a phone instead of taking a full
-    // banner of its own, so the modules start higher. The brand and the icon
-    // actions keep their own size.
+    // Phone chrome: the patch name gets a full row of its own (no more "Re…"),
+    // and the modules / signal-flow switch sits on the row below it so nothing
+    // is squeezed or clipped.
     const rows = await page.evaluate(() => {
       const r = (sel: string) => {
-        const b = (document.querySelector(sel) as HTMLElement).getBoundingClientRect();
-        return { y: Math.round(b.y), h: Math.round(b.height), w: Math.round(b.width) };
+        const el = document.querySelector(sel) as HTMLElement;
+        const b = el.getBoundingClientRect();
+        return { y: Math.round(b.y), h: Math.round(b.height), w: Math.round(b.width), el };
       };
-      return { brand: r('.brand'), preset: r('.preset-ctrl'), topbar: r('.topbar'), vw: window.innerWidth };
+      const name = document.querySelector('.preset-name') as HTMLElement;
+      return {
+        preset: r('.preset-ctrl'),
+        view: r('.view-row'),
+        truncated: name.scrollWidth > name.clientWidth + 1,
+        overflow: document.documentElement.scrollWidth - window.innerWidth,
+      };
     });
-    // Same row: the stepper's top is inside the brand's band…
-    expect(rows.preset.y).toBeLessThan(rows.brand.y + rows.brand.h);
-    // …and it is a compact pill, not the full width of the screen.
-    expect(rows.preset.w).toBeLessThan(rows.vw * 0.85);
-    // One row instead of two: the bar is a phone bar, not a banner.
-    expect(rows.topbar.h).toBeLessThan(80);
+    expect(rows.truncated).toBe(false);
+    expect(rows.view.y).toBeGreaterThanOrEqual(rows.preset.y + rows.preset.h - 4);
+    expect(rows.overflow).toBeLessThanOrEqual(1);
 
     // Overflow menu exposes the secondary actions.
     await page.locator('.top-more .tbtn').click();

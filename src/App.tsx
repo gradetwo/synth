@@ -51,16 +51,27 @@ function StartOverlay({
   return (
     <div className="start-overlay" role="dialog" aria-label={t('app.start')}>
       <div className="start-card">
+        {/* The logo and the version belong *here*: the first thing a returning
+            player wants to know is which build they are looking at. */}
+        <div className="start-brand">
+          <svg className="start-logo" width="46" height="46" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="10.5" stroke="currentColor" strokeOpacity=".35" />
+            <path
+              className="start-logo-wave"
+              d="M3.5 12 Q6.5 4.5 12 12 T20.5 12"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+            />
+          </svg>
+          <div className="start-name">
+            GROOVE <b>SYNTH</b>
+          </div>
+          <div className="start-sub">GS-1 · v{APP_VERSION}</div>
+        </div>
         <button type="button" className="start-btn" onClick={onStart} disabled={busy}>
           <span>{busy ? t('app.starting') : t('app.start')}</span>
-          <small>{t('app.startHint')}</small>
         </button>
-        {/* The running version, up front: an offline-first app can be serving a
-            cached build, and "which version am I actually on?" has to be
-            answerable without digging. */}
-        <p className="start-version">
-          GS-1 v{APP_VERSION} · {t('app.built')}
-        </p>
         {error ? (
           <div className="start-error" role="alert">
             <b>{t('app.startFailed')}</b>
@@ -70,9 +81,7 @@ function StartOverlay({
               {t('app.retry')}
             </button>
           </div>
-        ) : (
-          <small className="start-diag">{diag}</small>
-        )}
+        ) : null}
       </div>
     </div>
   );

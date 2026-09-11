@@ -78,21 +78,21 @@ for (const device of DEVICES) {
       await panel.locator('.d-close').click();
       await expect(panel).not.toBeVisible();
 
-      // Phone portrait: the preset pager shares the top row with the actions
-      // instead of taking a banner of its own. Wider portrait bars keep the
-      // roomier two-row arrangement.
+      // Phone portrait: the patch name has its own row and reads in full, and
+      // the view switch moved to the row below instead of squeezing it.
       if (device.width <= 430) {
-        const row = await page.evaluate(() => {
-          const ctrl = document.querySelector('.preset-ctrl') as HTMLElement | null;
-          const actions = document.querySelector('.top-actions.compact') as HTMLElement | null;
-          if (!ctrl || !actions) return null;
+        const chrome = await page.evaluate(() => {
+          const name = document.querySelector('.preset-name') as HTMLElement;
+          const preset = document.querySelector('.preset-ctrl') as HTMLElement;
+          const view = document.querySelector('.view-row') as HTMLElement;
           return {
-            ctrl: Math.round(ctrl.getBoundingClientRect().top),
-            actions: Math.round(actions.getBoundingClientRect().top),
+            truncated: name.scrollWidth > name.clientWidth + 1,
+            viewBelow: Math.round(view.getBoundingClientRect().top) >=
+              Math.round(preset.getBoundingClientRect().bottom) - 4,
           };
         });
-        expect(row).not.toBeNull();
-        expect(Math.abs(row!.ctrl - row!.actions)).toBeLessThan(16);
+        expect(chrome.truncated).toBe(false);
+        expect(chrome.viewBelow).toBe(true);
       }
 
       // The keyboard is the one control that must never be off screen.

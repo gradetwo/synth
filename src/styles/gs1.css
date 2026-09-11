@@ -552,17 +552,29 @@ button{touch-action:manipulation}
 /* Audio start gate (browsers require a gesture before sound). */
 .start-overlay{position:fixed;inset:0;z-index:70;display:grid;place-items:center;
   background:var(--mask);backdrop-filter:blur(3px);padding:24px}
-.start-btn{display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;
+.start-brand{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center}
+.start-logo{color:var(--accent);filter:drop-shadow(0 0 14px color-mix(in srgb,var(--accent) 35%,transparent))}
+/* A slow drift along the waveform: the screen is otherwise still, and a still
+   screen reads as frozen. Motion is off when the system asks for less of it. */
+.start-logo-wave{stroke-dasharray:26 46;animation:gs-wave 3.4s linear infinite}
+@keyframes gs-wave{to{stroke-dashoffset:-72}}
+.start-name{font:700 15px/1 var(--grot);letter-spacing:.16em;color:var(--txt-1)}
+.start-name b{color:var(--accent)}
+.start-sub{font:500 9.5px/1 var(--mono);letter-spacing:.14em;color:var(--txt-dim)}
+.start-btn{display:flex;align-items:center;justify-content:center;cursor:pointer;
   background:linear-gradient(180deg,#ffd089,#e9a02c 62%,#d98c1c);color:#231703;
-  border:1px solid rgba(255,255,255,.35);border-radius:20px;padding:18px 40px 16px;
-  font:700 17px/1 var(--grot);letter-spacing:.08em;min-height:64px;
-  box-shadow:0 20px 44px var(--shadow-2),inset 0 1px 0 rgba(255,255,255,.5)}
-/* A quiet hint line under the label instead of a play glyph: the icon said
-   nothing the label did not, and it read as decoration. */
-.start-btn small{font:500 10.5px/1.4 var(--grot);opacity:.68;letter-spacing:.02em;
-  border-top:1px solid rgba(35,23,3,.18);padding-top:8px;min-width:180px;text-align:center}
+  border:1px solid rgba(255,255,255,.35);border-radius:14px;padding:12px 30px;
+  font:700 14px/1 var(--grot);letter-spacing:.1em;min-height:46px;margin-top:4px;
+  box-shadow:0 12px 28px var(--shadow-2),inset 0 1px 0 rgba(255,255,255,.5);
+  animation:gs-breathe 3s ease-in-out infinite}
+@keyframes gs-breathe{0%,100%{box-shadow:0 12px 28px var(--shadow-2),0 0 0 0 rgba(255,179,64,.35),inset 0 1px 0 rgba(255,255,255,.5)}
+  50%{box-shadow:0 12px 28px var(--shadow-2),0 0 0 10px rgba(255,179,64,0),inset 0 1px 0 rgba(255,255,255,.5)}}
+.start-btn:hover{filter:brightness(1.04)}
 .start-btn:active{transform:translateY(1px)}
 .start-btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media (prefers-reduced-motion: reduce){
+  .start-logo-wave,.start-btn{animation:none}
+}
 
 /* PWA update banner. */
 .update-banner{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));
@@ -583,7 +595,10 @@ button{touch-action:manipulation}
               calc(20px + env(safe-area-inset-bottom))
               max(10px,env(safe-area-inset-left))}
   .notice{font-size:10px;padding:6px 8px;text-align:center}
-  .topbar{gap:8px;padding:8px 0 10px;flex-wrap:nowrap;align-items:center}
+  /* Wrap, so the view switch can take its own row when the rest does not fit
+     (see `.view-row`): squeezing everything into one line is what clipped the
+     left buttons and truncated the patch name. */
+  .topbar{gap:8px;padding:8px 0 10px;flex-wrap:wrap;align-items:center}
   .brand-text .brand-sub{display:none}
   /* The preset pager used to take a whole row of its own, which pushed the
      modules down by ~64px. It now sits *in* the top row beside the icons: the
@@ -826,6 +841,11 @@ body.module-dragging .module-grip{cursor:grabbing}
 .settings-row .d-theme{padding:0;border:none;background:none;gap:6px;flex-wrap:wrap}
 .d-foot-actions.preset-actions{grid-template-columns:repeat(3,minmax(0,1fr))}
 
+/* Compact top bars: the modules / signal-flow switch gets its own row, so the
+   patch name in the row above is never squeezed into "Re…". */
+.view-row{order:5;flex-basis:100%;width:100%;margin-top:8px}
+.view-row .view-toggle{width:100%}
+.view-row .vt-btn{flex:1;justify-content:center}
 /* The drawer body scrolls as one: the preset list first, the settings under it.
    Nothing is docked, so the list is never squeezed by however many buttons the
    settings have grown to. */

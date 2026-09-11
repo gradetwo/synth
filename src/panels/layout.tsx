@@ -404,7 +404,10 @@ export function TopBar({
           ) : null}
         </div>
       )}
-      {compactBar ? viewToggle : null}
+      {/* Compact bars put the view switch on its own row: squeezed into the
+          top row it took the space the patch name needs, and the name is what
+          the player is looking at. */}
+      {compactBar ? <div className="view-row">{viewToggle}</div> : null}
     </header>
   );
 }

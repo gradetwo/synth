@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.63.0',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '手机竖屏顶栏重新分行：**音色名独占一行、完整显示**（不再被挤成「Re…」），「模块 / 信号流」移到下一行的等宽两格，左上角的按钮也不会再被挤出屏幕。',
+        'The phone portrait top bar is laid out in rows again: the **patch name gets a full row and reads in full** (no more "Re…"), the Modules / Signal flow switch moves to an equal-width pair on the next row, and the buttons on the left can no longer be pushed off screen.',
+      ],
+      [
+        '启动页重做：上面是 **logo + 版本号**，下面是一枚**更小**的启动按钮，去掉了「浏览器需要一次点击…」这行说明；logo 的波形会缓慢流动、按钮有轻微呼吸光晕（系统开启「减弱动态效果」时自动静止）。',
+        'The start screen was redone: **logo and version** on top, a **smaller** start button below it, and the "browsers need one tap…" line is gone. The logo\'s waveform drifts slowly and the button has a soft breathing glow — both stop when the system asks for reduced motion.',
+      ],
+    ],
+  },
+  {
     version: '1.62.0',
     date: '2026-09-10',
     kind: 'fix',
