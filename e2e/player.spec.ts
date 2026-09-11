@@ -287,7 +287,11 @@ test.describe('player keyboard shortcuts', () => {
   test('space toggles playback and escape closes the panel', async ({ page }) => {
     await boot(page);
     await page.locator('.player-open').click();
+    // The panel arrives as its own chunk: give it a moment to mount before the
+    // keyboard shortcut has a listener to reach.
+    await expect(page.locator('.player.open')).toBeVisible();
     const play = page.locator('.player-play');
+    await expect(play).toBeVisible();
     await page.keyboard.press(' ');
     await expect(play).toHaveClass(/\bon\b/);
     await expect(page.locator('.player-track.current .pt-bars')).toHaveCount(1);

@@ -22,6 +22,11 @@ const Guide = lazy(() => import('@/components/Guide').then((m) => ({ default: m.
 import { SettingsDrawer } from '@/components/SettingsDrawer';
 
 const PianoRoll = lazy(() => import('@/components/PianoRoll').then((m) => ({ default: m.PianoRoll })));
+// The player panel renders the whole track list whether or not it is open, so it
+// belongs in a chunk of its own and mounts the first time it is opened.
+const PlayerPanel = lazy(() =>
+  import('@/components/PlayerPanel').then((m) => ({ default: m.PlayerPanel })),
+);
 // The preset drawer and the flow canvas are behind a click or a view switch too.
 // The settings drawer stays in the main chunk: it is the panel the shell test
 // renders through, and keeping it eager keeps that test honest.
@@ -36,7 +41,6 @@ const Changelog = lazy(() => import('@/components/Changelog').then((m) => ({ def
 const AudioSettings = lazy(() =>
   import('@/components/AudioSettings').then((m) => ({ default: m.AudioSettings })),
 );
-import { PlayerPanel } from '@/components/PlayerPanel';
 import { ToastHost } from '@/components/Toast';
 import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/register';
 import { setHapticsEnabled } from '@/hooks/useInputMode';
@@ -158,7 +162,7 @@ const ModulesView = memo(function ModulesView() {
 const TopBarView = memo(TopBar);
 const DisplayRowView = memo(DisplayRow);
 const KeyboardView = memo(KeyboardDock);
-const PlayerPanelView = memo(PlayerPanel);
+
 
 export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -171,6 +175,8 @@ export default function App() {
   const [status, setStatus] = useState(engine.getState());
   /** True once the engine has actually played in this session. */
   const [everRan, setEverRan] = useState(false);
+  /** The player panel is lazy: once opened, it stays mounted so it can animate. */
+  const [playerMounted, setPlayerMounted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const layout = useLayout();
@@ -398,7 +404,10 @@ export default function App() {
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
-  const openPlayer = useCallback(() => setPlayerOpen(true), []);
+  const openPlayer = useCallback(() => {
+    setPlayerMounted(true);
+    setPlayerOpen(true);
+  }, []);
   const closePlayer = useCallback(() => setPlayerOpen(false), []);
   const closeRoll = useCallback(() => setRollOpen(false), []);
   const changeView = useCallback((next: 'modules' | 'flow') => store.setView(next), []);
@@ -501,7 +510,11 @@ export default function App() {
           <AudioSettings open onClose={() => setAudioOpen(false)} />
         </Suspense>
       ) : null}
-      <PlayerPanelView open={playerOpen} onClose={closePlayer} onEdit={openRoll} />
+      {playerMounted ? (
+        <Suspense fallback={null}>
+          <PlayerPanel open={playerOpen} onClose={closePlayer} onEdit={openRoll} />
+        </Suspense>
+      ) : null}
       <ToastHost />
       <UpdateBanner />
       {showGate ? <StartOverlay onStart={start} error={error} busy={busy} /> : null}
