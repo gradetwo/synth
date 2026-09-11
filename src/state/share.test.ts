@@ -24,6 +24,30 @@ describe('patch share codec', () => {
     expect(decoded.params[Param.OSC1_WAVE]).toBe(layered.params[Param.OSC1_WAVE]);
   });
 
+  it('carries an arrangement with its layer mix', () => {
+    // The notes travel as a real MIDI file, so the receiving side decodes them
+    // with the parser the player already uses.
+    const midi = Uint8Array.from([0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0]);
+    const song = {
+      name: 'Shared Song',
+      midi,
+      mix: [
+        [true, 0.4, -0.6, -1.5],
+        [false, 1, 0.25, 2],
+      ] as [boolean, number, number, number][],
+    };
+    const state = createDefaultState();
+    const code = encodePatch(state, { song });
+    const back = decodePatch(code);
+    expect(back?.song?.name).toBe('Shared Song');
+    expect([...back!.song!.midi]).toEqual([...midi]);
+    expect(back?.song?.mix).toEqual(song.mix);
+
+    // Without a song the payload is unchanged, so old links keep their length.
+    const plain = decodePatch(encodePatch(state));
+    expect(plain?.song).toBeNull();
+  });
+
   it('round-trips every parameter and route', () => {
     const state = createDefaultState();
     state.params[Param.FILTER_CUTOFF] = 1234.5;

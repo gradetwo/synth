@@ -206,6 +206,11 @@ export class MidiPlayer {
     this.emit();
   }
 
+  /** The song that is loaded, for sharing and export. */
+  getSong(): MidiSong | null {
+    return this.song;
+  }
+
   /** The current song's layers, for the panel's mute/solo strip. */
   getLayers(): LayerState[] {
     return this.layers;

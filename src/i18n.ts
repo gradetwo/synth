@@ -143,6 +143,10 @@ const DICT: Record<string, [string, string]> = {
   'drawer.imported': ['已导入音色文件', 'Patch file imported'],
   'drawer.importFailed': ['文件格式无法识别', 'Unrecognised file format'],
   'drawer.exported': ['已导出当前音色 · <b>.gs1.json</b>', 'Exported the current patch · <b>.gs1.json</b>'],
+  'drawer.shareFile': [
+    '曲目太长，已改为下载 .gs1song 文件（对方用预设库「导入」即可）',
+    'The song is too long for a link, so it was downloaded as a .gs1song file (the other side imports it from the preset library)',
+  ],
   'drawer.shared': ['分享链接已复制到剪贴板', 'Share link copied to the clipboard'],
   'drawer.shareFailed': ['分享链接已写入地址栏', 'Share link written to the address bar'],
   'drawer.contrastOn': ['已切换高对比配色', 'High-contrast theme on'],

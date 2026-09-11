@@ -23,6 +23,23 @@ function base64UrlEncode(text: string): string {
   return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+function base64UrlFromBytes(bytes: Uint8Array): string {
+  let text = '';
+  // Chunked so a long song cannot blow the argument limit of `String.fromCharCode`.
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return base64UrlEncode(text);
+}
+
+function bytesFromBase64Url(code: string): Uint8Array | null {
+  const text = base64UrlDecode(code);
+  if (text === null) return null;
+  const out = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i) & 0xff;
+  return out;
+}
+
 function base64UrlDecode(code: string): string | null {
   try {
     const padded = code.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(code.length / 4) * 4, '=');
@@ -30,6 +47,21 @@ function base64UrlDecode(code: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * A whole arrangement carried by a share code (B).
+ *
+ * The notes travel as a real MIDI file — the same writer the export uses — so a
+ * share link is decoded by the parser that is already tested rather than by a
+ * second format. The layer mix rides alongside because MIDI has nowhere to put
+ * "this track is muted here".
+ */
+export interface SharedSong {
+  name: string;
+  midi: Uint8Array;
+  /** Per layer: [muted, volume, pan, offset]. */
+  mix: [boolean, number, number, number][];
 }
 
 export interface PatchPayload {
@@ -40,12 +72,20 @@ export interface PatchPayload {
   instanceMode: 'single' | 'layer' | 'split' | null;
   splitNote: number | null;
   routes: ModRoute[];
+  /** The arrangement, when the code carries one. */
+  song: SharedSong | null;
 }
+
+/** Longest share code (and therefore URL) the synth will copy. */
+export const MAX_SHARE_CODE = 12000;
 
 /** Encode the current patch into a shareable code. */
 export function encodePatch(
   state: SynthState,
-  options?: { routing?: { mode: 'single' | 'layer' | 'split'; splitNote: number } },
+  options?: {
+    routing?: { mode: 'single' | 'layer' | 'split'; splitNote: number };
+    song?: SharedSong;
+  },
 ): string {
   const ids = Object.keys(DEFAULT_PARAMS)
     .map(Number)
@@ -78,6 +118,20 @@ export function encodePatch(
       r: routes,
       ...(second ? { p2: second } : {}),
       ...(second && route ? { m: route.mode === 'layer' ? 1 : route.mode === 'split' ? 2 : 0, sn: route.splitNote } : {}),
+      // The song: a base64 MIDI file plus the mix that makes it sound the way
+      // it does here. Absent unless a code was asked to carry one.
+      ...(options?.song
+        ? {
+            sg: base64UrlFromBytes(options.song.midi),
+            sl: options.song.mix.map(([muted, volume, pan, offset]) => [
+              muted ? 1 : 0,
+              Math.round(volume * 1000) / 1000,
+              Math.round(pan * 1000) / 1000,
+              Math.round(offset * 100) / 100,
+            ]),
+            st: options.song.name,
+          }
+        : {}),
     }),
   );
 }
@@ -87,7 +141,17 @@ export function decodePatch(code: string): PatchPayload | null {
   if (!code.startsWith(PREFIX)) return null;
   const json = base64UrlDecode(code.slice(PREFIX.length));
   if (!json) return null;
-  let parsed: { s?: unknown; v?: unknown; r?: unknown; p2?: unknown; m?: unknown; sn?: unknown };
+  let parsed: {
+    s?: unknown;
+    v?: unknown;
+    r?: unknown;
+    p2?: unknown;
+    m?: unknown;
+    sn?: unknown;
+    sg?: unknown;
+    sl?: unknown;
+    st?: unknown;
+  };
   try {
     parsed = JSON.parse(json);
   } catch {
@@ -136,7 +200,34 @@ export function decodePatch(code: string): PatchPayload | null {
   const splitNote =
     typeof parsed.sn === 'number' && parsed.sn >= 0 && parsed.sn <= 127 ? Math.round(parsed.sn) : null;
 
-  return { params, params2, instanceMode: params2 ? mode : null, splitNote: params2 ? splitNote : null, routes };
+  // The song is optional and self-validating: bytes that do not parse as MIDI
+  // are dropped here rather than handed to the player.
+  let song: SharedSong | null = null;
+  if (typeof parsed.sg === 'string') {
+    const midi = bytesFromBase64Url(parsed.sg);
+    const mix = Array.isArray(parsed.sl)
+      ? parsed.sl
+          .filter((row): row is unknown[] => Array.isArray(row) && row.length >= 4)
+          .map((row) => [
+            Number(row[0]) >= 0.5,
+            Math.max(0, Math.min(1, Number(row[1]) || 0)),
+            Math.max(-1, Math.min(1, Number(row[2]) || 0)),
+            Math.max(-60, Math.min(60, Number(row[3]) || 0)),
+          ] as [boolean, number, number, number])
+      : [];
+    if (midi && midi.length > 0) {
+      song = { name: typeof parsed.st === 'string' ? parsed.st : 'Shared Song', midi, mix };
+    }
+  }
+
+  return {
+    params,
+    params2,
+    instanceMode: params2 ? mode : null,
+    splitNote: params2 ? splitNote : null,
+    routes,
+    song,
+  };
 }
 
 /** Full share URL for the current page. */

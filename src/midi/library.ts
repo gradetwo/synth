@@ -203,13 +203,14 @@ class MidiLibrary {
   }
 
   /** Add or replace an imported file / recording (never auto-plays). */
-  put(track: Track): void {
+  put(track: Track): string {
     this.tracks = [...this.tracks.filter((tr) => tr.id !== track.id), track];
     this.currentId = track.id;
     midiPlayer.load(track.song);
     this.applyMix(track);
     this.persist();
     this.emit();
+    return track.id;
   }
 
   /** Put a song's stored layer mix back onto the player. */
@@ -232,6 +233,10 @@ class MidiLibrary {
       track.id === this.currentId ? { ...track, mix } : track,
     );
     this.persist();
+    // The strip reads the player's layers on every library change; without this
+    // a mix applied from outside (a share code, an undo) left it showing the
+    // values the track had before.
+    this.emit();
   }
 
   /**

@@ -1003,6 +1003,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Export MIDI**: saves the current track or take as `.mid` for further editing in a DAW — it exports the mix you hear, with mute/solo, per-layer level, time offset and pan carried over.',
           ],
           [
+            '**分享编曲**：预设库的「分享」除了音色，还会带上当前曲目和它的层混音——对方打开链接就有同一首曲子、同样的平衡。曲目太长时自动改为下载 `.gs1song` 文件（对方用预设库的「导入」打开）。内置示范曲不会被分享。',
+            '**Sharing a song**: “Share” in the preset library carries the current song and its layer mix along with the patch — the other side opens the link and gets the same arrangement with the same balance. A long song is downloaded as a `.gs1song` file instead, which the preset library imports. Built-in demos are never shared.',
+          ],
+          [
             '**导出 MP3**：用当前音色离线渲染整首曲目，导出前把峰值归一化到 −1 dBFS（安静音色会被提升到正常音量，避免播放端大幅加增益），再编码为 256 kbps MP3。录制的片段可以在换音色后重新导出，得到不同音色的版本。',
             '**Export MP3**: renders the whole track offline with the current patch and encodes it to 192 kbps MP3. A recorded take can be re-exported after changing the patch for a different timbre.',
           ],

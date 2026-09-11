@@ -108,6 +108,37 @@ describe('MIDI library persistence', () => {
     expect(player2.getLayers()[0].pan).toBeCloseTo(-0.6, 6);
   });
 
+  it('announces a mix it saves, so the strip is never stale', async () => {
+    // The mix can also be applied from outside the player panel (a share code,
+    // an undo): whoever is showing the layers has to hear about it.
+    const library = await loadLibrary();
+    library.put({
+      id: 'file:notify.mid:1',
+      title: ['notify', 'notify'],
+      composer: 'imported',
+      group: 'imported' as const,
+      song: {
+        name: 'notify',
+        bpm: 120,
+        duration: 1,
+        notes: [{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }],
+        tracks: [
+          { name: 'A', notes: [{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }] },
+          { name: 'B', notes: [{ note: 67, velocity: 0.8, start: 0, duration: 0.5 }] },
+        ],
+      },
+    });
+    let notified = 0;
+    const stop = library.subscribe(() => {
+      notified += 1;
+    });
+    const { midiPlayer } = await import('./player');
+    midiPlayer.setLayer(0, { muted: true });
+    library.saveMix();
+    stop();
+    expect(notified).toBeGreaterThan(0);
+  });
+
   it('never stores the built-in songs', async () => {
     const library = await loadLibrary();
     library.put(track);

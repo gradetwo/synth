@@ -37,7 +37,9 @@ import {
   type Preset,
   type PresetCategory,
 } from './presets';
-import { midiLibrary, type Track } from '@/midi/library';
+import { midiLibrary, trackTitle, type Track } from '@/midi/library';
+import { midiPlayer } from '@/midi/player';
+import { parseMidi, writeMidi, type MidiSong } from '@/midi/smf';
 import { midi } from '@/audio/midi';
 import { midiOut } from '@/midi/output';
 import { setMidiOutEnabled } from '@/audio/noteBus';
@@ -51,9 +53,15 @@ import {
   SCENES_KEY,
   type Scene,
 } from './scenes';
-import { decodePatch, downloadText, encodePatch, shareUrl } from './share';
+import {
+  decodePatch,
+  downloadText,
+  encodePatch,
+  shareUrl,
+  type SharedSong,
+} from './share';
 import { setLang } from '@/i18n';
-import { mergeKnown, unwrap, wrap } from './persist';
+import { SCHEMA_VERSION, mergeKnown, unwrap, wrap } from './persist';
 
 const STORAGE_KEY = 'gs1:state:v1';
 const USER_KEY = 'gs1:user-presets:v1';
@@ -144,6 +152,9 @@ function saveJson(key: string, value: unknown) {
     /* storage may be unavailable (private mode); the synth still works */
   }
 }
+
+/** Longest share URL a chat client is likely to keep intact. */
+const MAX_SHARE_URL = 16_000;
 
 export class SynthStore {
   private state: SynthState;
@@ -361,14 +372,53 @@ export class SynthStore {
 
   // ----------------------------------------------------------- share / files
 
-  /** Compact, URL-safe code for the current patch. */
-  shareCode(): string {
-    return encodePatch(this.state);
+  /**
+   * The arrangement as it would travel in a share code, or null when there is
+   * nothing worth sharing: a built-in demo is not the user's own work.
+   */
+  private sharedSong(): SharedSong | null {
+    const track = midiLibrary.getCurrent();
+    if (!track || track.group === 'builtin') return null;
+    const song = midiPlayer.getSong();
+    if (!song || song.notes.length === 0) return null;
+    const tracks = song.tracks && song.tracks.length > 1 ? song.tracks : undefined;
+    const midi = writeMidi(song.notes, { bpm: song.bpm, name: track.title[0], tracks });
+    return {
+      name: trackTitle(track),
+      midi,
+      mix: midiPlayer.getLayers().map((layer) => [layer.muted, layer.volume, layer.pan, layer.offset]),
+    };
   }
 
-  /** Full shareable URL (updates the hash). */
+  /** Compact, URL-safe code for the current patch (and the song, if there is one). */
+  shareCode(): string {
+    const song = this.sharedSong();
+    return encodePatch(this.state, song ? { song } : undefined);
+  }
+
+  /** Full shareable URL. */
   shareLink(): string {
     return shareUrl(this.shareCode());
+  }
+
+  /**
+   * A share link when the code fits in a URL, otherwise a `.gs1song` file: a
+   * long arrangement is megabytes of base64 and every chat client would cut the
+   * link. Returns which one happened so the caller can say so.
+   */
+  shareOrDownload(): 'link' | 'file' {
+    const code = this.shareCode();
+    const url = shareUrl(code);
+    if (url.length <= MAX_SHARE_URL) {
+      history.replaceState(null, '', url);
+      return 'link';
+    }
+    const name = (this.sharedSong()?.name ?? 'gs1-song').replace(/[^\w\u4e00-\u9fa5-]+/g, '_');
+    downloadText(
+      `${name || 'gs1-song'}.gs1song`,
+      JSON.stringify({ format: 'gs1-song', schema: SCHEMA_VERSION, code }, null, 2),
+    );
+    return 'file';
   }
 
   /** Apply a `#p=...` share code. Returns false if it is malformed. */
@@ -386,6 +436,32 @@ export class SynthStore {
     };
     this.transientPreset = preset;
     this.applyPreset(preset);
+    // A song in the code arrives as a MIDI file: the library already knows how
+    // to hold one, so the arrangement shows up next to the imported tracks.
+    if (payload.song) this.importSharedSong(payload.song);
+    return true;
+  }
+
+  /** Put a song from a share code (or a `.gs1song` file) into the library. */
+  importSharedSong(shared: SharedSong): boolean {
+    let song: MidiSong;
+    try {
+      song = parseMidi(shared.midi, shared.name);
+    } catch {
+      return false;
+    }
+    if (!song.notes.length) return false;
+    midiLibrary.put({
+      id: `share:${shared.midi.length}:${shared.name}`,
+      title: [shared.name, shared.name],
+      composer: 'shared',
+      group: 'imported',
+      song,
+    });
+    shared.mix.forEach(([muted, volume, pan, offset], index) => {
+      midiPlayer.setLayer(index, { muted, volume, pan, offset });
+    });
+    midiLibrary.saveMix();
     return true;
   }
 
@@ -416,6 +492,7 @@ export class SynthStore {
   importPresetFile(text: string): boolean {
     let parsed: {
       format?: string;
+      code?: unknown;
       name?: unknown;
       params?: Record<string, unknown>;
       routes?: { src?: unknown; dst?: unknown; amount?: unknown; enabled?: unknown }[];
@@ -427,6 +504,11 @@ export class SynthStore {
       parsed = JSON.parse(text);
     } catch {
       return false;
+    }
+    // A `.gs1song` file is a share code in a box: an arrangement too long for a
+    // URL travels this way and lands in the same place.
+    if (parsed?.format === 'gs1-song') {
+      return typeof parsed.code === 'string' ? this.importPatchCode(parsed.code) : false;
     }
     if (parsed?.format !== 'gs1-preset' || !parsed.params || typeof parsed.params !== 'object') {
       return false;

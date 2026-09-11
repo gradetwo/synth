@@ -143,14 +143,20 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
               type="button"
               className="d-reset"
               onClick={async () => {
-                const url = store.shareLink();
+                // With an arrangement loaded the code carries the song too; if
+                // that makes the link too long for a chat client, the same
+                // payload goes out as a `.gs1song` file instead.
+                const what = store.shareOrDownload();
+                if (what === 'file') {
+                  toast(t('drawer.shareFile'));
+                  return;
+                }
                 try {
-                  await navigator.clipboard.writeText(url);
+                  await navigator.clipboard.writeText(store.shareLink());
                   toast(t('drawer.shared'));
                 } catch {
                   toast(t('drawer.shareFailed'));
                 }
-                history.replaceState(null, '', url);
               }}
             >
               {t('drawer.share')}

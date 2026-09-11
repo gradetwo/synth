@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.74.0',
+    date: '2026-09-11',
+    kind: 'feature',
+    items: [
+      [
+        '**分享一份完整编曲**：预设库里的「分享」现在会把当前曲目与它的层混音（静音/独奏/音量/声像/时间偏移）一起放进链接——对方打开链接就能看到、能播同一首曲子，混音也一模一样。曲目太长大到链接装不下时，会自动改成一个 `.gs1song` 文件（对方在预设库「导入」即可）。内置示范曲不会被分享。',
+        '**Share a whole arrangement**: “Share” in the preset library now puts the current song and its layer mix (mute/solo/level/pan/time offset) into the link — the other side opens it and gets the same song, playable, with the same balance. If the song is too long for a link it becomes a `.gs1song` file instead, which the other side imports from the preset library. Built-in demos are never shared.',
+      ],
+    ],
+  },
+  {
     version: '1.73.0',
     date: '2026-09-11',
     kind: 'feature',
