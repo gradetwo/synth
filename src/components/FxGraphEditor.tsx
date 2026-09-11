@@ -131,6 +131,8 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
    * gesture into a wire drag. Keeping them together is what stops a tap from
    * being seen twice (once as a drag, once as a click).
    */
+  /** The wire whose gain is being edited, as `slot:which`. */
+  const [selectedWire, setSelectedWire] = useState<string | null>(null);
   /** The card being moved, and where the pointer grabbed it. */
   const [moving, setMoving] = useState<{
     key: string;
@@ -264,6 +266,16 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
    * otherwise pick it up. Nothing is connected yet — that happens on release,
    * either on an input (a drag) or on the next tap (an input port or its row).
    */
+  const armOrDisarm = (src: number) => {
+    if (pending === src) {
+      setPending(null);
+      setArmed(null);
+      return;
+    }
+    setPending(src);
+    setArmed(null);
+  };
+
   const startFrom = (src: number) => (event: React.PointerEvent) => {
     event.preventDefault();
     if (pending === src) {
@@ -432,7 +444,21 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
         const fromY = fromTop + OUT_PORT_Y;
         const toX = toLeft;
         const toY = toTop + IN_PORT_Y[which];
-        return { key: `${node.slot}-${which}`, fromX, fromY, toX, toY, src: input.src, slot: node.slot, which };
+        return {
+          key: `${node.slot}-${which}`,
+          fromX,
+          fromY,
+          toX,
+          toY,
+          src: input.src,
+          slot: node.slot,
+          which,
+          gain: input.gain,
+          // Where the label chip sits: the midpoint of the curve, pulled a
+          // little towards the source so it does not sit on the input port.
+          labelX: (fromX + toX) / 2,
+          labelY: (fromY + toY) / 2 - 8,
+        };
       }),
   );
 
@@ -562,13 +588,18 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
                 {wires.map((wire) => (
                   <path
                     key={wire.key}
-                    className="fxg-wire"
+                    className={`fxg-wire${selectedWire === wire.key ? ' selected' : ''}`}
                     data-wire={`${wire.slot}:${wire.which}`}
                     d={wirePath(wire.fromX, wire.fromY, wire.toX, wire.toY)}
-                    onClick={() => disconnect(wire.slot, wire.which as 0 | 1)}
+                    // A click picks the connection so its gain can be set here;
+                    // the ✕ on the chip is what deletes it, so a stray click
+                    // cannot unwire a patch (it used to).
+                    onClick={() =>
+                      setSelectedWire((current) => (current === wire.key ? null : wire.key))
+                    }
                   />
                 ))}
-                {armed?.moved ? (
+{armed?.moved ? (
                   <path
                     className="fxg-wire ghost"
                     d={(() => {
@@ -579,6 +610,60 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
                   />
                 ) : null}
               </svg>
+
+                {wires.map((wire) =>
+                  selectedWire === wire.key ? (
+                    <div
+                      className="fxg-wire-edit"
+                      key={`edit-${wire.key}`}
+                      style={{ left: wire.labelX - 78, top: wire.labelY - 12 }}
+                      data-wire-edit={`${wire.slot}:${wire.which}`}
+                    >
+                      <input
+                        type="range"
+                        className="fxg-gain"
+                        data-act="wire-gain"
+                        min={0}
+                        max={200}
+                        value={Math.round(wire.gain * 100)}
+                        aria-label={`${t('fxg.node')} ${wire.slot + 1} ${t('fxg.input')} ${wire.which + 1} ${t('fxg.gain')}`}
+                        onChange={(event) => {
+                          ensureGraph();
+                          store.setParam(
+                            graphInGainId(wire.slot, wire.which as 0 | 1),
+                            Number(event.target.value) / 100,
+                          );
+                        }}
+                      />
+                      <span className="fxg-wire-val">{Math.round(wire.gain * 100)}%</span>
+                      <button
+                        type="button"
+                        className="fxg-wire-del"
+                        data-act="wire-del"
+                        aria-label={`${t('fxg.disconnect')} ${t('fxg.node')} ${wire.slot + 1} ${t('fxg.input')} ${wire.which + 1}`}
+                        onClick={() => {
+                          disconnect(wire.slot, wire.which as 0 | 1);
+                          setSelectedWire(null);
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : wire.gain !== 1 ? (
+                    <button
+                      type="button"
+                      className="fxg-wire-label"
+                      key={`label-${wire.key}`}
+                      style={{ left: wire.labelX - 22, top: wire.labelY - 10 }}
+                      data-wire-label={`${wire.slot}:${wire.which}`}
+                      title={t('fxg.wireHint')}
+                      onClick={() => setSelectedWire(wire.key)}
+                    >
+                      {Math.round(wire.gain * 100)}%
+                    </button>
+                  ) : null,
+                )}
+                
 
               {/* DRY source */}
               <div
@@ -600,6 +685,10 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
                   data-act="port-dry"
                   aria-label={`${t('fxg.dry')} ${t('fxg.output')}`}
                   onPointerDown={startFrom(GRAPH_DRY)}
+                  onClick={(event) => {
+                    if (event.detail !== 0) return;
+                    armOrDisarm(GRAPH_DRY);
+                  }}
                 />
               </div>
 
@@ -647,6 +736,14 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
                         event.preventDefault();
                         connect(node.slot, which, pending);
                       }}
+                      // Keyboard: a button fired by Enter/Space reports
+                      // `detail === 0`, which is the whole keyboard path for
+                      // arming and connecting without a pointer.
+                      onClick={(event) => {
+                        if (event.detail !== 0) return;
+                        if (pending === null) return;
+                        connect(node.slot, which, pending);
+                      }}
                     />
                   ))}
                   <button
@@ -657,6 +754,10 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
                     data-node={node.slot}
                     aria-label={`${t('fxg.node')} ${node.slot + 1} ${t('fxg.output')}`}
                     onPointerDown={startFrom(graphNodeSrc(node.slot))}
+                    onClick={(event) => {
+                      if (event.detail !== 0) return;
+                      armOrDisarm(graphNodeSrc(node.slot));
+                    }}
                   />
                 </div>
               ))}

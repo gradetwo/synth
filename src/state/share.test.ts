@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PARAMS, createDefaultState, Param } from '@/audio/params';
-import { PREFIX_FOR_TEST, decodePatch, encodePatch } from './share';
+import { writeMidi } from '@/midi/smf';
+import {
+  PREFIX_FOR_TEST,
+  decodePatch,
+  decodePatchAsync,
+  encodePatch,
+  encodePatchAsync,
+  readShareCode,
+} from './share';
 
 describe('patch share codec', () => {
+  const state = createDefaultState();
+
   it('carries the second layer only when a patch actually uses one', () => {
     const plain = encodePatch(createDefaultState(), { routing: { mode: 'layer', splitNote: 60 } });
     expect(decodePatch(plain)!.params2).toBeNull();
@@ -48,6 +58,43 @@ describe('patch share codec', () => {
     expect(plain?.song).toBeNull();
   });
 
+  it('compresses a code that carries an arrangement, and reads it back', async () => {
+    // A song is the case where the link length matters: MIDI bytes in base64
+    // plus a patch. Compressed it should be shorter, and round-trip exactly.
+    const notes = Array.from({ length: 400 }, (_, i) => ({
+      note: 48 + (i % 24),
+      velocity: 0.7,
+      start: i * 0.05,
+      duration: 0.04,
+    }));
+    const song = {
+      name: 'Long',
+      midi: writeMidi(notes, { bpm: 120, name: 'Long' }),
+      mix: [[false, 0.8, -0.2, 0]] as [boolean, number, number, number][],
+    };
+    const plain = encodePatch(state, { song });
+    const packed = await encodePatchAsync(state, { song });
+    expect(packed.startsWith('gs1.2.')).toBe(true);
+    expect(packed.length).toBeLessThan(plain.length);
+
+    const back = await decodePatchAsync(packed);
+    expect(back?.song?.name).toBe('Long');
+    expect(back?.song?.midi.length).toBe(song.midi.length);
+    expect(back?.song?.mix).toEqual(song.mix);
+    expect(back?.params[Param.FILTER_CUTOFF]).toBeCloseTo(state.params[Param.FILTER_CUTOFF]!, 3);
+
+    // A patch-only code stays in the plain format, so older builds can read it.
+    const small = await encodePatchAsync(state);
+    expect(small.startsWith('gs1.1.')).toBe(true);
+    expect((await decodePatchAsync(small))?.params[Param.MASTER_VOLUME]).toBeCloseTo(
+      state.params[Param.MASTER_VOLUME]!,
+      3,
+    );
+
+    // Garbage in the compressed form is refused, not thrown.
+    expect(await decodePatchAsync('gs1.2.%%%%')).toBeNull();
+  });
+
   it('round-trips every parameter and route', () => {
     const state = createDefaultState();
     state.params[Param.FILTER_CUTOFF] = 1234.5;
@@ -61,6 +108,21 @@ describe('patch share codec', () => {
     expect(decoded!.params[Param.FILTER_CUTOFF]).toBeCloseTo(1234.5, 3);
     expect(decoded!.params[Param.OSC1_PAN]).toBeCloseTo(-0.42, 3);
     expect(decoded!.routes).toEqual([{ src: 'velocity', dst: 'pwm', amount: -0.75, enabled: true }]);
+  });
+
+  it('recognises both forms of share code in a URL', async () => {
+    const packed = await encodePatchAsync(createDefaultState(), {
+      song: {
+        name: 'S',
+        midi: writeMidi([{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }], { bpm: 120 }),
+        mix: [[false, 1, 0, 0]],
+      },
+    });
+    expect(packed.startsWith('gs1.2.')).toBe(true);
+    expect(readShareCode(`#p=${packed}`)).toBe(packed);
+    expect(readShareCode(`https://example.com/#p=${packed}`)).toBe(packed);
+    expect(readShareCode(`https://example.com/?x=1#p=${encodePatch(createDefaultState())}`)).not.toBeNull();
+    expect(readShareCode('https://example.com/#p=nope')).toBeNull();
   });
 
   it('rejects malformed codes', () => {

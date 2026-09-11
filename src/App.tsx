@@ -210,10 +210,14 @@ export default function App() {
   useEffect(() => {
     // Apply a shared patch from the URL hash on first load.
     const code = readShareCode();
-    if (code && store.importPatchCode(code)) {
+    if (!code) return;
+    // The code may be deflated (an arrangement is), which is why this one is
+    // async; the plain form resolves immediately.
+    void store.importPatchCodeAsync(code).then((ok) => {
+      if (!ok) return;
       history.replaceState(null, '', window.location.pathname + window.location.search);
       toast(t('app.sharedLoaded'));
-    }
+    });
   }, []);
 
   useEffect(() => {

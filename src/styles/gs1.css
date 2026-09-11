@@ -266,7 +266,16 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 .fxg-wires{position:absolute;inset:0;pointer-events:none}
 .fxg-wire{fill:none;stroke:color-mix(in srgb,var(--accent) 70%,transparent);stroke-width:2;
   pointer-events:stroke;cursor:pointer}
-.fxg-wire:hover{stroke:#ff6b6b}
+.fxg-wire.selected{stroke:var(--accent);stroke-width:3}
+.fxg-wire-edit{position:absolute;display:flex;align-items:center;gap:4px;padding:2px 4px;
+  border:1px solid var(--accent-dim);border-radius:8px;background:var(--bg-pop);z-index:2}
+.fxg-wire-val{font:600 8.5px/1 var(--mono);color:var(--txt-2);width:28px;text-align:right}
+.fxg-wire-del{width:18px;height:18px;flex:none;border-radius:5px;border:1px solid var(--border);
+  background:var(--bg-inset);color:var(--txt-dim);font:700 9px/1 var(--mono);cursor:pointer}
+.fxg-wire-del:hover{color:#ff6b6b;border-color:#ff6b6b}
+.fxg-wire-label{position:absolute;padding:1px 5px;border-radius:7px;border:1px solid var(--border);
+  background:var(--bg-pop);color:var(--txt-2);font:600 8.5px/1.4 var(--mono);cursor:pointer;z-index:2}
+.fxg-wire-label:hover{border-color:var(--accent-dim);color:var(--accent)}
 .fxg-wire.ghost{stroke-dasharray:5 4;opacity:.8}
 .fxg-card{position:absolute;box-sizing:border-box;border:1px solid var(--border);border-radius:11px;
   background:var(--bg-inset);padding:6px 8px;display:flex;flex-direction:column;gap:4px}

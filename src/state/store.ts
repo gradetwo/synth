@@ -55,9 +55,12 @@ import {
 } from './scenes';
 import {
   decodePatch,
+  decodePatchAsync,
   downloadText,
   encodePatch,
+  encodePatchAsync,
   shareUrl,
+  type PatchPayload,
   type SharedSong,
 } from './share';
 import { setLang } from '@/i18n';
@@ -427,6 +430,16 @@ export class SynthStore {
     return encodePatch(this.state, song ? { song } : undefined);
   }
 
+  /**
+   * The same code, deflated when it carries an arrangement: a five-minute song
+   * is megabytes of base64 otherwise, and no chat client keeps a link that long.
+   * Falls back to the plain code wherever `CompressionStream` is missing.
+   */
+  async shareCodeAsync(): Promise<string> {
+    const song = this.sharedSong();
+    return encodePatchAsync(this.state, song ? { song } : undefined);
+  }
+
   /** Full shareable URL. */
   shareLink(): string {
     return shareUrl(this.shareCode());
@@ -437,8 +450,8 @@ export class SynthStore {
    * long arrangement is megabytes of base64 and every chat client would cut the
    * link. Returns which one happened so the caller can say so.
    */
-  shareOrDownload(): 'link' | 'file' {
-    const code = this.shareCode();
+  async shareOrDownload(): Promise<'link' | 'file'> {
+    const code = await this.shareCodeAsync();
     const url = shareUrl(code);
     if (url.length <= MAX_SHARE_URL) {
       history.replaceState(null, '', url);
@@ -452,10 +465,23 @@ export class SynthStore {
     return 'file';
   }
 
+  /**
+   * Apply a `#p=...` share code of either form (plain or deflated). The async
+   * path is what the app boots with; the sync one serves `.gs1song` files, which
+   * are never compressed.
+   */
+  async importPatchCodeAsync(code: string): Promise<boolean> {
+    const payload = await decodePatchAsync(code);
+    return payload ? this.applySharedPayload(payload) : false;
+  }
+
   /** Apply a `#p=...` share code. Returns false if it is malformed. */
   importPatchCode(code: string): boolean {
     const payload = decodePatch(code);
-    if (!payload) return false;
+    return payload ? this.applySharedPayload(payload) : false;
+  }
+
+  private applySharedPayload(payload: PatchPayload): boolean {
     const preset: Preset = {
       id: `shared-${Date.now()}`,
       name: 'Shared Patch · 分享音色',

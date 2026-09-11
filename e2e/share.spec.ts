@@ -33,10 +33,12 @@ test('shares a song with its mix, and the link opens it', async ({ page, browser
   await expect(page.locator('.player.open')).toHaveCount(0);
   await page.getByRole('button', { name: '预设库' }).click();
   await page.locator('.preset-drawer button', { hasText: '分享' }).first().click();
+  // The arrangement travels deflated (the `gs1.2.` form) — that is what keeps a
+  // long song inside a URL: this one comes to ~680 characters all in, where the
+  // plain form of the same song is a few hundred longer.
   await expect
-    .poll(async () => page.evaluate(() => location.hash.length), { timeout: 30_000 })
-    // A patch-only code is ~600 characters; the song takes it past 700.
-    .toBeGreaterThan(700);
+    .poll(async () => page.evaluate(() => location.hash), { timeout: 30_000 })
+    .toContain('gs1.2.');
   const url = await page.evaluate(() => location.href);
   expect(url.length).toBeLessThan(16_000);
 

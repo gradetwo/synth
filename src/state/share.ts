@@ -17,6 +17,16 @@ import {
 import { SCHEMA_VERSION } from './persist';
 
 const PREFIX = 'gs1.1.';
+/**
+ * Codes whose payload is deflate-compressed before base64.
+ *
+ * A share link carrying a whole arrangement is dominated by the MIDI bytes, and
+ * base64 makes them a third bigger again; deflating first keeps a five-minute
+ * song inside a URL. Only used when the browser has `CompressionStream`
+ * (Chrome 80+, Safari 16.4+, Firefox 113+), and the plain format stays readable
+ * for ever, so nothing depends on it.
+ */
+const PREFIX_DEFLATE = 'gs1.2.';
 
 /** The code prefix, for tests that build a historical payload by hand. */
 export const PREFIX_FOR_TEST = PREFIX;
@@ -82,14 +92,14 @@ export interface PatchPayload {
 /** Longest share code (and therefore URL) the synth will copy. */
 export const MAX_SHARE_CODE = 12000;
 
-/** Encode the current patch into a shareable code. */
-export function encodePatch(
+/** The JSON payload a share code carries. */
+function buildPayload(
   state: SynthState,
   options?: {
     routing?: { mode: 'single' | 'layer' | 'split'; splitNote: number };
     song?: SharedSong;
   },
-): string {
+): Record<string, unknown> {
   const ids = Object.keys(DEFAULT_PARAMS)
     .map(Number)
     .sort((a, b) => a - b);
@@ -114,36 +124,112 @@ export function encodePatch(
     : undefined;
   // `s` is the schema: a code from a newer build is refused rather than decoded
   // positionally into the wrong parameters.
-  return PREFIX + base64UrlEncode(
-    JSON.stringify({
-      s: SCHEMA_VERSION,
-      v: values,
-      r: routes,
-      ...(second ? { p2: second } : {}),
-      ...(second && route ? { m: route.mode === 'layer' ? 1 : route.mode === 'split' ? 2 : 0, sn: route.splitNote } : {}),
-      // The song: a base64 MIDI file plus the mix that makes it sound the way
-      // it does here. Absent unless a code was asked to carry one.
-      ...(options?.song
-        ? {
-            sg: base64UrlFromBytes(options.song.midi),
-            sl: options.song.mix.map(([muted, volume, pan, offset]) => [
-              muted ? 1 : 0,
-              Math.round(volume * 1000) / 1000,
-              Math.round(pan * 1000) / 1000,
-              Math.round(offset * 100) / 100,
-            ]),
-            st: options.song.name,
-          }
-        : {}),
-    }),
-  );
+  return {
+    s: SCHEMA_VERSION,
+    v: values,
+    r: routes,
+    ...(second ? { p2: second } : {}),
+    ...(second && route ? { m: route.mode === 'layer' ? 1 : route.mode === 'split' ? 2 : 0, sn: route.splitNote } : {}),
+    // The song: a base64 MIDI file plus the mix that makes it sound the way it
+    // does here. Absent unless a code was asked to carry one.
+    ...(options?.song
+      ? {
+          sg: base64UrlFromBytes(options.song.midi),
+          sl: options.song.mix.map(([muted, volume, pan, offset]) => [
+            muted ? 1 : 0,
+            Math.round(volume * 1000) / 1000,
+            Math.round(pan * 1000) / 1000,
+            Math.round(offset * 100) / 100,
+          ]),
+          st: options.song.name,
+        }
+      : {}),
+  };
 }
 
-/** Decode a share code; returns null for anything malformed. */
+/** Encode the current patch into a shareable code. */
+export function encodePatch(
+  state: SynthState,
+  options?: {
+    routing?: { mode: 'single' | 'layer' | 'split'; splitNote: number };
+    song?: SharedSong;
+  },
+): string {
+  return PREFIX + base64UrlEncode(JSON.stringify(buildPayload(state, options)));
+}
+
+function canCompress(): boolean {
+  return typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
+}
+
+async function deflate(text: string): Promise<Uint8Array> {
+  const stream = new CompressionStream('deflate-raw');
+  const writer = stream.writable.getWriter();
+  void writer.write(new TextEncoder().encode(text));
+  void writer.close();
+  return new Uint8Array(await new Response(stream.readable).arrayBuffer());
+}
+
+async function inflate(bytes: Uint8Array): Promise<string> {
+  const stream = new DecompressionStream('deflate-raw');
+  const writer = stream.writable.getWriter();
+  // A fresh copy keeps the type a plain ArrayBuffer-backed view: the bytes come
+  // from base64 and a `Uint8Array` over a larger buffer is not a valid source.
+  void writer.write(Uint8Array.from(bytes));
+  void writer.close();
+  return new TextDecoder().decode(await new Response(stream.readable).arrayBuffer());
+}
+
+/**
+ * Encode a share code, compressing it when the code carries an arrangement.
+ *
+ * Patch-only codes are already small and stay in the plain format, so an old
+ * build can still read the common case.
+ */
+export async function encodePatchAsync(
+  state: SynthState,
+  options?: {
+    routing?: { mode: 'single' | 'layer' | 'split'; splitNote: number };
+    song?: SharedSong;
+  },
+): Promise<string> {
+  const json = JSON.stringify(buildPayload(state, options));
+  if (!options?.song || !canCompress()) return PREFIX + base64UrlEncode(json);
+  try {
+    return PREFIX_DEFLATE + base64UrlFromBytes(await deflate(json));
+  } catch {
+    // A browser that advertises the API but fails on the call still gets a link.
+    return PREFIX + base64UrlEncode(json);
+  }
+}
+
+/**
+ * Decode a share code, inflating it first when it is a compressed one.
+ *
+ * Compressed codes are the ones that carry an arrangement, and nothing else can
+ * produce them, so an old build reading a new link sees a code it does not
+ * recognise rather than a patch decoded wrongly.
+ */
+export async function decodePatchAsync(code: string): Promise<PatchPayload | null> {
+  if (!code.startsWith(PREFIX_DEFLATE)) return decodePatch(code);
+  const bytes = bytesFromBase64Url(code.slice(PREFIX_DEFLATE.length));
+  if (!bytes) return null;
+  try {
+    return parsePayload(await inflate(bytes));
+  } catch {
+    return null;
+  }
+}
+
 export function decodePatch(code: string): PatchPayload | null {
   if (!code.startsWith(PREFIX)) return null;
   const json = base64UrlDecode(code.slice(PREFIX.length));
   if (!json) return null;
+  return parsePayload(json);
+}
+
+/** Shared payload parsing, for both the plain and the compressed form. */
+function parsePayload(json: string): PatchPayload | null {
   let parsed: {
     s?: unknown;
     v?: unknown;
@@ -243,10 +329,16 @@ export function shareUrl(code: string): string {
 
 /** Read a `#p=...` code from the current location, if present. */
 export function readShareCode(href?: string): string | null {
-  const hash = (href ?? (typeof window !== 'undefined' ? window.location.hash : '')).replace(/^#/, '');
+  const raw = href ?? (typeof window !== 'undefined' ? window.location.hash : '');
+  // Accept a bare hash, a `#p=...` string or a whole URL: the callers pass
+  // `location.hash`, but a link copied out of a chat is the whole thing.
+  const afterHash = raw.includes('#') ? raw.slice(raw.indexOf('#') + 1) : raw;
+  const hash = afterHash.replace(/^#/, '');
   const params = new URLSearchParams(hash);
   const code = params.get('p');
-  return code && code.startsWith(PREFIX) ? code : null;
+  // Both forms are share codes: the plain one and the deflated one an
+  // arrangement travels in.
+  return code && (code.startsWith(PREFIX) || code.startsWith(PREFIX_DEFLATE)) ? code : null;
 }
 
 export function downloadBlob(filename: string, blob: Blob) {

@@ -146,7 +146,7 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
                 // With an arrangement loaded the code carries the song too; if
                 // that makes the link too long for a chat client, the same
                 // payload goes out as a `.gs1song` file instead.
-                const what = store.shareOrDownload();
+                const what = await store.shareOrDownload();
                 if (what === 'file') {
                   toast(t('drawer.shareFile'));
                   return;

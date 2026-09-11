@@ -467,6 +467,8 @@ const DICT: Record<string, [string, string]> = {
   'fxg.toOut': ['送到输出', 'To output'],
   'fxg.outGain': ['输出增益', 'output gain'],
   'fxg.none': ['无', 'none'],
+  'fxg.disconnect': ['断开', 'Disconnect'],
+  'fxg.wireHint': ['点连线可以改这条连线的增益或断开它', 'Click a wire to set its gain or cut it'],
   'fx.moveLeft': ['前移一位', 'Move earlier'],
   'fx.moveRight': ['后移一位', 'Move later'],
   'fx.parallel': ['并联送出', 'Parallel send'],

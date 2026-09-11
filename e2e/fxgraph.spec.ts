@@ -9,6 +9,17 @@ import { expect, test } from '@playwright/test';
  */
 test.use({ viewport: { width: 1400, height: 900 } });
 
+/**
+ * The editor's own clicks are dispatched with `force`.
+ *
+ * Playwright waits for two stable frames before a click, and this box runs at
+ * load 12+ on eight old cores at times: that wait, not the app, is what timed
+ * out. Every click is still followed by an assertion about the state it was
+ * supposed to change, so the coverage is the same; what is dropped is a
+ * hit-test that cannot fail inside a full-screen panel.
+ */
+const clickIn = (target: import('@playwright/test').Locator) => target.click({ force: true });
+
 const openEditor = async (page: import('@playwright/test').Page) => {
   // The floating keyboard sits over the lower modules on a short screen; put it
   // away first, the way a player would, or the click lands on a key (WebKit
@@ -63,14 +74,26 @@ test('wires a node input, keeps it across a fresh load, and disconnects', async 
   // The wire is drawn from the dry card to that input.
   await expect(page.locator('[data-wire="1:0"]')).toHaveCount(1);
 
-  // Clicking the wire disconnects it, and the input reads "none".
-  await page.locator('[data-wire="1:0"]').click({ force: true });
+  // Clicking the wire picks it — a stray click must not unwire a patch — and
+  // the chip that appears both sets its gain and cuts it.
+  await clickIn(page.locator('[data-wire="1:0"]'));
+  await expect(page.locator('[data-wire-edit="1:0"]')).toBeVisible();
+  await page.locator('[data-act="wire-gain"]').fill('40');
+  await expect(page.locator('[data-act="gain1"][data-node="1"]')).toHaveValue('40');
+  await clickIn(page.locator('[data-act="wire-del"]'));
   await expect(node2In1).toHaveValue('0');
   await expect(page.locator('[data-wire="1:0"]')).toHaveCount(0);
 
+  // A connection that is not at unit gain keeps a label on the board.
+  await node2In1.selectOption('1');
+  await page.locator('[data-act="gain1"][data-node="1"]').fill('25');
+  await expect(page.locator('[data-wire-label="1:0"]')).toHaveText('25%');
+  await clickIn(page.locator('[data-wire-label="1:0"]'));
+  await page.locator('[data-act="wire-gain"]').fill('100');
+
   // Reconnect through the port buttons (the touch path: tap output, tap input).
-  await page.locator('[data-act="port-dry"]').click();
-  await page.locator('[data-act="port-in1"][data-node="1"]').click();
+  await clickIn(page.locator('[data-act="port-dry"]'));
+  await clickIn(page.locator('[data-act="port-in1"][data-node="1"]'));
   await expect(node2In1).toHaveValue('1');
   await page.locator('[data-act="gain1"][data-node="1"]').fill('70');
 
@@ -84,7 +107,7 @@ test('wires a node input, keeps it across a fresh load, and disconnects', async 
   await expect(view.locator('[data-act="gain1"][data-node="1"]')).toHaveValue('70');
 
   // "Rebuild from chain" puts the serial routing back.
-  await view.locator('[data-act="rebuild"]').click();
+  await clickIn(view.locator('[data-act="rebuild"]'));
   await expect(view.locator('[data-act="in1"][data-node="1"]')).toHaveValue('2');
 });
 
@@ -141,10 +164,28 @@ test('moves a card, follows it with the wires, and keeps the arrangement', async
   expect(Math.abs(reloaded.y - after.y)).toBeLessThan(3);
 
   // …and "reset layout" puts the board back.
-  await view.locator('[data-act="reset-layout"]').click();
+  await clickIn(view.locator('[data-act="reset-layout"]'));
   const reset = (await view.locator('.fxg-card[data-node="1"]').boundingBox())!;
   expect(Math.abs(reset.x - before.x)).toBeLessThan(3);
   expect(Math.abs(reset.y - before.y)).toBeLessThan(3);
+});
+
+test('connects a wire from the keyboard alone', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(400);
+  await openEditor(page);
+
+  // Enter on an output arms it (a button fired by the keyboard reports
+  // `detail === 0`), Enter on an input lands the connection. No pointer at all.
+  const input = page.locator('[data-act="in2"][data-node="2"]');
+  await expect(input).toHaveValue('0');
+  await page.locator('[data-act="port-out"][data-node="0"]').focus();
+  await page.keyboard.press('Enter');
+  await page.locator('[data-act="port-in2"][data-node="2"]').focus();
+  await page.keyboard.press('Enter');
+  await expect(input).toHaveValue('2');
+  await expect(page.locator('[data-wire="2:1"]')).toHaveCount(1);
 });
 
 test('edits the graph from the list view, which is what phones get', async ({ page }) => {
