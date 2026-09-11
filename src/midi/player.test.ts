@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MidiPlayer } from './player';
+import { MidiPlayer, mixedNotes, mixedTracks } from './player';
 import type { MidiSong } from './smf';
 
 /** Note-ons the transport hands to the engine, with their stereo position. */
@@ -220,6 +220,38 @@ describe('layers', () => {
     // Out of range is clamped rather than trusted.
     player.setLayer(0, { pan: -9 });
     expect(player.getLayers()[0].pan).toBe(-1);
+  });
+
+  it('hands the mix to renders and exports, not the raw file', () => {
+    const player = new MidiPlayer();
+    player.load(layered);
+    // Bass moved half a second later and pushed left, lead quiet but audible,
+    // and a third of the lead's notes are the same pitch so the list is stable.
+    player.setLayer(0, { offset: 0.5, pan: -1 });
+    player.setLayer(1, { volume: 0.5 });
+
+    const notes = mixedNotes(player['song'], player.getLayers());
+    // Bass is listed first and both land on 0.5 s: the bass moved there.
+    expect(notes.map((n) => n[0])).toEqual([48, 60]);
+    // Bass: moved half a second later and hard left.
+    expect(notes[0]).toEqual([48, 0.5, 0.5, 0.8, -1]);
+    // Lead: starts where it did, half velocity, centred.
+    expect(notes[1]).toEqual([60, 0.5, 0.5, 0.4, 0]);
+
+    // Muting a layer takes it out of the render entirely.
+    player.setLayer(0, { muted: true });
+    expect(mixedNotes(player['song'], player.getLayers()).map((n) => n[0])).toEqual([60]);
+
+    // The track list keeps each layer's name and pan for the MIDI export.
+    player.setLayer(0, { muted: false });
+    player.setLayer(1, { pan: 0.75 });
+    const tracks = mixedTracks(player['song'], player.getLayers());
+    expect(tracks.map((t) => [t.name, t.pan])).toEqual([
+      ['Bass', -1],
+      ['Lead', 0.75],
+    ]);
+    expect(tracks[0].notes[0].start).toBe(0.5);
+    expect(tracks[1].notes[0].velocity).toBeCloseTo(0.4, 6);
   });
 
   it('gives a single-layer song one layer with everything audible', () => {

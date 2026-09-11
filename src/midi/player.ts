@@ -10,7 +10,7 @@
 import { engine } from '@/audio/engine';
 import { metronome } from '@/audio/metronome';
 import { noteBus } from '@/audio/noteBus';
-import { songTracks, type MidiSong } from './smf';
+import { songTracks, type MidiNote, type MidiSong } from './smf';
 
 interface TimedEvent {
   t: number;
@@ -53,14 +53,28 @@ export interface LayerState {
   pan: number;
 }
 
-function buildEvents(song: MidiSong | null, layers: LayerState[]): TimedEvent[] {
+/** One layer of a song with the mix already applied to it. */
+interface AudibleLayer {
+  name: string;
+  notes: MidiNote[];
+  volume: number;
+  offset: number;
+  pan: number;
+}
+
+/**
+ * The layers that reach the synth, in order, with their mix resolved. Mute and
+ * solo are decided here once so playback, rendering and export all agree on
+ * what the song sounds like.
+ */
+function audibleLayers(song: MidiSong | null, layers: LayerState[]): AudibleLayer[] {
   if (!song) return [];
-  const events: TimedEvent[] = [];
   // One layer is the normal case and behaves exactly as before; with several,
-  // mute and solo decide which of them reach the synth.
+  // mute and solo decide which of them are heard.
   const anySolo = layers.some((layer) => layer.soloed);
-  const audible = songTracks(song)
+  return songTracks(song)
     .map((track, index) => ({
+      name: track.name,
       notes: track.notes,
       volume: layers[index]?.volume ?? 1,
       offset: layers[index]?.offset ?? 0,
@@ -72,18 +86,64 @@ function buildEvents(song: MidiSong | null, layers: LayerState[]): TimedEvent[] 
       if (!layer) return true;
       if (anySolo) return layer.soloed && !layer.muted;
       return !layer.muted;
-    });
-  for (const { notes, volume, offset, pan } of audible) {
-    for (const n of notes) {
-      // The layer's level is a velocity scale; a note never fades to nothing,
-      // or a quiet layer would silently drop notes instead of playing them
-      // softly. The offset slides the whole layer in time; a shifted note that
-      // would start before zero is dropped rather than played at the start.
-      const start = n.start + offset;
-      if (start < 0) continue;
-      const velocity = Math.max(1 / 127, Math.min(1, n.velocity * volume));
-      events.push({ t: start, note: n.note, on: true, velocity, pan });
-      events.push({ t: start + n.duration, note: n.note, on: false, velocity, pan });
+    })
+    .map(({ name, notes, volume, offset, pan }) => ({ name, notes, volume, offset, pan }));
+}
+
+/**
+ * The layer's level is a velocity scale; a note never fades to nothing, or a
+ * quiet layer would silently drop notes instead of playing them softly. The
+ * offset slides the whole layer in time; a shifted note that would start before
+ * zero is dropped rather than played at the start.
+ */
+function shape(notes: MidiNote[], volume: number, offset: number): { note: MidiNote; start: number; velocity: number }[] {
+  const out: { note: MidiNote; start: number; velocity: number }[] = [];
+  for (const n of notes) {
+    const start = n.start + offset;
+    if (start < 0) continue;
+    out.push({ note: n, start, velocity: Math.max(1 / 127, Math.min(1, n.velocity * volume)) });
+  }
+  return out;
+}
+
+/** The mixed note list, as `[note, start, length, velocity, pan]`. */
+export function mixedNotes(
+  song: MidiSong | null,
+  layers: LayerState[],
+): [number, number, number, number, number][] {
+  const out: [number, number, number, number, number][] = [];
+  for (const { notes, volume, offset, pan } of audibleLayers(song, layers)) {
+    for (const { note, start, velocity } of shape(notes, volume, offset)) {
+      out.push([note.note, start, note.duration, velocity, pan]);
+    }
+  }
+  out.sort((a, b) => a[1] - b[1]);
+  return out;
+}
+
+/** The mixed layers, for a multi-track MIDI export. */
+export function mixedTracks(
+  song: MidiSong | null,
+  layers: LayerState[],
+): { name: string; notes: MidiNote[]; pan: number }[] {
+  return audibleLayers(song, layers).map(({ name, notes, volume, offset, pan }) => ({
+    name,
+    pan,
+    notes: shape(notes, volume, offset).map(({ note, start, velocity }) => ({
+      note: note.note,
+      start,
+      duration: note.duration,
+      velocity,
+    })),
+  }));
+}
+
+function buildEvents(song: MidiSong | null, layers: LayerState[]): TimedEvent[] {
+  const events: TimedEvent[] = [];
+  for (const { notes, volume, offset, pan } of audibleLayers(song, layers)) {
+    for (const { note, start, velocity } of shape(notes, volume, offset)) {
+      events.push({ t: start, note: note.note, on: true, velocity, pan });
+      events.push({ t: start + note.duration, note: note.note, on: false, velocity, pan });
     }
   }
   events.sort((a, b) => a.t - b.t || Number(b.on) - Number(a.on));

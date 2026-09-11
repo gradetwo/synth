@@ -19,11 +19,11 @@ import { PARAM_NAMES, type SynthState } from './params';
 export interface RenderOptions {
   seconds?: number;
   sampleRate?: number;
-  /** [note, startSeconds, lengthSeconds, velocity?] tuples. */
-  notes?: [number, number, number, number?][];
+  /** [note, startSeconds, lengthSeconds, velocity?, pan?] tuples. */
+  notes?: [number, number, number, number?, number?][];
 }
 
-const DEFAULT_PHRASE: [number, number, number, number?][] = [
+const DEFAULT_PHRASE: [number, number, number, number?, number?][] = [
   [60, 0.1, 0.34],
   [64, 0.5, 0.34],
   [67, 0.9, 0.34],
@@ -141,9 +141,14 @@ export async function renderPatchToBuffer(
     node.parameters.get(name)?.setValueAtTime(value, 0);
   }
 
-  for (const [note, start, noteLength, velocity] of notes) {
+  for (const [note, start, noteLength, velocity, pan] of notes) {
     ctx.suspend(start).then(() => {
-      node.port.postMessage({ type: 'noteOn', note, velocity: velocity ?? 0.9 });
+      // A song layer's pan travels with the note, exactly as it does live.
+      if (pan !== undefined && Math.abs(pan) > 0.005) {
+        node.port.postMessage({ type: 'noteOnPan', note, velocity: velocity ?? 0.9, pan });
+      } else {
+        node.port.postMessage({ type: 'noteOn', note, velocity: velocity ?? 0.9 });
+      }
       ctx.resume();
     });
     ctx.suspend(start + noteLength).then(() => {

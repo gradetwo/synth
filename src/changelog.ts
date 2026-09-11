@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.71.0',
+    date: '2026-09-11',
+    kind: 'fix',
+    items: [
+      [
+        '**导出跟随当前混音**：多轨曲目里如果静音了某层、调过每层音量或声像、拖动过时间线，导出的 MIDI 与 WAV/MP3 现在和听到的完全一致（以前导出的是文件原样，混音被丢掉）。MIDI 里音量写进力度、声像写进 CC10、时间偏移写进时间，DAW 打开就是同一份编曲。',
+        '**Exports now follow your mix**: if you muted a layer, changed per-layer level or pan, or nudged a layer on the timeline, the exported MIDI and WAV/MP3 match what you hear. (They used to export the raw file and drop the mix.) In the MIDI file the level becomes velocity, pan becomes CC10 and the time offset becomes the note timing, so a DAW opens the same arrangement.',
+      ],
+    ],
+  },
+  {
     version: '1.70.0',
     date: '2026-09-11',
     kind: 'feature',

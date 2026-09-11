@@ -149,6 +149,33 @@ describe('multi-track files', () => {
     expect((plain[10] << 8) | plain[11]).toBe(1);
   });
 
+  it('writes a layer\'s pan as CC10 at the head of its track', () => {
+    const notes = [{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }];
+    const bytes = writeMidi(notes, {
+      bpm: 120,
+      name: 'Panned',
+      tracks: [
+        { name: 'Left', notes, pan: -1 },
+        { name: 'Right', notes, pan: 0.5 },
+        { name: 'Centre', notes },
+      ],
+    });
+    // Both panned layers carry a controller, the centred one does not.
+    const cc = (byte: number) => byte === 10;
+    const events = [...bytes];
+    expect(events.filter((b, i) => b === 0xb0 && cc(events[i + 1])).length).toBe(2);
+    // Hard left is 0, +0.5 is three quarters right (round(0.75 * 127) = 95).
+    const pans = events
+      .map((b, i) => (b === 0xb0 && cc(events[i + 1]) ? events[i + 2] : null))
+      .filter((v): v is number => v !== null);
+    expect(pans).toEqual([0, 95]);
+
+    // The controller does not disturb the round trip.
+    const back = parseMidi(bytes, 'panned');
+    expect(songTracks(back).map((layer) => layer.name)).toEqual(['Left', 'Right', 'Centre']);
+    expect(songTracks(back)[0].notes.map((n) => n.note)).toEqual([60]);
+  });
+
   it('gives a hand-built song exactly one layer', () => {
     const song = parseMidi(singleTrackFile(), 'one');
     expect(songTracks(song)).toHaveLength(1);

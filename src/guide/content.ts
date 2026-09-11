@@ -991,8 +991,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Recording**: hit ● and play on the screen keyboard, computer keyboard or a MIDI controller, then ■ to stop. The player’s own output is ignored, so only your playing is captured.',
           ],
           [
-            '**导出 MIDI**：把当前曲目或录制保存为 `.mid`，可在别的 DAW 里继续编辑。',
-            '**Export MIDI**: saves the current track or take as `.mid` for further editing in a DAW.',
+            '**导出 MIDI**：把当前曲目或录制保存为 `.mid`，可在别的 DAW 里继续编辑；导出的就是你听到的混音（静音/独奏、每层音量、时间偏移、声像都会跟着走）。',
+            '**Export MIDI**: saves the current track or take as `.mid` for further editing in a DAW — it exports the mix you hear, with mute/solo, per-layer level, time offset and pan carried over.',
           ],
           [
             '**导出 MP3**：用当前音色离线渲染整首曲目，导出前把峰值归一化到 −1 dBFS（安静音色会被提升到正常音量，避免播放端大幅加增益），再编码为 256 kbps MP3。录制的片段可以在换音色后重新导出，得到不同音色的版本。',

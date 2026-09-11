@@ -103,6 +103,11 @@ interface RawNote {
 export interface MidiTrack {
   name: string;
   notes: MidiNote[];
+  /**
+   * Stereo position, written as a CC10 at the start of the track so a DAW
+   * imports the arrangement with the balance it had here.
+   */
+  pan?: number;
 }
 
 interface TempoEvent {
@@ -260,7 +265,14 @@ function writeVlq(value: number): number[] {
 /** Encode a flat note list as a format-0 SMF. */
 export function writeMidi(
   notes: MidiNote[],
-  options: { bpm?: number; division?: number; name?: string; tracks?: MidiTrack[] } = {},
+  options: {
+    bpm?: number;
+    division?: number;
+    name?: string;
+    tracks?: MidiTrack[];
+    /** Stereo position for a format-0 file (a layered export carries it per track). */
+    pan?: number;
+  } = {},
 ): Uint8Array {
   const bpm = Math.max(20, Math.min(300, options.bpm ?? 120));
   const division = options.division ?? 480;
@@ -268,7 +280,12 @@ export function writeMidi(
   const tickOf = (seconds: number) => Math.max(0, Math.round((seconds * division * bpm) / 60));
 
   /** One MTrk body: an optional tempo, an optional name, then the notes. */
-  const encodeTrack = (list: MidiNote[], trackName: string | undefined, withTempo: boolean): number[] => {
+  const encodeTrack = (
+    list: MidiNote[],
+    trackName: string | undefined,
+    withTempo: boolean,
+    pan?: number,
+  ): number[] => {
     const events: { tick: number; order: number; bytes: number[] }[] = [];
     for (const n of list) {
       const note = Math.max(0, Math.min(127, Math.round(n.note)));
@@ -287,6 +304,11 @@ export function writeMidi(
     if (trackName) {
       const text = [...trackName].slice(0, 60).map((c) => c.charCodeAt(0) & 0x7f);
       track.push(0x00, 0xff, 0x03, ...writeVlq(text.length), ...text);
+    }
+    // CC10 pan sits at the head of the track: 0 is hard left, 64 centre.
+    if (pan !== undefined && Math.abs(pan) > 0.005) {
+      const value = Math.max(0, Math.min(127, Math.round(((pan + 1) / 2) * 127)));
+      track.push(0x00, 0xb0, 10, value);
     }
     let last = 0;
     for (const event of events) {
@@ -308,8 +330,11 @@ export function writeMidi(
   // separate tracks rather than one merged blob.
   const layers = options.tracks && options.tracks.length > 1 ? options.tracks : null;
   const bodies = layers
-    ? [encodeTrack([], options.name, true), ...layers.map((layer) => encodeTrack(layer.notes, layer.name, false))]
-    : [encodeTrack(notes, options.name, true)];
+    ? [
+        encodeTrack([], options.name, true),
+        ...layers.map((layer) => encodeTrack(layer.notes, layer.name, false, layer.pan)),
+      ]
+    : [encodeTrack(notes, options.name, true, options.pan)];
 
   const header = [
     0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6,
