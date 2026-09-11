@@ -141,6 +141,29 @@ describe('layers', () => {
     expect(notesPlayed()).toEqual([]);
   });
 
+  it('scales a layer\'s velocity with its volume, never to silence', () => {
+    const player = new MidiPlayer();
+    player.load(layered);
+    const velocities = () => player['events'].filter((e) => e.on).map((e) => e.velocity);
+    expect(velocities().sort()).toEqual([0.8, 0.8]);
+
+    player.setLayer(1, { volume: 0.5 });
+    // Only the Lead layer's note (60) is attenuated.
+    expect(player['events'].filter((e) => e.on && e.note === 60)[0].velocity).toBeCloseTo(0.4, 6);
+    expect(player['events'].filter((e) => e.on && e.note === 48)[0].velocity).toBeCloseTo(0.8, 6);
+
+    // Down to zero still schedules the note, at the smallest audible velocity:
+    // a fader pulled down must not delete notes from the arrangement.
+    player.setLayer(1, { volume: 0 });
+    const quiet = player['events'].filter((e) => e.on && e.note === 60);
+    expect(quiet).toHaveLength(1);
+    expect(quiet[0].velocity).toBeGreaterThan(0);
+    expect(quiet[0].velocity).toBeLessThan(0.02);
+    // The value is clamped rather than trusted.
+    player.setLayer(1, { volume: 9 });
+    expect(player.getLayers()[1].volume).toBe(1);
+  });
+
   it('gives a single-layer song one layer with everything audible', () => {
     const player = new MidiPlayer();
     player.load({

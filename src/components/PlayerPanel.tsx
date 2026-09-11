@@ -259,6 +259,18 @@ export function PlayerPanel({
             {layers.map((layer, index) => (
               <div className="layer-row" key={`${layer.name}-${index}`} data-layer={index}>
                 <span className="layer-name">{layer.name}</span>
+                <input
+                  type="range"
+                  className="layer-vol"
+                  min={0}
+                  max={100}
+                  value={Math.round(layer.volume * 100)}
+                  aria-label={`${t('layer.volume')} ${layer.name}`}
+                  onChange={(event) => {
+                    midiPlayer.setLayer(index, { volume: Number(event.target.value) / 100 });
+                    setLayers(midiPlayer.getLayers());
+                  }}
+                />
                 <button
                   type="button"
                   className={`layer-btn${layer.muted ? ' on' : ''}`}

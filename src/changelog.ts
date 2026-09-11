@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.61.0',
+    date: '2026-09-10',
+    kind: 'feature',
+    items: [
+      [
+        '多轨曲目的轨道条新增**每层音量滑杆**：`M`（静音）、`S`（独奏）之外可以单独调每一层的响度，方便把伴奏压下去、把主旋律顶上来。拉到最低时音符仍然存在（只是以最小力度播放），不会把编曲删掉。',
+        'The track strip for multi-track songs gained a **volume slider per layer**: besides `M` (mute) and `S` (solo) each layer has its own level, so a backing part can be pushed down under the lead. At the bottom of the slider the notes still exist — they just play at the smallest velocity — rather than being deleted from the arrangement.',
+      ],
+    ],
+  },
+  {
     version: '1.60.0',
     date: '2026-09-10',
     kind: 'feature',

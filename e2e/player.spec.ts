@@ -206,6 +206,10 @@ test.describe('player MIDI import', () => {
     await expect(mute).toHaveAttribute('aria-pressed', 'true');
     await strip.locator('[data-layer="1"] [data-act="solo"]').click();
     await expect(strip.locator('[data-layer="1"] [data-act="solo"]')).toHaveAttribute('aria-pressed', 'true');
+    // Each layer has its own level, so a two-track file can be balanced.
+    const volume = strip.locator('[data-layer="0"] .layer-vol');
+    await volume.fill('40');
+    await expect(volume).toHaveValue('40');
 
   });
 });

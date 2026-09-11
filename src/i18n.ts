@@ -371,6 +371,7 @@ const DICT: Record<string, [string, string]> = {
   'settings.title': ['设置', 'Settings'],
   'settings.workspace': ['工作区', 'Workspace'],
   'layer.mute': ['静音', 'Mute'],
+  'layer.volume': ['音量', 'Volume'],
   'layer.solo': ['独奏', 'Solo'],
   'settings.instances': ['第二层音色', 'Second timbre'],
   'settings.performance': ['演奏', 'Playing'],

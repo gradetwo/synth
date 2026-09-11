@@ -38,11 +38,13 @@ export interface PlayerState {
   countIn: boolean;
 }
 
-/** Mute and solo per file track. */
+/** Mute, solo and level per file track. */
 export interface LayerState {
   name: string;
   muted: boolean;
   soloed: boolean;
+  /** 0..1, applied to the layer's note velocities when it is scheduled. */
+  volume: number;
 }
 
 function buildEvents(song: MidiSong | null, layers: LayerState[]): TimedEvent[] {
@@ -51,15 +53,23 @@ function buildEvents(song: MidiSong | null, layers: LayerState[]): TimedEvent[] 
   // One layer is the normal case and behaves exactly as before; with several,
   // mute and solo decide which of them reach the synth.
   const anySolo = layers.some((layer) => layer.soloed);
-  const audible = songTracks(song).filter((_, index) => {
-    const layer = layers[index];
-    if (!layer) return true;
-    if (anySolo) return layer.soloed && !layer.muted;
-    return !layer.muted;
-  });
-  for (const n of audible.flatMap((layer) => layer.notes)) {
-    events.push({ t: n.start, note: n.note, on: true, velocity: n.velocity });
-    events.push({ t: n.start + n.duration, note: n.note, on: false, velocity: n.velocity });
+  const audible = songTracks(song)
+    .map((track, index) => ({ notes: track.notes, volume: layers[index]?.volume ?? 1, layer: layers[index] }))
+    .filter(({ layer }) => {
+      // A song without layer state (hand-built) is all audible.
+      if (!layer) return true;
+      if (anySolo) return layer.soloed && !layer.muted;
+      return !layer.muted;
+    });
+  for (const { notes, volume } of audible) {
+    for (const n of notes) {
+      // The layer's level is a velocity scale; a note never fades to nothing,
+      // or a quiet layer would silently drop notes instead of playing them
+      // softly.
+      const velocity = Math.max(1 / 127, Math.min(1, n.velocity * volume));
+      events.push({ t: n.start, note: n.note, on: true, velocity });
+      events.push({ t: n.start + n.duration, note: n.note, on: false, velocity });
+    }
   }
   events.sort((a, b) => a.t - b.t || Number(b.on) - Number(a.on));
   return events;
@@ -97,7 +107,9 @@ export class MidiPlayer {
     this.stop();
     this.song = song;
     // Layer state is per song: a fresh load starts with everything audible.
-    this.layers = song ? songTracks(song).map((layer) => ({ name: layer.name, muted: false, soloed: false })) : [];
+    this.layers = song
+      ? songTracks(song).map((layer) => ({ name: layer.name, muted: false, soloed: false, volume: 1 }))
+      : [];
     this.events = buildEvents(song, this.layers);
     this.cursor = 0;
     this.bpm = song?.bpm ?? 120;
@@ -117,10 +129,12 @@ export class MidiPlayer {
     return this.layers;
   }
 
-  setLayer(index: number, patch: Partial<Pick<LayerState, 'muted' | 'soloed'>>): void {
+  setLayer(index: number, patch: Partial<Pick<LayerState, 'muted' | 'soloed' | 'volume'>>): void {
     const layer = this.layers[index];
     if (!layer) return;
-    this.layers = this.layers.map((entry, i) => (i === index ? { ...entry, ...patch } : entry));
+    const clean =
+      patch.volume === undefined ? patch : { ...patch, volume: Math.max(0, Math.min(1, patch.volume)) };
+    this.layers = this.layers.map((entry, i) => (i === index ? { ...entry, ...clean } : entry));
     this.rebuild();
   }
 
