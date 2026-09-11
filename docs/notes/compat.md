@@ -127,6 +127,12 @@ WebKitGTK 的合成要走显示服务器，帧率直接决定 Playwright 能不�
 
 结论：本机 WebKit 慢的根因是**软件渲染**，不是 Xvfb 本身；换显示服务器只能好一倍，仍然不够。
 真正的解法是在有 GL 的环境里跑（自己的桌面会话），或把 WebKit 的判据交给 CI。
+
+**约定（2026-09-12 起）**：开发与测试中 **本地 WebKit 一律走 Weston**——
+`npm run test:e2e:webkit:wayland`（headless Weston；传 spec 文件即只跑该文件，`--all` 跑全量），
+桌面里则用 `npm run test:e2e:webkit:desktop`；`npm run nightly` 会自动优先 Weston，其次 Xvfb，
+最后才 headless，并在 `docs/notes/nightly.md` 的记录里注明用的哪种显示。Xvfb（`test:e2e:webkit:headed`）
+只在 Weston 不可用时作为回退。
 注意：本轮为验证 Docker 拉取了 3.56 GB 的镜像，`docker rmi mcr.microsoft.com/playwright:v1.63.0-noble` 可删除。
 
 ## 8. 忙碌宿主上的 E2E 判据补充

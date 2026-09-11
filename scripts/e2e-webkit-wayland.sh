@@ -21,12 +21,19 @@ suite=("e2e/responsive.spec.ts" "e2e/touch.spec.ts" "e2e/text-fit.spec.ts" "e2e/
        "e2e/fxgraph.spec.ts" "e2e/share.spec.ts" "e2e/drawer.spec.ts" "e2e/theme.spec.ts")
 
 args=()
+files=()
 for arg in "$@"; do
   case "$arg" in
     --all) suite=() ;;
-    *) args+=("$arg") ;;
+    --*) args+=("$arg") ;;
+    *) files+=("$arg") ;;
   esac
 done
+# An explicit file list replaces the default subset, so a single spec can be
+# checked in a minute or two.
+if [ "${#files[@]}" -gt 0 ]; then
+  suite=("${files[@]}")
+fi
 
 command -v weston >/dev/null || { echo "weston is not installed (pacman -S weston)" >&2; exit 1; }
 

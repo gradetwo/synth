@@ -7,18 +7,20 @@
  * scheduled CI job. Waiting for a push means a WebKit-only regression can sit
  * unnoticed for days; that is exactly what happened to the start button.
  *
- *   npm run nightly                  # WebKit, headed under Xvfb, whole suite
+ *   npm run nightly                  # WebKit core subset on headless Weston
  *   npm run nightly -- --engines=webkit,firefox
- *   npm run nightly -- --subset      # the phone/tablet viewports + the new work
+ *   npm run nightly -- --all         # the whole suite (slow on a workstation)
+ *   npm run nightly -- --display=xvfb # force the older Xvfb path
  *   npm run nightly -- --update      # also append a row to docs/notes/nightly.md
  *
- * Headed under a virtual display is not a preference: headless WebKit on Linux
- * never fires requestAnimationFrame, so Playwright's pre-click stability check
- * waits for ever and every click times out (see docs/notes/compat.md). The
- * script therefore runs `xvfb-run -a ... --headed` when Xvfb is available, and
- * says so when it is not.
+ * Headed on a compositor is not a preference: headless WebKit on Linux never
+ * fires requestAnimationFrame, so Playwright's pre-click stability check waits
+ * for ever and every click times out. Weston's headless backend is the standard
+ * local path now — measured 1.8 fps against Xvfb's 0.7 on this machine, and it
+ * uses the GPU when `/dev/dri` is there (see docs/notes/compat.md). Xvfb stays
+ * as a fallback, and a real desktop session is fastest of all.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,7 +83,33 @@ if (existsSync(lockPath)) {
 }
 writeFileSync(lockPath, `${Date.now()}\n${process.pid}\n`);
 
-const hasXvfb = spawnSync('which', ['xvfb-run'], { encoding: 'utf8' }).status === 0;
+const which = (name) => spawnSync('which', [name], { encoding: 'utf8' }).status === 0;
+const hasWeston = which('weston');
+const hasXvfb = which('xvfb-run');
+/** `auto` (default), `wayland`, `xvfb` or `none`: how WebKit gets a display. */
+const display = value('display', 'auto');
+const chosen = display !== 'auto' ? display : hasWeston ? 'wayland' : hasXvfb ? 'xvfb' : 'none';
+
+/**
+ * Start a headless Weston and wait for its socket, so WebKit has a compositor
+ * to composite into. Returns the pid to stop it again.
+ */
+function startWeston() {
+  const runtime = join(logDir, 'xdg');
+  mkdirSync(runtime, { recursive: true, mode: 0o700 });
+  const socket = 'wayland-gs1';
+  const child = spawn(
+    'weston',
+    ['--backend=headless-backend.so', `--socket=${socket}`, '--width=1280', '--height=900', '--idle-time=0'],
+    { cwd: root, env: { ...env, XDG_RUNTIME_DIR: runtime }, detached: true, stdio: 'ignore' },
+  );
+  child.unref();
+  for (let i = 0; i < 40; i++) {
+    if (existsSync(join(runtime, socket))) return { pid: child.pid, runtime, socket };
+    spawnSync('sleep', ['0.25']);
+  }
+  return { pid: child.pid, runtime, socket, failed: true };
+}
 const stamp = new Date().toISOString().slice(0, 10);
 const rows = [];
 let failures = 0;
@@ -89,18 +117,45 @@ let failures = 0;
 for (const engine of engines) {
   const logPath = join(logDir, `${stamp}-${engine}.log`);
   const cmd = ['playwright', 'test', '--project', engine, '--workers=1', ...subset];
-  let argv;
-  if (engine === 'webkit' && hasXvfb) {
-    // The renderer needs frames for the clicks to be considered stable.
-    argv = ['-a', 'npx', ...cmd, '--headed'];
-  } else {
-    argv = ['npx', ...cmd];
-  }
   const started = Date.now();
-  console.log(`[nightly] ${engine}: npx ${cmd.join(' ')}${engine === 'webkit' && hasXvfb ? ' --headed (xvfb)' : ''}`);
-  const result = hasXvfb && engine === 'webkit'
-    ? run('xvfb-run', argv)
-    : run(argv[0], argv.slice(1));
+  /** How this engine is being given a display, for the log and the table. */
+  let how = 'headless';
+  let result;
+  if (engine === 'webkit' && chosen === 'wayland') {
+    const weston = startWeston();
+    if (weston.failed) {
+      console.error('[nightly] weston did not come up; running WebKit headless');
+      result = run('npx', cmd);
+    } else {
+      how = 'weston';
+      const previous = { XDG_RUNTIME_DIR: env.XDG_RUNTIME_DIR, WAYLAND_DISPLAY: env.WAYLAND_DISPLAY };
+      env.XDG_RUNTIME_DIR = weston.runtime;
+      env.WAYLAND_DISPLAY = weston.socket;
+      try {
+        result = run('npx', [...cmd, '--headed']);
+      } finally {
+        if (previous.XDG_RUNTIME_DIR === undefined) delete env.XDG_RUNTIME_DIR;
+        else env.XDG_RUNTIME_DIR = previous.XDG_RUNTIME_DIR;
+        if (previous.WAYLAND_DISPLAY === undefined) delete env.WAYLAND_DISPLAY;
+        else env.WAYLAND_DISPLAY = previous.WAYLAND_DISPLAY;
+        try {
+          process.kill(-weston.pid, 'SIGTERM');
+        } catch {
+          try {
+            process.kill(weston.pid, 'SIGTERM');
+          } catch {
+            /* already gone */
+          }
+        }
+      }
+    }
+  } else if (engine === 'webkit' && chosen === 'xvfb' && hasXvfb) {
+    how = 'xvfb';
+    result = run('xvfb-run', ['-a', 'npx', ...cmd, '--headed']);
+  } else {
+    result = run('npx', cmd);
+  }
+  console.log(`[nightly] ${engine}: ${how} · npx ${cmd.join(' ')}`);
   const seconds = Math.round((Date.now() - started) / 1000);
   writeFileSync(logPath, result.out);
 
@@ -109,11 +164,14 @@ for (const engine of engines) {
   const status = result.code === 0 ? 'pass' : 'fail';
   if (result.code !== 0) failures += 1;
   console.log(`[nightly] ${engine}: ${status} — ${passed} passed, ${failed} failed (${seconds}s) · ${logPath}`);
-  rows.push({ engine, status, passed, failed, seconds });
+  rows.push({ engine, how, status, passed, failed, seconds });
 }
 
 const summary = rows
-  .map((r) => `| ${stamp} | ${r.engine} | ${r.status === 'pass' ? '✅' : '❌'} ${r.status} | ${r.passed} | ${r.failed} | ${r.seconds}s |`)
+  .map(
+    (r) =>
+      `| ${stamp} | ${r.engine} | ${r.how} | ${r.status === 'pass' ? '✅' : '❌'} ${r.status} | ${r.passed} | ${r.failed} | ${r.seconds}s |`,
+  )
   .join('\n');
 
 if (update) {
@@ -121,9 +179,10 @@ if (update) {
     writeFileSync(
       notesPath,
       '# 夜间浏览器跑 / Nightly browser runs\n\n' +
-        '由 `npm run nightly -- --update`（本机）或 CI 的 `nightly` 作业写入：WebKit / Firefox 全量 E2E。\n' +
-        '本机需 `xvfb-run`：headless WebKit 不触发 rAF，点击会一直等（见 `docs/notes/compat.md`）。\n\n' +
-        '| 日期 | 内核 | 结果 | 通过 | 失败 | 用时 |\n| :--- | :--- | :--- | ---: | ---: | ---: |\n',
+        '由 `npm run nightly -- --update`（本机）或 CI 的 `nightly` 作业写入：WebKit / Firefox 的 E2E。\n' +
+        '本机 WebKit 默认跑在 headless Weston 上（headless 模式不触发 rAF，点击会一直等；\n' +
+        'Weston 比 Xvfb 快一倍多，有 `/dev/dri` 时会走 GPU —— 见 `docs/notes/compat.md`）。\n\n' +
+        '| 日期 | 内核 | 显示 | 结果 | 通过 | 失败 | 用时 |\n| :--- | :--- | :--- | :--- | ---: | ---: | ---: |\n',
     );
   }
   appendFileSync(notesPath, `${summary}\n`);
