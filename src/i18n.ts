@@ -231,7 +231,7 @@ const DICT: Record<string, [string, string]> = {
   'audio.polyHint': ['负载过高时引擎会自动下调；这里可以手动设一个上限。', 'The engine lowers this automatically under load; set a ceiling here if you prefer.'],
   'audio.resume': ['恢复音频', 'Resume audio'],
   'audio.footer': ['这些数字来自浏览器与渲染线程本身，用于判断“音质问题”到底出在哪一环。', 'These numbers come from the browser and the render thread, so a sound problem can be traced to the right stage.'],
-  'drawer.checkUpdate': ['检查更新', 'Check for updates'],
+  'drawer.checkUpdate': ['检查更新', 'Updates'],
   'drawer.updateCurrent': ['已是最新版本', 'You are on the latest version'],
   'drawer.updateFound': ['发现新版本，正在更新…', 'New version found, updating…'],
   'drawer.updateUnsupported': ['离线模式不可用', 'Update check unavailable'],
@@ -378,8 +378,8 @@ const DICT: Record<string, [string, string]> = {
   // --- two instances -------------------------------------------------------
   'inst.pick': ['正在编辑', 'Editing'],
   'inst.hint': ['1 = 主音色，2 = 第二层（面板显示正在编辑的那一层）', '1 = main patch, 2 = second layer (the panels show the one being edited)'],
-  'inst.route': ['按键分配', 'Key routing'],
-  'inst.single': ['只用第 1 层', 'Instance 1 only'],
+  'inst.route': ['按键分配', 'Routing'],
+  'inst.single': ['只用第 1 层', 'Instance 1'],
   'inst.layer': ['叠加两层', 'Layer both'],
   'inst.split': ['按音高分区', 'Split by key'],
   'inst.splitAt': ['分界音', 'Split at'],
@@ -387,7 +387,7 @@ const DICT: Record<string, [string, string]> = {
   'settings.behaviour': ['交互', 'Interaction'],
   'settings.about': ['关于与文档', 'About & docs'],
   'settings.docs': ['文档', 'Docs'],
-  'settings.openAudio': ['打开音频设置', 'Open audio settings'],
+  'settings.openAudio': ['打开音频设置', 'Audio settings'],
   // --- sampler (A) ---------------------------------------------------------
   'wave.sample': ['采样', 'Sample'],
   'smp.import': ['导入采样', 'Import sample'],

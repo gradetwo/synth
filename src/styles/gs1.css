@@ -61,14 +61,21 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
   border-bottom:1px solid var(--line-soft);position:relative}
 .topbar::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;
   background:linear-gradient(90deg,transparent,rgba(255,179,64,.35),transparent)}
-.brand{display:flex;align-items:center;gap:11px}
+/* The bar wraps when the labels are long (English) instead of pushing its own
+   content past its right edge. */
+.topbar{flex-wrap:wrap}
+.top-actions{flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:11px;min-width:0}
 .brand-mark{width:38px;height:38px;border-radius:10px;
   background:radial-gradient(circle at 32% 28%,var(--knob-hi),var(--bg-panel) 70%);
   border:1px solid var(--border-hi);display:grid;place-items:center;
   box-shadow:inset 0 1px 0 var(--sheen),0 4px 12px var(--shadow-1)}
 .brand-text .brand-name{font:700 15px/1.1 var(--grot);letter-spacing:.06em}
 .brand-text .brand-name b{color:var(--accent)}
-.brand-text .brand-sub{font:500 8.5px/1 var(--mono);color:var(--txt-dim);letter-spacing:.14em;margin-top:3px}
+.brand-text{min-width:0;overflow:hidden}
+.brand-text .brand-sub{font:500 8.5px/1 var(--mono);color:var(--txt-dim);letter-spacing:.14em;margin-top:3px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.brand-text .brand-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .preset-ctrl{display:flex;align-items:stretch;gap:8px;flex:1;min-width:0;justify-content:center}
 .nav-btn{width:30px;border:1px solid var(--border);border-radius:8px;cursor:pointer;
   background:var(--bg-inset);color:var(--txt-2);font-size:16px;font-family:var(--mono);transition:.15s}
@@ -157,7 +164,7 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
   border:1px solid var(--border);border-radius:12px;position:relative;
   box-shadow:inset 0 1px 0 var(--sheen),0 10px 24px var(--shadow-1);
   padding:12px 12px 13px}
-.module-head{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.module-head{display:flex;align-items:center;gap:8px;margin-bottom:12px;min-width:0;overflow:hidden}
 .module-head .bar{width:3.5px;height:14px;border-radius:2px;background:var(--mc);box-shadow:0 0 8px var(--mc)}
 .module-head .title{font:700 11.5px/1 var(--grot);letter-spacing:.16em;color:var(--mc)}
 .module-head .sub{font:500 8.5px/1 var(--mono);color:var(--txt-dim);letter-spacing:.08em;margin-left:-2px}
@@ -846,6 +853,25 @@ body.module-dragging .module-grip{cursor:grabbing}
 .view-row{order:5;flex-basis:100%;width:100%;margin-top:8px}
 .view-row .view-toggle{width:100%}
 .view-row .vt-btn{flex:1;justify-content:center}
+/* ---- text safety -------------------------------------------------------
+   The layouts are sized for Chinese labels, which are two to four glyphs wide;
+   the same string in English can be twice that. Anything that sits in a fixed
+   slot is therefore one line with an ellipsis, and every flex/grid child is
+   allowed to shrink (`min-width:0`) instead of pushing its neighbours out of
+   the bar. Long English words are shortened in `i18n` where an ellipsis would
+   cut the meaning. */
+.tbtn-label,.vt-btn,.seg button,.d-reset,.roll-btn,.layer-name,.pt-title,.pt-meta,
+.preset-name,.preset-tag,.settings-label,.settings-section h3,
+.module-head .title,.module-head .sub,.nd-label,.nd-sub,.knob-label,.knob-value,
+.chip,.pcard-name,.pcard-meta,.fx-title,.badge,.d-title,.player-title,.d-theme-btn,
+.wt-name,.start-name,.start-sub,.row-label,.audio-row .lbl{
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.settings-row>*,.d-foot-actions>*,.topbar>*,.knob-row>*,.fx-grid>*,.player-actions>*{
+  min-width:0}
+/* Labels with a whole row to themselves may wrap. */
+.settings-note{white-space:normal;overflow:visible;text-overflow:clip}
+.start-sub{overflow:visible}
+
 /* The drawer body scrolls as one: the preset list first, the settings under it.
    Nothing is docked, so the list is never squeezed by however many buttons the
    settings have grown to. */

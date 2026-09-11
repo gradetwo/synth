@@ -23,6 +23,25 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.64.0',
+    date: '2026-09-10',
+    kind: 'fix',
+    items: [
+      [
+        '**英文界面不再撑坏排版**：版面是按中文（2–4 个字）留的宽度，英文同样的意思可能长一倍。现在固定位置上的文字一律单行 + 省略号（`…`），一行放不下时整行换行而不是把别的控件挤出屏幕；顶栏与音色名尤其明显。',
+        '**English labels no longer break the layout**: the design is sized for Chinese (two to four glyphs), and the same label in English can be twice as wide. Text in a fixed slot is now one line with an ellipsis, and rows wrap when they run out of room instead of pushing their neighbours off screen — most visible in the top bar and the patch name.',
+      ],
+      [
+        '几个过长的英文按钮改成更短的写法（`Open audio settings` → `Audio settings`、`Check for updates` → `Updates`、`Instance 1 only` → `Instance 1`、`Key routing` → `Routing`），避免省略号切掉意思。',
+        'A few over-long English buttons were shortened (`Open audio settings` → `Audio settings`, `Check for updates` → `Updates`, `Instance 1 only` → `Instance 1`, `Key routing` → `Routing`) so the ellipsis never has to cut the meaning.',
+      ],
+      [
+        '新增「英文版排版」端到端用例：切到英文后，在**手机竖屏与桌面**两种宽度下遍历模块视图、设置抽屉与预设库，断言没有任何容器把内容挤出自己的右边界、页面也不会横向滚动。',
+        'Added an "English layout" end-to-end test: after switching to English it walks the module view, the settings drawer and the preset library at **phone portrait and desktop** widths, asserting that nothing overflows its own right edge and the page never scrolls sideways.',
+      ],
+    ],
+  },
+  {
     version: '1.63.0',
     date: '2026-09-10',
     kind: 'fix',
