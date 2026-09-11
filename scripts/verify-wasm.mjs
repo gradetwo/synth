@@ -47,7 +47,7 @@ const peak = (ptr, frames) => {
 console.log('[verify] WASM core');
 
 // Bump this together with `ABI_VERSION` in crates/synth-core/src/abi.rs.
-check('ABI version', ex.gs_abi_version() === 7, `v${ex.gs_abi_version()}`);
+check('ABI version', ex.gs_abi_version() === 8, `v${ex.gs_abi_version()}`);
 check('exposes the meter exports', typeof ex.gs_take_true_peak === 'function' && typeof ex.gs_loudness_rms === 'function');
 check(
   'exposes the second instance',
@@ -78,6 +78,10 @@ check(
     typeof ex.gs_wavetable_clear === 'function' &&
     typeof ex.gs_wavetable_has === 'function' &&
     ex.gs_wavetable_capacity() > 0,
+);
+check(
+  'exposes the effect routing graph',
+  typeof ex.gs_fx_graph_sync === 'function',
 );
 check('max block size is 1024', ex.gs_max_block_size() === 1024);
 check('voice pool is 32', ex.gs_max_voices() === 32);
@@ -169,6 +173,60 @@ for (const block of [128, 256, 512, 1024]) {
     m = Math.max(m, peak(ex.gs_left_ptr(), block));
   }
   check(`renders block size ${block}`, m > 0.05, `peak ${m.toFixed(3)}`);
+}
+
+// --------------------------------------------------- effect routing graph
+// The graph may only ever be an alternative way of saying what the chain says:
+// deriving it from the current chain has to render the same samples.
+{
+  const chain = [1, 2, 3, 4, 5, 6];
+  const patch = (core) => {
+    for (const [id, value] of [
+      [Param.MASTER_VOLUME, 0.8], [1, 1], [2, 2], [5, 0.8], [7, 0], [14, 16000], [17, 0],
+      [19, 0.002], [21, 1], [23, 0], [29, 1], [31, 0.3], [32, 1], [35, 0.25], [43, 1],
+      [46, 0.5], [47, 1], [50, 0.4], [51, 1], [54, 0.4], [55, 1], [57, 0.5], [100, 0],
+    ]) {
+      core.gs_set_param(id, value);
+    }
+    chain.forEach((kind, slot) => core.gs_set_param(82 + slot, kind));
+  };
+  const renderGraph = (core) => {
+    core.gs_all_notes_off();
+    core.gs_note_on(60, 0.9);
+    const out = [];
+    for (let block = 0; block < 30; block++) {
+      core.gs_process(128);
+      const view = new Float32Array(core.memory.buffer, core.gs_left_ptr(), 128);
+      out.push(...view);
+    }
+    return out;
+  };
+
+  // A fresh instance per variant: the DSP keeps its delay lines and reverb
+  // tail across `gs_init`, and a leftover tail would show up as a difference
+  // that has nothing to do with the routing.
+  const fresh = () =>
+    new WebAssembly.Instance(new WebAssembly.Module(readFileSync(wasmPath)), {}).exports;
+  const legacy = (() => {
+    const core = fresh();
+    core.gs_init(48000, 16);
+    patch(core);
+    return renderGraph(core);
+  })();
+  const graph = (() => {
+    const core = fresh();
+    core.gs_init(48000, 16);
+    patch(core);
+    core.gs_fx_graph_sync();
+    return renderGraph(core);
+  })();
+  let worst = 0;
+  for (let i = 0; i < legacy.length; i++) worst = Math.max(worst, Math.abs(legacy[i] - graph[i]));
+  check(
+    'the routing graph renders exactly the chain it came from',
+    worst === 0 && legacy.some((v) => Math.abs(v) > 0.01),
+    `worst sample difference ${worst}`,
+  );
 }
 
 // ------------------------------------------------------- per-note stereo pan

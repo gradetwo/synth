@@ -118,7 +118,75 @@ export const Param = {
   FX_PARALLEL4: 91,
   FX_PARALLEL5: 92,
   FX_PARALLEL6: 93,
+  /** 1 = route the effect nodes through the graph below instead of the chain (A1). */
+  FX_GRAPH: 100,
+  /** Node input 1 source: 0 nothing, 1 dry bus, 2..7 node 1..6. */
+  FX_NODE1_IN1: 101,
+  FX_NODE2_IN1: 102,
+  FX_NODE3_IN1: 103,
+  FX_NODE4_IN1: 104,
+  FX_NODE5_IN1: 105,
+  FX_NODE6_IN1: 106,
+  /** Gain on node input 1. */
+  FX_NODE1_IN1_GAIN: 107,
+  FX_NODE2_IN1_GAIN: 108,
+  FX_NODE3_IN1_GAIN: 109,
+  FX_NODE4_IN1_GAIN: 110,
+  FX_NODE5_IN1_GAIN: 111,
+  FX_NODE6_IN1_GAIN: 112,
+  /** Node input 2: the second connection a node can sum. */
+  FX_NODE1_IN2: 113,
+  FX_NODE2_IN2: 114,
+  FX_NODE3_IN2: 115,
+  FX_NODE4_IN2: 116,
+  FX_NODE5_IN2: 117,
+  FX_NODE6_IN2: 118,
+  FX_NODE1_IN2_GAIN: 119,
+  FX_NODE2_IN2_GAIN: 120,
+  FX_NODE3_IN2_GAIN: 121,
+  FX_NODE4_IN2_GAIN: 122,
+  FX_NODE5_IN2_GAIN: 123,
+  FX_NODE6_IN2_GAIN: 124,
+  /** 1 = this node's output reaches the mix bus. */
+  FX_NODE1_TO_OUT: 125,
+  FX_NODE2_TO_OUT: 126,
+  FX_NODE3_TO_OUT: 127,
+  FX_NODE4_TO_OUT: 128,
+  FX_NODE5_TO_OUT: 129,
+  FX_NODE6_TO_OUT: 130,
+  /** Gain on the way to the mix bus. */
+  FX_NODE1_OUT_GAIN: 131,
+  FX_NODE2_OUT_GAIN: 132,
+  FX_NODE3_OUT_GAIN: 133,
+  FX_NODE4_OUT_GAIN: 134,
+  FX_NODE5_OUT_GAIN: 135,
+  FX_NODE6_OUT_GAIN: 136,
 } as const;
+
+/** The dry (pre-effect) bus, as a graph source code. */
+export const GRAPH_DRY = 1;
+
+/** Source code for the output of node `slot` (0-based). */
+export function graphNodeSrc(slot: number): number {
+  return slot + 2;
+}
+
+/** Source code of a node input parameter (0 or 1). */
+export function graphInId(slot: number, which: 0 | 1): ParamId {
+  return ((which === 0 ? Param.FX_NODE1_IN1 : Param.FX_NODE1_IN2) + slot) as ParamId;
+}
+
+export function graphInGainId(slot: number, which: 0 | 1): ParamId {
+  return ((which === 0 ? Param.FX_NODE1_IN1_GAIN : Param.FX_NODE1_IN2_GAIN) + slot) as ParamId;
+}
+
+export function graphToOutId(slot: number): ParamId {
+  return (Param.FX_NODE1_TO_OUT + slot) as ParamId;
+}
+
+export function graphOutGainId(slot: number): ParamId {
+  return (Param.FX_NODE1_OUT_GAIN + slot) as ParamId;
+}
 
 /** Positions in the effect chain (A5). One per effect: the chain is a permutation. */
 export const FX_SLOTS = 6;
@@ -159,6 +227,50 @@ export function intToFxKind(value: number): FxKind {
 export function fxKindCanBeParallel(kind: FxKind): boolean {
   return kind === 'chorus' || kind === 'flanger' || kind === 'phaser' || kind === 'drive';
 }
+
+/**
+ * The routing graph a chain is equivalent to (A1).
+ *
+ * Node 1 reads the dry bus, every later node reads the one before it, and the
+ * last position that actually runs feeds the mix bus — which is exactly what
+ * the chain does, so switching the graph on cannot change the sound. Positions
+ * that run as sends keep the dry signal through their own blend law, which is
+ * why they need no special routing here.
+ *
+ * A position with nothing in it passes its input straight through, so the last
+ * position with an effect is the signal the bus ends up carrying.
+ */
+export function graphFromChain(read: (id: ParamId) => number): number[] {
+  const chain = readChain(read);
+  const out: number[] = [1]; // the graph switch itself
+  const sources: number[] = [];
+  let previous: number | null = null;
+  for (let slot = 0; slot < FX_SLOTS; slot++) {
+    sources.push(previous === null ? GRAPH_DRY : graphNodeSrc(previous));
+    if (chain[slot] !== 'none') previous = slot;
+  }
+  const lastActive = previous ?? 0;
+  // The order has to match `GRAPH_FROM_CHAIN_IDS`, which is the order the
+  // parameters are written in.
+  out.push(...sources); // input 1 sources
+  for (let slot = 0; slot < FX_SLOTS; slot++) out.push(1); // input 1 gains
+  for (let slot = 0; slot < FX_SLOTS; slot++) out.push(0); // input 2 sources
+  for (let slot = 0; slot < FX_SLOTS; slot++) out.push(1); // input 2 gains
+  for (let slot = 0; slot < FX_SLOTS; slot++) out.push(slot === lastActive ? 1 : 0);
+  for (let slot = 0; slot < FX_SLOTS; slot++) out.push(1); // output gains
+  return out;
+}
+
+/** The parameter ids `graphFromChain` writes, in the order it returns values. */
+export const GRAPH_FROM_CHAIN_IDS: ParamId[] = [
+  Param.FX_GRAPH,
+  ...Array.from({ length: FX_SLOTS }, (_, slot) => graphInId(slot, 0)),
+  ...Array.from({ length: FX_SLOTS }, (_, slot) => graphInGainId(slot, 0)),
+  ...Array.from({ length: FX_SLOTS }, (_, slot) => graphInId(slot, 1)),
+  ...Array.from({ length: FX_SLOTS }, (_, slot) => graphInGainId(slot, 1)),
+  ...Array.from({ length: FX_SLOTS }, (_, slot) => graphToOutId(slot)),
+  ...Array.from({ length: FX_SLOTS }, (_, slot) => graphOutGainId(slot)),
+];
 
 /** The chain as it is set today, in signal order. */
 export function readChain(get: (id: ParamId) => number): FxKind[] {
@@ -208,6 +320,43 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.FX_PARALLEL4]: 'fxParallel4',
   [Param.FX_PARALLEL5]: 'fxParallel5',
   [Param.FX_PARALLEL6]: 'fxParallel6',
+  [Param.FX_GRAPH]: 'fxGraph',
+  [Param.FX_NODE1_IN1]: 'fxNode1In1',
+  [Param.FX_NODE2_IN1]: 'fxNode2In1',
+  [Param.FX_NODE3_IN1]: 'fxNode3In1',
+  [Param.FX_NODE4_IN1]: 'fxNode4In1',
+  [Param.FX_NODE5_IN1]: 'fxNode5In1',
+  [Param.FX_NODE6_IN1]: 'fxNode6In1',
+  [Param.FX_NODE1_IN1_GAIN]: 'fxNode1In1Gain',
+  [Param.FX_NODE2_IN1_GAIN]: 'fxNode2In1Gain',
+  [Param.FX_NODE3_IN1_GAIN]: 'fxNode3In1Gain',
+  [Param.FX_NODE4_IN1_GAIN]: 'fxNode4In1Gain',
+  [Param.FX_NODE5_IN1_GAIN]: 'fxNode5In1Gain',
+  [Param.FX_NODE6_IN1_GAIN]: 'fxNode6In1Gain',
+  [Param.FX_NODE1_IN2]: 'fxNode1In2',
+  [Param.FX_NODE2_IN2]: 'fxNode2In2',
+  [Param.FX_NODE3_IN2]: 'fxNode3In2',
+  [Param.FX_NODE4_IN2]: 'fxNode4In2',
+  [Param.FX_NODE5_IN2]: 'fxNode5In2',
+  [Param.FX_NODE6_IN2]: 'fxNode6In2',
+  [Param.FX_NODE1_IN2_GAIN]: 'fxNode1In2Gain',
+  [Param.FX_NODE2_IN2_GAIN]: 'fxNode2In2Gain',
+  [Param.FX_NODE3_IN2_GAIN]: 'fxNode3In2Gain',
+  [Param.FX_NODE4_IN2_GAIN]: 'fxNode4In2Gain',
+  [Param.FX_NODE5_IN2_GAIN]: 'fxNode5In2Gain',
+  [Param.FX_NODE6_IN2_GAIN]: 'fxNode6In2Gain',
+  [Param.FX_NODE1_TO_OUT]: 'fxNode1ToOut',
+  [Param.FX_NODE2_TO_OUT]: 'fxNode2ToOut',
+  [Param.FX_NODE3_TO_OUT]: 'fxNode3ToOut',
+  [Param.FX_NODE4_TO_OUT]: 'fxNode4ToOut',
+  [Param.FX_NODE5_TO_OUT]: 'fxNode5ToOut',
+  [Param.FX_NODE6_TO_OUT]: 'fxNode6ToOut',
+  [Param.FX_NODE1_OUT_GAIN]: 'fxNode1OutGain',
+  [Param.FX_NODE2_OUT_GAIN]: 'fxNode2OutGain',
+  [Param.FX_NODE3_OUT_GAIN]: 'fxNode3OutGain',
+  [Param.FX_NODE4_OUT_GAIN]: 'fxNode4OutGain',
+  [Param.FX_NODE5_OUT_GAIN]: 'fxNode5OutGain',
+  [Param.FX_NODE6_OUT_GAIN]: 'fxNode6OutGain',
   [Param.OSC1_ON]: 'osc1On',
   [Param.OSC1_WAVE]: 'osc1Wave',
   [Param.OSC1_PITCH]: 'osc1Pitch',
@@ -481,6 +630,47 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.FX_PARALLEL4]: 0,
   [Param.FX_PARALLEL5]: 0,
   [Param.FX_PARALLEL6]: 0,
+  // The routing graph is off until the editor turns it on: every existing patch
+  // then runs the chain above, which is what it was written for (A1).
+  [Param.FX_GRAPH]: 0,
+  // Its default is the chain: node 1 reads the dry bus, each later node reads
+  // the one before it, and the last node feeds the output.
+  [Param.FX_NODE1_IN1]: GRAPH_DRY,
+  [Param.FX_NODE2_IN1]: graphNodeSrc(0),
+  [Param.FX_NODE3_IN1]: graphNodeSrc(1),
+  [Param.FX_NODE4_IN1]: graphNodeSrc(2),
+  [Param.FX_NODE5_IN1]: graphNodeSrc(3),
+  [Param.FX_NODE6_IN1]: graphNodeSrc(4),
+  [Param.FX_NODE1_IN1_GAIN]: 1,
+  [Param.FX_NODE2_IN1_GAIN]: 1,
+  [Param.FX_NODE3_IN1_GAIN]: 1,
+  [Param.FX_NODE4_IN1_GAIN]: 1,
+  [Param.FX_NODE5_IN1_GAIN]: 1,
+  [Param.FX_NODE6_IN1_GAIN]: 1,
+  [Param.FX_NODE1_IN2]: 0,
+  [Param.FX_NODE2_IN2]: 0,
+  [Param.FX_NODE3_IN2]: 0,
+  [Param.FX_NODE4_IN2]: 0,
+  [Param.FX_NODE5_IN2]: 0,
+  [Param.FX_NODE6_IN2]: 0,
+  [Param.FX_NODE1_IN2_GAIN]: 1,
+  [Param.FX_NODE2_IN2_GAIN]: 1,
+  [Param.FX_NODE3_IN2_GAIN]: 1,
+  [Param.FX_NODE4_IN2_GAIN]: 1,
+  [Param.FX_NODE5_IN2_GAIN]: 1,
+  [Param.FX_NODE6_IN2_GAIN]: 1,
+  [Param.FX_NODE1_TO_OUT]: 0,
+  [Param.FX_NODE2_TO_OUT]: 0,
+  [Param.FX_NODE3_TO_OUT]: 0,
+  [Param.FX_NODE4_TO_OUT]: 0,
+  [Param.FX_NODE5_TO_OUT]: 0,
+  [Param.FX_NODE6_TO_OUT]: 1,
+  [Param.FX_NODE1_OUT_GAIN]: 1,
+  [Param.FX_NODE2_OUT_GAIN]: 1,
+  [Param.FX_NODE3_OUT_GAIN]: 1,
+  [Param.FX_NODE4_OUT_GAIN]: 1,
+  [Param.FX_NODE5_OUT_GAIN]: 1,
+  [Param.FX_NODE6_OUT_GAIN]: 1,
   [Param.MASTER_TUNE]: 0,
   [Param.VOICE_MODE]: 0,
   [Param.FX_CHORUS_ON]: 0,

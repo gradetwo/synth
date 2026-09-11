@@ -129,10 +129,25 @@ pub mod id {
     pub const FX_PARALLEL4: u32 = 91;
     pub const FX_PARALLEL5: u32 = 92;
     pub const FX_PARALLEL6: u32 = 93;
+    /// 1 = route the effect positions through the graph below instead of the
+    /// legacy chain (A1). 0 keeps every old patch exactly as it was.
+    pub const FX_GRAPH: u32 = 100;
+    /// Node input 1 source, one per node: 0 = nothing, 1 = the dry bus,
+    /// 2..=7 = the output of node 1..6.
+    pub const FX_NODE_IN1: u32 = 101;
+    /// Gain on node input 1.
+    pub const FX_NODE_IN1_GAIN: u32 = 107;
+    /// Node input 2 source (same encoding); 0 unless a node sums two signals.
+    pub const FX_NODE_IN2: u32 = 113;
+    pub const FX_NODE_IN2_GAIN: u32 = 119;
+    /// 1 = this node's output reaches the mix bus.
+    pub const FX_NODE_TO_OUT: u32 = 125;
+    /// Gain on the way to the mix bus.
+    pub const FX_NODE_OUT_GAIN: u32 = 131;
 }
 
-/// Highest parameter id + 1 (ids are 0..=99).
-pub const PARAM_COUNT: usize = 100;
+/// Highest parameter id + 1.
+pub const PARAM_COUNT: usize = 137;
 
 /// Positions in the effect chain (A5). Six is one per effect: the chain is a
 /// permutation, so reordering can never lose an effect or double one up.
@@ -503,6 +518,64 @@ pub struct LfoParams {
     pub one_shot: bool,
 }
 
+/// Where a node input takes its signal from (A1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GraphInput {
+    /// 0 = nothing, 1 = the dry (pre-effect) bus, 2..=7 = node 1..=6.
+    pub src: u8,
+    pub gain: f32,
+}
+
+impl GraphInput {
+    pub const NONE: Self = Self { src: 0, gain: 1.0 };
+}
+
+/// The dry bus; the first source a node can read.
+pub const GRAPH_DRY: u8 = 1;
+/// Source code for node `slot` (0-based).
+pub const fn graph_node_src(slot: usize) -> u8 {
+    slot as u8 + 2
+}
+
+/// Which per-node graph field a parameter id addresses.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GraphParam {
+    In1Src,
+    In1Gain,
+    In2Src,
+    In2Gain,
+    ToOut,
+    OutGain,
+}
+
+/// Decode a graph parameter id into (node index, field). `None` for every other
+/// parameter.
+pub fn graph_param_field(param_id: u32) -> Option<(u32, GraphParam)> {
+    let ranges: [(u32, GraphParam); 6] = [
+        (id::FX_NODE_IN1, GraphParam::In1Src),
+        (id::FX_NODE_IN1_GAIN, GraphParam::In1Gain),
+        (id::FX_NODE_IN2, GraphParam::In2Src),
+        (id::FX_NODE_IN2_GAIN, GraphParam::In2Gain),
+        (id::FX_NODE_TO_OUT, GraphParam::ToOut),
+        (id::FX_NODE_OUT_GAIN, GraphParam::OutGain),
+    ];
+    for (base, field) in ranges {
+        if param_id >= base && param_id < base + FX_SLOTS as u32 {
+            return Some((param_id - base, field));
+        }
+    }
+    None
+}
+
+/// Clamp a written value into a valid source code. A code that names nothing
+/// reads as "not connected", which is what the renderer does with it anyway.
+pub fn graph_src_code(value: f32) -> u8 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+    (value as u32).min(FX_SLOTS as u32 + 1) as u8
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct FxParams {
     pub reverb_on: bool,
@@ -524,6 +597,17 @@ pub struct FxParams {
     pub chain: [FxKind; FX_SLOTS],
     /// Positions that run as sends rather than inserts.
     pub parallel: [bool; FX_SLOTS],
+    /// Feed-forward routing for the effect nodes (A1). While this is false the
+    /// chain above runs exactly as it always has, which is how every patch
+    /// written before the graph existed keeps its sound.
+    pub graph: bool,
+    /// Up to two inputs per node. An input's `src` may only point at the dry
+    /// bus or at an *earlier* node; anything else is ignored when rendering, so
+    /// the graph can never contain a loop.
+    pub node_in: [[GraphInput; 2]; FX_SLOTS],
+    /// Nodes whose output reaches the mix bus, and at what gain.
+    pub node_to_out: [bool; FX_SLOTS],
+    pub node_out_gain: [f32; FX_SLOTS],
     pub chorus_on: bool,
     pub chorus_depth: f32,
     pub chorus_rate: f32,
@@ -658,6 +742,20 @@ impl Params {
                     FxKind::Drive,
                 ],
                 parallel: [false; FX_SLOTS],
+                graph: false,
+                // The default graph is the legacy chain: node 1 reads the dry
+                // bus, each later node reads the one before it, and the last
+                // node feeds the output.
+                node_in: [
+                    [GraphInput { src: GRAPH_DRY, gain: 1.0 }, GraphInput::NONE],
+                    [GraphInput { src: graph_node_src(0), gain: 1.0 }, GraphInput::NONE],
+                    [GraphInput { src: graph_node_src(1), gain: 1.0 }, GraphInput::NONE],
+                    [GraphInput { src: graph_node_src(2), gain: 1.0 }, GraphInput::NONE],
+                    [GraphInput { src: graph_node_src(3), gain: 1.0 }, GraphInput::NONE],
+                    [GraphInput { src: graph_node_src(4), gain: 1.0 }, GraphInput::NONE],
+                ],
+                node_to_out: [false, false, false, false, false, true],
+                node_out_gain: [1.0; FX_SLOTS],
                 chorus_on: false,
                 chorus_depth: 0.5,
                 chorus_rate: 0.6,
@@ -713,6 +811,22 @@ impl Params {
         use id as p;
         // A non-finite value can never reach the DSP (f32::clamp propagates NaN).
         let value = if value.is_finite() { value } else { 0.0 };
+        // The graph parameters are contiguous per-node ranges, and Rust match
+        // patterns cannot hold a range bound computed from a constant.
+        if let Some((index, field)) = graph_param_field(param_id) {
+            let slot = index as usize;
+            if slot < FX_SLOTS {
+                match field {
+                    GraphParam::In1Src => self.fx.node_in[slot][0].src = graph_src_code(value),
+                    GraphParam::In1Gain => self.fx.node_in[slot][0].gain = value.clamp(0.0, 4.0),
+                    GraphParam::In2Src => self.fx.node_in[slot][1].src = graph_src_code(value),
+                    GraphParam::In2Gain => self.fx.node_in[slot][1].gain = value.clamp(0.0, 4.0),
+                    GraphParam::ToOut => self.fx.node_to_out[slot] = value >= 0.5,
+                    GraphParam::OutGain => self.fx.node_out_gain[slot] = value.clamp(0.0, 4.0),
+                }
+            }
+            return;
+        }
         match param_id {
             p::MASTER_VOLUME => self.master_volume = clamp01(value),
             p::PATCH_GAIN => self.patch_gain = value.clamp(0.0, 8.0),
@@ -782,6 +896,7 @@ impl Params {
                 let slot = (param_id - p::FX_PARALLEL1) as usize;
                 self.fx.parallel[slot] = value >= 0.5;
             }
+            p::FX_GRAPH => self.fx.graph = value >= 0.5,
             p::FX_CHORUS_ON => self.fx.chorus_on = value > 0.5,
             p::FX_CHORUS_DEPTH => self.fx.chorus_depth = clamp01(value),
             p::FX_CHORUS_RATE => self.fx.chorus_rate = value.clamp(0.02, 10.0),

@@ -13,7 +13,7 @@ use crate::params::{MAX_BLOCK_SIZE, MAX_VOICES, SPECTRUM_BINS};
 /// 4 added the impulse-response import.
 /// 5 added the sample import.
 /// 6 added the second instance (parameters + key/velocity routing).
-pub const ABI_VERSION: u32 = 7;
+pub const ABI_VERSION: u32 = 8;
 
 /// Initialise the engine. Returns 1 on success.
 #[no_mangle]
@@ -234,6 +234,13 @@ pub extern "C" fn gs_force_release_excess() {
 }
 
 // --------------------------------------------------------------------- events
+
+/// Turn on the effect routing graph, seeded from the chain that is set now, so
+/// the sound does not change the moment the graph takes over.
+#[no_mangle]
+pub extern "C" fn gs_fx_graph_sync() {
+    engine().fx_graph_from_chain();
+}
 
 #[no_mangle]
 pub extern "C" fn gs_note_on(note: u32, velocity: f32) {

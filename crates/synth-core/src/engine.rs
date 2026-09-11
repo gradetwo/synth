@@ -20,8 +20,8 @@ use crate::dsp::wavetable::{CycleError, Table, BASE_LEN as WT_BASE_LEN};
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_limit, Rng};
 use crate::fft::Spectrum;
 use crate::params::{
-    id, is_continuous, FxKind, LfoTarget, ModDst, ModSrc, OscParams, Params, FX_SLOTS,
-    MAX_BLOCK_SIZE, MAX_UNISON, MAX_VOICES, PARAM_COUNT,
+    graph_node_src, id, is_continuous, FxKind, GraphInput, LfoTarget, ModDst, ModSrc, OscParams,
+    Params, FX_SLOTS, GRAPH_DRY, MAX_BLOCK_SIZE, MAX_UNISON, MAX_VOICES, PARAM_COUNT,
 };
 use crate::voice::{NoteOnResult, VoiceManager};
 
@@ -211,6 +211,13 @@ pub struct Engine {
     // Scratch buffers — all statically sized, all reused per voice.
     osc_a: [f32; MAX_BLOCK_SIZE],
     osc_b: [f32; MAX_BLOCK_SIZE],
+    /// One output buffer per effect node of the routing graph (A1), plus the
+    /// scratch the node input mix is summed into. Allocated once in `init`:
+    /// the render loop must never allocate, and six nodes cost ~64 KB.
+    graph_node_l: Vec<f32>,
+    graph_node_r: Vec<f32>,
+    graph_in_l: Vec<f32>,
+    graph_in_r: Vec<f32>,
     /// Scratch for rendering one unison sub-voice at a time.
     unison_buf: [f32; MAX_BLOCK_SIZE],
     /// Filtered OSC 2 signal when the oscillators are panned apart.
@@ -355,6 +362,10 @@ impl Engine {
             filter_envs: [Adsr::new(); MAX_VOICES],
             osc_a: [0.0; MAX_BLOCK_SIZE],
             osc_b: [0.0; MAX_BLOCK_SIZE],
+            graph_node_l: Vec::new(),
+            graph_node_r: Vec::new(),
+            graph_in_l: Vec::new(),
+            graph_in_r: Vec::new(),
             unison_buf: [0.0; MAX_BLOCK_SIZE],
             voice_buf_r: [0.0; MAX_BLOCK_SIZE],
             voice_lfos: [Lfo::new(); MAX_VOICES],
@@ -450,6 +461,19 @@ impl Engine {
         self.reverb.set_sample_rate(self.sample_rate);
         self.delay.setup(self.sample_rate);
         self.convolver.prepare();
+        // `resize`, not a fresh allocation: the host can re-init, and the arena
+        // never grows (see the convolver's response buffer for the same reason).
+        let node_capacity = FX_SLOTS * MAX_BLOCK_SIZE;
+        if self.graph_node_l.len() != node_capacity {
+            self.graph_node_l.clear();
+            self.graph_node_l.resize(node_capacity, 0.0);
+            self.graph_node_r.clear();
+            self.graph_node_r.resize(node_capacity, 0.0);
+            self.graph_in_l.clear();
+            self.graph_in_l.resize(MAX_BLOCK_SIZE, 0.0);
+            self.graph_in_r.clear();
+            self.graph_in_r.resize(MAX_BLOCK_SIZE, 0.0);
+        }
         // `resize`, not a fresh `vec!`: the host may re-init the engine, and the
         // arena never grows. Allocating a second 384 KB response buffer before
         // the old one is freed fragments the free list until a later init fails.
@@ -1876,6 +1900,10 @@ impl Engine {
     /// signal and its wet output is added, leaving the signal underneath intact.
     /// A serial position is an insert: wet and dry are crossfaded.
     fn apply_fx(&mut self, frames: usize) {
+        if self.params.fx.graph {
+            self.apply_fx_graph(frames);
+            return;
+        }
         for slot in 0..FX_SLOTS {
             let kind = self.params.fx.chain[slot];
             let parallel = self.params.fx.parallel[slot];
@@ -1980,6 +2008,217 @@ impl Engine {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// Seed the routing graph from the chain that is set now: node 1 reads the
+    /// dry bus, every later node reads the one before it, and the last node that
+    /// actually runs feeds the mix bus. Turning the graph on after this sounds
+    /// exactly like the chain it came from.
+    pub fn fx_graph_from_chain(&mut self) {
+        let chain = self.params.fx.chain;
+        let mut previous: Option<usize> = None;
+        for slot in 0..FX_SLOTS {
+            let src = match previous {
+                Some(from) => graph_node_src(from),
+                None => GRAPH_DRY,
+            };
+            self.params.fx.node_in[slot] = [GraphInput { src, gain: 1.0 }, GraphInput::NONE];
+            self.params.fx.node_to_out[slot] = false;
+            self.params.fx.node_out_gain[slot] = 1.0;
+            if chain[slot] != FxKind::None {
+                previous = Some(slot);
+            }
+        }
+        // Empty positions pass their input straight through, so the last
+        // position that runs is the signal the bus ends up carrying. With no
+        // effect at all it is the dry bus, which node 1 passes through.
+        match previous {
+            Some(last) => self.params.fx.node_to_out[last] = true,
+            None => self.params.fx.node_to_out[0] = true,
+        }
+        self.params.fx.graph = true;
+    }
+
+    /// Render the effect positions as a feed-forward graph (A1).
+    ///
+    /// Nodes run in index order and an input may only read the dry bus or an
+    /// *earlier* node, which is a valid topological order without sorting
+    /// anything on the audio thread — and makes a loop impossible by
+    /// construction. A node whose input is not connected processes silence; if
+    /// nothing is routed to the mix bus the effect section is silent, which is
+    /// what an empty patch should be.
+    fn apply_fx_graph(&mut self, frames: usize) {
+        for slot in 0..FX_SLOTS {
+            self.mix_node_input(slot, frames);
+            self.render_fx_node(slot, frames);
+        }
+        let fx = self.params.fx;
+        self.fx_l[..frames].fill(0.0);
+        self.fx_r[..frames].fill(0.0);
+        for slot in 0..FX_SLOTS {
+            if !fx.node_to_out[slot] {
+                continue;
+            }
+            let gain = fx.node_out_gain[slot];
+            let base = slot * MAX_BLOCK_SIZE;
+            for i in 0..frames {
+                self.fx_l[i] += self.graph_node_l[base + i] * gain;
+                self.fx_r[i] += self.graph_node_r[base + i] * gain;
+            }
+        }
+    }
+
+    /// Sum a node's inputs into its buffer: up to two connections, each from the
+    /// dry bus or an earlier node, each with its own gain.
+    fn mix_node_input(&mut self, slot: usize, frames: usize) {
+        let inputs = self.params.fx.node_in[slot];
+        self.graph_in_l[..frames].fill(0.0);
+        self.graph_in_r[..frames].fill(0.0);
+        for input in inputs {
+            if input.src == 0 || input.gain == 0.0 {
+                continue;
+            }
+            if input.src == GRAPH_DRY {
+                for i in 0..frames {
+                    self.graph_in_l[i] += self.fx_l[i] * input.gain;
+                    self.graph_in_r[i] += self.fx_r[i] * input.gain;
+                }
+                continue;
+            }
+            let from = input.src as usize - 2;
+            // Reading this node or a later one would be a loop: the connection is
+            // ignored, deterministically, rather than guessed at.
+            if from >= slot || from >= FX_SLOTS {
+                continue;
+            }
+            let base = from * MAX_BLOCK_SIZE;
+            for i in 0..frames {
+                self.graph_in_l[i] += self.graph_node_l[base + i] * input.gain;
+                self.graph_in_r[i] += self.graph_node_r[base + i] * input.gain;
+            }
+        }
+        let base = slot * MAX_BLOCK_SIZE;
+        let (node_l, node_r) = (&mut self.graph_node_l, &mut self.graph_node_r);
+        node_l[base..base + frames].copy_from_slice(&self.graph_in_l[..frames]);
+        node_r[base..base + frames].copy_from_slice(&self.graph_in_r[..frames]);
+    }
+
+    /// Run one node's effect on its own buffer, in place. The blend law is the
+    /// same one the chain uses: an insert crossfades, a send adds its wet signal
+    /// to the untouched input.
+    fn render_fx_node(&mut self, slot: usize, frames: usize) {
+        let fx = self.params.fx;
+        let kind = fx.chain[slot];
+        let parallel = fx.parallel[slot];
+        let base = slot * MAX_BLOCK_SIZE;
+        match kind {
+            FxKind::None => {}
+            FxKind::Delay => {
+                // Runs even when it is off (mix 0), so the line keeps moving and
+                // switching it back on does not replay a stale tail.
+                let params = DelayParams {
+                    time_s: self.params.delay_time_seconds(),
+                    feedback: fx.delay_fb,
+                    mix: if fx.delay_on { fx.delay_mix } else { 0.0 },
+                    damp: fx.delay_damp,
+                    ping_pong: fx.delay_ping_pong,
+                };
+                self.delay.process(
+                    params,
+                    &mut self.graph_node_l[base..base + frames],
+                    &mut self.graph_node_r[base..base + frames],
+                    frames,
+                );
+            }
+            FxKind::Reverb => {
+                let mix = if fx.reverb_on { fx.reverb_mix } else { 0.0 };
+                if fx.reverb_mode == 1 && self.convolver.has_ir() {
+                    self.convolver.process(
+                        &mut self.graph_node_l[base..base + frames],
+                        &mut self.graph_node_r[base..base + frames],
+                        frames,
+                        mix * fx.conv_trim,
+                    );
+                } else {
+                    self.reverb.set_params(ReverbParams {
+                        size: if fx.reverb_on { fx.reverb_size } else { 0.0 },
+                        damp: fx.reverb_damp,
+                        mix,
+                        width: fx.reverb_width,
+                        predelay: fx.reverb_predelay,
+                    });
+                    self.reverb.process(
+                        &mut self.graph_node_l[base..base + frames],
+                        &mut self.graph_node_r[base..base + frames],
+                    );
+                }
+            }
+            FxKind::Chorus if fx.chorus_on && fx.chorus_mix > 0.0 => {
+                unsafe {
+                    gs_fx_chorus_set(fx.chorus_depth, fx.chorus_rate, 20.0, 0.25);
+                    gs_fx_chorus_block(
+                        self.graph_node_l[base..].as_ptr(),
+                        self.graph_node_r[base..].as_ptr(),
+                        self.osc_a.as_mut_ptr(),
+                        self.osc_b.as_mut_ptr(),
+                        frames as u32,
+                    );
+                }
+                self.blend_node(slot, frames, fx.chorus_mix, parallel);
+            }
+            FxKind::Flanger if fx.flanger_on && fx.flanger_mix > 0.0 => {
+                unsafe {
+                    gs_fx_flanger_set(0.5, fx.flanger_rate, 2.0, fx.flanger_fb);
+                    gs_fx_flanger_block(
+                        self.graph_node_l[base..].as_ptr(),
+                        self.graph_node_r[base..].as_ptr(),
+                        self.osc_a.as_mut_ptr(),
+                        self.osc_b.as_mut_ptr(),
+                        frames as u32,
+                    );
+                }
+                self.blend_node(slot, frames, fx.flanger_mix, parallel);
+            }
+            FxKind::Phaser if fx.phaser_on && fx.phaser_mix > 0.0 => {
+                unsafe {
+                    gs_fx_phaser_set(0.8, fx.phaser_rate, fx.phaser_fb, 4);
+                    gs_fx_phaser_block(
+                        self.graph_node_l[base..].as_ptr(),
+                        self.graph_node_r[base..].as_ptr(),
+                        self.osc_a.as_mut_ptr(),
+                        self.osc_b.as_mut_ptr(),
+                        frames as u32,
+                    );
+                }
+                self.blend_node(slot, frames, fx.phaser_mix, parallel);
+            }
+            FxKind::Drive if fx.drive_on && fx.drive_mix > 0.0 => {
+                unsafe {
+                    gs_fx_overdrive_set(fx.drive_amt);
+                    gs_fx_overdrive_block(
+                        self.graph_node_l[base..].as_ptr(),
+                        self.graph_node_r[base..].as_ptr(),
+                        self.osc_a.as_mut_ptr(),
+                        self.osc_b.as_mut_ptr(),
+                        frames as u32,
+                    );
+                }
+                self.blend_node(slot, frames, fx.drive_mix, parallel);
+            }
+            _ => {}
+        }
+    }
+
+    /// Fold a node's wet signal (in `osc_a/osc_b`) into its own buffer.
+    fn blend_node(&mut self, slot: usize, frames: usize, mix: f32, parallel: bool) {
+        let dry = if parallel { 1.0 } else { 1.0 - mix };
+        let base = slot * MAX_BLOCK_SIZE;
+        for i in 0..frames {
+            self.graph_node_l[base + i] =
+                self.graph_node_l[base + i] * dry + self.osc_a[i] * mix;
+            self.graph_node_r[base + i] =
+                self.graph_node_r[base + i] * dry + self.osc_b[i] * mix;
         }
     }
 
@@ -2166,6 +2405,243 @@ mod tests {
         let mut e = Box::new(Engine::new());
         e.init(48000.0, poly);
         e
+    }
+
+    /// Render a note through the engine and collect every sample it produced,
+    /// so two routings can be compared exactly.
+    fn render_all(e: &mut Engine, note: u8, blocks: usize) -> (Vec<f32>, Vec<f32>) {
+        e.note_on(note, 0.9);
+        let mut left = Vec::new();
+        let mut right = Vec::new();
+        for _ in 0..blocks {
+            e.process(128);
+            left.extend_from_slice(e.left());
+            right.extend_from_slice(e.right());
+        }
+        (left, right)
+    }
+
+    fn worst_difference(a: &[f32], b: &[f32]) -> f32 {
+        a.iter()
+            .zip(b.iter())
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0f32, f32::max)
+    }
+
+    /// A patch with every effect switched on and a given chain, so the graph and
+    /// the legacy path can be compared on the same signal.
+    fn fx_test_engine(chain: [FxKind; FX_SLOTS], parallel: &[usize]) -> Box<Engine> {
+        let mut e = new_engine(8);
+        e.set_param(id::OSC1_WAVE, 2.0);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 16000.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.002);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::LFO2_ON, 0.0);
+        e.set_param(id::FX_REVERB_ON, 1.0);
+        e.set_param(id::FX_REVERB_MIX, 0.3);
+        e.set_param(id::FX_DELAY_ON, 1.0);
+        e.set_param(id::FX_DELAY_MIX, 0.25);
+        e.set_param(id::FX_DELAY_FB, 0.4);
+        e.set_param(id::FX_CHORUS_ON, 1.0);
+        e.set_param(id::FX_CHORUS_MIX, 0.5);
+        e.set_param(id::FX_FLANGER_ON, 1.0);
+        e.set_param(id::FX_FLANGER_MIX, 0.4);
+        e.set_param(id::FX_PHASER_ON, 1.0);
+        e.set_param(id::FX_PHASER_MIX, 0.4);
+        e.set_param(id::FX_DRIVE_ON, 1.0);
+        e.set_param(id::FX_DRIVE_MIX, 0.5);
+        let kinds = [0u32, 1, 2, 3, 4, 5, 6];
+        for (slot, kind) in chain.iter().enumerate() {
+            let code = match kind {
+                FxKind::None => kinds[0],
+                FxKind::Delay => kinds[1],
+                FxKind::Reverb => kinds[2],
+                FxKind::Chorus => kinds[3],
+                FxKind::Flanger => kinds[4],
+                FxKind::Phaser => kinds[5],
+                FxKind::Drive => kinds[6],
+            };
+            e.set_param(id::FX_CHAIN1 + slot as u32, code as f32);
+        }
+        for slot in parallel {
+            e.set_param(id::FX_PARALLEL1 + *slot as u32, 1.0);
+        }
+        e
+    }
+
+    fn set_graph_input(e: &mut Engine, slot: usize, which: usize, src: u8, gain: f32) {
+        let base = if which == 0 { id::FX_NODE_IN1 } else { id::FX_NODE_IN2 };
+        let gain_base = if which == 0 { id::FX_NODE_IN1_GAIN } else { id::FX_NODE_IN2_GAIN };
+        e.set_param(base + slot as u32, src as f32);
+        e.set_param(gain_base + slot as u32, gain);
+    }
+
+    /// Clear every default output connection, so a test states the routes it
+    /// means instead of inheriting the serial default.
+    fn clear_node_routes(e: &mut Engine) {
+        for slot in 0..FX_SLOTS {
+            e.set_param(id::FX_NODE_TO_OUT + slot as u32, 0.0);
+        }
+    }
+
+    fn route_node(e: &mut Engine, slot: usize, gain: f32) {
+        e.set_param(id::FX_NODE_TO_OUT + slot as u32, 1.0);
+        e.set_param(id::FX_NODE_OUT_GAIN + slot as u32, gain);
+    }
+
+    /// The graph and the chain have to be the same signal: switching the graph
+    /// on after `fx_graph_from_chain` may not change one sample, for every shape
+    /// the chain can take (effects off, empty positions, sends).
+    #[test]
+    fn the_graph_reproduces_the_legacy_chain_exactly() {
+        let _guard = lock_engine();
+        let cases: [([FxKind; FX_SLOTS], &[usize]); 6] = [
+            ([FxKind::None; FX_SLOTS], &[]),
+            (
+                [
+                    FxKind::Delay,
+                    FxKind::Reverb,
+                    FxKind::Chorus,
+                    FxKind::Flanger,
+                    FxKind::Phaser,
+                    FxKind::Drive,
+                ],
+                &[],
+            ),
+            ([FxKind::Reverb, FxKind::None, FxKind::None, FxKind::None, FxKind::None, FxKind::None], &[]),
+            ([FxKind::None, FxKind::None, FxKind::None, FxKind::None, FxKind::None, FxKind::Drive], &[]),
+            ([FxKind::Chorus, FxKind::None, FxKind::Drive, FxKind::None, FxKind::Reverb, FxKind::None], &[0, 2]),
+            ([FxKind::Drive, FxKind::Chorus, FxKind::None, FxKind::Phaser, FxKind::None, FxKind::Delay], &[1, 3]),
+        ];
+        for (index, (chain, parallel)) in cases.iter().enumerate() {
+            let mut legacy = fx_test_engine(*chain, parallel);
+            let (ll, lr) = render_all(&mut legacy, 60, 30);
+
+            let mut graph = fx_test_engine(*chain, parallel);
+            graph.fx_graph_from_chain();
+            let (gl, gr) = render_all(&mut graph, 60, 30);
+
+            assert!(ll.iter().any(|v| v.abs() > 0.01), "case {index}: nothing rendered");
+            assert_eq!(
+                worst_difference(&ll, &gl),
+                0.0,
+                "case {index}: the graph changed the left channel"
+            );
+            assert_eq!(worst_difference(&lr, &gr), 0.0, "case {index}: right channel");
+        }
+    }
+
+    /// Two inputs are summed with their own gains, which is what makes a graph a
+    /// graph rather than a chain.
+    #[test]
+    fn node_inputs_are_summed_with_their_gains() {
+        let _guard = lock_engine();
+        let render = |a: f32, b: Option<f32>| {
+            let mut e = fx_test_engine([FxKind::None; FX_SLOTS], &[]);
+            e.set_param(id::FX_GRAPH, 1.0);
+            clear_node_routes(&mut e);
+            set_graph_input(&mut e, 0, 0, GRAPH_DRY, a);
+            if let Some(b) = b {
+                set_graph_input(&mut e, 0, 1, GRAPH_DRY, b);
+            }
+            route_node(&mut e, 0, 1.0);
+            let (l, _) = render_all(&mut e, 60, 12);
+            l
+        };
+        // 0.5 + 0.25 of the same signal is 0.75 of it, sample for sample.
+        let summed = render(0.5, Some(0.25));
+        let scaled = render(0.75, None);
+        assert!(summed.iter().any(|v| v.abs() > 0.01));
+        assert_eq!(worst_difference(&summed, &scaled), 0.0);
+    }
+
+    /// One node feeding two others that both reach the output is a fan-out: the
+    /// mix bus is the sum of what is routed to it.
+    #[test]
+    fn a_node_can_feed_two_paths_that_sum_at_the_output() {
+        let _guard = lock_engine();
+        let render = |a: f32, b: f32| {
+            let mut e = fx_test_engine([FxKind::None; FX_SLOTS], &[]);
+            e.set_param(id::FX_GRAPH, 1.0);
+            clear_node_routes(&mut e);
+            // Node 1 reads the dry bus; it feeds nodes 2 and 3, both to output.
+            set_graph_input(&mut e, 0, 0, GRAPH_DRY, 1.0);
+            set_graph_input(&mut e, 1, 0, graph_node_src(0), 1.0);
+            set_graph_input(&mut e, 2, 0, graph_node_src(0), 1.0);
+            route_node(&mut e, 1, a);
+            route_node(&mut e, 2, b);
+            let (l, _) = render_all(&mut e, 60, 12);
+            l
+        };
+        // dry * 1 + dry * 0.5 == dry * 1.5, which one path with that gain gives.
+        let split = render(1.0, 0.5);
+        assert!(split.iter().any(|v| v.abs() > 0.01));
+        let single = {
+            let mut e = fx_test_engine([FxKind::None; FX_SLOTS], &[]);
+            e.set_param(id::FX_GRAPH, 1.0);
+            clear_node_routes(&mut e);
+            set_graph_input(&mut e, 0, 0, GRAPH_DRY, 1.0);
+            route_node(&mut e, 0, 1.5);
+            let (l, _) = render_all(&mut e, 60, 12);
+            l
+        };
+        assert_eq!(worst_difference(&split, &single), 0.0);
+    }
+
+    /// A connection that would point at this node or a later one is a loop, so
+    /// it is ignored: the order stays fixed and nothing blows up.
+    #[test]
+    fn a_backward_connection_is_ignored() {
+        let _guard = lock_engine();
+        for src in [graph_node_src(0), graph_node_src(2), graph_node_src(5)] {
+            let mut e = fx_test_engine([FxKind::None; FX_SLOTS], &[]);
+            e.set_param(id::FX_GRAPH, 1.0);
+            clear_node_routes(&mut e);
+            set_graph_input(&mut e, 0, 0, src, 1.0);
+            route_node(&mut e, 0, 1.0);
+            let (l, r) = render_all(&mut e, 60, 12);
+            assert!(
+                l.iter().chain(r.iter()).all(|v| *v == 0.0),
+                "a loop input should carry nothing"
+            );
+        }
+    }
+
+    /// Nothing routed to the output is silence, not a stuck or NaN bus.
+    #[test]
+    fn an_empty_graph_is_silent_rather_than_unstable() {
+        let _guard = lock_engine();
+        let mut e = fx_test_engine([FxKind::None; FX_SLOTS], &[]);
+        e.set_param(id::FX_GRAPH, 1.0);
+        clear_node_routes(&mut e);
+        // Node 1 runs but nothing reaches the output.
+        set_graph_input(&mut e, 0, 0, GRAPH_DRY, 1.0);
+        let (l, r) = render_all(&mut e, 60, 12);
+        assert!(l.iter().chain(r.iter()).all(|v| v.is_finite()));
+        assert!(l.iter().chain(r.iter()).all(|v| v.abs() < 1e-6));
+    }
+
+    /// Gains are clamped like every other parameter, so a wild value cannot
+    /// blow the bus up.
+    #[test]
+    fn node_gains_are_clamped() {
+        let _guard = lock_engine();
+        let render = |gain: f32| {
+            let mut e = fx_test_engine([FxKind::None; FX_SLOTS], &[]);
+            e.set_param(id::FX_GRAPH, 1.0);
+            clear_node_routes(&mut e);
+            set_graph_input(&mut e, 0, 0, GRAPH_DRY, gain);
+            route_node(&mut e, 0, 1.0);
+            let (l, _) = render_all(&mut e, 60, 12);
+            l
+        };
+        let clamped = render(4.0);
+        assert_eq!(worst_difference(&render(1000.0), &clamped), 0.0);
+        assert!(clamped.iter().all(|v| v.is_finite()));
     }
 
     #[test]
