@@ -64,6 +64,8 @@
 | A2c | **连线的可视化编辑与键盘可达**：点选连线（误点不断开）、连线上直接调增益、非单位增益显示百分比标签、端口键盘操作（Tab + 回车）、连线本身可聚焦并用回车选中（含 aria-label 说明来源/目标/增益） | ✅ v1.77.0 |
 | B6 | **分享码压缩**：带曲目的链接先用 `CompressionStream('deflate-raw')` 压缩（五分钟曲目 36,390 → 1,516 字符，约 96% 更小），无该 API 时回退明文；纯音色码与 `.gs1song` 格式不变，旧链接仍可读 | ✅ v1.77.0 |
 | A2d | **效果节点多实例**：算法混响与四个插入效果**每个节点一套状态**（C 桥接层加 slot 维度、混响改为每节点一份）；延迟/卷积因内存上限仍单实例，第二个同类节点直通、编辑器标「已占用」并禁用；修掉「同一效果两个节点共用状态」的隐患 | ✅ v1.78.0 |
+| C11 | **界面每帧成本**：画布改为按需重绘（示波器/频谱/迷你波形/滤波曲线/电平表只在数据或参数变化时重画、渐变缓存、DOM 只在文本变化时写）、去掉 7 处全屏 `backdrop-filter`、启动页动画改用 opacity 与静态光晕；Chromium 空闲 7.5 → 60 fps（音频运行中同样 60 fps），本机全量 E2E 8.7 → 4.2 分钟，并新增「音频运行时 > 20 fps」的 E2E 守卫 | ✅ v1.79.0 |
+| C12 | **本机 WebKit 标准跑法定为 headless Weston**（`npm run test:e2e:webkit:wayland`，比 Xvfb 快一倍、有 `/dev/dri` 时走 GPU），nightly 自动按 Weston → Xvfb → headless 选择并记录显示栈；同时更正早期结论：慢的根因是应用页每帧成本，不是内核（空白页三内核均 60 fps） | ✅ v1.79.0 |
 | C10 | **体积继续拆分**：播放器面板改为按需 chunk 且首次打开才挂载（初始 JS 153.3 → **150.8 KB gzip**） | ✅ v1.78.0 |
 | C9 | **门禁在繁忙机器上不再假红**：`bench` 按 `loadavg` 判定宿主是否过载（过载只报正确性、跳过计时并说明原因）；Playwright 默认超时 45→60 s；WebKit/Firefox 项目开 `reducedMotion` + 单独超时 + 重试；修掉两个跨引擎测试缺陷（Chromium 专用启动参数害 WebKit 起不来、浮动键盘挡住模块按钮） | ✅ v1.76.0 |
 | C8 | **真正的夜间跑**：仓库新增 `nightly` 作业（`on.schedule`，`verify-ci` 守住它）+ 本机 `npm run nightly`（WebKit 核心子集 + `xvfb-run --headed`、锁、日志轮转、`docs/notes/nightly.md` 记录）+ systemd 用户定时器模板 | ✅ v1.76.0 |
@@ -331,7 +333,7 @@
 3. `crates/synth-core/src/engine.rs`：在 `render_oscillator` 的 `None` 分支里按波表渲染，需要**每声部相位状态**（`wt_phase: [[f32; 2]; MAX_VOICES]`），并在 `gs_voice_reset` 路径复位；unison 可先不支持并注明。
 4. TS 侧：`src/audio/params.ts`（id 与名称）、`worklet-processor.js`（**PARAMS 描述符表必须同步**，否则值到不了 DSP——本轮踩过这个坑）、`WAVES`/`WAVE_ICONS`/`i18n`、OSC 模块的配方式选择。
 5. 测试：① `dsp::wavetable` 单测——每级频谱在谐波上限以上无能量（带宽受限）、基频正确、输出有界；② 引擎级**频域**测试——高音区谐波之间无混叠能量（沿用 `verify-audio.mjs` 的 FFT 手法）；③ 门禁新增一项"波表在高音区不产生混叠"。
-6. 完成后：`npm run verify`、e2e、更新记录（只说改了什么）、`docs/USER-GUIDE.md`、`npm run package`、`wrangler deploy`。
+6. 完成后：更新记录（只说改了什么）、`docs/USER-GUIDE.md`，然后一条命令 `npm run release -- <version>`（校验版本与更新记录 → `verify` → E2E → 打包 → 部署 → 线上 hash 核对 → 打 tag，见 `docs/notes/release.md`）。
 
 **之后的队列**：A5 效果路由/并联 + 卷积混响（IR 导入）→ P2 10b 动态信号图与节点内联编辑 → 多轨/时间线、采样导入、Web MIDI 输出 → P0.5 多浏览器 E2E（需 `playwright install-deps`，配置已就绪）、P0.6 进一步 streaming。
 

@@ -19,12 +19,27 @@ const TAU = Math.PI * 2;
  * Components that read live values do so inside `draw`, so they never re-render
  * React just to animate.
  */
-function useRafCanvas(draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void) {
+function useRafCanvas(
+  draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void,
+  /**
+   * Whether this frame is worth drawing at all.
+   *
+   * Everything here used to repaint 60 times a second whether or not anything
+   * had changed, which on a software-rendered page cost more than the audio
+   * (measured: the app page ran at 7.5 fps with the canvases drawing and 58 fps
+   * with them hidden). A canvas whose data only moves when the engine sends an
+   * analysis frame, or when a parameter changes, says so here.
+   */
+  dirty?: () => boolean,
+) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const drawRef = useRef(draw);
+  const dirtyRef = useRef(dirty);
+  const forced = useRef(true);
 
   useEffect(() => {
     drawRef.current = draw;
+    dirtyRef.current = dirty;
   });
 
   useEffect(() => {
@@ -38,11 +53,15 @@ function useRafCanvas(draw: (ctx: CanvasRenderingContext2D, w: number, h: number
       canvas.height = Math.round(rect.height * dpr);
       const ctx = canvas.getContext('2d');
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // A resize has to repaint, however quiet the data is.
+      forced.current = true;
     };
     const ro = new ResizeObserver(resize);
     ro.observe(canvas);
     resize();
     const unsubscribe = subscribeFrame(() => {
+      if (!forced.current && dirtyRef.current && !dirtyRef.current()) return;
+      forced.current = false;
       const ctx = canvas.getContext('2d');
       if (!ctx || canvas.width === 0) return;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -128,7 +147,9 @@ function lfoShape(type: ReturnType<typeof intToLfoWave>, p: number): number {
 export function Scope() {
   const buf = useRef(new Float32Array(1024));
   const gain = useRef(1);
-  const ref = useRafCanvas((ctx, w, h) => {
+  const seen = useRef(-1);
+  const ref = useRafCanvas(
+    (ctx, w, h) => {
     const ink = canvasInk();
     ctx.fillStyle = ink.spectrumBg;
     ctx.fillRect(0, 0, w, h);
@@ -158,9 +179,15 @@ export function Scope() {
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-  });
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    },
+    () => {
+      if (seen.current === analysis.frames) return false;
+      seen.current = analysis.frames;
+      return true;
+    },
+  );
   return <canvas ref={ref} aria-label={t('canvas.scopeAria')} />;
 }
 
@@ -177,13 +204,26 @@ export function ScopeMeta() {
 // ----------------------------------------------------------------- spectrum
 
 export function Spectrum() {
-  const ref = useRafCanvas((ctx, w, h) => {
+  const seen = useRef(-1);
+  // One gradient for the whole panel instead of one per bar per frame: the
+  // colour only depends on the panel height, and building 36 of them 60 times a
+  // second was most of what this canvas cost.
+  const gradient = useRef<{ key: string; value: CanvasGradient } | null>(null);
+  const ref = useRafCanvas(
+    (ctx, w, h) => {
     const ink = canvasInk();
     ctx.fillStyle = ink.spectrumBg;
     ctx.fillRect(0, 0, w, h);
     const bins = analysis.spectrum;
     const peaks = analysis.peaks;
     const bw = w / bins.length;
+    const key = `${h}:${ink.accent}:${ink.accentFade}`;
+    if (gradient.current?.key !== key) {
+      const g = ctx.createLinearGradient(0, h, 0, 0);
+      g.addColorStop(0, ink.accentFade);
+      g.addColorStop(1, ink.accent);
+      gradient.current = { key, value: g };
+    }
     // Lift the mid/low bins so a normal patch actually fills the panel.
     for (let i = 0; i < bins.length; i++) {
       const v = spectrumDisplay(bins[i]);
@@ -192,10 +232,7 @@ export function Spectrum() {
       if (bh > 0.5) {
         const x = i * bw + 1.5;
         const wid = Math.max(1, bw - 3);
-        const g = ctx.createLinearGradient(0, h, 0, h - bh);
-        g.addColorStop(0, ink.accentFade);
-        g.addColorStop(1, ink.accent);
-        ctx.fillStyle = g;
+        ctx.fillStyle = gradient.current.value;
         if (ctx.roundRect) {
           ctx.beginPath();
           ctx.roundRect(x, h - bh, wid, bh, [2, 2, 0, 0]);
@@ -209,7 +246,13 @@ export function Spectrum() {
         ctx.fillRect(i * bw + 1.5, h - pv * (h - 6) - 1.5, Math.max(1, bw - 3), 1.5);
       }
     }
-  });
+    },
+    () => {
+      if (seen.current === analysis.frames) return false;
+      seen.current = analysis.frames;
+      return true;
+    },
+  );
   return <canvas ref={ref} aria-label={t('canvas.spectrumAria')} />;
 }
 
@@ -224,7 +267,9 @@ export function MiniWave({
   color: string;
   lfo?: boolean;
 }) {
-  const ref = useRafCanvas((ctx, w, h) => {
+  const signature = useRef('');
+  const ref = useRafCanvas(
+    (ctx, w, h) => {
     const on = store.getParam((lfo ? 23 : which === 1 ? 1 : 7) as ParamId) > 0.5;
     const wave = lfo
       ? intToLfoWave(store.getParam(24 as ParamId))
@@ -252,12 +297,28 @@ export function MiniWave({
     }
     ctx.stroke();
     ctx.shadowBlur = 0;
-  });
+    },
+    () => {
+      // Nothing here moves on its own: the shape is a function of parameters.
+      const next = [
+        store.getParam((lfo ? 23 : which === 1 ? 1 : 7) as ParamId) > 0.5 ? 1 : 0,
+        store.getParam((lfo ? 24 : which === 1 ? 2 : 8) as ParamId),
+        store.getParam(79 as ParamId) > 0.5 ? 1 : 0,
+        which,
+        lfo ? 1 : 0,
+      ].join(':');
+      if (signature.current === next) return false;
+      signature.current = next;
+      return true;
+    },
+  );
   return <canvas className="mini-canvas" ref={ref} aria-hidden="true" />;
 }
 
 export function FilterCurve() {
-  const ref = useRafCanvas((ctx, w, h) => {
+  const signature = useRef('');
+  const ref = useRafCanvas(
+    (ctx, w, h) => {
     const type = intToFilter(store.getParam(13 as ParamId));
     const cutoff = store.getParam(14 as ParamId);
     const res = store.getParam(15 as ParamId);
@@ -293,7 +354,18 @@ export function FilterCurve() {
     ctx.lineTo(fc, h - 2);
     ctx.stroke();
     ctx.setLineDash([]);
-  });
+    },
+    () => {
+      const next = [
+        store.getParam(13 as ParamId),
+        store.getParam(14 as ParamId),
+        store.getParam(15 as ParamId),
+      ].join(':');
+      if (signature.current === next) return false;
+      signature.current = next;
+      return true;
+    },
+  );
   return <canvas className="mini-canvas" ref={ref} style={{ height: 40, marginTop: 11 }} aria-hidden="true" />;
 }
 
@@ -301,7 +373,11 @@ export function FilterCurve() {
 
 export function VuMeter() {
   const caption = useRef<HTMLSpanElement | null>(null);
-  const ref = useRafCanvas((ctx, w, h) => {
+  const seen = useRef(-1);
+  const lastText = useRef('');
+  const lastHot = useRef(false);
+  const ref = useRafCanvas(
+    (ctx, w, h) => {
     ctx.clearRect(0, 0, w, h);
     const segs = 12;
     const gap = 3;
@@ -321,7 +397,13 @@ export function VuMeter() {
         : canvasInk().off;
       ctx.fillRect(0, y, w, sh);
     }
-  });
+    },
+    () => {
+      if (seen.current === analysis.frames) return false;
+      seen.current = analysis.frames;
+      return true;
+    },
+  );
   // Peak / loudness / limiter readout, updated without re-rendering React.
   useEffect(
     () =>
@@ -331,8 +413,16 @@ export function VuMeter() {
         // Peak · loudness · gain reduction · DSP load. Silence reads as a
         // stable dash rather than a parked -60 that twitches at the rounding
         // boundary (see audio/meter for the formatting rules).
-        el.textContent = meterCaption(analysis.truePeak, analysis.loudness, analysis.load, analysis.limit);
-        el.classList.toggle('hot', meterIsHot(analysis.truePeak, analysis.load));
+        const text = meterCaption(analysis.truePeak, analysis.loudness, analysis.load, analysis.limit);
+        if (text !== lastText.current) {
+          lastText.current = text;
+          el.textContent = text;
+        }
+        const hot = meterIsHot(analysis.truePeak, analysis.load);
+        if (hot !== lastHot.current) {
+          lastHot.current = hot;
+          el.classList.toggle('hot', hot);
+        }
       }),
     [],
   );
@@ -359,7 +449,8 @@ export function LfoLed() {
       const sync = store.getParam(28 as ParamId) > 0.5;
       const rate = sync ? store.getParam(37 as ParamId) / 60 : store.getParam(25 as ParamId);
       const phase = (((now - start) / 1000) * rate) % 1;
-      el.classList.toggle('on', on && Math.sin(phase * TAU) > 0);
+      const lit = on && Math.sin(phase * TAU) > 0;
+      if (lit !== el.classList.contains('on')) el.classList.toggle('on', lit);
     });
   }, []);
   return <div className="lfo-led" ref={ref} />;

@@ -125,7 +125,15 @@ WebKitGTK 的合成要走显示服务器，帧率直接决定 Playwright 能不�
 | Xvfb（`npm run test:e2e:webkit:headed`） | 2.7 s / 2 帧 ≈ **0.7 fps** | 之前记录用的方案，最慢 |
 | Docker（官方 `mcr.microsoft.com/playwright:v1.63.0-noble`） | headless **0 帧/4 s**；headed + 容器内 xvfb **>10 分钟无输出** | 容器里没有 `/dev/dri`（要 `--device /dev/dri` 才有）；本轮实测结论：**Docker 在这台机器上帮不上忙** |
 
-结论：本机 WebKit 慢的根因是**软件渲染**，不是 Xvfb 本身；换显示服务器只能好一倍，仍然不够。
+**更正（2026-09-12）**：上面的数字都是**应用页**的帧率，不是内核上限。用空白页测，三个内核都能到 60 fps
+（Chromium 61.3、Firefox 61.3、WebKit headless 58.7）；真正的原因是应用页每帧做的事太重
+（全屏 `backdrop-filter` + 画布每帧重绘 + 启动页 box-shadow/drop-shadow 动画），已修复：
+Chromium 空闲 7.5 → 28–33 fps，音频运行中 → 60.8 fps，本机全量 E2E 从 8.7 分钟降到约 4.2 分钟。
+详见 `docs/notes/ui-frame-cost.md`。所以「换显示服务器」不是必需的，Weston 的价值在于 WebKit 需要合成器
+（headless 下 0 帧），以及有 `/dev/dri` 时能走 GPU。
+
+结论：本机 WebKit 慢的根因是**软件渲染**（叠加当时的应用页每帧成本），不是 Xvfb 本身；换显示服务器只能好一倍，
+仍然不够。
 真正的解法是在有 GL 的环境里跑（自己的桌面会话），或把 WebKit 的判据交给 CI。
 
 **约定（2026-09-12 起）**：开发与测试中 **本地 WebKit 一律走 Weston**——

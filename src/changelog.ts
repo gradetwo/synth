@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.79.0',
+    date: '2026-09-12',
+    kind: 'fix',
+    items: [
+      [
+        '**空闲界面更省电、更跟手**：示波器、频谱、迷你波形、滤波曲线和电平表以前不管有没有新数据都在每帧重画，现在只在画面真的变化时重画；启动页与各抽屉的全屏模糊背景也去掉了。修好后同一台机器上界面帧率从 7.5 fps 升到 60 fps，低端机和手机上更省电、拖动更顺，在电脑上跑测试也快了一倍。',
+        '**The idle interface is lighter and smoother**: the scope, spectrum, mini waveforms, filter curve and meters used to repaint every frame whether or not anything had changed, and now redraw only when the picture actually changes; the full-screen blurred backdrops on the start screen and the drawers are gone as well. On the same machine the interface went from 7.5 fps to 60 fps: less battery drain and smoother dragging on low-end phones, and tests on a laptop run about twice as fast.',
+      ],
+    ],
+  },
+  {
     version: '1.78.0',
     date: '2026-09-11',
     kind: 'feature',

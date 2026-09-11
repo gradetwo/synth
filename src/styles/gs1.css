@@ -244,7 +244,7 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
    board that scrolls, so wires are drawn from arithmetic rather than from
    measured positions. */
 .fxg-mask{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
-  background:var(--mask);backdrop-filter:blur(3px);padding:12px}
+  background:var(--mask);padding:12px}
 .fxg-panel{display:flex;flex-direction:column;width:min(1100px,100%);height:min(760px,100%);
   background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;overflow:hidden}
 .fxg-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);
@@ -457,7 +457,7 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 .kbd-tips b{color:var(--txt-2);font-weight:600}
 
 /* ── 抽屉 ── */
-.drawer-mask{position:fixed;inset:0;background:var(--mask);backdrop-filter:blur(2px);
+.drawer-mask{position:fixed;inset:0;background:var(--mask);
   opacity:0;pointer-events:none;transition:.25s;z-index:40}
 .drawer{position:fixed;top:0;right:0;bottom:0;width:min(380px,92vw);z-index:50;
   background:linear-gradient(180deg,var(--bg-drawer),var(--bg-drawer-2));border-left:1px solid var(--border-hi);
@@ -559,7 +559,7 @@ button{touch-action:manipulation}
 .drawer-mask.show{opacity:1;pointer-events:auto}
 
 /* ---- guide / manual (offline) ---- */
-.guide-mask{position:fixed;inset:0;background:var(--mask);backdrop-filter:blur(3px);
+.guide-mask{position:fixed;inset:0;background:var(--mask);
   opacity:0;pointer-events:none;transition:.25s;z-index:60}
 .guide-mask.show{opacity:1;pointer-events:auto}
 .guide{position:fixed;z-index:61;left:50%;top:50%;transform:translate(-50%,-48%) scale(.98);
@@ -656,9 +656,14 @@ button{touch-action:manipulation}
 
 /* Audio start gate (browsers require a gesture before sound). */
 .start-overlay{position:fixed;inset:0;z-index:70;display:grid;place-items:center;
-  background:var(--mask);backdrop-filter:blur(3px);padding:24px}
-.start-brand{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center}
-.start-logo{color:var(--accent);filter:drop-shadow(0 0 14px color-mix(in srgb,var(--accent) 35%,transparent))}
+  background:var(--mask);padding:24px}
+.start-brand{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center}
+/* A static glow behind the logo instead of a drop-shadow filter on it: the wave
+   inside the logo animates, so a filter there is re-applied every frame. */
+.start-brand::before{content:'';position:absolute;top:-16px;left:50%;width:82px;height:82px;
+  transform:translateX(-50%);border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle,color-mix(in srgb,var(--accent) 26%,transparent) 0%,transparent 70%)}
+.start-logo{position:relative;color:var(--accent)}
 /* A slow drift along the waveform: the screen is otherwise still, and a still
    screen reads as frozen. Motion is off when the system asks for less of it. */
 .start-logo-wave{stroke-dasharray:26 46;animation:gs-wave 3.4s linear infinite}
@@ -666,19 +671,27 @@ button{touch-action:manipulation}
 .start-name{font:700 15px/1 var(--grot);letter-spacing:.16em;color:var(--txt-1)}
 .start-name b{color:var(--accent)}
 .start-sub{font:500 9.5px/1 var(--mono);letter-spacing:.14em;color:var(--txt-dim)}
-.start-btn{display:flex;align-items:center;justify-content:center;cursor:pointer;
+.start-btn{position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer;
   background:linear-gradient(180deg,#ffd089,#e9a02c 62%,#d98c1c);color:#231703;
   border:1px solid rgba(255,255,255,.35);border-radius:14px;padding:12px 30px;
   font:700 14px/1 var(--grot);letter-spacing:.1em;min-height:46px;margin-top:4px;
-  box-shadow:0 12px 28px var(--shadow-2),inset 0 1px 0 rgba(255,255,255,.5);
-  animation:gs-breathe 3s ease-in-out infinite}
-@keyframes gs-breathe{0%,100%{box-shadow:0 12px 28px var(--shadow-2),0 0 0 0 rgba(255,179,64,.35),inset 0 1px 0 rgba(255,255,255,.5)}
-  50%{box-shadow:0 12px 28px var(--shadow-2),0 0 0 10px rgba(255,179,64,0),inset 0 1px 0 rgba(255,255,255,.5)}}
+  box-shadow:0 12px 28px var(--shadow-2),inset 0 1px 0 rgba(255,255,255,.5)}
+/* The pulse is a scaled, faded halo rather than an animated box-shadow: the
+   compositor can do transform and opacity, while an animated shadow repaints
+   the button (and its blur) every frame — which on a software-rendered page
+   cost more than everything else on the start screen together. */
+.start-btn::after{content:'';position:absolute;inset:-2px;border-radius:16px;
+  border:2px solid rgba(255,179,64,.5);transform:scale(1);opacity:.55;
+  animation:gs-breathe 3s ease-in-out infinite;pointer-events:none}
+/* Opacity only: a scaled border has to be re-rastered every frame in software,
+   while a fade is a composite the browser can do without repainting. */
+@keyframes gs-breathe{0%,100%{opacity:.5}
+  50%{opacity:0}}
 .start-btn:hover{filter:brightness(1.04)}
 .start-btn:active{transform:translateY(1px)}
 .start-btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 @media (prefers-reduced-motion: reduce){
-  .start-logo-wave,.start-btn{animation:none}
+  .start-logo-wave,.start-btn::after{animation:none}
 }
 
 /* PWA update banner. */
@@ -1261,7 +1274,7 @@ input,textarea,[contenteditable='true']{
 .po-icon{font-size:8px}
 
 /* ---- player panel ---- */
-.player-mask{position:fixed;inset:0;background:var(--mask);backdrop-filter:blur(3px);
+.player-mask{position:fixed;inset:0;background:var(--mask);
   opacity:0;pointer-events:none;transition:.25s;z-index:64}
 .player-mask.show{opacity:1;pointer-events:auto}
 .player{position:fixed;z-index:65;top:0;right:0;bottom:0;width:min(440px,94vw);
@@ -1443,7 +1456,7 @@ input,textarea,[contenteditable='true']{
 .flow-chip:hover{color:var(--mc,var(--accent));border-color:var(--mc,var(--accent-dim))}
 /* Detail card: compact floating panel on desktop, bottom sheet on phones. */
 .flow-params-mask{position:fixed;inset:0;background:var(--mask);
-  backdrop-filter:blur(3px);z-index:46;animation:fp-mask .18s ease-out}
+  z-index:46;animation:fp-mask .18s ease-out}
 @keyframes fp-mask{from{opacity:0}to{opacity:1}}
 /* The detail card is the module card itself, centred on screen. */
 .flow-params{position:fixed;z-index:47;left:50%;top:50%;transform:translate(-50%,-50%);
@@ -1673,7 +1686,7 @@ input,textarea,[contenteditable='true']{
    Piano roll editor
    ========================================================================== */
 
-.roll-mask{position:fixed;inset:0;background:var(--mask);backdrop-filter:blur(3px);
+.roll-mask{position:fixed;inset:0;background:var(--mask);
   opacity:0;pointer-events:none;transition:.22s;z-index:70}
 .roll-mask.show{opacity:1;pointer-events:auto}
 .roll{position:fixed;z-index:71;left:50%;top:2.5vh;bottom:2.5vh;width:min(1120px,96vw);

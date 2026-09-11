@@ -88,9 +88,10 @@ C 多轨与时间线、B 分层与分享、A 效果路由图（引擎 + 编辑�
 
 ### P8 工程与质量（中 / 低中 / 6 批，穿插做）
 
-**P8.1 本地 WebKit 标准化** — 🔶 本轮完成大半
-- 已完成：本地默认 `npm run test:e2e:webkit:wayland`（headless Weston，1.8 fps；有 `/dev/dri` 时走 GPU）、`test:e2e:webkit:desktop`（桌面会话最快）、nightly 自动选 Weston → Xvfb → headless 并在记录里带 display 列；Docker 路径实测不可用并记录。
-- 待做：把这条写进 ROADMAP 与更新记录（本批一并做）。
+**P8.1 本地 WebKit 标准化** — ✅ v1.79.0 完成
+- 已完成：本地默认 `npm run test:e2e:webkit:wayland`（headless Weston）、`test:e2e:webkit:desktop`（桌面会话最快）、nightly 自动选 Weston → Xvfb → headless 并在记录里带 display 列；Docker 路径实测不可用并记录；已写进 ROADMAP 与更新记录。
+- 关键更正（v1.79.0）：慢的根因**不是**显示栈或内核——空白页上 Chromium/Firefox/WebKit 都是 60 fps；是应用页每帧成本（全屏模糊 + 画布每帧重绘 + 启动页动画）。修完后 Chromium 空闲 7.5 → 60 fps，本机全量 E2E 8.7 → 4.2 分钟。详见 `docs/notes/ui-frame-cost.md`。
+- 新增守卫：`e2e/performance.spec.ts` 断言音频运行中界面 > 20 fps（抓「退回每帧重绘」，不考核机器性能）。
 
 **P8.2 视觉回归**（1 批）
 - 要点：Playwright 截图基线（模块网格、路由图、卷帘、播放器、启动页 × 深/浅色 × 手机/桌面），阈值化比较，失败保留 diff。
@@ -116,7 +117,7 @@ C 多轨与时间线、B 分层与分享、A 效果路由图（引擎 + 编辑�
 
 | 批次 | 内容 | 依赖 | 预估 |
 | :--- | :--- | :--- | :--- |
-| 1 | P8.1 收尾 + P8.6 一键发布 | — | 小 |
+| 1 | P8.1 收尾 ✅ v1.79.0 + P8.6 一键发布 | — | 小 |
 | 2 | P5.1 时间线编辑二期 | — | 中 |
 | 3 | P8.4 解析器模糊测试 | — | 小 |
 | 4 | P6.1 FM/PM + 环形调制 | — | 中 |
