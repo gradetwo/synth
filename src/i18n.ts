@@ -372,6 +372,8 @@ const DICT: Record<string, [string, string]> = {
   'settings.workspace': ['工作区', 'Workspace'],
   'layer.mute': ['静音', 'Mute'],
   'layer.volume': ['音量', 'Volume'],
+  'layer.map': ['时间线', 'Timeline'],
+  'layer.mapHint': ['点一下定位播放位置，左右拖动可整体前后移动这一层', 'Tap to scrub, drag sideways to move this layer in time'],
   'layer.solo': ['独奏', 'Solo'],
   'settings.instances': ['第二层音色', 'Second timbre'],
   'settings.performance': ['演奏', 'Playing'],

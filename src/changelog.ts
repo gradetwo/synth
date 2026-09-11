@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.68.0',
+    date: '2026-09-11',
+    kind: 'feature',
+    items: [
+      [
+        '缩略时间线现在可以**直接操作**：在某一层的时间线上点一下就把播放位置跳到那一点；左右拖动则整层前后移动，音符跟着一起走，可以做出错位的层次感。挪动属于这首曲子本身，重新打开还会保留（左右最多各挪一分钟，移到起点之前的音符不再发声，画面上也不再画出来）。',
+        'The mini timelines are now **controls**: tap one to jump the transport to that point, or drag sideways to move that whole layer in time — the notes travel with it, which is an easy way to offset layers against each other. The nudge belongs to the song and comes back when you reopen it (up to a minute either way; notes pushed before the start stop sounding and stop being drawn).',
+      ],
+    ],
+  },
+  {
     version: '1.67.0',
     date: '2026-09-11',
     kind: 'feature',

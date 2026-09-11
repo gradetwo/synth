@@ -215,6 +215,37 @@ test.describe('player MIDI import', () => {
     await volume.fill('40');
     await expect(volume).toHaveValue('40');
 
+    // The mini timeline is a control too: a tap scrubs the transport…
+    const map = strip.locator('[data-layer="0"] .layer-map');
+    await map.scrollIntoViewIfNeeded();
+    const box = await map.boundingBox();
+    expect(box).not.toBeNull();
+    const bar = box!;
+    const seek = page.locator('.player-seek');
+    const seekMax = await seek.evaluate((el) => Number((el as HTMLInputElement).max));
+    expect(seekMax).toBeGreaterThan(0);
+    await page.mouse.click(bar.x + bar.width * 0.6, bar.y + bar.height / 2);
+    const scrubbed = await seek.evaluate((el) => Number((el as HTMLInputElement).value));
+    expect(scrubbed / seekMax).toBeGreaterThan(0.4);
+    expect(scrubbed / seekMax).toBeLessThan(0.8);
+
+    // …and a sideways drag slides the whole layer in time.
+    const block = strip.locator('[data-layer="0"] .layer-note').first();
+    const before = await block.evaluate((el) => (el as HTMLElement).style.left);
+    await page.mouse.move(bar.x + bar.width * 0.1, bar.y + bar.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bar.x + bar.width * 0.35, bar.y + bar.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await expect
+      .poll(async () => block.evaluate((el) => (el as HTMLElement).style.left))
+      .not.toBe(before);
+    const moved = await block.evaluate((el) => (el as HTMLElement).style.left);
+    // A drag must not also scrub: moving a layer is not a transport jump.
+    expect(await seek.evaluate((el) => Number((el as HTMLInputElement).value))).toBeCloseTo(
+      scrubbed,
+      3,
+    );
+
     // The mix belongs to the song, so it survives a reload.
     await page.reload();
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
@@ -224,6 +255,12 @@ test.describe('player MIDI import', () => {
     await expect(again).toHaveAttribute('data-layers', '2');
     await expect(again.locator('[data-layer="0"] .layer-vol')).toHaveValue('40');
     await expect(again.locator('[data-layer="0"] [data-act="mute"]')).toHaveAttribute('aria-pressed', 'true');
+    // The nudge is arrangement, not session: it comes back with the song.
+    await expect
+      .poll(async () =>
+        again.locator('[data-layer="0"] .layer-note').first().evaluate((el) => (el as HTMLElement).style.left),
+      )
+      .toBe(moved);
 
   });
 });

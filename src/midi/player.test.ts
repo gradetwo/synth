@@ -164,6 +164,30 @@ describe('layers', () => {
     expect(player.getLayers()[1].volume).toBe(1);
   });
 
+  it('slides a layer in time, dropping what it pushes before zero', () => {
+    const player = new MidiPlayer();
+    player.load(layered);
+    const starts = (note: number) =>
+      player['events']
+        .filter((e) => e.on && e.note === note)
+        .map((e) => Number(e.t.toFixed(6)));
+
+    expect(starts(60)).toEqual([0.5]);
+    // Nudging the Lead layer a quarter second early moves its note with it.
+    player.setLayer(1, { offset: -0.25 });
+    expect(starts(60)).toEqual([0.25]);
+    // The other layer is untouched.
+    expect(starts(48)).toEqual([0]);
+    // Sliding past the start drops the notes that no longer fit, rather than
+    // stacking them all on beat one.
+    player.setLayer(1, { offset: -0.6 });
+    expect(starts(60)).toEqual([]);
+    expect(starts(48)).toEqual([0]);
+    // A wild value is clamped to something a song can survive.
+    player.setLayer(1, { offset: 1e6 });
+    expect(player.getLayers()[1].offset).toBe(60);
+  });
+
   it('gives a single-layer song one layer with everything audible', () => {
     const player = new MidiPlayer();
     player.load({

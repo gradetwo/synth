@@ -30,7 +30,7 @@ export interface Track {
    * Per-layer mute/solo/level for a multi-track song. A mix is part of the
    * song you loaded, not of this listening session, so it is stored with it.
    */
-  mix?: { muted?: boolean; soloed?: boolean; volume?: number }[];
+  mix?: { muted?: boolean; soloed?: boolean; volume?: number; offset?: number }[];
 }
 
 export function trackTitle(track: Track): string {
@@ -90,6 +90,10 @@ function readStoredTracks(): Track[] {
                 typeof entry.volume === 'number' && Number.isFinite(entry.volume)
                   ? Math.max(0, Math.min(1, entry.volume))
                   : 1,
+              offset:
+                typeof entry.offset === 'number' && Number.isFinite(entry.offset)
+                  ? Math.max(-60, Math.min(60, entry.offset))
+                  : 0,
             }))
         : undefined;
       out.push({ ...track, mix, group: track.id.startsWith('clip') ? 'clip' : 'imported' });
@@ -211,6 +215,7 @@ class MidiLibrary {
       muted: layer.muted,
       soloed: layer.soloed,
       volume: layer.volume,
+      offset: layer.offset,
     }));
     this.tracks = this.tracks.map((track) =>
       track.id === this.currentId ? { ...track, mix } : track,

@@ -45,6 +45,8 @@ export interface LayerState {
   soloed: boolean;
   /** 0..1, applied to the layer's note velocities when it is scheduled. */
   volume: number;
+  /** Seconds this layer is shifted by (negative = earlier). */
+  offset: number;
 }
 
 function buildEvents(song: MidiSong | null, layers: LayerState[]): TimedEvent[] {
@@ -54,21 +56,29 @@ function buildEvents(song: MidiSong | null, layers: LayerState[]): TimedEvent[] 
   // mute and solo decide which of them reach the synth.
   const anySolo = layers.some((layer) => layer.soloed);
   const audible = songTracks(song)
-    .map((track, index) => ({ notes: track.notes, volume: layers[index]?.volume ?? 1, layer: layers[index] }))
+    .map((track, index) => ({
+      notes: track.notes,
+      volume: layers[index]?.volume ?? 1,
+      offset: layers[index]?.offset ?? 0,
+      layer: layers[index],
+    }))
     .filter(({ layer }) => {
       // A song without layer state (hand-built) is all audible.
       if (!layer) return true;
       if (anySolo) return layer.soloed && !layer.muted;
       return !layer.muted;
     });
-  for (const { notes, volume } of audible) {
+  for (const { notes, volume, offset } of audible) {
     for (const n of notes) {
       // The layer's level is a velocity scale; a note never fades to nothing,
       // or a quiet layer would silently drop notes instead of playing them
-      // softly.
+      // softly. The offset slides the whole layer in time; a shifted note that
+      // would start before zero is dropped rather than played at the start.
+      const start = n.start + offset;
+      if (start < 0) continue;
       const velocity = Math.max(1 / 127, Math.min(1, n.velocity * volume));
-      events.push({ t: n.start, note: n.note, on: true, velocity });
-      events.push({ t: n.start + n.duration, note: n.note, on: false, velocity });
+      events.push({ t: start, note: n.note, on: true, velocity });
+      events.push({ t: start + n.duration, note: n.note, on: false, velocity });
     }
   }
   events.sort((a, b) => a.t - b.t || Number(b.on) - Number(a.on));
@@ -108,7 +118,13 @@ export class MidiPlayer {
     this.song = song;
     // Layer state is per song: a fresh load starts with everything audible.
     this.layers = song
-      ? songTracks(song).map((layer) => ({ name: layer.name, muted: false, soloed: false, volume: 1 }))
+      ? songTracks(song).map((layer) => ({
+          name: layer.name,
+          muted: false,
+          soloed: false,
+          volume: 1,
+          offset: 0,
+        }))
       : [];
     this.events = buildEvents(song, this.layers);
     this.cursor = 0;
@@ -129,11 +145,17 @@ export class MidiPlayer {
     return this.layers;
   }
 
-  setLayer(index: number, patch: Partial<Pick<LayerState, 'muted' | 'soloed' | 'volume'>>): void {
+  setLayer(
+    index: number,
+    patch: Partial<Pick<LayerState, 'muted' | 'soloed' | 'volume' | 'offset'>>,
+  ): void {
     const layer = this.layers[index];
     if (!layer) return;
-    const clean =
-      patch.volume === undefined ? patch : { ...patch, volume: Math.max(0, Math.min(1, patch.volume)) };
+    const clean: typeof patch = { ...patch };
+    if (patch.volume !== undefined) clean.volume = Math.max(0, Math.min(1, patch.volume));
+    // Keep a layer inside the song: a minute of offset either way is plenty for
+    // nudging an arrangement, and it cannot be dragged out of existence.
+    if (patch.offset !== undefined) clean.offset = Math.max(-60, Math.min(60, patch.offset));
     this.layers = this.layers.map((entry, i) => (i === index ? { ...entry, ...clean } : entry));
     this.rebuild();
   }

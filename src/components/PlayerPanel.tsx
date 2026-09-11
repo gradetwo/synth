@@ -53,6 +53,10 @@ export function PlayerPanel({
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
   const fileRef = useRef<HTMLInputElement | null>(null);
+  /** In-flight drag on a layer's mini timeline. */
+  const drag = useRef<{ x: number; offset: number; width: number; duration: number; moved: boolean } | null>(
+    null,
+  );
   // Timestamp of the last track *change*, so a double-click on a new track does
   // not immediately pause the playback it just started.
   const lastSelect = useRef(0);
@@ -92,8 +96,10 @@ export function PlayerPanel({
   const maps = useMemo(() => {
     const song = current?.song ?? null;
     if (!song) return [];
-    return songTracks(song).map((track) => layoutNotes(track.notes, song.duration));
-  }, [current]);
+    return songTracks(song).map((track, index) =>
+      layoutNotes(track.notes, song.duration, layers[index]?.offset ?? 0),
+    );
+  }, [current, layers]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -266,7 +272,47 @@ export function PlayerPanel({
             {layers.map((layer, index) => (
               <div className="layer-row" key={`${layer.name}-${index}`} data-layer={index}>
                 {/* The layer's notes as a bar: the arrangement at a glance. */}
-                <div className="layer-map" data-act="map" aria-hidden="true">
+                <div
+                  className="layer-map"
+                  data-act="map"
+                  role="group"
+                  aria-label={`${t('layer.map')} ${layer.name}`}
+                  title={t('layer.mapHint')}
+                  onPointerDown={(event) => {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    drag.current = {
+                      x: event.clientX,
+                      offset: layer.offset,
+                      width: rect.width,
+                      duration: player.duration || 1,
+                      moved: false,
+                    };
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                  }}
+                  onPointerMove={(event) => {
+                    const d = drag.current;
+                    if (!d) return;
+                    const dx = event.clientX - d.x;
+                    if (Math.abs(dx) < 4) return;
+                    d.moved = true;
+                    midiPlayer.setLayer(index, { offset: d.offset + (dx / d.width) * d.duration });
+                    setLayers(midiPlayer.getLayers());
+                  }}
+                  onPointerUp={(event) => {
+                    const d = drag.current;
+                    drag.current = null;
+                    if (!d) return;
+                    if (d.moved) {
+                      // A drag is an arrangement change: keep it with the song.
+                      midiLibrary.saveMix();
+                      return;
+                    }
+                    // A tap is a scrub: jump the transport to that point.
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const fraction = (event.clientX - rect.left) / Math.max(1, rect.width);
+                    midiPlayer.seek(Math.max(0, Math.min(1, fraction)) * (player.duration || 0));
+                  }}
+                >
                   {(maps[index] ?? []).map((block, blockIndex) => (
                     <span
                       key={blockIndex}

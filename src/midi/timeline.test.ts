@@ -28,6 +28,24 @@ describe('layer mini-map geometry', () => {
     expect(late.left + late.width).toBeLessThanOrEqual(100.0001);
   });
 
+  it('draws a shifted layer shifted', () => {
+    const notes = [
+      { note: 60, velocity: 1, start: 1, duration: 1 },
+      { note: 62, velocity: 1, start: 3, duration: 1 },
+    ];
+    // Whole layer a second later: every block moves by a quarter of a 4 s song.
+    const late = layoutNotes(notes, 4, 1);
+    expect(late[0].left).toBeCloseTo(50, 5);
+    expect(late[1].left).toBeCloseTo(100 - late[1].width, 5);
+    // …and two seconds earlier: the first note leaves the song, the second
+    // lands where the first used to be.
+    const early = layoutNotes(notes, 4, -2);
+    expect(early).toHaveLength(1);
+    expect(early[0].left).toBeCloseTo(25, 5);
+    // A layer dragged clean off the start draws nothing at all.
+    expect(layoutNotes(notes, 4, -60)).toHaveLength(0);
+  });
+
   it('survives a song with no duration yet', () => {
     const blocks = layoutNotes([{ note: 60, velocity: 1, start: 0, duration: 1 }], 0);
     expect(blocks).toHaveLength(1);
