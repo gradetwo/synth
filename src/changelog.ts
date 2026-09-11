@@ -23,6 +23,25 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.81.0',
+    date: '2026-09-12',
+    kind: 'fix',
+    items: [
+      [
+        '**导入损坏的 MIDI 文件更稳了**：内容被截断的文件以前可能直接报错，现在会尽量把能读的部分读出来；损坏字节造出的音符、力度、速度都会先夹到合法范围（音符 0–127、力度 0–1、速度有限），谎报轨道数量的文件也不会再让导入卡一下。播放器导入、分享码里的曲目、导出的 `.mid` 都走同一条路径。',
+        '**Importing a damaged MIDI file is sturdier**: a truncated file used to fail outright and now gives up only what it cannot read, note numbers, velocities and tempos from corrupt bytes are clamped into legal ranges (0–127, 0–1, a finite BPM), and a file that lies about how many tracks it holds no longer stalls the import. The player, a song inside a share link and an exported `.mid` all take the same path.',
+      ],
+      [
+        '**导入的音色文件会显示自己的名字**：以前从补丁文件导入的音色虽然已经生效，顶栏还是显示上一个音色的名字，现在会显示文件名。',
+        '**An imported patch file shows its own name**: the sound was already live, but the top bar kept showing the name of the patch it replaced; it now names the file you imported.',
+      ],
+      [
+        '**所有解析器都加了随机输入测试**：分享码、补丁文件、`.gs1song`、MIDI、Scala 音律表、WAV、存储波形，每种每个版本跑一万个随机与「合法文件的变异」输入，保证不崩溃、不卡死、不产出非法数据。',
+        '**Every parser now has a fuzzer**: share codes, patch files, `.gs1song`, MIDI, Scala tuning files, WAV and stored waveforms each get ten thousand random and mutated inputs on every run, so none of them can crash, hang or hand the rest of the app an illegal value.',
+      ],
+    ],
+  },
+  {
     version: '1.80.0',
     date: '2026-09-12',
     kind: 'feature',
