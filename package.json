@@ -25,6 +25,7 @@
     "verify": "npm run verify:clippy && npm run test:rust && npm run test && npm run lint && npm run build && npm run test:wasm && npm run verify:ci && npm run verify:dist && npm run verify:budget && npm run verify:audio && npm run verify:bench && npm run test:dsp",
     "test:dsp": "node scripts/dsp-baseline.mjs",
     "test:e2e:webkit": "playwright test --project=webkit --workers=1",
+    "test:e2e:webkit:headed": "xvfb-run -a playwright test --project=webkit --workers=1 --headed",
     "lint": "eslint src --max-warnings=999",
     "test:e2e": "playwright test",
     "verify:ci": "node scripts/verify-ci.mjs",

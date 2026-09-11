@@ -38,7 +38,14 @@ Chromium 下同一个上下文往往自己就变成 `running`，所以本地 Chr
 主线程会有一次很长的停顿**，怀疑与 AudioWorklet 渲染线程抢 CPU（或 WebKit 的自动播放/音频线程调度）有关，
 需要单独用一个快速开关（例如不启动引擎只测 UI）来隔离，暂记为待查。
 
-实践建议：本地用 `npm run test:e2e:webkit`（`--workers=1`）逐个 spec 跑，或分文件跑；整包的判据仍然放在 CI。
+**根因已定位（2026-09-11）**：本机 **headless WebKit 里 `requestAnimationFrame` 完全不触发**（实测 500 ms 内 0 帧）。
+Playwright 的点击前「稳定性」检查要等两帧，所以每个需要该检查的点击都会一直等下去——这就是那 23 个用例
+超时的原因，与页面代码无关。验证方法：`page.evaluate` 里数 500 ms 的 rAF 回调帧数，headless 为 0。
+
+**可用跑法**：`xvfb-run -a npm run test:e2e:webkit:headed`（有头 + 虚拟显示，rAF 恢复）。有头模式下点击正常，
+用例会走到真实差异上（例如 `smoke` 的「折叠模块」在 WebKit 下没生效、导出渲染较慢），这些属于待逐个核对的差异。
+
+实践建议：本地用 `npm run test:e2e:webkit:headed`（`xvfb-run -a`，`--workers=1`）跑；整包的判据仍然放在 CI。
 已有的本地记录：`e2e/fxgraph.spec.ts`、`e2e/smoke.spec.ts` 单独跑通过（引擎启动 11 s），
 `share.spec.ts`/`fxgraph` 在 WebKit 下也能跑完。
 
