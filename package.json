@@ -26,6 +26,8 @@
     "test:dsp": "node scripts/dsp-baseline.mjs",
     "test:e2e:webkit": "playwright test --project=webkit --workers=1",
     "test:e2e:webkit:headed": "xvfb-run -a playwright test --project=webkit --workers=1 --headed",
+    "test:e2e:webkit:desktop": "playwright test --project=webkit --workers=1 --headed",
+    "test:e2e:webkit:wayland": "./scripts/e2e-webkit-wayland.sh",
     "nightly": "node scripts/nightly-e2e.mjs",
     "lint": "eslint src --max-warnings=999",
     "test:e2e": "playwright test",

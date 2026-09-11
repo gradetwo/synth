@@ -113,14 +113,30 @@ WebKit / Firefox 两个项目显式设了 `reducedMotion: 'reduce'`：应用本�
 「跳过（宿主繁忙）」并说明原因，退出码仍为 0；空载时计时门禁照旧。Playwright 的默认超时也从 45 s 提到 60 s，
 路由图用例的编辑器内点击走 `force`（等两帧在 load 12 时会超时，而每次点击后面都有状态断言兜底）。
 
-## 7. 忙碌宿主上的 E2E 判据补充
+## 7. 本机显示栈与 WebKit 帧率（2026-09-12 实测）
+
+WebKitGTK 的合成要走显示服务器，帧率直接决定 Playwright 能不能点得动（每次点击等两帧稳定）。
+同一台机器（CachyOS，i915 + amdgpu 模块已加载，但本会话的沙箱里看不到 `/dev/dri`，只有软件渲染）实测：
+
+| 方案 | 帧率 | 说明 |
+| :--- | :--- | :--- |
+| **自己的桌面会话**（推荐） | 正常（有 GL） | 在桌面里的终端跑 `npm run test:e2e:webkit:desktop`；`/dev/dri` 存在时 WebKit 走 GPU，不需要 Xvfb |
+| Weston headless（`npm run test:e2e:webkit:wayland`） | 2.2 s / 4 帧 ≈ **1.8 fps** | 比 Xvfb 快一倍多；本机已装 weston 15。有 `/dev/dri` 时应能走 GL |
+| Xvfb（`npm run test:e2e:webkit:headed`） | 2.7 s / 2 帧 ≈ **0.7 fps** | 之前记录用的方案，最慢 |
+| Docker（官方 `mcr.microsoft.com/playwright:v1.63.0-noble`） | headless **0 帧/4 s**；headed + 容器内 xvfb **>10 分钟无输出** | 容器里没有 `/dev/dri`（要 `--device /dev/dri` 才有）；本轮实测结论：**Docker 在这台机器上帮不上忙** |
+
+结论：本机 WebKit 慢的根因是**软件渲染**，不是 Xvfb 本身；换显示服务器只能好一倍，仍然不够。
+真正的解法是在有 GL 的环境里跑（自己的桌面会话），或把 WebKit 的判据交给 CI。
+注意：本轮为验证 Docker 拉取了 3.56 GB 的镜像，`docker rmi mcr.microsoft.com/playwright:v1.63.0-noble` 可删除。
+
+## 8. 忙碌宿主上的 E2E 判据补充
 
 同一台机器一旦被别的负载占满（实测 load 14.6 / 8 核），整套 Chromium E2E 会出现 2–3 个**超时**失败，
 而按文件重跑立刻全绿（本轮实测：整包 96/99，失败 3 项按文件重跑 16/16 全通过）。所以本地流程是：
 整包失败且 `loadavg` 明显大于核数时，先看失败项是不是「等元素/等帧」类超时，再按文件重跑确认；
 `bench` 的计时门禁同理（见第 6 节）。真正的判据仍是空载整包 + CI。
 
-## 8. 部署后核对线上资源的两个坑（Cloudflare）
+## 9. 部署后核对线上资源的两个坑（Cloudflare）
 
 1. `wrangler deploy` 之后 **CF 边缘可能还缓存着旧的 `index.html`**（`cache-control: max-age=0,
    must-revalidate`，但边缘 HIT 会先给旧副本）：用带随机查询串的请求核对资源 hash，
