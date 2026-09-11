@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.80.0',
+    date: '2026-09-12',
+    kind: 'feature',
+    items: [
+      [
+        '**时间线上直接改音符**：播放器面板里的缩略时间线多了一个「音符」模式——点选音符、拖动改位置、拖右缘改长度、双击删除，都按 1/16 吸附；选中后下面还有一排按钮（提前/推后一格、缩短/加长、删除），手机上不拖拽也能编辑。它和钢琴卷帘是**同一份数据、同一套撤销**：在时间线上挪一个音，打开卷帘就在新位置；改动立刻随曲目保存，重开仍在。原来的行为（拖动整层前后移动、点一下定位播放位置）原样保留在默认的「编排」模式里。',
+        '**Edit notes directly on the timeline**: the mini timeline in the player panel gained a “Notes” mode — select a note, drag it to move, drag its right edge to resize, double-click to delete, all snapping to sixteenths, plus a row of buttons (earlier/later one step, shorter/longer, delete) so a phone needs no dragging at all. It shares one document and one undo history with the piano roll: move a note on the timeline and it is already moved in the roll, and an edit is saved with the song the moment you let go, so it is still there after a reload. The old behaviour — dragging the whole layer, tapping to seek — is untouched in the default “Arrange” mode.',
+      ],
+      [
+        '**多轨文件不再被卷帘压成一条轨**：钢琴卷帘现在一次编辑一层（工具栏多了「层」选择器），保存和导出 MIDI 时其余各层原样保留；内置示范曲目第一次编辑会自动存成副本并提示一次。',
+        '**Multi-track files are no longer flattened by the roll**: the piano roll now edits one layer at a time (a “Layer” picker appears in its toolbar), and saving or exporting MIDI keeps every other layer as it was. Editing a built-in demo saves a copy first, with a message saying so.',
+      ],
+    ],
+  },
+  {
     version: '1.79.0',
     date: '2026-09-12',
     kind: 'fix',
