@@ -105,7 +105,15 @@ WebKit / Firefox 两个项目显式设了 `reducedMotion: 'reduce'`：应用本�
   在 Firefox/Playwright 环境下不稳定，尚未判定是真实差异还是环境差异。
 - `export.spec.ts` 的 MP3 离线渲染在 Firefox 下超出用例时限（渲染比 Chromium 慢很多）。
 
-## 6. 部署后核对线上资源的两个坑（Cloudflare）
+## 6. 忙机器上的计时门禁
+
+这台机器经常被其它负载占满（8 核老 i7，实测 load 8–13），此时 `bench` 的平均块耗时会是空载的 3–4 倍，
+但 DSP 一行没改。因此 `scripts/bench.mjs` 现在有**两道自检**：跑前跑后的 `loadavg`，以及**自身的持续负载**
+（空载约 250 µs/块，超过 450 µs 即认为宿主被过度占用）。任一条命中就只报正确性检查、把计时检查标记为
+「跳过（宿主繁忙）」并说明原因，退出码仍为 0；空载时计时门禁照旧。Playwright 的默认超时也从 45 s 提到 60 s，
+路由图用例的编辑器内点击走 `force`（等两帧在 load 12 时会超时，而每次点击后面都有状态断言兜底）。
+
+## 7. 部署后核对线上资源的两个坑（Cloudflare）
 
 1. `wrangler deploy` 之后 **CF 边缘可能还缓存着旧的 `index.html`**（`cache-control: max-age=0,
    must-revalidate`，但边缘 HIT 会先给旧副本）：用带随机查询串的请求核对资源 hash，

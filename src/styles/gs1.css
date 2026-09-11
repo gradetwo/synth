@@ -267,6 +267,7 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 .fxg-wire{fill:none;stroke:color-mix(in srgb,var(--accent) 70%,transparent);stroke-width:2;
   pointer-events:stroke;cursor:pointer}
 .fxg-wire.selected{stroke:var(--accent);stroke-width:3}
+.fxg-wire:focus-visible{outline:none;stroke:var(--accent);stroke-width:3;stroke-dasharray:6 3}
 .fxg-wire-edit{position:absolute;display:flex;align-items:center;gap:4px;padding:2px 4px;
   border:1px solid var(--accent-dim);border-radius:8px;background:var(--bg-pop);z-index:2}
 .fxg-wire-val{font:600 8.5px/1 var(--mono);color:var(--txt-2);width:28px;text-align:right}

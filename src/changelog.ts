@@ -32,8 +32,8 @@ export const CHANGELOG: Release[] = [
         '**Share links are compressed now**: a link that carries a song is deflated before it is encoded, so a five-minute arrangement goes from about 36,000 characters to about 1,500 (96% smaller) — long songs that used to need a `.gs1song` file now travel as a link. Patch-only links keep their format and old links still open.',
       ],
       [
-        '**效果路由图的连线更好用了**：点连线现在是「选中」而不是直接断开（改增益、误触都不会掉线），选中后可以直接在连线上调增益，不是 100% 的连线会显示百分比；端口也支持键盘——Tab 到端口，回车选来源、再回车落到输入。',
-        '**The routing-graph wires are easier to work with**: clicking a wire now selects it instead of cutting it (no more losing a connection to a stray click), the selected wire carries its own gain slider, and a connection that is not at 100% shows its percentage. Ports work from the keyboard too: tab to a port, Enter to pick a source, Enter again to land it on an input.',
+        '**效果路由图的连线更好用了**：点连线现在是「选中」而不是直接断开（改增益、误触都不会掉线），选中后可以直接在连线上调增益，不是 100% 的连线会显示百分比；键盘也能全程操作——Tab 到端口用回车选来源、再回车落到输入，连线本身可聚焦，回车选中后即可用滑杆调增益。',
+        '**The routing-graph wires are easier to work with**: clicking a wire now selects it instead of cutting it (no more losing a connection to a stray click), the selected wire carries its own gain slider, and a connection that is not at 100% shows its percentage. The whole editor works from the keyboard: tab to a port and Enter picks a source, Enter again lands it on an input, and a wire itself takes focus so Enter selects it and the slider sets its gain.',
       ],
     ],
   },

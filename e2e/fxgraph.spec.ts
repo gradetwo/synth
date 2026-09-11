@@ -188,6 +188,25 @@ test('connects a wire from the keyboard alone', async ({ page }) => {
   await expect(page.locator('[data-wire="2:1"]')).toHaveCount(1);
 });
 
+test('picks a wire from the keyboard and edits its gain', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(400);
+  await openEditor(page);
+
+  // The default graph has a wire into every node; focus the one into node 2 and
+  // press Enter, which is how a keyboard user reaches a connection.
+  const wire = page.locator('[data-wire="1:0"]');
+  await expect(wire).toHaveAttribute('role', 'button');
+  await wire.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('[data-wire-edit="1:0"]')).toBeVisible();
+  // The chip's slider is focusable, so the gain is keyboard-editable too.
+  await page.locator('[data-act="wire-gain"]').focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.locator('[data-act="gain1"][data-node="1"]')).not.toHaveValue('100');
+});
+
 test('edits the graph from the list view, which is what phones get', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');

@@ -597,6 +597,18 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
                     onClick={() =>
                       setSelectedWire((current) => (current === wire.key ? null : wire.key))
                     }
+                    // A wire is a control, not decoration: it takes focus so a
+                    // keyboard user can pick it and then set its gain in the
+                    // chip that appears (whose slider is focusable).
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={selectedWire === wire.key}
+                    aria-label={`${sourceLabel(wire.src)} → ${t('fxg.node')} ${wire.slot + 1} ${t('fxg.input')} ${wire.which + 1}, ${t('fxg.gain')} ${Math.round(wire.gain * 100)}%`}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      setSelectedWire((current) => (current === wire.key ? null : wire.key));
+                    }}
                   />
                 ))}
 {armed?.moved ? (
