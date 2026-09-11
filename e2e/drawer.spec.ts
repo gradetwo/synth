@@ -85,3 +85,43 @@ test.describe('two instances', () => {
     await expect(page.locator('[data-instance="2"]')).toHaveAttribute('aria-pressed', 'true');
   });
 });
+
+/**
+ * Patch files arrive through the drawer's importer, which parses JSON the user
+ * downloaded. Junk has to be refused with a message instead of a broken patch.
+ */
+test.describe('patch file import', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('imports a .gs1.json patch and refuses junk', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(250);
+    await page.getByRole('button', { name: '预设库' }).click();
+
+    const input = page.locator('input[accept=".json,application/json"]');
+    await input.setInputFiles({
+      name: 'my-patch.gs1.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(
+        JSON.stringify({
+          format: 'gs1-preset',
+          name: 'From a file',
+          params: { '14': 900, '15': 0.42 },
+        }),
+      ),
+    });
+    await expect(page.locator('.toast')).toContainText('已导入音色文件');
+    // The patch is live: the top bar names the file it came from.
+    await expect(page.locator('.preset-name')).toContainText('From a file');
+
+    // A file that is not a patch is refused, and the patch stays where it was.
+    await input.setInputFiles({
+      name: 'junk.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from('{"format":"something-else"}'),
+    });
+    await expect(page.locator('.toast')).toContainText('文件格式无法识别');
+    await expect(page.locator('.preset-name')).toContainText('From a file');
+  });
+});

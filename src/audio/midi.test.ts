@@ -45,4 +45,19 @@ describe('MIDI decoding', () => {
     expect(decodeMidi([0x90])).toBeNull();
     expect(decodeMidi([])).toBeNull();
   });
+
+  it('clamps bytes that are not 7-bit numbers into legal actions', () => {
+    // A driver, a recorder buffer or a test can hand over anything; every
+    // action still has to be something the engine can act on.
+    expect(decodeMidi([0x90, 300, 300])).toEqual({ type: 'noteOn', note: 127, channel: 0, velocity: 1 });
+    expect(decodeMidi([0x90, NaN, 64])).toEqual({ type: 'noteOn', note: 0, channel: 0, velocity: 64 / 127 });
+    // 14-bit bend: the top of the range is d2 = 127, d1 = 127, so a clamped
+    // 300 lands just short of +1 rather than past it.
+    expect(decodeMidi([0xe0, -5, 300])).toEqual({ type: 'pitchBend', channel: 0, value: 0.984375 });
+    expect(decodeMidi([0xe0, 300, 300])).toEqual({ type: 'pitchBend', channel: 0, value: 16383 / 8192 - 1 });
+    expect(decodeMidi([0xb0, 999, 300])).toEqual({ type: 'cc', controller: 127, value: 1 });
+    expect(
+      decodeMidi([0x90, undefined as unknown as number, 100] as number[]),
+    ).toEqual({ type: 'noteOn', note: 0, channel: 0, velocity: 100 / 127 });
+  });
 });

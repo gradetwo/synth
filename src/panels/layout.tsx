@@ -55,7 +55,11 @@ export function TopBar({
   view: 'modules' | 'flow';
   onView: (view: 'modules' | 'flow') => void;
 }) {
-  const currentPresetId = usePresetId();
+  // Called for its subscription: this bar has to re-render when the patch
+  // changes. `currentPreset()` also knows about an imported patch file, which is
+  // applied without joining the library — a plain lookup in `allPresets()`
+  // would leave the bar showing the patch it replaced.
+  usePresetId();
   const theme = useTheme();
   const keyboardVisible = useKeyboardVisible();
   const canUndo = useCanUndo();
@@ -63,7 +67,7 @@ export function TopBar({
   const activeSlot = useActiveSlot();
   const slotAFilled = useSlotFilled('a');
   const slotBFilled = useSlotFilled('b');
-  const preset = store.allPresets().find((p) => p.id === currentPresetId);
+  const preset = store.currentPreset();
   const { device, width, height } = useViewport();
   const phone = device === 'phone';
   // Phones and portrait tablets keep a compact bar with a secondary-action

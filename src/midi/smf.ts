@@ -42,35 +42,49 @@ const DEFAULT_TEMPO = 500_000; // 120 BPM in µs per quarter note
 
 class Reader {
   private view: DataView;
+  private length: number;
   offset = 0;
 
   constructor(bytes: Uint8Array) {
     this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    this.length = bytes.byteLength;
   }
 
   get remaining(): number {
-    return this.view.byteLength - this.offset;
+    return this.length - this.offset;
   }
 
+  /**
+   * Every read is total: past the end it returns 0 and stays put instead of
+   * throwing. A truncated or lying MIDI file is a file to salvage, and the
+   * parser around this reader decides what is playable — a `RangeError` from a
+   * byte read would escape as a crash on a file the user simply downloaded.
+   */
   u8(): number {
+    if (this.offset >= this.length) return 0;
     return this.view.getUint8(this.offset++);
   }
 
   u16(): number {
-    const v = this.view.getUint16(this.offset);
-    this.offset += 2;
+    const v = this.remaining >= 2 ? this.view.getUint16(this.offset) : (this.u8() << 8) | this.u8();
+    if (this.remaining >= 2) this.offset += 2;
     return v;
   }
 
   u32(): number {
-    const v = this.view.getUint32(this.offset);
-    this.offset += 4;
-    return v;
+    if (this.remaining >= 4) {
+      const v = this.view.getUint32(this.offset);
+      this.offset += 4;
+      return v;
+    }
+    return ((this.u8() << 24) | (this.u8() << 16) | (this.u8() << 8) | this.u8()) >>> 0;
   }
 
   ascii(len: number): string {
+    const count = Math.max(0, Math.min(len, this.remaining));
     let out = '';
-    for (let i = 0; i < len; i++) out += String.fromCharCode(this.u8());
+    for (let i = 0; i < count; i++) out += String.fromCharCode(this.view.getUint8(this.offset + i));
+    this.offset += count;
     return out;
   }
 
@@ -86,7 +100,9 @@ class Reader {
   }
 
   skip(len: number): void {
-    this.offset += len;
+    // Clamped both ways: a negative or absurd length must not move the cursor
+    // outside the file, where the next read would be a different kind of wrong.
+    this.offset = Math.max(0, Math.min(this.length, this.offset + len));
   }
 }
 
@@ -150,7 +166,9 @@ export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
   for (let track = 0; track < trackCount && reader.remaining >= 8; track++) {
     if (reader.ascii(4) !== 'MTrk') break;
     const length = reader.u32();
-    const end = reader.offset + length;
+    // A track that claims to be longer than the file ends at the file: the
+    // bytes are simply not there.
+    const end = Math.min(bytes.byteLength, reader.offset + length);
     let tick = 0;
     let running = 0;
 
@@ -169,7 +187,11 @@ export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
         const type = reader.u8();
         const size = reader.vlq();
         if (type === 0x51 && size === 3) {
-          tempos.push({ tick, usPerQuarter: (reader.u8() << 16) | (reader.u8() << 8) | reader.u8() });
+          const usPerQuarter = (reader.u8() << 16) | (reader.u8() << 8) | reader.u8();
+          // Zero microseconds per quarter note is not a tempo: keeping it would
+          // divide by zero into an infinite BPM. The clock then falls back to
+          // the default, exactly as it does for a file with no tempo event.
+          if (usPerQuarter > 0) tempos.push({ tick, usPerQuarter });
         } else if (type === 0x03) {
           // A track name is a layer name; the file title is the first one.
           const text = reader.ascii(size).trim();
@@ -190,8 +212,10 @@ export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
 
       const kind = status & 0xf0;
       if (kind === 0x90 || kind === 0x80) {
-        const note = reader.u8();
-        const velocity = reader.u8();
+        // A data byte is 7 bits by definition; a file that says otherwise is
+        // corrupt, and a note number of 200 would follow us into the player.
+        const note = Math.min(127, reader.u8());
+        const velocity = Math.min(127, reader.u8());
         const on = kind === 0x90 && velocity > 0;
         rawNotes.push({ tick, note, velocity: velocity / 127, on, track });
       } else if (kind === 0xc0 || kind === 0xd0) {
@@ -207,7 +231,11 @@ export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
   const toSeconds = makeTickClock(tempos, division || 480);
   const open = new Map<number, { start: number; velocity: number }>();
   const notes: MidiNote[] = [];
-  const layered: MidiNote[][] = Array.from({ length: Math.max(1, trackCount) }, () => []);
+  // Sparse on purpose: `trackCount` is a claim in the header, and a 50-byte file
+  // is free to claim 65 535 tracks. Allocating a list per claimed track made a
+  // corrupt file allocate megabytes; layers are created when a note lands in
+  // one, and `map`/`filter` below skip the holes.
+  const layered: MidiNote[][] = [];
   let duration = 0;
 
   for (const raw of rawNotes) {
@@ -226,11 +254,16 @@ export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
     }
   }
   for (const [note, held] of open) {
-    const played = { note, velocity: held.velocity, start: held.start, duration: 0.5 };
+    const played = {
+      note: Math.max(0, Math.min(127, note)),
+      velocity: held.velocity,
+      start: held.start,
+      duration: 0.5,
+    };
     notes.push(played);
     // The leftover note has no track tag beyond the map it came from; it lands
     // in the first layer, which is where a single-track file belongs anyway.
-    layered[0].push(played);
+    (layered[0] ??= []).push(played);
     duration = Math.max(duration, held.start + 0.5);
   }
 

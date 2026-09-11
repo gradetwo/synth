@@ -198,6 +198,42 @@ describe('synth store', () => {
   });
 });
 
+describe('importing a patch file', () => {
+  beforeEach(() => {
+    store.applyPresetById('init');
+  });
+
+  it('applies a .gs1.json patch and reports success', () => {
+    const text = JSON.stringify({
+      format: 'gs1-preset',
+      name: 'From a file',
+      params: { [String(Param.FILTER_CUTOFF)]: 900, [String(Param.FILTER_RES)]: 0.42 },
+      routes: [{ src: 'lfo1', dst: 'cutoff', amount: -0.4, enabled: true }],
+    });
+    expect(store.importPresetFile(text)).toBe(true);
+    expect(store.getParam(Param.FILTER_CUTOFF)).toBe(900);
+    expect(store.getParam(Param.FILTER_RES)).toBe(0.42);
+    expect(store.currentPreset()?.name).toBe('From a file');
+  });
+
+  it('refuses anything else without touching the patch', () => {
+    store.setParam(Param.FILTER_CUTOFF, 1234);
+    for (const text of ['', 'nope', '{}', '{"format":"gs1-preset"}', '{"format":"gs1-preset","params":[]}']) {
+      expect(store.importPresetFile(text)).toBe(false);
+    }
+    expect(store.getParam(Param.FILTER_CUTOFF)).toBe(1234);
+  });
+
+  it('treats a .gs1song file as a share code', () => {
+    const code = store.shareCode();
+    expect(store.importPresetFile(JSON.stringify({ format: 'gs1-song', schema: 2, code }))).toBe(true);
+    // A file whose code does not decode is refused like any other share code.
+    expect(store.importPresetFile(JSON.stringify({ format: 'gs1-song', code: 'gs1.1.not-a-patch' }))).toBe(
+      false,
+    );
+  });
+});
+
 describe('undo covers the whole document', () => {
   it('undoes a module collapse', () => {
     store.applyPresetById('init');

@@ -190,3 +190,60 @@ function singleTrackFile(): Uint8Array {
   const chunk = [0x4d, 0x54, 0x72, 0x6b, 0, 0, 0, track.length, ...track];
   return Uint8Array.from([...header, ...chunk]);
 }
+
+/**
+ * Corrupt files, kept as the minimal samples the parser fuzzer found.
+ *
+ * A MIDI file arrives from a download folder or a chat client, so none of these
+ * may throw, hang, or hand the player a value it cannot use.
+ */
+describe('parseMidi on corrupt files', () => {
+  const header = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0];
+  const chunk = (body: number[], declared = body.length) => [
+    0x4d, 0x54, 0x72, 0x6b,
+    (declared >>> 24) & 0xff, (declared >>> 16) & 0xff, (declared >>> 8) & 0xff, declared & 0xff,
+    ...body,
+  ];
+
+  it('salvages a track whose text event claims more bytes than the file holds', () => {
+    // `FF 03 7F …` promises 127 name bytes and the file ends after three.
+    const bytes = Uint8Array.from([...header, ...chunk([0x00, 0xff, 0x03, 0x7f, 0x61, 0x62, 0x63])]);
+    const song = parseMidi(bytes, 'truncated');
+    expect(song.notes).toEqual([]);
+    expect(song.duration).toBeGreaterThan(0);
+  });
+
+  it('salvages a track that claims to be longer than the file', () => {
+    const bytes = Uint8Array.from([...header, ...chunk([0x00, 0x90, 0x3c, 0x64], 0x7fffffff)]);
+    expect(() => parseMidi(bytes, 'lying')).not.toThrow();
+  });
+
+  it('keeps note numbers and velocities inside MIDI range', () => {
+    // Data bytes of 0xff are not legal, and 255/127 would be a velocity of 2.
+    const bytes = Uint8Array.from([...header, ...chunk([0x00, 0x90, 0xff, 0xff, 0x00, 0x80, 0xff, 0x00])]);
+    const song = parseMidi(bytes, 'loud');
+    expect(song.notes).toHaveLength(1);
+    expect(song.notes[0].note).toBe(127);
+    expect(song.notes[0].velocity).toBeLessThanOrEqual(1);
+  });
+
+  it('ignores a tempo of zero instead of reporting an infinite BPM', () => {
+    const bytes = Uint8Array.from([...header, ...chunk([0x00, 0xff, 0x51, 0x03, 0, 0, 0, 0x00, 0xff, 0x2f, 0x00])]);
+    const song = parseMidi(bytes, 'zero-tempo');
+    expect(Number.isFinite(song.bpm)).toBe(true);
+    expect(song.bpm).toBe(120);
+  });
+
+  it('does not allocate per claimed track: 65 535 of them, on 50 bytes', () => {
+    const lying = singleTrackFile();
+    lying[10] = 0xff;
+    lying[11] = 0xff;
+    const started = performance.now();
+    for (let i = 0; i < 200; i += 1) parseMidi(lying, 'many');
+    // The eager version allocated a list per *claimed* track and needed ~5 s
+    // for this loop; the sparse version needs a few milliseconds, so the bound
+    // is wide enough to survive a busy host and still catch the regression.
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(songTracks(parseMidi(lying, 'many'))).toHaveLength(1);
+  });
+});

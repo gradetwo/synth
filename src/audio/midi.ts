@@ -24,14 +24,39 @@ export type MidiAction =
   | { type: 'cc'; controller: number; value: number }
   | { type: 'noteBend'; note: number; channel: number; value: number };
 
+/**
+ * One byte of a message, coerced and clamped.
+ *
+ * A Web MIDI message is a `Uint8Array` and its data bytes are 7-bit, but this is
+ * also called from the recorder and from tests, so a hole, a `NaN` or a byte
+ * from a driver that sends 300 must not become a note number or a velocity of
+ * 2.4 — clamping here keeps every action this function returns legal.
+ */
+function byteAt(value: unknown, max: number): number {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(max, n));
+}
+
+/** A data byte is 7 bits. */
+function dataByte(value: unknown): number {
+  return byteAt(value, 127);
+}
+
+/** A status byte keeps its high nibble: it *is* the message type. */
+function statusByte(value: unknown): number {
+  return byteAt(value, 255);
+}
+
 /** Decode a raw MIDI message. Returns null for messages we ignore. */
 export function decodeMidi(data: ArrayLike<number>): MidiAction | null {
   if (!data || data.length < 2) return null;
-  const status = data[0] & 0xf0;
-  const channel = data[0] & 0x0f;
-  const d1 = data[1] ?? 0;
-  const d2 = data[2] ?? 0;
-  switch (status) {
+  const status = statusByte(data[0]);
+  const kind = status & 0xf0;
+  const channel = status & 0x0f;
+  const d1 = dataByte(data[1]);
+  const d2 = dataByte(data[2]);
+  switch (kind) {
     case 0x90:
       return d2 > 0
         ? { type: 'noteOn', note: d1, channel, velocity: d2 / 127 }

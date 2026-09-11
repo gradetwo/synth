@@ -64,6 +64,7 @@ import {
   type SharedSong,
 } from './share';
 import { setLang } from '@/i18n';
+import { parsePatchFile } from './patchfile';
 import { SCHEMA_VERSION, mergeKnown, unwrap, wrap } from './persist';
 
 const STORAGE_KEY = 'gs1:state:v1';
@@ -545,79 +546,13 @@ export class SynthStore {
     downloadText(`${name || 'gs1-patch'}.gs1.json`, JSON.stringify(payload, null, 2));
   }
 
-  /** Load a `.gs1.json` file exported by `exportCurrentPreset`. */
+  /** Load a `.gs1.json` patch file, or a `.gs1song` arrangement file. */
   importPresetFile(text: string): boolean {
-    let parsed: {
-      format?: string;
-      code?: unknown;
-      name?: unknown;
-      params?: Record<string, unknown>;
-      routes?: { src?: unknown; dst?: unknown; amount?: unknown; enabled?: unknown }[];
-      params2?: Record<string, unknown>;
-      instanceMode?: unknown;
-      splitNote?: unknown;
-    };
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      return false;
-    }
-    // A `.gs1song` file is a share code in a box: an arrangement too long for a
-    // URL travels this way and lands in the same place.
-    if (parsed?.format === 'gs1-song') {
-      return typeof parsed.code === 'string' ? this.importPatchCode(parsed.code) : false;
-    }
-    if (parsed?.format !== 'gs1-preset' || !parsed.params || typeof parsed.params !== 'object') {
-      return false;
-    }
-    const params: Record<number, number> = { ...DEFAULT_PARAMS };
-    for (const [key, value] of Object.entries(parsed.params)) {
-      const id = Number(key);
-      if (Number.isFinite(id) && typeof value === 'number' && Number.isFinite(value)) {
-        params[id] = value;
-      }
-    }
-    const routes: ModRoute[] = Array.isArray(parsed.routes)
-      ? parsed.routes
-          .filter((r) => r && typeof r.src === 'string' && typeof r.dst === 'string')
-          .map((r) => ({
-            src: r.src as ModRoute['src'],
-            dst: r.dst as ModRoute['dst'],
-            amount: clamp(Number(r.amount) || 0, -1, 1),
-            enabled: Boolean(r.enabled),
-          }))
-      : DEFAULT_ROUTES.map((r) => ({ ...r }));
-    // A patch file from a layered patch carries the layer and its routing.
-    const params2: Record<number, number> = { ...DEFAULT_PARAMS };
-    let layered = false;
-    if (parsed.params2 && typeof parsed.params2 === 'object') {
-      for (const [key, value] of Object.entries(parsed.params2)) {
-        const id = Number(key);
-        if (Number.isFinite(id) && typeof value === 'number' && Number.isFinite(value)) {
-          params2[id] = value;
-          layered = true;
-        }
-      }
-    }
-    const instanceMode =
-      parsed.instanceMode === 'layer' || parsed.instanceMode === 'split' ? parsed.instanceMode : undefined;
-    const splitNote =
-      typeof parsed.splitNote === 'number' && parsed.splitNote >= 0 && parsed.splitNote <= 127
-        ? Math.round(parsed.splitNote)
-        : undefined;
-
-    const preset: Preset = {
-      id: `file-${Date.now()}`,
-      name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name : 'Imported Patch · 导入音色',
-      tag: 'IMPORTED',
-      cat: 'USER',
-      wave: intToWave(params[2] ?? 0),
-      params,
-      routes: routes.length ? routes : DEFAULT_ROUTES.map((r) => ({ ...r })),
-      ...(layered ? { params2, instanceMode, splitNote } : {}),
-    };
-    this.transientPreset = preset;
-    this.applyPreset(preset);
+    const file = parsePatchFile(text);
+    if (!file) return false;
+    if (file.kind === 'song') return this.importPatchCode(file.code);
+    this.transientPreset = file.preset;
+    this.applyPreset(file.preset);
     return true;
   }
 
