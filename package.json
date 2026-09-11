@@ -1,7 +1,7 @@
 {
   "name": "groove-synth-gs1",
   "private": true,
-  "version": "1.65.0",
+  "version": "1.66.0",
   "type": "module",
   "description": "GROOVE SYNTH GS-1 \u2014 industrial-grade WebAssembly polyphonic synthesizer with a Rust DSP core, AudioWorklet rendering and a fully offline PWA shell.",
   "license": "MIT",
@@ -21,11 +21,13 @@
     "verify:dist": "node scripts/verify-dist.mjs",
     "verify:budget": "node scripts/verify-budget.mjs",
     "verify:audio": "node scripts/verify-audio.mjs",
-    "verify": "npm run test:rust && npm run test && npm run lint && npm run build && npm run test:wasm && npm run verify:ci && npm run verify:dist && npm run verify:budget && npm run verify:audio && npm run test:dsp",
+    "verify": "npm run test:rust && npm run test && npm run lint && npm run build && npm run test:wasm && npm run verify:ci && npm run verify:dist && npm run verify:budget && npm run verify:audio && npm run verify:bench && npm run test:dsp",
     "test:dsp": "node scripts/dsp-baseline.mjs",
     "lint": "eslint src --max-warnings=999",
     "test:e2e": "playwright test",
-    "verify:ci": "node scripts/verify-ci.mjs"
+    "verify:ci": "node scripts/verify-ci.mjs",
+    "bench": "node scripts/bench.mjs --update",
+    "verify:bench": "node scripts/bench.mjs"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",

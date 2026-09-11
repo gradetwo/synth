@@ -50,6 +50,9 @@ jobs:
       - name: Audio quality gates (time + frequency domain)
         run: npm run verify:audio
 
+      - name: Sustained-load benchmark
+        run: npm run verify:bench
+
       - name: DSP regression baseline
         run: npm run test:dsp
 

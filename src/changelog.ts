@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.66.0',
+    date: '2026-09-11',
+    kind: 'feature',
+    items: [
+      [
+        '新增**持续负载基准**（`npm run bench`）：跑 6 秒「双锯齿齐奏 + 全套效果 + 16 个持续音」的最坏情况，把平均/p50/p99/最差耗时与占用率写进 `docs/notes/performance.md`（可随提交看历史），并作为门禁检查——当前实测平均 **243 µs/块（占 2.67 ms 预算的 9.1%）**，最差 940 µs，无溢出、无音频线程分配。',
+        'Added a **sustained-load benchmark** (`npm run bench`): six seconds of the worst case (two unison saws, the whole effect chain, sixteen held notes), writing mean/p50/p99/worst block time and the budget share into `docs/notes/performance.md` so the history is visible in git — and gating on it. Currently **243 µs per 128-frame block (9.1% of the 2.67 ms budget)**, worst 940 µs, no overruns and no audio-thread allocation.',
+      ],
+    ],
+  },
+  {
     version: '1.65.0',
     date: '2026-09-10',
     kind: 'feature',
