@@ -47,7 +47,7 @@ const peak = (ptr, frames) => {
 console.log('[verify] WASM core');
 
 // Bump this together with `ABI_VERSION` in crates/synth-core/src/abi.rs.
-check('ABI version', ex.gs_abi_version() === 6, `v${ex.gs_abi_version()}`);
+check('ABI version', ex.gs_abi_version() === 7, `v${ex.gs_abi_version()}`);
 check('exposes the meter exports', typeof ex.gs_take_true_peak === 'function' && typeof ex.gs_loudness_rms === 'function');
 check(
   'exposes the second instance',
@@ -169,6 +169,52 @@ for (const block of [128, 256, 512, 1024]) {
     m = Math.max(m, peak(ex.gs_left_ptr(), block));
   }
   check(`renders block size ${block}`, m > 0.05, `peak ${m.toFixed(3)}`);
+}
+
+// ------------------------------------------------------- per-note stereo pan
+// The player pans each song layer, so a note-on can carry a stereo position.
+{
+  const rms = (ptr, frames) => {
+    const samples = new Float32Array(ex.memory.buffer, ptr, frames);
+    let sum = 0;
+    for (const v of samples) sum += v * v;
+    return Math.sqrt(sum / frames);
+  };
+  // A dry mono patch: a stereo effect would spread the image on its own and
+  // hide whether the pan did anything.
+  for (const [id, value] of [
+    [Param.OSC1_WAVE, 2], [Param.OSC1_PAN, 0], [Param.FX_REVERB_ON, 0],
+    [Param.FX_DELAY_ON, 0], [43, 0], [47, 0], [51, 0], [55, 0], [Param.MASTER_VOLUME, 0.8],
+    // A short release so the previous check's note is gone before this one
+    // starts: a ringing tail is a centred voice mixed into the measurement.
+    [Param.ENV_RELEASE, 0.01],
+  ]) {
+    ex.gs_set_param(id, value);
+  }
+  const renderPan = (pan) => {
+    ex.gs_all_notes_off();
+    for (let i = 0; i < 80; i++) ex.gs_process(128);
+    ex.gs_note_on_pan(60, 1, pan);
+    let l = 0;
+    let r = 0;
+    for (let i = 0; i < 40; i++) {
+      ex.gs_process(128);
+      l = Math.max(l, rms(ex.gs_left_ptr(), 128));
+      r = Math.max(r, rms(ex.gs_right_ptr(), 128));
+    }
+    return { l, r };
+  };
+  const left = renderPan(-0.9);
+  check('a note panned left stays left', left.l > left.r * 4, `L ${left.l.toFixed(3)} R ${left.r.toFixed(3)}`);
+  const right = renderPan(0.9);
+  check('a note panned right stays right', right.r > right.l * 4, `L ${right.l.toFixed(3)} R ${right.r.toFixed(3)}`);
+  const centre = renderPan(0);
+  check(
+    'a centred note stays balanced',
+    centre.l / centre.r > 0.9 && centre.l / centre.r < 1.1,
+    `L/R ${(centre.l / centre.r).toFixed(3)}`,
+  );
+  ex.gs_all_notes_off();
 }
 
 // ------------------------------------------------------------- zero alloc

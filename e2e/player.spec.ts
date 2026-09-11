@@ -215,6 +215,11 @@ test.describe('player MIDI import', () => {
     await volume.fill('40');
     await expect(volume).toHaveValue('40');
 
+    // Each layer has a place in the stereo image, saved with the song.
+    const pan = strip.locator('[data-layer="0"] .layer-pan');
+    await pan.fill('-60');
+    await expect(pan).toHaveValue('-60');
+
     // The mini timeline is a control too: a tap scrubs the transport…
     const map = strip.locator('[data-layer="0"] .layer-map');
     await map.scrollIntoViewIfNeeded();
@@ -255,12 +260,23 @@ test.describe('player MIDI import', () => {
     await expect(again).toHaveAttribute('data-layers', '2');
     await expect(again.locator('[data-layer="0"] .layer-vol')).toHaveValue('40');
     await expect(again.locator('[data-layer="0"] [data-act="mute"]')).toHaveAttribute('aria-pressed', 'true');
+    // The pan comes back with it too.
+    await expect(again.locator('[data-layer="0"] .layer-pan')).toHaveValue('-60');
     // The nudge is arrangement, not session: it comes back with the song.
     await expect
       .poll(async () =>
         again.locator('[data-layer="0"] .layer-note').first().evaluate((el) => (el as HTMLElement).style.left),
       )
       .toBe(moved);
+
+    // A phone is the narrowest place the strip has to work: the extra control
+    // wraps instead of pushing the row out of the panel.
+    await page.setViewportSize({ width: 320, height: 720 });
+    await expect(again.locator('[data-layer="0"] .layer-pan')).toBeVisible();
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
 
   });
 });

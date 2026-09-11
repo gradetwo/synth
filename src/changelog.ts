@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.70.0',
+    date: '2026-09-11',
+    kind: 'feature',
+    items: [
+      [
+        '多轨曲目的每层多了一个**声像**滑杆：把某一层推到左边或右边，两层就能各占一边，比单纯调音量更容易分辨。声像和静音/独奏/音量、时间偏移一样属于这首曲子，重开还在；演奏时按下的音符仍然居中，不受影响。',
+        'Each layer of a multi-track song now has a **pan** slider: push a layer left or right and two layers can sit apart, which is far easier to tell apart than level alone. Like mute/solo/level and the time offset, the pan belongs to the song and comes back when you reopen it; notes you play by hand stay centred.',
+      ],
+    ],
+  },
+  {
     version: '1.69.0',
     date: '2026-09-11',
     kind: 'sound',

@@ -328,6 +328,10 @@ pub struct Engine {
     params_b: Params,
     /// Which instance each voice belongs to.
     voice_instance: [u8; MAX_VOICES],
+    /// Per-voice stereo offset, set from the note-on that started it. The
+    /// player uses it to give each song layer its own place in the image; a
+    /// plain keyboard note leaves it at the centre.
+    voice_pan: [f32; MAX_VOICES],
     /// Key/velocity routing between the instances.
     pub routing: InstanceRouting,
     /// Smoothing state for instance B (instance A uses the originals).
@@ -416,6 +420,7 @@ impl Engine {
             smp_state: [[ReadState::new(); 2]; MAX_VOICES],
             params_b: Params::new(),
             voice_instance: [0; MAX_VOICES],
+            voice_pan: [0.0; MAX_VOICES],
             routing: InstanceRouting::new(),
             smooth_target_b: [0.0; PARAM_COUNT],
             smooth_value_b: [0.0; PARAM_COUNT],
@@ -839,26 +844,34 @@ impl Engine {
     }
 
     pub fn note_on(&mut self, note: u8, velocity: f32) {
+        self.note_on_pan(note, velocity, 0.0);
+    }
+
+    /// Note-on with a stereo position (-1 = hard left, 1 = hard right). The
+    /// player passes a song layer's pan here; playing by hand leaves it centred.
+    pub fn note_on_pan(&mut self, note: u8, velocity: f32, pan: f32) {
         let vel = velocity.clamp(0.0, 1.0);
+        let pan = pan.clamp(-1.0, 1.0);
         // Mono/legato keeps a single voice, so a layer there would be one note
         // per instance only by halving the effect; it plays instance A.
         if self.params.voice_mode != 0 {
-            self.mono_note_on(note, vel);
+            self.mono_note_on(note, vel, pan);
             return;
         }
         for instance in 0..2u8 {
             if self.routing.wants(instance, note, vel) {
-                self.start_note(note, vel, instance);
+                self.start_note(note, vel, instance, pan);
             }
         }
     }
 
     /// Start one voice for `note` on `instance`.
-    fn start_note(&mut self, note: u8, vel: f32, instance: u8) {
+    fn start_note(&mut self, note: u8, vel: f32, instance: u8, pan: f32) {
         let freq = self.pitch_hz(note as f32);
-        match self.vm.note_on_inst(note, vel, freq, instance) {
+        match self.vm.note_on_inst(note, vel, freq, instance, pan) {
             NoteOnResult::Allocated(slot) => {
                 self.voice_instance[slot] = instance;
+                self.voice_pan[slot] = pan;
                 self.retrigger(slot);
             }
             NoteOnResult::Queued(victim) => {
@@ -909,7 +922,7 @@ impl Engine {
     }
 
     /// MONO/LEGATO note-on: always uses slot 0.
-    fn mono_note_on(&mut self, note: u8, velocity: f32) {
+    fn mono_note_on(&mut self, note: u8, velocity: f32, pan: f32) {
         let was_held = self.mono_len;
         if self.mono_len < self.mono_held.len() && !self.mono_held[..self.mono_len].contains(&note) {
             self.mono_held[self.mono_len] = note;
@@ -919,6 +932,7 @@ impl Engine {
         // Legato only suppresses the envelope restart when a key is already held.
         let legato = self.params.voice_mode == 2 && was_held > 0;
         let slot = 0usize;
+        self.voice_pan[slot] = pan.clamp(-1.0, 1.0);
         let was_active = self.vm.voices[slot].active;
         {
             let voice = &mut self.vm.voices[slot];
@@ -1309,11 +1323,12 @@ impl Engine {
         let sr = self.sample_rate;
         let tune = self.params.master_tune;
         let tuning = self.tuning;
-        while let Some((slot, _note, _vel, instance)) = self
+        while let Some((slot, _note, _vel, instance, pan)) = self
             .vm
             .flush_pending(|note| pitch_hz_with(note as f32, tune, &tuning))
         {
             self.voice_instance[slot] = instance;
+            self.voice_pan[slot] = pan;
             let params = self.params_for(instance).env;
             let fenv_params = self.params_for(instance).filter_env;
             self.ladders[slot][0].reset();
@@ -1791,12 +1806,15 @@ impl Engine {
         }
 
         // --- pan + accumulate into the stereo mix bus -----------------------
+        // A voice's own position rides on top of the patch's: a song layer can
+        // be placed in the image without touching the preset.
+        let voice_pan = self.voice_pan[slot];
         if stereo {
             // Each oscillator has its own position (the matrix PAN offset is
             // applied to both), with an equal-power law per oscillator.
             let mut angles = [0.0f32; 2];
             for which in 0..2 {
-                let pan = (params.osc[which].pan + mod_pan).clamp(-1.0, 1.0);
+                let pan = (params.osc[which].pan + mod_pan + voice_pan).clamp(-1.0, 1.0);
                 angles[which] = (pan + 1.0) * core::f32::consts::FRAC_PI_4;
             }
             let (l1, r1) = (angles[0].cos(), angles[0].sin());
@@ -1815,10 +1833,11 @@ impl Engine {
             // position, applied after the shared filter.
             let pan = if levels > 1e-4 {
                 ((osc_level[0] * params.osc[0].pan + osc_level[1] * params.osc[1].pan) / levels
-                    + mod_pan)
+                    + mod_pan
+                    + voice_pan)
                     .clamp(-1.0, 1.0)
             } else {
-                mod_pan.clamp(-1.0, 1.0)
+                (mod_pan + voice_pan).clamp(-1.0, 1.0)
             };
             let angle = (pan + 1.0) * core::f32::consts::FRAC_PI_4;
             // The patch's own trim rides on the voice gain, so a preset can be
@@ -2306,6 +2325,66 @@ mod tests {
         let left = simd::peak(&e.left()[..128]);
         let right = simd::peak(&e.right()[..128]);
         assert!(right > left * 5.0, "expected hard-right pan, L={left} R={right}");
+    }
+
+    /// A song layer's pan is per voice, so two layers of one song can sit in
+    /// different places at the same time — and it rides on top of the patch's
+    /// own position rather than replacing it.
+    #[test]
+    fn per_voice_pan_places_layers_in_the_image() {
+        let _guard = lock_engine();
+        let mut e = new_engine(2);
+        e.set_param(id::OSC1_WAVE, 2.0);
+        e.set_param(id::OSC1_LEVEL, 1.0);
+        e.set_param(id::OSC2_ON, 0.0);
+        let energy = |e: &mut Engine, blocks: usize| {
+            for _ in 0..blocks {
+                e.process(128);
+            }
+            let rms = |samples: &[f32]| {
+                (samples.iter().map(|v| (v * v) as f64).sum::<f64>() / samples.len() as f64).sqrt()
+                    as f32
+            };
+            let l = rms(&e.left()[..128]);
+            let r = rms(&e.right()[..128]);
+            (l, r)
+        };
+
+        // Two voices of the same patch, played at opposite ends of the image.
+        e.note_on_pan(60, 1.0, -0.9);
+        e.note_on_pan(67, 1.0, 0.9);
+        let (l, r) = energy(&mut e, 60);
+        assert!((l / r.max(1e-6)) < 1.4 && (l / r.max(1e-6)) > 0.7, "a symmetric pair should balance: L={l} R={r}");
+
+        // One voice on its own, hard left: the layer's position is what decides.
+        e.all_notes_off();
+        e.process(128);
+        e.note_on_pan(60, 1.0, -0.9);
+        let (l, r) = energy(&mut e, 60);
+        assert!(l > r * 4.0, "expected the layer on the left, L={l} R={r}");
+
+        // The patch's own pan still applies: a hard-right patch with a centred
+        // voice is on the right, and a hard-left layer moves it back.
+        e.all_notes_off();
+        e.process(128);
+        e.set_param(id::OSC1_PAN, 1.0);
+        e.note_on_pan(60, 1.0, 0.0);
+        let (l, r) = energy(&mut e, 60);
+        assert!(r > l * 4.0, "the patch's pan was lost: L={l} R={r}");
+        e.note_on_pan(72, 1.0, -1.0);
+        let (l2, r2) = energy(&mut e, 60);
+        assert!(
+            l2 / r2.max(1e-6) > l / r.max(1e-6),
+            "the layer's pan did not pull the voice left: {l2} vs {r2}"
+        );
+
+        // Out of range positions are clamped rather than trusted.
+        e.all_notes_off();
+        e.process(128);
+        e.set_param(id::OSC1_PAN, 0.0);
+        e.note_on_pan(60, 1.0, 99.0);
+        let (l, r) = energy(&mut e, 60);
+        assert!(r > l * 4.0, "pan was not clamped: L={l} R={r}");
     }
 
     #[test]

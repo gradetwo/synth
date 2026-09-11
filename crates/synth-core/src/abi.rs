@@ -13,7 +13,7 @@ use crate::params::{MAX_BLOCK_SIZE, MAX_VOICES, SPECTRUM_BINS};
 /// 4 added the impulse-response import.
 /// 5 added the sample import.
 /// 6 added the second instance (parameters + key/velocity routing).
-pub const ABI_VERSION: u32 = 6;
+pub const ABI_VERSION: u32 = 7;
 
 /// Initialise the engine. Returns 1 on success.
 #[no_mangle]
@@ -238,6 +238,12 @@ pub extern "C" fn gs_force_release_excess() {
 #[no_mangle]
 pub extern "C" fn gs_note_on(note: u32, velocity: f32) {
     engine().note_on(note.min(127) as u8, velocity);
+}
+
+/// Note-on with a stereo position (-1..1), used for a song layer's pan.
+#[no_mangle]
+pub extern "C" fn gs_note_on_pan(note: u32, velocity: f32, pan: f32) {
+    engine().note_on_pan(note.min(127) as u8, velocity, pan);
 }
 
 #[no_mangle]

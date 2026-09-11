@@ -67,6 +67,9 @@ struct Pending {
     /// Which instance the note was played for, so a promoted note keeps its
     /// timbre (layer/split).
     instance: u8,
+    /// Stereo position the note was played at, so a promoted note keeps the
+    /// layer's place in the image.
+    pan: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -99,6 +102,7 @@ impl VoiceManager {
                 note: 0,
                 velocity: 0.0,
                 instance: 0,
+                pan: 0.0,
             }; PENDING_CAPACITY],
             pending_len: 0,
         }
@@ -175,7 +179,7 @@ impl VoiceManager {
     }
 
     pub fn note_on(&mut self, note: u8, velocity: f32, freq: f32) -> NoteOnResult {
-        self.note_on_inst(note, velocity, freq, 0)
+        self.note_on_inst(note, velocity, freq, 0, 0.0)
     }
 
     /// As [`VoiceManager::note_on`], for a note played on instance `instance`.
@@ -183,7 +187,14 @@ impl VoiceManager {
     /// A note is one voice per instance: in layer mode the engine calls this
     /// twice for the same note, which allocates two voices because voices are
     /// found by *free slot*, not by note number.
-    pub fn note_on_inst(&mut self, note: u8, velocity: f32, freq: f32, instance: u8) -> NoteOnResult {
+    pub fn note_on_inst(
+        &mut self,
+        note: u8,
+        velocity: f32,
+        freq: f32,
+        instance: u8,
+        pan: f32,
+    ) -> NoteOnResult {
         if let Some(index) = self.find_free() {
             return NoteOnResult::Allocated(self.claim(index, note, velocity, freq));
         }
@@ -192,7 +203,7 @@ impl VoiceManager {
             // Retune an already-fading victim so repeated steals do not queue
             // several notes onto the same slot.
             if !self.voices[victim].stealing {
-                self.pending[self.pending_len] = Pending { note, velocity, instance };
+                self.pending[self.pending_len] = Pending { note, velocity, instance, pan };
                 self.pending_len += 1;
                 self.voices[victim].stealing = true;
                 self.voices[victim].gate = false;
@@ -205,7 +216,7 @@ impl VoiceManager {
 
     /// Promote the oldest pending note into a now-idle slot. Returns the slot and
     /// note so the engine can reset the DSP state and retrigger.
-    pub fn flush_pending<F>(&mut self, mut freq_of: F) -> Option<(usize, u8, f32, u8)>
+    pub fn flush_pending<F>(&mut self, mut freq_of: F) -> Option<(usize, u8, f32, u8, f32)>
     where
         F: FnMut(u8) -> f32,
     {
@@ -214,7 +225,7 @@ impl VoiceManager {
         }
         let limit = self.max_polyphony.min(MAX_VOICES);
         let index = (0..limit).find(|&i| !self.voices[i].active)?;
-        let Pending { note, velocity, instance } = self.pending[0];
+        let Pending { note, velocity, instance, pan } = self.pending[0];
         // Shift the queue down (tiny, fixed-size copy).
         for i in 1..self.pending_len {
             self.pending[i - 1] = self.pending[i];
@@ -222,7 +233,7 @@ impl VoiceManager {
         self.pending_len -= 1;
         let freq = freq_of(note);
         self.claim(index, note, velocity, freq);
-        Some((index, note, velocity, instance))
+        Some((index, note, velocity, instance, pan))
     }
 
     pub fn note_off(&mut self, note: u8) {
@@ -372,10 +383,25 @@ mod tests {
         vm.release_slot(slot);
         let promoted = vm.flush_pending(freq);
         assert!(promoted.is_some());
-        let (_, note, _, instance) = promoted.unwrap();
+        let (_, note, _, instance, pan) = promoted.unwrap();
         // Notes are queued with their instance so a promoted note keeps its timbre.
         assert_eq!(instance, 0);
+        assert_eq!(pan, 0.0);
         assert_eq!(note, 64);
+    }
+
+    /// A promoted note keeps the layer's stereo position as well as its timbre,
+    /// or a stolen note in a panned layer would jump to the centre.
+    #[test]
+    fn pending_note_keeps_its_pan() {
+        let mut vm = VoiceManager::new();
+        vm.set_max_polyphony(1);
+        vm.note_on_inst(60, 1.0, freq(60), 1, -0.75);
+        vm.note_on_inst(64, 1.0, freq(64), 1, -0.75);
+        vm.release_slot(0);
+        let (_, note, _, instance, pan) = vm.flush_pending(freq).expect("promoted");
+        assert_eq!((note, instance), (64, 1));
+        assert!((pan + 0.75).abs() < 1e-6, "pan came back as {pan}");
     }
 
     #[test]

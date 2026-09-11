@@ -242,6 +242,9 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
       case 'noteOn':
         this.wasm.gs_note_on(data.note, data.velocity);
         break;
+      case 'noteOnPan':
+        this.wasm.gs_note_on_pan(data.note, data.velocity, data.pan);
+        break;
       case 'noteOff':
         this.wasm.gs_note_off(data.note);
         break;

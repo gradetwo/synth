@@ -339,6 +339,21 @@ export function PlayerPanel({
                     setLayers(midiPlayer.getLayers());
                   }}
                 />
+                <input
+                  type="range"
+                  className="layer-pan"
+                  data-act="pan"
+                  min={-100}
+                  max={100}
+                  value={Math.round(layer.pan * 100)}
+                  aria-label={`${t('layer.pan')} ${layer.name}`}
+                  title={`${t('layer.pan')}: ${Math.round(layer.pan * 100)}`}
+                  onChange={(event) => {
+                    midiPlayer.setLayer(index, { pan: Number(event.target.value) / 100 });
+                    midiLibrary.saveMix();
+                    setLayers(midiPlayer.getLayers());
+                  }}
+                />
                 <button
                   type="button"
                   className={`layer-btn${layer.muted ? ' on' : ''}`}

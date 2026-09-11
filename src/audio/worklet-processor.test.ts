@@ -246,6 +246,67 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
     expect(highThird).toBeGreaterThan(lowThird * 4);
   });
 
+  it('places a note-on message in the stereo image', async () => {
+    // Pan is a per-note property (the player pans each song layer), so it rides
+    // on its own message; a centred note keeps the raw-MIDI fast path.
+    const render = async (pan: number | null) => {
+      const proc = instantiate();
+      await waitReady(proc);
+      const params: Record<string, Float32Array> = {};
+      for (const d of descriptors()) params[d.name] = new Float32Array([d.defaultValue]);
+      params.osc1On = new Float32Array([1]);
+      params.osc1Wave = new Float32Array([2]);
+      params.osc1Level = new Float32Array([0.8]);
+      params.osc2On = new Float32Array([0]);
+      params.osc2Level = new Float32Array([0]);
+      params.osc1Pan = new Float32Array([0]);
+      params.filterCutoff = new Float32Array([16000]);
+      params.filterEnvAmt = new Float32Array([0]);
+      params.envAttack = new Float32Array([0.001]);
+      params.envSustain = new Float32Array([1]);
+      params.lfoOn = new Float32Array([0]);
+      params.fxReverbOn = new Float32Array([0]);
+      params.fxDelayOn = new Float32Array([0]);
+      params.fxChorusOn = new Float32Array([0]);
+      params.fxPhaserOn = new Float32Array([0]);
+      params.fxDriveOn = new Float32Array([0]);
+      params.masterVolume = new Float32Array([1]);
+      for (let i = 0; i < 10; i++) {
+        proc.process([], [[new Float32Array(128), new Float32Array(128)]], params);
+      }
+      if (pan === null) {
+        const packet = new Uint8Array([0x90, 60, 127]);
+        proc.port.onmessage?.({ data: packet.buffer });
+      } else {
+        proc.port.onmessage?.({ data: { type: 'noteOnPan', note: 60, velocity: 1, pan } });
+      }
+      const left = new Float32Array(128);
+      const right = new Float32Array(128);
+      let sumL = 0;
+      let sumR = 0;
+      for (let i = 0; i < 60; i++) {
+        proc.process([], [[left, right]], params);
+        if (i < 10) continue;
+        for (let s = 0; s < 128; s++) {
+          sumL += left[s] * left[s];
+          sumR += right[s] * right[s];
+        }
+      }
+      return { l: Math.sqrt(sumL), r: Math.sqrt(sumR) };
+    };
+
+    const centre = await render(null);
+    expect(centre.l).toBeGreaterThan(0);
+    // A raw MIDI note keeps the patch's own position: dead centre here.
+    expect(centre.l / centre.r).toBeGreaterThan(0.9);
+    expect(centre.l / centre.r).toBeLessThan(1.1);
+
+    const left = await render(-0.9);
+    expect(left.l).toBeGreaterThan(left.r * 3);
+    const right = await render(0.9);
+    expect(right.r).toBeGreaterThan(right.l * 3);
+  });
+
   it('emits periodic analysis frames', async () => {
     messages.length = 0;
     const proc = instantiate();

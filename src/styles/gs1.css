@@ -914,7 +914,7 @@ body.module-dragging .module-grip{cursor:grabbing}
   .settings-row .d-theme-btn{min-height:44px;padding:0 12px}
   .settings-inline select{min-height:44px}
   .layer-btn{width:44px;height:44px;font-size:12px}
-  .layer-vol{width:104px;height:44px}
+  .layer-vol,.layer-pan{width:104px;height:44px}
   .layer-map{height:20px}
   .layer-row{gap:10px}
   .d-reset{min-height:40px}
@@ -1215,13 +1215,15 @@ input,textarea,[contenteditable='true']{
 .player-search input:focus{border-color:var(--accent-dim)}
 /* Mute/solo strip for multi-track songs. */
 .layer-strip{display:flex;flex-direction:column;gap:4px;padding:8px 16px 0}
-.layer-row{display:flex;align-items:center;gap:6px}
+/* Wraps rather than crushes: a long track name or an extra control moves to a
+   second line instead of squeezing the sliders to nothing. */
+.layer-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .layer-name{flex:1;min-width:0;font:600 10px/1.2 var(--grot);color:var(--txt-2);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .layer-btn{width:26px;height:24px;border-radius:7px;border:1px solid var(--border);
   background:var(--bg-inset);color:var(--txt-dim);font:700 10px/1 var(--mono);cursor:pointer;flex:none}
 .layer-btn.on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
-.layer-vol{width:74px;height:20px;flex:none;accent-color:var(--accent);
+.layer-vol,.layer-pan{width:74px;height:20px;flex:none;accent-color:var(--accent);
   touch-action:pan-y;background:none}
 /* Layer mini-map: the arrangement as a bar of note blocks plus a playhead. */
 .layer-map{position:relative;flex:1 1 auto;min-width:0;height:14px;border-radius:4px;

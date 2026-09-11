@@ -2,6 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MidiPlayer } from './player';
 import type { MidiSong } from './smf';
 
+/** Note-ons the transport hands to the engine, with their stereo position. */
+const played: { note: number; velocity: number; pan: number }[] = [];
+vi.mock('@/audio/noteBus', () => ({
+  noteBus: {
+    noteOn: (note: number, velocity: number, pan = 0) => played.push({ note, velocity, pan }),
+    noteOff: () => {},
+    allOff: () => {},
+  },
+}));
+
 /**
  * The transport's A/B looping is timing logic, so it is tested against a fake
  * clock: `requestAnimationFrame` is captured and driven by hand, which makes
@@ -24,6 +34,7 @@ let rafCallback: FrameRequestCallback | null = null;
 let now = 0;
 
 beforeEach(() => {
+  played.length = 0;
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
     rafCallback = cb;
     return 1;
@@ -186,6 +197,29 @@ describe('layers', () => {
     // A wild value is clamped to something a song can survive.
     player.setLayer(1, { offset: 1e6 });
     expect(player.getLayers()[1].offset).toBe(60);
+  });
+
+  it('gives each layer its own place in the stereo image', () => {
+    const player = new MidiPlayer();
+    player.load(layered);
+    // Flat out and play: both layers are centred until they are panned.
+    player.play();
+    advance(1000);
+    expect(played.map((p) => p.pan)).toEqual([0, 0]);
+
+    player.stop();
+    played.length = 0;
+    player.setLayer(0, { pan: -0.8 });
+    player.setLayer(1, { pan: 0.5 });
+    player.play();
+    advance(1000);
+    // The bass sits left, the lead right — and each note carries its layer.
+    expect(played.find((p) => p.note === 48)?.pan).toBeCloseTo(-0.8, 6);
+    expect(played.find((p) => p.note === 60)?.pan).toBeCloseTo(0.5, 6);
+
+    // Out of range is clamped rather than trusted.
+    player.setLayer(0, { pan: -9 });
+    expect(player.getLayers()[0].pan).toBe(-1);
   });
 
   it('gives a single-layer song one layer with everything audible', () => {

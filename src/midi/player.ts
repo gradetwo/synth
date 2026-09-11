@@ -17,6 +17,8 @@ interface TimedEvent {
   note: number;
   on: boolean;
   velocity: number;
+  /** Stereo position of the layer the note belongs to (-1..1). */
+  pan: number;
 }
 
 export interface PlayerState {
@@ -47,6 +49,8 @@ export interface LayerState {
   volume: number;
   /** Seconds this layer is shifted by (negative = earlier). */
   offset: number;
+  /** -1 (left) .. 1 (right); the layer's place in the stereo image. */
+  pan: number;
 }
 
 function buildEvents(song: MidiSong | null, layers: LayerState[]): TimedEvent[] {
@@ -60,6 +64,7 @@ function buildEvents(song: MidiSong | null, layers: LayerState[]): TimedEvent[] 
       notes: track.notes,
       volume: layers[index]?.volume ?? 1,
       offset: layers[index]?.offset ?? 0,
+      pan: layers[index]?.pan ?? 0,
       layer: layers[index],
     }))
     .filter(({ layer }) => {
@@ -68,7 +73,7 @@ function buildEvents(song: MidiSong | null, layers: LayerState[]): TimedEvent[] 
       if (anySolo) return layer.soloed && !layer.muted;
       return !layer.muted;
     });
-  for (const { notes, volume, offset } of audible) {
+  for (const { notes, volume, offset, pan } of audible) {
     for (const n of notes) {
       // The layer's level is a velocity scale; a note never fades to nothing,
       // or a quiet layer would silently drop notes instead of playing them
@@ -77,8 +82,8 @@ function buildEvents(song: MidiSong | null, layers: LayerState[]): TimedEvent[] 
       const start = n.start + offset;
       if (start < 0) continue;
       const velocity = Math.max(1 / 127, Math.min(1, n.velocity * volume));
-      events.push({ t: start, note: n.note, on: true, velocity });
-      events.push({ t: start + n.duration, note: n.note, on: false, velocity });
+      events.push({ t: start, note: n.note, on: true, velocity, pan });
+      events.push({ t: start + n.duration, note: n.note, on: false, velocity, pan });
     }
   }
   events.sort((a, b) => a.t - b.t || Number(b.on) - Number(a.on));
@@ -124,6 +129,7 @@ export class MidiPlayer {
           soloed: false,
           volume: 1,
           offset: 0,
+          pan: 0,
         }))
       : [];
     this.events = buildEvents(song, this.layers);
@@ -147,7 +153,7 @@ export class MidiPlayer {
 
   setLayer(
     index: number,
-    patch: Partial<Pick<LayerState, 'muted' | 'soloed' | 'volume' | 'offset'>>,
+    patch: Partial<Pick<LayerState, 'muted' | 'soloed' | 'volume' | 'offset' | 'pan'>>,
   ): void {
     const layer = this.layers[index];
     if (!layer) return;
@@ -156,6 +162,7 @@ export class MidiPlayer {
     // Keep a layer inside the song: a minute of offset either way is plenty for
     // nudging an arrangement, and it cannot be dragged out of existence.
     if (patch.offset !== undefined) clean.offset = Math.max(-60, Math.min(60, patch.offset));
+    if (patch.pan !== undefined) clean.pan = Math.max(-1, Math.min(1, patch.pan));
     this.layers = this.layers.map((entry, i) => (i === index ? { ...entry, ...clean } : entry));
     this.rebuild();
   }
@@ -355,7 +362,7 @@ export class MidiPlayer {
       if (event.on) {
         if (!this.active.has(note)) {
           this.active.add(note);
-          noteBus.noteOn(note, event.velocity);
+          noteBus.noteOn(note, event.velocity, event.pan);
         }
       } else if (this.active.delete(note)) {
         noteBus.noteOff(note);

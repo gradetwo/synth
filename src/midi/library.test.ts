@@ -91,7 +91,7 @@ describe('MIDI library persistence', () => {
     library.put(layered);
     // Balance it like a player would…
     const { midiPlayer } = await import('./player');
-    midiPlayer.setLayer(0, { muted: true, volume: 0.4, offset: -1.5 });
+    midiPlayer.setLayer(0, { muted: true, volume: 0.4, offset: -1.5, pan: -0.6 });
     library.saveMix();
 
     // …and a reload brings the mix back with the song.
@@ -102,8 +102,10 @@ describe('MIDI library persistence', () => {
     expect(player2.getLayers()[0].muted).toBe(true);
     expect(player2.getLayers()[0].volume).toBeCloseTo(0.4, 6);
     expect(player2.getLayers()[1].muted).toBe(false);
-    // The arrangement (a layer pushed 1.5 s earlier) travels with the mix.
+    // The arrangement (a layer pushed 1.5 s earlier) and its place in the
+    // stereo image travel with the mix.
     expect(player2.getLayers()[0].offset).toBeCloseTo(-1.5, 6);
+    expect(player2.getLayers()[0].pan).toBeCloseTo(-0.6, 6);
   });
 
   it('never stores the built-in songs', async () => {

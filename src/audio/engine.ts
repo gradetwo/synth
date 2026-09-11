@@ -667,9 +667,24 @@ export class AudioEngine {
     });
   }
 
-  noteOn(note: number, velocity = 1) {
-    const buf = new Uint8Array([0x90, note & 0x7f, Math.round(clamp(velocity, 0, 1) * 127)]);
-    this.node?.port.postMessage(buf.buffer, [buf.buffer]);
+  /**
+   * Start a note. `pan` places it in the stereo image (-1 left, 1 right) and is
+   * only used by the song player, which pans each layer; a played note stays
+   * centred and takes the shortest path (raw MIDI bytes).
+   */
+  noteOn(note: number, velocity = 1, pan = 0) {
+    const level = clamp(velocity, 0, 1);
+    if (Math.abs(pan) < 0.005) {
+      const buf = new Uint8Array([0x90, note & 0x7f, Math.round(level * 127)]);
+      this.node?.port.postMessage(buf.buffer, [buf.buffer]);
+      return;
+    }
+    this.node?.port.postMessage({
+      type: 'noteOnPan',
+      note,
+      velocity: level,
+      pan: clamp(pan, -1, 1),
+    });
   }
 
   noteOff(note: number) {

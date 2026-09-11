@@ -983,8 +983,8 @@ export const GUIDE_SECTIONS: GuideSection[] = [
             '**Metronome**: the metronome icon clicks on every beat with an accent on the first beat of the bar. It runs on its own audio path, so it never colours the patch, the recording or an export. Once it is on, a **1·2** button appears for a one-bar count-in.',
           ],
           [
-            '**多轨与分层**：格式 1 的 MIDI 会保留轨道分层，播放器里每条轨道一行，可单独静音、独奏、调音量。每行左侧的**缩略时间线**画出该层的音符和播放头：点一下跳到那个位置，左右拖动则整层前后移动，用来做错位的层次感；挪动量属于这首曲子，重开还在。',
-            '**Multi-track layers**: a format-1 MIDI keeps its tracks, one row per layer in the player, each with its own mute, solo and level. The **mini timeline** on the left of each row draws that layer’s notes and the playhead: tap it to jump the transport there, or drag sideways to move the whole layer in time for an offset, layered feel. The nudge belongs to the song, so it comes back when you reopen it.',
+            '**多轨与分层**：格式 1 的 MIDI 会保留轨道分层，播放器里每条轨道一行，可单独静音、独奏、调音量、调声像（推左推右，让两层各占一边）。每行左侧的**缩略时间线**画出该层的音符和播放头：点一下跳到那个位置，左右拖动则整层前后移动，用来做错位的层次感；挪动量属于这首曲子，重开还在。',
+            '**Multi-track layers**: a format-1 MIDI keeps its tracks, one row per layer in the player, each with its own mute, solo, level and pan (push layers left and right to set them apart). The **mini timeline** on the left of each row draws that layer’s notes and the playhead: tap it to jump the transport there, or drag sideways to move the whole layer in time for an offset, layered feel. The nudge belongs to the song, so it comes back when you reopen it.',
           ],
           [
             '**录制**：点 ● 录制后用屏幕键盘、电脑键盘或 MIDI 控制器演奏，再点 ■ 结束；录制会忽略播放器自身的输出，只记录你弹的内容。',
