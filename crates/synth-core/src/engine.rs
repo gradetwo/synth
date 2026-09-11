@@ -53,14 +53,16 @@ extern "C" {
         frames: u32,
     );
     fn gs_fx_init(sample_rate: f32);
-    fn gs_fx_chorus_set(depth: f32, freq: f32, delay_ms: f32, feedback: f32);
-    fn gs_fx_chorus_block(in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
-    fn gs_fx_flanger_set(depth: f32, freq: f32, delay_ms: f32, feedback: f32);
-    fn gs_fx_flanger_block(in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
-    fn gs_fx_phaser_set(depth: f32, freq: f32, feedback: f32, poles: i32);
-    fn gs_fx_phaser_block(in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
-    fn gs_fx_overdrive_set(drive: f32);
-    fn gs_fx_overdrive_block(in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
+    /// How many effect slots the C bridge has state for.
+    fn gs_fx_slots() -> i32;
+    fn gs_fx_chorus_set(slot: i32, depth: f32, freq: f32, delay_ms: f32, feedback: f32);
+    fn gs_fx_chorus_block(slot: i32, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
+    fn gs_fx_flanger_set(slot: i32, depth: f32, freq: f32, delay_ms: f32, feedback: f32);
+    fn gs_fx_flanger_block(slot: i32, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
+    fn gs_fx_phaser_set(slot: i32, depth: f32, freq: f32, feedback: f32, poles: i32);
+    fn gs_fx_phaser_block(slot: i32, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
+    fn gs_fx_overdrive_set(slot: i32, drive: f32);
+    fn gs_fx_overdrive_block(slot: i32, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
 }
 
 /// Short release applied to a stolen voice (seconds).
@@ -275,7 +277,17 @@ pub struct Engine {
     /// Per-note pitch bend in semitones (MPE): every note bends on its own, so
     /// this cannot be the single global `pitch_bend` wheel.
     bends: [f32; crate::params::TUNING_NOTES],
-    reverb: Reverb,
+    /// One algorithmic reverb per effect node: the graph can put a reverb in
+    /// two places, and sharing one state would make them cross-talk. The
+    /// impulse-response engine is a single instance (see `convolver`).
+    reverbs: Vec<Reverb>,
+    /// Whether this block has already used the single-instance effects. The
+    /// delay line (768 KB) and the convolver (787 KB) do not fit in the arena
+    /// six times over, so a second node of those kinds passes its input through
+    /// instead of quietly sharing — and sometimes corrupting — the first one's
+    /// state. The editor does not offer a duplicate either (see `fxchain`).
+    fx_delay_used: bool,
+    fx_conv_used: bool,
     /// One comb resonator per voice, used by the COMB filter type.
     combs: [CombFilter; MAX_VOICES],
     pitch_bend: f32,
@@ -396,7 +408,9 @@ impl Engine {
             ladders: [[LadderFilter::new(); 2]; MAX_VOICES],
             tuning: [0.0; crate::params::TUNING_NOTES],
             bends: [0.0; crate::params::TUNING_NOTES],
-            reverb: Reverb::new(),
+            reverbs: Vec::new(),
+            fx_delay_used: false,
+            fx_conv_used: false,
             combs: [const { CombFilter::new() }; MAX_VOICES],
             pitch_bend: 0.0,
             mod_wheel: 0.0,
@@ -458,7 +472,15 @@ impl Engine {
         for comb in self.combs.iter_mut() {
             comb.prepare(self.sample_rate);
         }
-        self.reverb.set_sample_rate(self.sample_rate);
+        // `resize` rather than a fresh allocation, like the other arena buffers:
+        // a host that re-inits must not fragment the free list.
+        if self.reverbs.len() != FX_SLOTS {
+            self.reverbs.clear();
+            self.reverbs.resize_with(FX_SLOTS, Reverb::new);
+        }
+        for reverb in self.reverbs.iter_mut() {
+            reverb.set_sample_rate(self.sample_rate);
+        }
         self.delay.setup(self.sample_rate);
         self.convolver.prepare();
         // `resize`, not a fresh allocation: the host can re-init, and the arena
@@ -482,13 +504,15 @@ impl Engine {
             self.ir_scratch.clear();
             self.ir_scratch.resize(capacity, 0.0);
         }
-        self.reverb.set_params(ReverbParams {
-            size: self.params.fx.reverb_size,
-            damp: self.params.fx.reverb_damp,
-            mix: 0.0,
-            width: self.params.fx.reverb_width,
-            predelay: self.params.fx.reverb_predelay,
-        });
+        for reverb in self.reverbs.iter_mut() {
+            reverb.set_params(ReverbParams {
+                size: self.params.fx.reverb_size,
+                damp: self.params.fx.reverb_damp,
+                mix: 0.0,
+                width: self.params.fx.reverb_width,
+                predelay: self.params.fx.reverb_predelay,
+            });
+        }
         self.spectrum.init();
         self.spectrum.reset();
         self.lfo.reset();
@@ -1943,21 +1967,22 @@ impl Engine {
                     } else {
                         // Damped, modulated and with a pre-delay, which the old
                         // Soundpipe `revsc` could not do.
-                        self.reverb.set_params(ReverbParams {
+                        self.reverbs[slot].set_params(ReverbParams {
                             size: if fx.reverb_on { fx.reverb_size } else { 0.0 },
                             damp: fx.reverb_damp,
                             mix,
                             width: fx.reverb_width,
                             predelay: fx.reverb_predelay,
                         });
-                        self.reverb
+                        self.reverbs[slot]
                             .process(&mut self.fx_l[..frames], &mut self.fx_r[..frames]);
                     }
                 }
                 FxKind::Chorus if fx.chorus_on && fx.chorus_mix > 0.0 => {
                     unsafe {
-                        gs_fx_chorus_set(fx.chorus_depth, fx.chorus_rate, 20.0, 0.25);
+                        gs_fx_chorus_set(slot as i32, fx.chorus_depth, fx.chorus_rate, 20.0, 0.25);
                         gs_fx_chorus_block(
+                            slot as i32,
                             self.fx_l.as_ptr(),
                             self.fx_r.as_ptr(),
                             self.osc_a.as_mut_ptr(),
@@ -1969,8 +1994,9 @@ impl Engine {
                 }
                 FxKind::Flanger if fx.flanger_on && fx.flanger_mix > 0.0 => {
                     unsafe {
-                        gs_fx_flanger_set(0.5, fx.flanger_rate, 2.0, fx.flanger_fb);
+                        gs_fx_flanger_set(slot as i32, 0.5, fx.flanger_rate, 2.0, fx.flanger_fb);
                         gs_fx_flanger_block(
+                            slot as i32,
                             self.fx_l.as_ptr(),
                             self.fx_r.as_ptr(),
                             self.osc_a.as_mut_ptr(),
@@ -1982,8 +2008,9 @@ impl Engine {
                 }
                 FxKind::Phaser if fx.phaser_on && fx.phaser_mix > 0.0 => {
                     unsafe {
-                        gs_fx_phaser_set(0.8, fx.phaser_rate, fx.phaser_fb, 4);
+                        gs_fx_phaser_set(slot as i32, 0.8, fx.phaser_rate, fx.phaser_fb, 4);
                         gs_fx_phaser_block(
+                            slot as i32,
                             self.fx_l.as_ptr(),
                             self.fx_r.as_ptr(),
                             self.osc_a.as_mut_ptr(),
@@ -1995,8 +2022,9 @@ impl Engine {
                 }
                 FxKind::Drive if fx.drive_on && fx.drive_mix > 0.0 => {
                     unsafe {
-                        gs_fx_overdrive_set(fx.drive_amt);
+                        gs_fx_overdrive_set(slot as i32, fx.drive_amt);
                         gs_fx_overdrive_block(
+                            slot as i32,
                             self.fx_l.as_ptr(),
                             self.fx_r.as_ptr(),
                             self.osc_a.as_mut_ptr(),
@@ -2009,6 +2037,11 @@ impl Engine {
                 _ => {}
             }
         }
+    }
+
+    /// Effect nodes that have their own DSP state.
+    pub fn fx_slots(&self) -> usize {
+        FX_SLOTS
     }
 
     /// Seed the routing graph from the chain that is set now: node 1 reads the
@@ -2049,6 +2082,8 @@ impl Engine {
     /// nothing is routed to the mix bus the effect section is silent, which is
     /// what an empty patch should be.
     fn apply_fx_graph(&mut self, frames: usize) {
+        self.fx_delay_used = false;
+        self.fx_conv_used = false;
         for slot in 0..FX_SLOTS {
             self.mix_node_input(slot, frames);
             self.render_fx_node(slot, frames);
@@ -2115,6 +2150,12 @@ impl Engine {
         match kind {
             FxKind::None => {}
             FxKind::Delay => {
+                // One delay line exists, so only the first delay node in the
+                // block drives it; a second passes its input through.
+                if self.fx_delay_used {
+                    return;
+                }
+                self.fx_delay_used = true;
                 // Runs even when it is off (mix 0), so the line keeps moving and
                 // switching it back on does not replay a stale tail.
                 let params = DelayParams {
@@ -2134,6 +2175,12 @@ impl Engine {
             FxKind::Reverb => {
                 let mix = if fx.reverb_on { fx.reverb_mix } else { 0.0 };
                 if fx.reverb_mode == 1 && self.convolver.has_ir() {
+                    // Same rule as the delay: the imported response is one
+                    // instance, so the first such node wins.
+                    if self.fx_conv_used {
+                        return;
+                    }
+                    self.fx_conv_used = true;
                     self.convolver.process(
                         &mut self.graph_node_l[base..base + frames],
                         &mut self.graph_node_r[base..base + frames],
@@ -2141,14 +2188,14 @@ impl Engine {
                         mix * fx.conv_trim,
                     );
                 } else {
-                    self.reverb.set_params(ReverbParams {
+                    self.reverbs[slot].set_params(ReverbParams {
                         size: if fx.reverb_on { fx.reverb_size } else { 0.0 },
                         damp: fx.reverb_damp,
                         mix,
                         width: fx.reverb_width,
                         predelay: fx.reverb_predelay,
                     });
-                    self.reverb.process(
+                    self.reverbs[slot].process(
                         &mut self.graph_node_l[base..base + frames],
                         &mut self.graph_node_r[base..base + frames],
                     );
@@ -2156,8 +2203,9 @@ impl Engine {
             }
             FxKind::Chorus if fx.chorus_on && fx.chorus_mix > 0.0 => {
                 unsafe {
-                    gs_fx_chorus_set(fx.chorus_depth, fx.chorus_rate, 20.0, 0.25);
+                    gs_fx_chorus_set(slot as i32, fx.chorus_depth, fx.chorus_rate, 20.0, 0.25);
                     gs_fx_chorus_block(
+                        slot as i32,
                         self.graph_node_l[base..].as_ptr(),
                         self.graph_node_r[base..].as_ptr(),
                         self.osc_a.as_mut_ptr(),
@@ -2169,8 +2217,9 @@ impl Engine {
             }
             FxKind::Flanger if fx.flanger_on && fx.flanger_mix > 0.0 => {
                 unsafe {
-                    gs_fx_flanger_set(0.5, fx.flanger_rate, 2.0, fx.flanger_fb);
+                    gs_fx_flanger_set(slot as i32, 0.5, fx.flanger_rate, 2.0, fx.flanger_fb);
                     gs_fx_flanger_block(
+                        slot as i32,
                         self.graph_node_l[base..].as_ptr(),
                         self.graph_node_r[base..].as_ptr(),
                         self.osc_a.as_mut_ptr(),
@@ -2182,8 +2231,9 @@ impl Engine {
             }
             FxKind::Phaser if fx.phaser_on && fx.phaser_mix > 0.0 => {
                 unsafe {
-                    gs_fx_phaser_set(0.8, fx.phaser_rate, fx.phaser_fb, 4);
+                    gs_fx_phaser_set(slot as i32, 0.8, fx.phaser_rate, fx.phaser_fb, 4);
                     gs_fx_phaser_block(
+                        slot as i32,
                         self.graph_node_l[base..].as_ptr(),
                         self.graph_node_r[base..].as_ptr(),
                         self.osc_a.as_mut_ptr(),
@@ -2195,8 +2245,9 @@ impl Engine {
             }
             FxKind::Drive if fx.drive_on && fx.drive_mix > 0.0 => {
                 unsafe {
-                    gs_fx_overdrive_set(fx.drive_amt);
+                    gs_fx_overdrive_set(slot as i32, fx.drive_amt);
                     gs_fx_overdrive_block(
+                        slot as i32,
                         self.graph_node_l[base..].as_ptr(),
                         self.graph_node_r[base..].as_ptr(),
                         self.osc_a.as_mut_ptr(),
@@ -2425,6 +2476,149 @@ mod tests {
             .zip(b.iter())
             .map(|(x, y)| (x - y).abs())
             .fold(0.0f32, f32::max)
+    }
+
+    /// The engine and the C bridge have to agree on how many effect instances
+    /// exist, or a node would read another node's state.
+    #[test]
+    fn the_bridge_has_one_effect_state_per_slot() {
+        // Both sides of the boundary, because a mismatch would have one node
+        // read another node's state.
+        assert_eq!(unsafe { gs_fx_slots() } as usize, FX_SLOTS);
+        assert_eq!(crate::abi::gs_fx_slot_count() as usize, FX_SLOTS);
+    }
+
+    /// Two nodes running the same effect keep their own state: with one shared
+    /// instance the second `set` would overwrite the first and both outputs
+    /// would be identical.
+    #[test]
+    fn two_nodes_of_the_same_effect_do_not_share_state() {
+        let _guard = lock_engine();
+        // Node 1 only, node 2 only, then both. With a state per node the pair is
+        // the sum of the two; sharing one instance (what the engine did before
+        // the graph had per-node effects) makes the second node drive the first
+        // one's delay line and the sum no longer holds.
+        let build = |node1: bool, node2: bool| {
+            let mut e = fx_test_engine([FxKind::None; FX_SLOTS], &[]);
+            // Stay below the lookahead limiter: this is about state, and a
+            // limiter is a nonlinearity.
+            e.set_param(id::MASTER_VOLUME, 0.1);
+            e.set_param(id::FX_GRAPH, 1.0);
+            clear_node_routes(&mut e);
+            e.set_param(id::FX_CHORUS_ON, 1.0);
+            e.set_param(id::FX_CHORUS_MIX, 1.0);
+            for (index, on) in [node1, node2].into_iter().enumerate() {
+                if !on {
+                    continue;
+                }
+                e.set_param(id::FX_CHAIN1 + index as u32, 3.0);
+                set_graph_input(&mut e, index, 0, GRAPH_DRY, 1.0);
+                route_node(&mut e, index, 1.0);
+            }
+            render_all(&mut e, 60, 20)
+        };
+
+        let only_one = build(true, false).0;
+        let only_two = build(false, true).0;
+        let both = build(true, true).0;
+        assert!(both.iter().any(|v| v.abs() > 0.01), "nothing rendered");
+        let worst = both
+            .iter()
+            .zip(only_one.iter().zip(only_two.iter()))
+            .map(|(pair, (one, two))| (pair - (one + two)).abs())
+            .fold(0.0f32, f32::max);
+        assert!(worst < 1e-4, "the two chorus nodes did not sum: worst {worst}");
+    }
+
+    /// Two reverb nodes keep their own tails, on the same reasoning as the
+    /// chorus above. The algorithmic reverb is the one effect where two
+    /// instances are musically interesting (two rooms in parallel).
+    #[test]
+    fn two_reverb_nodes_do_not_share_state() {
+        let _guard = lock_engine();
+        let build = |node1: bool, node2: bool| {
+            let mut e = fx_test_engine([FxKind::None; FX_SLOTS], &[]);
+            e.set_param(id::MASTER_VOLUME, 0.1);
+            e.set_param(id::FX_GRAPH, 1.0);
+            clear_node_routes(&mut e);
+            e.set_param(id::FX_REVERB_ON, 1.0);
+            e.set_param(id::FX_REVERB_MIX, 1.0);
+            e.set_param(id::FX_REVERB_SIZE, 0.8);
+            // No imported response: that engine is a single instance.
+            e.set_param(id::FX_REVERB_MODE, 0.0);
+            for (index, on) in [node1, node2].into_iter().enumerate() {
+                if !on {
+                    continue;
+                }
+                e.set_param(id::FX_CHAIN1 + index as u32, 2.0);
+                set_graph_input(&mut e, index, 0, GRAPH_DRY, 1.0);
+                route_node(&mut e, index, 1.0);
+            }
+            render_all(&mut e, 60, 120)
+        };
+        let only_one = build(true, false).0;
+        let only_two = build(false, true).0;
+        let both = build(true, true).0;
+        // A reverb tail builds up slowly; give it a third of a second and just
+        // check that there is something to compare.
+        assert!(
+            both.iter().any(|v| v.abs() > 1e-4),
+            "nothing rendered: peak {}",
+            both.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+        );
+        let worst = both
+            .iter()
+            .zip(only_one.iter().zip(only_two.iter()))
+            .map(|(pair, (one, two))| (pair - (one + two)).abs())
+            .fold(0.0f32, f32::max);
+        assert!(worst < 1e-4, "the two reverb nodes did not sum: worst {worst}");
+    }
+
+    /// The delay line and the convolver are single instances (their memory does
+    /// not fit six times over), so a second node of those kinds passes its input
+    /// through rather than sharing a line with the first: the sound must not
+    /// change, and nothing may blow up.
+    #[test]
+    fn duplicate_delay_and_ir_nodes_pass_through() {
+        let _guard = lock_engine();
+        // Node 1 is a delay either way; node 2 is an empty position (which is a
+        // pass-through) or a second delay node. Both reach the output, so with
+        // the rule the two runs are identical: the duplicate passes its input
+        // through instead of driving the same delay line a second time.
+        let build = |duplicate: bool| {
+            let mut e = fx_test_engine([FxKind::None; FX_SLOTS], &[]);
+            e.set_param(id::MASTER_VOLUME, 0.1);
+            e.set_param(id::FX_GRAPH, 1.0);
+            clear_node_routes(&mut e);
+            e.set_param(id::FX_DELAY_ON, 1.0);
+            e.set_param(id::FX_DELAY_MIX, 0.5);
+            e.set_param(id::FX_DELAY_FB, 0.3);
+            e.set_param(id::FX_CHAIN1, 1.0);
+            set_graph_input(&mut e, 0, 0, GRAPH_DRY, 1.0);
+            route_node(&mut e, 0, 1.0);
+            e.set_param(id::FX_CHAIN2, if duplicate { 1.0 } else { 0.0 });
+            set_graph_input(&mut e, 1, 0, GRAPH_DRY, 1.0);
+            route_node(&mut e, 1, 1.0);
+            render_all(&mut e, 60, 25)
+        };
+        let pass_through = build(false);
+        let with_duplicate = build(true);
+        assert!(
+            pass_through.0.iter().any(|v| v.abs() > 0.01),
+            "nothing rendered: peak {}",
+            pass_through.0.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+        );
+        assert!(
+            with_duplicate.0.iter().chain(with_duplicate.1.iter()).all(|v| v.is_finite()),
+            "a duplicate delay node produced a non-finite sample"
+        );
+        let worst = pass_through
+            .0
+            .iter()
+            .zip(with_duplicate.0.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(worst < 1e-4, "the duplicate changed the sound by {worst}");
     }
 
     /// A patch with every effect switched on and a given chain, so the graph and

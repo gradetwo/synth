@@ -59,6 +59,7 @@
 | A2b | **路由图卡片可拖动摆放**（位置进工作区、连线跟随、重置布局；参数批量提交减少重绘） | ✅ v1.76.0 |
 | A2c | **连线的可视化编辑与键盘可达**：点选连线（误点不断开）、连线上直接调增益、非单位增益显示百分比标签、端口键盘操作（Tab + 回车）、连线本身可聚焦并用回车选中（含 aria-label 说明来源/目标/增益） | ✅ v1.77.0 |
 | B6 | **分享码压缩**：带曲目的链接先用 `CompressionStream('deflate-raw')` 压缩（五分钟曲目 36,390 → 1,516 字符，约 96% 更小），无该 API 时回退明文；纯音色码与 `.gs1song` 格式不变，旧链接仍可读 | ✅ v1.77.0 |
+| A2d | **效果节点多实例**：算法混响与四个插入效果**每个节点一套状态**（C 桥接层加 slot 维度、混响改为每节点一份）；延迟/卷积因内存上限仍单实例，第二个同类节点直通、编辑器标「已占用」并禁用；修掉「同一效果两个节点共用状态」的隐患 | ✅ v1.78.0 |
 | C9 | **门禁在繁忙机器上不再假红**：`bench` 按 `loadavg` 判定宿主是否过载（过载只报正确性、跳过计时并说明原因）；Playwright 默认超时 45→60 s；WebKit/Firefox 项目开 `reducedMotion` + 单独超时 + 重试；修掉两个跨引擎测试缺陷（Chromium 专用启动参数害 WebKit 起不来、浮动键盘挡住模块按钮） | ✅ v1.76.0 |
 | C8 | **真正的夜间跑**：仓库新增 `nightly` 作业（`on.schedule`，`verify-ci` 守住它）+ 本机 `npm run nightly`（WebKit 核心子集 + `xvfb-run --headed`、锁、日志轮转、`docs/notes/nightly.md` 记录）+ systemd 用户定时器模板 | ✅ v1.76.0 |
 | C7 | **本机 WebKit 可跑**：依赖装好后定位到「headless WebKit 不触发 rAF → Playwright 点击稳定性检查挂死」，给出 `xvfb-run … --headed` 跑法（`npm run test:e2e:webkit:headed`），记录在 `docs/notes/compat.md` | ✅ v1.75.0 |

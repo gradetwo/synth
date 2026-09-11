@@ -83,6 +83,11 @@ check(
   'exposes the effect routing graph',
   typeof ex.gs_fx_graph_sync === 'function',
 );
+check(
+  'every effect node has its own state slot',
+  ex.gs_fx_slot_count() === 6,
+  `slots ${ex.gs_fx_slot_count()}`,
+);
 check('max block size is 1024', ex.gs_max_block_size() === 1024);
 check('voice pool is 32', ex.gs_max_voices() === 32);
 check('spectrum exposes 36 bins', ex.gs_spectrum_bins() === 36);

@@ -32,6 +32,7 @@ import {
   type FxKind,
   type ParamId,
 } from '@/audio/params';
+import { getUserIr } from '@/audio/ir';
 import { store } from '@/state/store';
 import { useSynth } from '@/hooks/useSynth';
 import { useViewport } from '@/hooks/useViewport';
@@ -150,6 +151,18 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
   const graphOn = (params[Param.FX_GRAPH] ?? 0) >= 0.5;
+  /**
+   * Kinds the engine can only run once per patch, and why: the delay line is
+   * 768 KB and the convolver 787 KB, so six of either does not fit in the
+   * arena. A second node of those kinds passes its input through, which the
+   * editor does not want to hand out silently — the option is disabled instead.
+   */
+  const singleInstance = new Set<FxKind>();
+  singleInstance.add('delay');
+  if ((params[Param.FX_REVERB_MODE] ?? 0) >= 0.5 && getUserIr()) singleInstance.add('reverb');
+  const usedBy = (kind: FxKind, except: number) =>
+    nodes.some((node) => node.slot !== except && node.kind === kind);
+  const isSingleInstance = (kind: FxKind) => singleInstance.has(kind);
   const savedPos = snapshot.layout.fxGraphPos;
   const posOf = useCallback(
     (key: string): [number, number] => savedPos[key] ?? defaultPos(key),
@@ -166,25 +179,23 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
     }
     return { w, h };
   }, [posOf]);
-  const nodes = useMemo(
-    () =>
-      Array.from({ length: FX_SLOTS }, (_, slot) => ({
-        slot,
-        kind: intToFxKind(params[Param.FX_CHAIN1 + slot] ?? 0),
-        parallel: (params[Param.FX_PARALLEL1 + slot] ?? 0) >= 0.5,
-        in1: {
-          src: Math.round(params[graphInId(slot, 0)] ?? 0),
-          gain: params[graphInGainId(slot, 0)] ?? 1,
-        },
-        in2: {
-          src: Math.round(params[graphInId(slot, 1)] ?? 0),
-          gain: params[graphInGainId(slot, 1)] ?? 1,
-        },
-        toOut: (params[graphToOutId(slot)] ?? 0) >= 0.5,
-        outGain: params[graphOutGainId(slot)] ?? 1,
-      })),
-    [params],
-  );
+  // Derived per render: the compiler memoises this itself, and saying so twice
+  // (the manual `useMemo` that was here) is what the lint complains about.
+  const nodes = Array.from({ length: FX_SLOTS }, (_, slot) => ({
+    slot,
+    kind: intToFxKind(params[Param.FX_CHAIN1 + slot] ?? 0),
+    parallel: (params[Param.FX_PARALLEL1 + slot] ?? 0) >= 0.5,
+    in1: {
+      src: Math.round(params[graphInId(slot, 0)] ?? 0),
+      gain: params[graphInGainId(slot, 0)] ?? 1,
+    },
+    in2: {
+      src: Math.round(params[graphInId(slot, 1)] ?? 0),
+      gain: params[graphInGainId(slot, 1)] ?? 1,
+    },
+    toOut: (params[graphToOutId(slot)] ?? 0) >= 0.5,
+    outGain: params[graphOutGainId(slot)] ?? 1,
+  }));
 
   // Escape closes it, like every other overlay. The component is mounted only
   // while it is open, so closing discards the gestures in progress.
@@ -368,11 +379,20 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
               });
             }}
           >
-            {FX_KINDS.map((kind) => (
-              <option key={kind} value={kind}>
-                {FX_KIND_LABELS[kind]}
-              </option>
-            ))}
+            {FX_KINDS.map((kind) => {
+              const taken = kind !== node.kind && isSingleInstance(kind) && usedBy(kind, slot);
+              return (
+                <option
+                  key={kind}
+                  value={kind}
+                  disabled={taken}
+                  title={taken ? t('fxg.singleInstance') : undefined}
+                >
+                  {FX_KIND_LABELS[kind]}
+                  {taken ? ` (${t('fxg.inUse')})` : ''}
+                </option>
+              );
+            })}
           </select>
           {onParam !== undefined ? (
             <button
@@ -513,6 +533,7 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
         <div className="fxg-hint">
           {graphOn ? t('fxg.hintOn') : t('fxg.hintOff')}
           {view === 'canvas' ? ` · ${t('fxg.dragHint')}` : ''}
+          {singleInstance.size > 0 ? ` · ${t('fxg.singleInstance')}` : ''}
         </div>
 
         {view === 'list' ? (

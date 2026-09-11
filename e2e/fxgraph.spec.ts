@@ -207,6 +207,31 @@ test('picks a wire from the keyboard and edits its gain', async ({ page }) => {
   await expect(page.locator('[data-act="gain1"][data-node="1"]')).not.toHaveValue('100');
 });
 
+test('allows a second instance of an effect, and blocks the ones that cannot', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(400);
+  await openEditor(page);
+
+  const kind = (slot: number) => page.locator('[data-act="kind"][data-node="' + slot + '"]');
+  const option = (slot: number, value: string) => kind(slot).locator(`option[value="${value}"]`);
+
+  // The default chain has one of each. Make node 2 a second chorus: allowed,
+  // because every effect node has its own state for it.
+  await kind(1).selectOption('chorus');
+  await expect(kind(1)).toHaveValue('chorus');
+  await expect(option(1, 'chorus')).toBeEnabled();
+
+  // A second delay is not on offer: the delay line is one instance, so the
+  // engine would pass it through (and the option says so). Node 1 is the delay
+  // in the default chain, so node 2's copy of the option is the one to check.
+  await expect(kind(0)).toHaveValue('delay');
+  await expect(option(1, 'delay')).toBeDisabled();
+  await expect(option(1, 'delay')).toHaveText(/已占用/);
+  // The kind a node already is stays selectable, so it can be left alone.
+  await expect(option(0, 'delay')).toBeEnabled();
+});
+
 test('edits the graph from the list view, which is what phones get', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');

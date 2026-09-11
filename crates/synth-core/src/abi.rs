@@ -237,6 +237,13 @@ pub extern "C" fn gs_force_release_excess() {
 
 /// Turn on the effect routing graph, seeded from the chain that is set now, so
 /// the sound does not change the moment the graph takes over.
+/// How many effect nodes have their own state (the C bridge's array size). A
+/// test asserts this matches `FX_SLOTS`, so the two cannot drift apart.
+#[no_mangle]
+pub extern "C" fn gs_fx_slot_count() -> u32 {
+    engine().fx_slots() as u32
+}
+
 #[no_mangle]
 pub extern "C" fn gs_fx_graph_sync() {
     engine().fx_graph_from_chain();

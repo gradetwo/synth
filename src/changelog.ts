@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.78.0',
+    date: '2026-09-11',
+    kind: 'feature',
+    items: [
+      [
+        '**效果路由图里同一个效果可以用在多个节点**：算法混响、合唱、镶边、移相、过载现在每个节点都有自己的一套内部状态——两个合唱各摆各的、两个混响就是两间不同的房间，并联做层次一下子方便很多。',
+        '**The routing graph can use the same effect in more than one node**: the algorithmic reverb, chorus, flanger, phaser and overdrive now keep their own state per node — two choruses sweep independently, two reverbs are two different rooms, and layering them in parallel is finally straightforward.',
+      ],
+      [
+        '**延迟与卷积混响（IR）仍然每个音色只能用一次**：一条延迟线 768 KB、一份卷积 787 KB，六份放不进 8 MiB 的内存里。第二个同类节点会原样直通（不再共用一条线），编辑器里这样的选项会显示「已占用」并不可选，免得白选。顺带修掉一个隐患：以前把同一效果放到两个节点会共用内部状态、互相干扰听起来不对。',
+        '**The delay and the convolution reverb still run once per patch**: a delay line is 768 KB and a convolver 787 KB, and six of either does not fit in the 8 MiB the engine has. A second node of those kinds passes its input through (it no longer shares one line), and the editor marks such an option “in use” and disables it so it cannot be picked by mistake. This also fixes a real hazard: two nodes of the same effect used to share internal state and interfere.',
+      ],
+    ],
+  },
+  {
     version: '1.77.0',
     date: '2026-09-11',
     kind: 'feature',

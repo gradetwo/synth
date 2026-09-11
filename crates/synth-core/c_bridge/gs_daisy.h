@@ -76,15 +76,19 @@ void gs_voice_formant_set(int v, int side, float vowel, float res);
 void gs_voice_formant_block(int v, int side, const float *in, float *out, uint32_t frames);
 
 /* --- global modulation effects (DaisySP) ---------------------------------- */
+#define GS_FX_SLOTS 6
+
 void gs_fx_init(float sample_rate);
-void gs_fx_chorus_set(float depth, float freq, float delay_ms, float feedback);
-void gs_fx_chorus_block(const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
-void gs_fx_flanger_set(float depth, float freq, float delay_ms, float feedback);
-void gs_fx_flanger_block(const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
-void gs_fx_phaser_set(float depth, float freq, float feedback, int poles);
-void gs_fx_phaser_block(const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
-void gs_fx_overdrive_set(float drive);
-void gs_fx_overdrive_block(const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
+/** How many effect nodes have their own state (`FX_SLOTS` on the Rust side). */
+int gs_fx_slots(void);
+void gs_fx_chorus_set(int slot, float depth, float freq, float delay_ms, float feedback);
+void gs_fx_chorus_block(int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
+void gs_fx_flanger_set(int slot, float depth, float freq, float delay_ms, float feedback);
+void gs_fx_flanger_block(int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
+void gs_fx_phaser_set(int slot, float depth, float freq, float feedback, int poles);
+void gs_fx_phaser_block(int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
+void gs_fx_overdrive_set(int slot, float drive);
+void gs_fx_overdrive_block(int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
 
 /* Diagnostics: number of voices currently allocated in the static pool. */
 int gs_daisy_voice_slots(void);
