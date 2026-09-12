@@ -112,6 +112,177 @@ function render(blocks, skip = 20) {
   return out;
 }
 
+// ----------------------------- P9.1a: a ruler that does not leak (see below)
+//
+// Two post-mortems — `docs/notes/hard-sync-aliasing.md` and the P6.2b noise
+// floor investigation — ended at the same place: the exact-bin Parseval measure
+// this gate used for "non-harmonic energy" is `total - sum(2|X(k*f0)|^2)`, a
+// difference of two nearly equal large numbers. It is only readable when the
+// tone sits on a whole number of analysis periods, and no oscillator does:
+// `daisysp::Oscillator` computes its phase increment as `f * sr_recip_` in
+// float, so "880 Hz" is really 879.999965 Hz and every partial is off the
+// probe by `k * 3.5e-5` Hz. The leftover leaks, and the sign of the residual
+// then depends on the tone's phase. Probing the f32-exact frequency instead —
+// the obvious fix — was measured on this wasm build and does not work either:
+// over the eight notes below the sine reads -74 dB on one and hits the
+// `max(residual, 1e-30)` clamp (-2978 "dB") on the next.
+//
+// What is stable is a window whose own leakage is far below the thing being
+// measured. A 7-term Blackman-Harris window has -180 dB sidelobes, so over four
+// whole seconds the power that is not within eight bins (2 Hz) of a harmonic is
+// the engine's own off-grid energy. The 4-term Blackman-Harris is not enough:
+// its -92 dB sidelobes leave a pure sine at -104 dB, above the -105 dB line
+// this batch has to hold, while the 7-term one reads -117 dB and does not move
+// when the exclusion band is widened to 16 Hz.
+
+/**
+ * Everything a settled oscillator measurement depends on, pinned. `gs_init`
+ * keeps the parameter block *and* the modulation matrix, so an unset pitch or
+ * noise amount is the previous scenario's — which is how the hard-sync section
+ * was silent the first few times it ran, and why P6.3a measured the default
+ * patch's ENV -> CUTOFF instead of its filter.
+ */
+const QUIET_PATCH = [
+  [P.OSC1_ON, 1], [P.OSC1_LEVEL, 0.9], [P.OSC1_PITCH, 0], [P.OSC1_DETUNE, 0],
+  [P.OSC1_UNISON, 1], [P.OSC1_SPREAD, 0], [P.OSC1_PW, 0.5], [P.OSC1_SYNC, 0],
+  [P.OSC1_SUB, 0], [P.OSC1_SUB_LEVEL, 0],
+  [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0], [P.OSC2_PITCH, 0], [P.OSC2_DETUNE, 0],
+  [P.OSC2_UNISON, 1], [P.OSC2_SPREAD, 0], [P.OSC2_SUB, 0], [P.OSC2_SUB_LEVEL, 0],
+  [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0], [P.MASTER_TUNE, 0],
+  [P.FILTER_TYPE, 0], [P.FILTER_CUTOFF, 18000], [P.FILTER_RES, 0.05],
+  [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0], [P.FILTER_KBD, 0],
+  [P.FILTER_ROUTING, 0], [P.FILTER_MORPH, 0], [P.FILTER_BLEND, 0],
+  [P.FILTER2_TYPE, 0], [P.FILTER2_CUTOFF, 20000], [P.FILTER2_RES, 0],
+  [P.FILTER2_DRIVE, 0],
+  [P.ENV_ATTACK, 0.01], [P.ENV_DECAY, 0.5], [P.ENV_SUSTAIN, 1], [P.ENV_RELEASE, 0.005],
+  [P.LFO_ON, 0], [P.LFO2_ON, 0], [P.VOICE_MODE, 0], [P.OVERSAMPLE, 0],
+  [P.MASTER_VOLUME, 1],
+  [P.FX_GRAPH, 0], [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
+  [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0], [P.FX_CRUSH_ON, 0],
+  [P.FX_EQ_ON, 0], [P.FX_TRANSIENT_ON, 0],
+];
+
+/** The P6.3a lesson in one call: the default patch's ENV/LFO -> CUTOFF is live. */
+function clearModMatrix() {
+  for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
+}
+
+/** 400 blocks = 1.07 s: the P6.2b report measured another 12 dB over 200. */
+const SETTLE_BLOCKS = 400;
+/** The alias ruler's window, and its exclusion half-width in bins of it. */
+const FLOOR_SECONDS = 4;
+const FLOOR_BINS = 8;
+
+/**
+ * A settled, pinned, unmodulated four-second render of one note, left channel.
+ */
+function renderFloor(extra, note) {
+  engine([...QUIET_PATCH, ...extra], [[note, 1]]);
+  clearModMatrix();
+  const blocks = Math.round((FLOOR_SECONDS * SR) / BLOCK);
+  const out = new Float64Array(blocks * BLOCK);
+  const heap = new Float32Array(ex.memory.buffer);
+  let w = 0;
+  for (let b = 0; b < SETTLE_BLOCKS + blocks; b++) {
+    ex.gs_process(BLOCK);
+    if (b < SETTLE_BLOCKS) continue;
+    const ptr = ex.gs_left_ptr() / 4;
+    for (let i = 0; i < BLOCK; i++) out[w++] = heap[ptr + i];
+  }
+  return out;
+}
+
+/** Iterative radix-2 FFT, in place, on a Float64Array pair. */
+function fftInPlace(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      const tr = re[i];
+      re[i] = re[j];
+      re[j] = tr;
+      const ti = im[i];
+      im[i] = im[j];
+      im[j] = ti;
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (-2 * Math.PI) / len;
+    const wr = Math.cos(ang);
+    const wi = Math.sin(ang);
+    const half = len >> 1;
+    for (let i = 0; i < n; i += len) {
+      let cr = 1;
+      let ci = 0;
+      for (let j = 0; j < half; j++) {
+        const ur = re[i + j];
+        const ui = im[i + j];
+        const vr = re[i + j + half] * cr - im[i + j + half] * ci;
+        const vi = re[i + j + half] * ci + im[i + j + half] * cr;
+        re[i + j] = ur + vr;
+        im[i + j] = ui + vi;
+        re[i + j + half] = ur - vr;
+        im[i + j + half] = ui - vi;
+        const ncr = cr * wr - ci * wi;
+        ci = cr * wi + ci * wr;
+        cr = ncr;
+      }
+    }
+  }
+}
+
+/** 7-term Blackman-Harris, the minimum-sidelobe member of the family. */
+const BH7 = [
+  0.27105140069342, 0.43329793923448, 0.21812299954311, 0.06592544638803,
+  0.01081174209837, 0.00077658482522, 0.00001388721735,
+];
+
+function bh7Window(n, N) {
+  let v = BH7[0];
+  for (let k = 1; k < BH7.length; k++) {
+    v += (k % 2 ? -1 : 1) * BH7[k] * Math.cos((2 * Math.PI * k * n) / (N - 1));
+  }
+  return v;
+}
+
+/**
+ * The share of a settled render's power that is *not* on the harmonic grid of
+ * `f0`, in dB. The window is a 7-term Blackman-Harris over the whole render,
+ * zero-padded to the next power of two; eight bins either side of every
+ * harmonic are excluded. At four seconds a bin is 0.25 Hz and the window's own
+ * main lobe is +-1.75 Hz, so the exclusion covers the lobe and no line power
+ * can be mistaken for off-grid energy.
+ */
+function offGridFloor(samples, f0) {
+  const N = samples.length;
+  let nfft = 1;
+  while (nfft < N) nfft <<= 1;
+  const re = new Float64Array(nfft);
+  const im = new Float64Array(nfft);
+  for (let i = 0; i < N; i++) re[i] = samples[i] * bh7Window(i, N);
+  fftInPlace(re, im);
+  const half = nfft >> 1;
+  const df = SR / nfft;
+  const exHz = (FLOOR_BINS * SR) / N;
+  const excluded = new Uint8Array(half);
+  for (let k = 1; k * f0 < SR / 2 + exHz; k++) {
+    const centre = k * f0;
+    const lo = Math.max(0, Math.ceil((centre - exHz) / df));
+    const hi = Math.min(half - 1, Math.floor((centre + exHz) / df));
+    for (let b = lo; b <= hi; b++) excluded[b] = 1;
+  }
+  let off = 0;
+  let total = 0;
+  for (let b = 0; b < half; b++) {
+    const p = re[b] * re[b] + im[b] * im[b];
+    total += p;
+    if (!excluded[b]) off += p;
+  }
+  return 10 * Math.log10(Math.max(off, 1e-300) / Math.max(total, 1e-300));
+}
+
 /** Windowed single-bin magnitude (Hann window, same maths as the Rust tests). */
 function binMag(samples, freq) {
   const n = samples.length;
@@ -734,6 +905,23 @@ function blockSteps(frames) {
 // parameter block across `gs_init`, so an unset pitch or ring amount is the
 // *previous* section's — which is exactly how this section was silent the first
 // few times it ran.
+//
+// P9.1a measured this restart through the corrected ruler (`offGridFloor`, at
+// the bottom of this file) and left the figures below alone on purpose. Be
+// honest about what they are: the restart's residual is **not stationary**.
+// Over one held note the four-second windows run from about -36 dB to -119 dB,
+// and across note-ons its median moves 22-58 dB, because the sub-sample
+// position of the restart walks across the 2x oversampling grid on a
+// several-second cycle. So the -68.7 dB printed here is a favourable window of
+// that cycle, not a floor — this assertion passes by luck, and the same scene
+// through the new ruler can read anywhere in that range. Tightening it (the
+// P9.1a brief asked for -70 dB) is not possible without first making the
+// restart's residue stationary, and that is an engine change with a baseline
+// re-record: it belongs to the new **P9.1c hard-sync restart alignment** batch,
+// whose acceptance is "every 4 s window at or below -60 dB and a window-to-
+// window spread below 3 dB over at least 30 s". See `.tmp/hard-sync-drift.md`
+// for the raw evidence and the end of this file for the corrected ruler and the
+// plain oscillators' numbers.
 {
   const master = 220;
   const quiet = [
@@ -1365,7 +1553,7 @@ function blockSteps(frames) {
   const NOTE = 45;
   const F0 = 440 * 2 ** ((NOTE - 69) / 12);
   const BLOCKS = (1 * SR) / BLOCK; // one whole second
-  const SKIP_BLOCKS = 240; // let the attack and the limiter settle
+  const SKIP_BLOCKS = 400; // let the attack and the limiter settle (P9.1a: was 240)
   /** Rectangular-window single-bin amplitude (no leakage on an exact bin). */
   const binMagRect = (samples, freq) => {
     const w = (2 * Math.PI * freq) / SR;
@@ -1392,19 +1580,22 @@ function blockSteps(frames) {
         // previous scenario may have left behind, and all three would move the
         // harmonics off the bins the measurement subtracts.
         [P.OSC1_PITCH, 0], [P.OSC1_DETUNE, 0], [P.OSC1_UNISON, 1], [P.OSC1_SPREAD, 0],
-        [P.MASTER_TUNE, 0],
+        [P.OSC1_SYNC, 0], [P.OSC1_SUB, 0], [P.OSC1_SUB_LEVEL, 0], [P.MASTER_TUNE, 0],
         [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0],
         [P.OSC2_PITCH, 0], [P.OSC2_DETUNE, 0], [P.OSC2_UNISON, 1], [P.OSC2_SPREAD, 0],
-        [P.OSC_FM, 0], [P.OSC_RING, 0],
+        [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0], [P.VOICE_MODE, 0],
         [P.FILTER_TYPE, 0], [P.FILTER_CUTOFF, 20000], [P.FILTER_RES, 0.1],
-        [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0],
+        [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0], [P.FILTER_KBD, 0],
         // No second stage and no graph: the whole scenario is spelled out, so
         // the measurement does not depend on where in the file it sits.
-        [P.FILTER_ROUTING, 0], [P.FX_GRAPH, 0],
+        [P.FILTER_ROUTING, 0], [P.FILTER_MORPH, 0], [P.FILTER2_TYPE, 0],
+        [P.FILTER2_CUTOFF, 20000], [P.FILTER2_RES, 0], [P.FILTER2_DRIVE, 0],
+        [P.FX_GRAPH, 0],
         [P.ENV_ATTACK, 0.01], [P.ENV_SUSTAIN, 1],
         [P.LFO_ON, 0], [P.LFO2_ON, 0],
         [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
         [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0],
+        [P.FX_CRUSH_ON, 0], [P.FX_EQ_ON, 0], [P.FX_TRANSIENT_ON, 0],
         // The drive is the only effect in the chain, so the alias source is
         // unambiguous whatever the previous scenario left behind.
         [P.FX_CHAIN1, 6], [P.FX_CHAIN2, 0], [P.FX_CHAIN3, 0],
@@ -1690,6 +1881,66 @@ function blockSteps(frames) {
       `peak ${peak.toFixed(3)}, worst sample step ${worstStep.toFixed(3)}`,
     );
   }
+}
+
+// ------------------------------- P9.1a: the oscillator's off-grid floor
+//
+// The ruler lives at the top of the file (`QUIET_PATCH`, `renderFloor`,
+// `offGridFloor`); this is where it is pointed at every factory waveform and
+// every octave of the keyboard. Every scenario pins the whole signal path,
+// clears the modulation matrix and settles for 400 blocks, so the number
+// belongs to the oscillator rather than to the scenario's position in the file.
+//
+// This section sits last on purpose: it re-pins the whole parameter block, and
+// the hard-sync scene above is sensitive to what it inherits.
+{
+  const NOTES = [33, 45, 57, 69, 81, 91, 96, 105];
+  const hz = (n) => 440 * 2 ** ((n - 69) / 12);
+  const floor = (wave, note) => offGridFloor(renderFloor([[P.OSC1_WAVE, wave]], note), hz(note));
+  const at = (values) => `${NOTES.map((n, i) => values[i].toFixed(1)).join('/')} dB at ${NOTES.map((n) => hz(n).toFixed(0)).join('/')} Hz`;
+
+  // The control: a sine has nothing to fold, so everything below is the ruler's
+  // own floor. The exact-bin measure this gate used to carry read -84...-102 dB
+  // here (and the post-mortem had to argue the number was an artefact); this one
+  // is clean by construction. -105 dB is the batch's line and this is the
+  // measurement that makes it assertable.
+  const sines = NOTES.map((n) => floor(WAVE.sine, n));
+  check(
+    'a steady sine leaves nothing off its harmonic grid',
+    Math.max(...sines) < -105,
+    `worst ${Math.max(...sines).toFixed(1)} dB over ${NOTES.length} notes (${at(sines)})`,
+  );
+
+  // The harmonic-rich waves. Their floor is real — P6.2b traced it to the
+  // two-point polyBLEP in DaisySP, at the fixed offset `48000 mod f0` below each
+  // harmonic — and P9.1b is the batch that band-limits it. So this records the
+  // "before" table and holds it with a loose bound; the -60 dB acceptance is
+  // P9.1b's to tighten once the oscillators are fixed.
+  for (const [name, wave, bound] of [
+    ['triangle', WAVE.triangle, -40],
+    ['saw', WAVE.saw, -30],
+    ['square', WAVE.square, -30],
+  ]) {
+    const floors = NOTES.map((n) => floor(wave, n));
+    check(
+      `the ${name}'s off-grid floor is recorded for P9.1b`,
+      floors.every((v) => Number.isFinite(v) && v < bound),
+      `${at(floors)} (worst ${Math.max(...floors).toFixed(1)} dB)`,
+    );
+  }
+
+  // Repeatability. `gs_init` keeps the voice phases and the allocator rotates
+  // the slot, so the P6.2b post-mortem watched one scenario move 30 dB between
+  // repetitions; this is the assertion that would have caught it, and it is the
+  // one the hard-sync restart fails today (it is off this scene's path). The
+  // plain oscillator is state-free: eight fresh scenes agree to the last bit.
+  const repeats = Array.from({ length: 8 }, () => floor(WAVE.saw, 81));
+  const spread = Math.max(...repeats) - Math.min(...repeats);
+  check(
+    'the same scenario measures the same eight times',
+    spread < 1,
+    `saw at C7: ${Math.min(...repeats).toFixed(2)}...${Math.max(...repeats).toFixed(2)} dB, spread ${spread.toFixed(2)} dB`,
+  );
 }
 
 console.log('[audio] quality gate');
