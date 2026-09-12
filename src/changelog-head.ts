@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.91.0',
+    version: '1.92.0',
     date: '2026-09-12',
     kind: 'feature',
     items: [
       [
-        '**录音不再覆盖上一遍**：每次录完都成为一条独立的 take（内容 = 当前 take 或该层原有的音符 + 刚弹的），新的自动选中、旧的全部保留，随时切回去听。同一个音在 50 ms 内重复按算重击，替换而不是叠成双倍力度；每层最多 8 条，超出淘汰最旧的。切 take 立刻改变该层内容，播放、卷帘、MIDI/WAV/MP3 导出与分享码都跟着当前 take；分享码会带上全部 take，对方也能切。',
-        '**Recording no longer overwrites the last pass**: every finished recording becomes its own take (the selected take’s notes, or the layer’s, plus what you just played), the new one is selected and the old ones stay, so switching back to hear them is a click. The same key inside 50 ms counts as a re-strike and replaces the note instead of doubling its velocity into a flam, and a layer keeps up to eight takes, retiring the oldest. Switching a take changes the layer immediately, and playback, the roll, MIDI/WAV/MP3 export and the share link all follow the selected take; the link carries every take so the other side can switch too.',
+        '**两个新效果：位粉碎与塑形 EQ**：路由图里多了「CRUSH」（降位 4–16 bit + 降采样 1–64 倍，带可调抗混叠，适合 lofi 与电子质感）和「EQ」（低架 + 可扫中频峰值 + 高架，各段独立增益与频率），都有干湿混合、默认关闭、随音色保存与分享；原来的六个效果节点与所有旧音色**完全不变**。',
+        '**Two new effects: bit-crusher and shaping EQ**: the routing graph gained CRUSH (4–16 bits, 1–64× downsampling, adjustable anti-aliasing — the lofi and digital texture) and EQ (low shelf + sweepable mid peak + high shelf, each with its own gain and frequency). Both have a dry/wet mix, are off by default, and save and share with the patch; the original six effect nodes and every existing patch are unchanged.',
       ],
     ],
-};
+  };

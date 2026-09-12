@@ -50,7 +50,11 @@ const wasmGz = files
 const lame = files.find((file) => /lamejs-.*\.js$/.test(file));
 
 const BUDGETS = {
-  total: 1700 * 1024,
+  // 1700 → 1712 KB when the bit-crusher and the shaping EQ landed (P6.4):
+  // +14.4 KB of wasm (both cores) and +2.9 KB of JS for two effects that are
+  // off by default. Measured, not guessed — and P8.5 is the batch that has to
+  // claw it back, which is why this comment names the trade.
+  total: 1712 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   // Raised from 150 KB when the routing graph and song sharing landed
   // (measured 151.7 KB): the editor, piano roll, drawers and the flow canvas
