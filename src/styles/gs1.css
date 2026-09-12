@@ -1318,6 +1318,15 @@ input,textarea,[contenteditable='true']{
 .player-seek::-moz-range-thumb,
 .player-field input[type='range']::-moz-range-thumb{
   width:14px;height:14px;border-radius:50%;background:var(--accent);border:0}
+/* Tempo map: a compact list of sections inside the transport row (P5.3). */
+.tempo-map{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-left:auto}
+.tempo-seg{display:flex;align-items:center;gap:3px;padding:1px 4px;border-radius:7px;
+  background:var(--bg-inset);border:1px solid var(--line-soft-2)}
+.tempo-bpm{width:52px;height:22px;border-radius:5px;border:1px solid var(--border);
+  background:var(--bg-socket);color:var(--txt-1);font:600 10px/1 var(--mono);text-align:right;padding:0 3px}
+.tempo-bar{height:22px;border-radius:5px;border:1px solid var(--border);background:var(--bg-socket);
+  color:var(--txt-1);font:600 10px/1 var(--mono)}
+.tempo-bars{font:600 9px/1 var(--mono);color:var(--txt-dim);padding:0 2px}
 .player-time{font:600 10px/1 var(--mono);color:var(--txt-dim);white-space:nowrap;min-width:78px;text-align:right}
 .player-controls{display:flex;flex-direction:column;gap:8px;padding:6px 16px 4px}
 .player-field{display:flex;align-items:center;gap:9px;font:600 9.5px/1 var(--mono);

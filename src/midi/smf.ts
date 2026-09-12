@@ -7,6 +7,7 @@
  */
 
 import type { MidiClip } from './clips';
+import { defaultMap, secondsToBeats, type TempoSegment } from './tempo';
 
 export interface MidiNote {
   /** MIDI note number, 0–127. */
@@ -33,6 +34,13 @@ export interface MidiSong {
    * hand-built songs (a recording, a demo, a test fixture) stay valid.
    */
   tracks?: MidiTrack[];
+  /**
+   * Where the tempo and the time signature change (P5.3). Optional: a song with
+   * one tempo just has `bpm`, and `tempoMapOf` builds the one-segment map.
+   */
+  tempoMap?: import('./tempo').TempoSegment[];
+  /** Beats per bar of the first segment, for plain readers. */
+  beatsPerBar?: number;
   /**
    * The arrangement, when the song has one (P5.2): clips placed and repeated on
    * the timeline. `notes` above is always their expansion, so the player, the
@@ -169,6 +177,8 @@ export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
 
   const rawNotes: RawNote[] = [];
   const tempos: TempoEvent[] = [];
+  /** Beats-per-bar changes, keyed by tick (P5.3). */
+  const signatures = new Map<number, number>();
   const trackNames: string[] = [];
   let title = '';
 
@@ -201,6 +211,13 @@ export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
           // divide by zero into an infinite BPM. The clock then falls back to
           // the default, exactly as it does for a file with no tempo event.
           if (usPerQuarter > 0) tempos.push({ tick, usPerQuarter });
+        } else if (type === 0x58 && size >= 2) {
+          // Time signature: numerator, denominator as a power of two, then
+          // clocks-per-click and 32nds-per-quarter, which a player does not need.
+          const numerator = reader.u8();
+          reader.u8();
+          if (numerator >= 1 && numerator <= 16) signatures.set(tick, numerator);
+          reader.skip(size - 2);
         } else if (type === 0x03) {
           // A track name is a layer name; the file title is the first one.
           const text = reader.ascii(size).trim();
@@ -285,14 +302,64 @@ export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
     .filter((layer) => layer.notes.length > 0)
     .map((layer, index) => ({ name: layer.name || `Track ${index + 1}`, notes: layer.notes }));
 
+  const divisionOrDefault = division || 480;
+  const beatsOf = (tick: number): number => tick / divisionOrDefault;
+  const tempoMap = buildTempoMap(tempos, signatures, beatsOf);
+  const firstSignature = tempoMap.length ? tempoMap[0].beatsPerBar : (signatures.get(0) ?? 4);
   return {
     name: title || name,
     bpm: Math.round(60_000_000 / firstTempo),
+    // Only a song that actually changes tempo or signature carries a map; a
+    // plain one keeps the flat BPM every reader already understands.
+    ...(tempoMap.length ? { tempoMap } : {}),
+    beatsPerBar: firstSignature,
     duration: Math.max(duration, 0.5),
     notes,
     tracks: tracks.length ? tracks : [{ name: 'Track 1', notes }],
   };
 }
+
+/**
+ * Turn the tempo and time-signature events into segments, or an empty list when
+ * the song has one tempo and a plain 4/4 signature.
+ */
+function buildTempoMap(
+  tempos: TempoEvent[],
+  signatures: Map<number, number>,
+  beatsOf: (tick: number) => number,
+): TempoSegment[] {
+  const changes: { beat: number; bpm?: number; beatsPerBar?: number }[] = [];
+  const sortedTempos = [...tempos].sort((a, b) => a.tick - b.tick);
+  for (const tempo of sortedTempos) {
+    changes.push({ beat: tidyBeats(beatsOf(tempo.tick)), bpm: Math.round(60_000_000 / tempo.usPerQuarter) });
+  }
+  for (const [tick, numerator] of [...signatures.entries()].sort((a, b) => a[0] - b[0])) {
+    changes.push({ beat: tidyBeats(beatsOf(tick)), beatsPerBar: numerator });
+  }
+  changes.sort((a, b) => a.beat - b.beat);
+  if (changes.length === 0) return [];
+
+  const firstBpm = changes.find((change) => change.bpm !== undefined)?.bpm ?? 120;
+  const firstBar = changes.find((change) => change.beatsPerBar !== undefined)?.beatsPerBar ?? 4;
+  const segments: TempoSegment[] = [];
+  let bpm = firstBpm;
+  let beatsPerBar = firstBar;
+  let start = 0;
+  for (const change of changes) {
+    if (change.beat > start + 1e-9 && (change.bpm !== undefined || change.beatsPerBar !== undefined)) {
+      segments.push({ bpm, beats: tidyBeats(change.beat - start), beatsPerBar });
+      start = change.beat;
+    }
+    if (change.bpm !== undefined) bpm = change.bpm;
+    if (change.beatsPerBar !== undefined) beatsPerBar = change.beatsPerBar;
+  }
+  segments.push({ bpm, beats: Number.POSITIVE_INFINITY, beatsPerBar });
+  // One tempo, one signature, nothing before it: not a map, just a song.
+  const trivial = segments.length === 1 && segments[0].beatsPerBar === 4 && signatures.size <= 1;
+  return trivial ? [] : segments;
+}
+
+const tidyBeats = (v: number): number => Math.round(v * 1000) / 1000;
 
 function writeVlq(value: number): number[] {
   const out = [value & 0x7f];
@@ -312,15 +379,20 @@ export function writeMidi(
     division?: number;
     name?: string;
     tracks?: MidiTrack[];
+    /** Where the tempo and the signature change (P5.3); one segment otherwise. */
+    tempoMap?: TempoSegment[];
+    beatsPerBar?: number;
     /** Stereo position for a format-0 file (a layered export carries it per track). */
     pan?: number;
   } = {},
 ): Uint8Array {
   const bpm = Math.max(20, Math.min(300, options.bpm ?? 120));
   const division = options.division ?? 480;
-  const usPerQuarter = Math.round(60_000_000 / bpm);
-  const tickOf = (seconds: number) => Math.max(0, Math.round((seconds * division * bpm) / 60));
-
+  const map = options.tempoMap && options.tempoMap.length ? options.tempoMap : defaultMap(bpm, options.beatsPerBar ?? 4);
+  // A note's position is musical, so it goes through the map: seconds -> beats
+  // -> ticks. With one tempo this is the same arithmetic as before, which is why
+  // a plain song exports byte for byte as it always did.
+  const tickOf = (seconds: number) => Math.max(0, Math.round(secondsToBeats(map, seconds) * division));
   /** One MTrk body: an optional tempo, an optional name, then the notes. */
   const encodeTrack = (
     list: MidiNote[],
@@ -337,12 +409,36 @@ export function writeMidi(
       events.push({ tick: start, order: 0, bytes: [0x90, note, velocity] });
       events.push({ tick: endTick, order: 1, bytes: [0x80, note, 0] });
     }
+    // The tempo map goes into the stream at its own ticks, so a file that changes
+    // tempo says so where it does. A song with one tempo and 4/4 emits exactly
+    // the single tempo event it always did — the signature only appears when it
+    // is not 4/4, which is what keeps every existing export byte for byte the
+    // same.
+    if (withTempo) {
+      const trivial = map.length === 1 && (map[0].beatsPerBar ?? 4) === 4;
+      let beat = 0;
+      for (const segment of map) {
+        const at = Math.max(0, Math.round(beat * division));
+        const us = Math.round(60_000_000 / Math.max(20, Math.min(300, segment.bpm)));
+        events.push({
+          tick: at,
+          order: -2,
+          bytes: [0xff, 0x51, 0x03, (us >> 16) & 0xff, (us >> 8) & 0xff, us & 0xff],
+        });
+        if (!trivial) {
+          events.push({
+            tick: at,
+            order: -1,
+            bytes: [0xff, 0x58, 0x04, Math.max(1, Math.round(segment.beatsPerBar)), 0x02, 0x18, 0x08],
+          });
+        }
+        if (!Number.isFinite(segment.beats)) break;
+        beat += segment.beats;
+      }
+    }
     events.sort((a, b) => a.tick - b.tick || a.order - b.order);
 
     const track: number[] = [];
-    if (withTempo) {
-      track.push(0x00, 0xff, 0x51, 0x03, (usPerQuarter >> 16) & 0xff, (usPerQuarter >> 8) & 0xff, usPerQuarter & 0xff);
-    }
     if (trackName) {
       const text = [...trackName].slice(0, 60).map((c) => c.charCodeAt(0) & 0x7f);
       track.push(0x00, 0xff, 0x03, ...writeVlq(text.length), ...text);

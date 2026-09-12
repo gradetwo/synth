@@ -391,6 +391,14 @@ const DICT: Record<string, [string, string]> = {
     'OSC 2 → OSC 1 · FM 相位调制 / RING 环形调制 / SYNC 硬同步（需要 OSC 2 打开）· NOISE 混入白噪',
     'OSC 2 → OSC 1 · FM phase modulation / RING ring modulation / SYNC hard sync (needs OSC 2 on) · NOISE blends white noise in',
   ],
+  'player.tempoMapHint': [
+    '速度与拍号：每一段从上一段结束处开始；最后的「小节」是这段的长度（空 = 到曲末）。读数为「小节.拍」',
+    'Tempo and signature: each section starts where the last one ends; the number is how many bars it lasts (blank = to the end). The readout is bar.beat',
+  ],
+  'player.tempoBpm': ['速度（BPM）', 'Tempo (BPM)'],
+  'player.tempoBar': ['拍号', 'Time signature'],
+  'player.tempoAdd': ['加一段速度/拍号', 'Add a tempo section'],
+  'player.tempoRemove': ['删掉最后一段', 'Remove the last section'],
   'clip.lane': ['片段编排', 'Clip lane'],
   'clip.fold': ['折叠成片段', 'Fold into a clip'],
   'clip.foldHint': [

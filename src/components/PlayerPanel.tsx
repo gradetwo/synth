@@ -18,12 +18,19 @@ import {
 } from '@/midi/timeline';
 import { MIN_LENGTH, removeNote, rollToSeconds, updateNote, type RollDoc } from '@/midi/roll';
 import { clipsDuration, clipsOf, clipsOfLayer, expandClips } from '@/midi/clips';
+import { barBeatAt, secondsToBeats, tempoMapOf, withTempoMap, type TempoSegment } from '@/midi/tempo';
 import { rollSession, useRollSession } from '@/state/roll';
 import { midiLibrary, trackTitle, type TrackGroup } from '@/midi/library';
 import { store } from '@/state/store';
 import { exportSongMidi, exportSongMp3, exportSongWav } from '@/midi/export';
 import { QUANTISE_GRIDS, quantiseLabel, quantiseNotes, type QuantiseGrid } from '@/midi/quantise';
 import { TransportIcon } from './TransportIcon';
+
+/** Bar.beat at a time, through a tempo map — shown next to the clock (P5.3). */
+const barLabelOf = (map: TempoSegment[], time: number): string => {
+  const where = barBeatAt(map, secondsToBeats(map, time));
+  return `${where.bar}.${where.beat}`;
+};
 
 const fmtTime = (s: number) => {
   const total = Math.max(0, Math.round(s));
@@ -898,6 +905,28 @@ export function Transport({
   onRecord: () => void;
   compact?: boolean;
 }) {
+  /**
+   * The tempo map lives with the song, so the transport reads it from the
+   * library and writes it back through the same path a preset edit takes: saved
+   * with the track, one undo step, and the player reloaded so the metronome and
+   * the readout follow (P5.3).
+   */
+  const song = midiLibrary.getCurrent()?.song ?? null;
+  const tempoMap = tempoMapOf(song);
+  const writeTempoMap = (next: TempoSegment[]) => {
+    const current = midiLibrary.getCurrent();
+    if (!current) return;
+    const written = withTempoMap(current.song, next);
+    midiLibrary.putSong(written);
+    store.mark();
+    const state = midiPlayer.getState();
+    midiPlayer.load(written, { keepMix: true });
+    if (state.time > 0) midiPlayer.seek(Math.min(state.time, midiPlayer.getState().duration));
+    if (state.playing) midiPlayer.play();
+  };
+  const editSegment = (index: number, patch: Partial<TempoSegment>) => {
+    writeTempoMap(tempoMap.map((segment, i) => (i === index ? { ...segment, ...patch } : segment)));
+  };
   return (
     <div className={`player-transport${compact ? ' compact' : ''}`}>
       <button
@@ -957,6 +986,82 @@ export function Transport({
       >
         <TransportIcon name="metronome" />
       </button>
+      {/* Tempo map: where the tempo and the signature change (P5.3). The edits
+          are written with the song, so a reload keeps them. Only in the full
+          transport: on a phone this row is the compact strip above the modules,
+          and a detail editor there would push the whole view down. */}
+      {!compact ? (
+      <span className="tempo-map" data-act="tempo-map" title={t('player.tempoMapHint')}>
+        {tempoMap.map((segment, index) => (
+          <span className="tempo-seg" key={index}>
+            <input
+              type="number"
+              className="tempo-bpm"
+              min={20}
+              max={300}
+              value={segment.bpm}
+              data-act={`tempo-bpm-${index}`}
+              aria-label={`${t('player.tempoBpm')} ${index + 1}`}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                if (Number.isFinite(value) && value >= 20 && value <= 300) editSegment(index, { bpm: value });
+              }}
+            />
+            <select
+              className="tempo-bar"
+              value={segment.beatsPerBar}
+              data-act={`tempo-bar-${index}`}
+              aria-label={`${t('player.tempoBar')} ${index + 1}`}
+              onChange={(event) => editSegment(index, { beatsPerBar: Number(event.target.value) })}
+            >
+              {[2, 3, 4, 5, 6, 7].map((beats) => (
+                <option key={beats} value={beats}>
+                  {beats}/4
+                </option>
+              ))}
+            </select>
+            {Number.isFinite(segment.beats) ? (
+              <span className="tempo-bars">{Math.round(segment.beats / segment.beatsPerBar)}</span>
+            ) : null}
+          </span>
+        ))}
+        <button
+          type="button"
+          className="player-btn"
+          data-act="tempo-add"
+          title={t('player.tempoAdd')}
+          aria-label={t('player.tempoAdd')}
+          onClick={() => {
+            haptic();
+            // A new section starts where the last one ends, two bars long, at
+            // the same tempo: something to then edit, not a surprise.
+            const last = tempoMap[tempoMap.length - 1];
+            const beats = last.beatsPerBar * 2;
+            const next = tempoMap.map((segment, index) =>
+              index === tempoMap.length - 1 ? { ...segment, beats } : segment,
+            );
+            writeTempoMap([...next, { bpm: last.bpm, beats: Number.POSITIVE_INFINITY, beatsPerBar: last.beatsPerBar }]);
+          }}
+        >
+          +
+        </button>
+        {tempoMap.length > 1 ? (
+          <button
+            type="button"
+            className="player-btn"
+            data-act="tempo-remove"
+            title={t('player.tempoRemove')}
+            aria-label={t('player.tempoRemove')}
+            onClick={() => {
+              haptic();
+              writeTempoMap(tempoMap.slice(0, -1));
+            }}
+          >
+            −
+          </button>
+        ) : null}
+      </span>
+      ) : null}
       {!compact && player.metronome ? (
         <button
           type="button"
@@ -1016,8 +1121,10 @@ export function Transport({
         onChange={(event) => midiPlayer.seek(Number(event.target.value))}
         aria-label={t('player.seek')}
       />
-      <span className="player-time">
-        {rec.recording ? `${rec.elapsed.toFixed(1)}s` : `${fmtTime(player.time)} / ${fmtTime(player.duration)}`}
+      <span className="player-time" data-act="bar-beat">
+        {rec.recording
+          ? `${rec.elapsed.toFixed(1)}s`
+          : `${fmtTime(player.time)} / ${fmtTime(player.duration)} · ${barLabelOf(midiPlayer.getTempoMap(), player.time)}`}
       </span>
     </div>
   );

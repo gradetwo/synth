@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.86.0',
+    date: '2026-09-12',
+    kind: 'feature',
+    items: [
+      [
+        '**速度与拍号（tempo map）**：播放器面板现在可以给一首曲子加**多段速度与拍号**——每段有自己的 BPM 与「几几拍」（2/4–7/4），从上一段结束处开始；每拍的长短、重音（每小节第一拍更响）、预备拍、量化网格与「小节.拍」读数全部跟着它走，所以 3/4 段里一小节就是三拍，而不是四拍。**小节数与拍号随曲目保存**，重开仍在；导出的 MIDI 会在正确的 tick 上写出 tempo 与拍号事件，用自家解析器往返可读回同一张表。',
+        '**Tempo and time signature map**: the player panel can now give a song **several tempo and signature sections** — each with its own BPM and time signature (2/4–7/4), starting where the previous one ends. The length of a beat, the accents (the first beat of a bar is louder), the count-in, the quantise grid and the “bar.beat” readout all follow it, so a bar in a 3/4 section is three beats rather than four. **Sections are saved with the song** and come back after a reload, and a MIDI export writes the tempo and signature events at the right ticks — our own parser reads the same map back.',
+      ],
+    ],
+  },
+  {
     version: '1.85.0',
     date: '2026-09-12',
     kind: 'fix',

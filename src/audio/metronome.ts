@@ -9,6 +9,7 @@
  */
 
 import { engine } from './engine';
+import { barBeatAt, beatsToSeconds, secondsToBeats, type TempoSegment } from '@/midi/tempo';
 
 /** Lookahead window: schedule every click inside it, nothing further out. */
 const HORIZON_S = 0.25;
@@ -18,6 +19,7 @@ class Metronome {
   enabled = false;
   /** Beats between accents; 0 means "never accent". */
   beatsPerBar = 4;
+  /** Next beat to click, in beats from the top of the song. */
   private nextBeat = 0;
   private node: GainNode | null = null;
 
@@ -31,11 +33,17 @@ class Metronome {
     return gain;
   }
 
-  /** Start counting from `fromSongTime` (negative for a count-in). */
-  arm(fromSongTime: number, bpm: number): void {
-    const beat = 60 / Math.max(20, bpm);
-    // Snap the first click onto the beat grid so the count-in lines up.
-    this.nextBeat = Math.ceil(fromSongTime / beat - 1e-6) * beat;
+  /**
+   * Start counting from `fromSongTime` (negative for a count-in).
+   *
+   * The position is kept in *beats* rather than seconds, so a tempo map needs no
+   * special handling: each click is converted to a time through the map, and a
+   * change of tempo is simply the next beat being somewhere else.
+   */
+  arm(fromSongTime: number, map: TempoSegment[]): void {
+    const beat = secondsToBeats(map, fromSongTime);
+    this.nextBeat = Math.ceil(beat - 1e-6);
+    if (this.nextBeat < beat) this.nextBeat += 1;
   }
 
   stop(): void {
@@ -56,22 +64,25 @@ class Metronome {
    * corresponds to, so a click at song time `t` is scheduled at
    * `now + (t - songTime) / rate`.
    */
-  schedule(songTime: number, rate: number, bpm: number, now: number): void {
+  schedule(songTime: number, rate: number, map: TempoSegment[], now: number): void {
     if (!this.enabled) return;
     const ctx = engine.ctx;
     if (!ctx || ctx.state !== 'running') return;
     const node = this.ensureNode(ctx);
-    const beat = 60 / Math.max(20, bpm);
-    while (this.nextBeat < songTime + HORIZON_S) {
-      const at = now + (this.nextBeat - songTime) / Math.max(0.05, rate);
-      if (at >= ctx.currentTime) {
-        const index = Math.round(this.nextBeat / beat);
-        const accented = this.beatsPerBar > 0 && ((index % this.beatsPerBar) + this.beatsPerBar) % this.beatsPerBar === 0;
-        this.click(node, ctx, at, accented, this.nextBeat < 0);
+    for (let guard = 0; guard < 512; guard += 1) {
+      const beat = this.nextBeat;
+      const at = beatsToSeconds(map, beat);
+      if (at >= songTime + HORIZON_S) break;
+      const when = now + (at - songTime) / Math.max(0.05, rate);
+      if (when >= ctx.currentTime) {
+        const where = barBeatAt(map, beat);
+        // The first beat of a bar is the loud one; the count-in is quieter and
+        // pitched differently (see `click`).
+        this.click(node, ctx, when, where.beat === 1, at < 0);
       }
-      this.nextBeat += beat;
+      this.nextBeat = beat + 1;
       // A long stall must not schedule a burst of clicks.
-      if (this.nextBeat < songTime - 1) this.nextBeat = songTime;
+      if (beatsToSeconds(map, this.nextBeat) < songTime - 1) this.nextBeat = secondsToBeats(map, songTime);
     }
   }
 

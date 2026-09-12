@@ -11,6 +11,7 @@ import { engine } from '@/audio/engine';
 import { metronome } from '@/audio/metronome';
 import { noteBus } from '@/audio/noteBus';
 import { songTracks, type MidiNote, type MidiSong } from './smf';
+import { tempoMapOf, type TempoSegment } from './tempo';
 
 interface TimedEvent {
   t: number;
@@ -172,6 +173,8 @@ export class MidiPlayer {
   };
   /** Song tempo, used by the metronome. */
   private bpm = 120;
+  /** The song's tempo map: where the tempo and the signature change (P5.3). */
+  private map: TempoSegment[] = tempoMapOf(null);
   private song: MidiSong | null = null;
   private layers: LayerState[] = [];
 
@@ -202,6 +205,7 @@ export class MidiPlayer {
     this.events = buildEvents(song, this.layers);
     this.cursor = 0;
     this.bpm = song?.bpm ?? 120;
+    this.map = tempoMapOf(song ?? null);
     // A new song invalidates any loop region from the previous one.
     this.state = {
       ...this.state,
@@ -211,6 +215,11 @@ export class MidiPlayer {
       loopEnd: null,
     };
     this.emit();
+  }
+
+  /** The tempo map in force, for the transport readout (P5.3). */
+  getTempoMap(): TempoSegment[] {
+    return this.map;
   }
 
   /** The song that is loaded, for sharing and export. */
@@ -280,7 +289,7 @@ export class MidiPlayer {
       const bar = (60 / Math.max(20, this.bpm)) * beats;
       const from = this.state.countIn ? -bar : this.state.time;
       if (this.state.countIn) this.resumeWall += (bar * 1000) / this.state.rate;
-      metronome.arm(from, this.bpm);
+      metronome.arm(from, this.map);
     }
     this.state = { ...this.state, playing: true };
     this.emit();
@@ -312,7 +321,7 @@ export class MidiPlayer {
   seek(seconds: number): void {
     const time = Math.max(0, Math.min(this.state.duration, seconds));
     this.releaseAll();
-    if (this.state.metronome) metronome.arm(time, this.bpm);
+    if (this.state.metronome) metronome.arm(time, this.map);
     this.resumeElapsed = time;
     this.resumeWall = performance.now();
     this.cursor = 0;
@@ -359,7 +368,7 @@ export class MidiPlayer {
   setMetronome(on: boolean): void {
     this.state = { ...this.state, metronome: on };
     metronome.enabled = on;
-    if (on && this.state.playing) metronome.arm(this.state.time, this.bpm);
+    if (on && this.state.playing) metronome.arm(this.state.time, this.map);
     else if (!on) metronome.stop();
     this.emit();
   }
@@ -394,7 +403,7 @@ export class MidiPlayer {
 
     if (this.state.metronome) {
       const ctx = engine.ctx;
-      if (ctx) metronome.schedule(target, this.state.rate, this.bpm, ctx.currentTime);
+      if (ctx) metronome.schedule(target, this.state.rate, this.map, ctx.currentTime);
     }
 
     if (target >= endPoint) {
@@ -408,7 +417,7 @@ export class MidiPlayer {
         const overshoot = (target - endPoint) / Math.max(0.05, this.state.rate);
         this.resumeElapsed = back;
         this.resumeWall = now - Math.min(overshoot, 0.25) * 1000;
-        if (this.state.metronome) metronome.arm(back, this.bpm);
+        if (this.state.metronome) metronome.arm(back, this.map);
         this.state = { ...this.state, time: back };
         this.emit();
         this.raf = requestAnimationFrame(this.tick);
