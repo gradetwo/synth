@@ -906,22 +906,28 @@ function blockSteps(frames) {
 // *previous* section's — which is exactly how this section was silent the first
 // few times it ran.
 //
-// P9.1a measured this restart through the corrected ruler (`offGridFloor`, at
-// the bottom of this file) and left the figures below alone on purpose. Be
-// honest about what they are: the restart's residual is **not stationary**.
-// Over one held note the four-second windows run from about -36 dB to -119 dB,
-// and across note-ons its median moves 22-58 dB, because the sub-sample
-// position of the restart walks across the 2x oversampling grid on a
-// several-second cycle. So the -68.7 dB printed here is a favourable window of
-// that cycle, not a floor — this assertion passes by luck, and the same scene
-// through the new ruler can read anywhere in that range. Tightening it (the
-// P9.1a brief asked for -70 dB) is not possible without first making the
-// restart's residue stationary, and that is an engine change with a baseline
-// re-record: it belongs to the new **P9.1c hard-sync restart alignment** batch,
-// whose acceptance is "every 4 s window at or below -60 dB and a window-to-
-// window spread below 3 dB over at least 30 s". See `.tmp/hard-sync-drift.md`
-// for the raw evidence and the end of this file for the corrected ruler and the
-// plain oscillators' numbers.
+// P9.1c: the restart residual is a *stationary* quantity now, and that is how
+// it is asserted -- every four-second window has to stay under the line, not
+// just a favourable one. Until P9.1c `sync_kernel` interpolated the step
+// kernel straight across its own jump at `d = 0`, so a master wrap whose
+// sub-sample position walked into the last 1/64 of a sample came back with a
+// correction of the wrong sign and nearly full magnitude. The residual
+// therefore burst to about the naive saw's own level (-33 dB) for ~11 s out of
+// every ~24 s and recovered to below -110 dB in between: the -68.7 dB this
+// section used to print was a favourable window of that cycle. (The old
+// rectangular ruler reads the fixed engine as -46 dB for the saw, which is the
+// same difference-of-two-large-numbers failure P9.1a documented; it is gone
+// from this section.) What replaced it is the P9.1a BH-7 ruler -- four whole
+// seconds, every window read on its own, every window under the line -- over
+// the three waveforms and the four ratios the brief names.
+//
+// Division of labour: this is the short scan (three windows per scene, so the
+// gate stays affordable). The long scan -- many windows, a second test on
+// consecutive note-ons -- lives in the Rust tests
+// `hard_sync_restart_residual_is_stationary` and
+// `hard_sync_note_on_spread_is_stationary`, which can render for a minute.
+// Both sides assert the same thing; only the scene count and window count
+// differ.
 {
   const master = 220;
   const quiet = [
@@ -990,42 +996,69 @@ function blockSteps(frames) {
   // sidelobes sit near -95 dB and a limiter still recovering from the attack
   // reads as a slow gain change, which is exactly the modulation an off-grid
   // metric picks up (see docs/notes/hard-sync-aliasing.md).
-  const binMagRect = (samples, freq) => {
-    const w = (2 * Math.PI * freq) / SR;
-    let re = 0;
-    let im = 0;
-    for (let i = 0; i < samples.length; i++) {
-      re += samples[i] * Math.cos(w * i);
-      im -= samples[i] * Math.sin(w * i);
-    }
-    return Math.hypot(re, im) / samples.length;
-  };
-  const settledOffGrid = (samples) => {
-    const n = samples.length;
-    const total = samples.reduce((sum, v) => sum + v * v, 0) / n;
-    let lines = 0;
-    for (let k = 1; master * k < 23900; k++) {
-      const m = binMagRect(samples, master * k);
-      // A sinusoid of amplitude A reads |sum|/N = A/2, so its power is 2m^2.
-      lines += 2 * m * m;
-    }
-    return 10 * Math.log10(Math.max(total - lines, 1e-30) / Math.max(total, 1e-30));
-  };
+  // The P6.2 acceptance line, now as a window scan: three waveforms x four
+  // ratios, three non-overlapping four-second windows each, every window
+  // measured with the P9.1a BH-7 ruler. The fix measures -88 dB or better in
+  // every window of every scene, so this pins the line where the engine
+  // actually is.
+  const WINDOW = 4 * SR;
+  const WINDOW_BLOCKS = WINDOW / BLOCK;
+  const WINDOWS = 3;
   for (const [name, wave] of [
     ['saw', WAVE.saw],
     ['square', WAVE.square],
     ['triangle', WAVE.triangle],
   ]) {
-    // 200 blocks to settle, then 375 blocks = 48000 samples = one second.
+    for (const ratio of [1.41, 1.7, 2.0, 3.3]) {
+      const ratioSemis = 12 * Math.log2(ratio);
+      engine(
+        [
+          ...quiet,
+          [P.OSC1_WAVE, wave], [P.OSC1_LEVEL, 0.9], [P.OSC1_PITCH, ratioSemis],
+          [P.OSC1_PW, 0.5], [P.OSC1_SYNC, 1], [P.OSC1_SUB, 0],
+          [P.OSC2_WAVE, WAVE.sine], [P.OSC2_ON, 1], [P.OSC2_LEVEL, 0], [P.OSC2_PITCH, 0],
+          [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0],
+        ],
+        [[57, 1]],
+      );
+      const samples = new Float64Array(WINDOWS * WINDOW);
+      let w = 0;
+      for (const [l] of render(400 + WINDOWS * WINDOW_BLOCKS, 400)) {
+        for (const v of l) samples[w++] = v;
+      }
+      const windows = [];
+      for (let k = 0; k < WINDOWS; k++) {
+        windows.push(offGridFloor(samples.subarray(k * WINDOW, (k + 1) * WINDOW), master));
+      }
+      const worst = Math.max(...windows);
+      check(
+        `hard sync's restart residual is stationary (${name} x${ratio})`,
+        worst < -60,
+        `${windows.map((v) => v.toFixed(1)).join(' / ')} dB, worst ${worst.toFixed(1)} (target -60)`,
+      );
+    }
+  }
+
+  // The calibration that makes the number readable: the *unsynced* slave at a
+  // non-integer ratio is nowhere near the master's grid, so the same ruler
+  // reads it near 0 dB.
+  const freeCal = renderSync(0, WAVE.saw, 400 + WINDOW_BLOCKS, 400);
+  const freeFloor = offGridFloor(freeCal, master);
+  check(
+    'the off-grid ruler does see an unsynced slave',
+    freeFloor > -3,
+    `${freeFloor.toFixed(1)} dB with sync off (the synced windows above sit under -88)`,
+  );
+
+  // Time domain alongside it: periodic at the master's rate (>= 0.999), bounded,
+  // finite, and free of sample-to-sample steps large enough to be heard as a
+  // click.
+  for (const [name, wave] of [
+    ['saw', WAVE.saw],
+    ['square', WAVE.square],
+    ['triangle', WAVE.triangle],
+  ]) {
     const synced = renderSync(1, wave, 575, 200);
-    const free = renderSync(0, wave, 575, 200);
-    const off = settledOffGrid(synced);
-    const offFree = settledOffGrid(free);
-    check(
-      `hard sync band-limits the restart (${name})`,
-      off < -60 && offFree > -3,
-      `${off.toFixed(1)} dB synced vs ${offFree.toFixed(1)} dB free (target -60)`,
-    );
     let peak = 0;
     let jump = 0;
     let finite = true;
@@ -1035,10 +1068,11 @@ function blockSteps(frames) {
       peak = Math.max(peak, Math.abs(v));
       if (i > 0) jump = Math.max(jump, Math.abs(v - synced[i - 1]));
     }
+    const corr = periodCorrelation(synced);
     check(
-      `hard sync stays bounded and click-free (${name})`,
-      finite && peak <= 1.0 + 1e-6 && jump < 0.25 && periodCorrelation(synced) > 0.95,
-      `peak ${peak.toFixed(3)}, largest step ${jump.toFixed(3)}, correlation ${periodCorrelation(synced).toFixed(4)}`,
+      `hard sync stays bounded, click-free and periodic (${name})`,
+      finite && peak <= 1.0 + 1e-6 && jump < 0.25 && corr > 0.999,
+      `peak ${peak.toFixed(3)}, largest step ${jump.toFixed(3)}, correlation ${corr.toFixed(4)}`,
     );
   }
   // The sub oscillator: one sine an octave or two down.

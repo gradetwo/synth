@@ -65,9 +65,25 @@ const lame = files.find((file) => /lamejs-.*\.js$/.test(file));
 // The clean tree had 4.1 KB of headroom, so the feature spent essentially all of
 // it. P11.1 (`wasm-opt -Oz`, a projected >=10 % off both cores) is the batch
 // that has to buy it back; if it does not, the next feature pays.
+//
+// P9.1c (hard-sync restart alignment) is the second, and it moved the total
+// 1676 -> 1678 KB. The clean tree measured 1675.9 KB, so it had 0.1 KB of
+// headroom and any behaviour change at all would have overrun it. The whole
+// +0.4 KB is the two wasm cores, +196 bytes each (the gate script is not in
+// `dist`, so nothing here is a script-growth trade): `sync_kernel` has to know
+// that a query landed in the one 1/64-sample cell that spans the BLEP table's
+// step-residual jump, which is one extra comparison and one conditional add per
+// tap. What that buys: before it, a master wrap whose sub-sample position
+// walked into that cell got a correction of the wrong sign and nearly full
+// magnitude, so the restart residual burst from below -110 dB to -33 dB for
+// about 11 s out of every ~24 s (86 dB of window-to-window spread). After it,
+// every four-second window of every waveform and ratio measures -88 dB or
+// better (12 scenes x 36 windows, real wasm). P11.1 still has to buy the whole
+// thing back, P9.2 included — that commitment is unchanged.
 const BUDGETS = {
-  // Measured 1674.0 KB after P9.2. +2.0 KB (+0.12 %).
-  total: 1676 * 1024,
+  // Measured 1676.3 KB after P9.1c (1675.9 KB on the clean tree, +0.4 KB of
+  // wasm). The 1678 KB ceiling keeps the P8.5 "measured + small margin" rule.
+  total: 1678 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   // Measured 131.2 KB gzip. +2.8 KB (+2.1 %); the P8.5 plan target was 140 KB,
   // so this is the tight version of an already-reached goal.

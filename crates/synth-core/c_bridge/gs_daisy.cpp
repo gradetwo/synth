@@ -150,12 +150,37 @@ static void build_blep_kernels() {
 }
 
 /// Kernel sample at offset `d` (in oversampled samples) from the discontinuity.
-static inline float sync_kernel(const float *tab, float d) {
+///
+/// The BLEP table is the *residual* `step_bandlimited - step_naive`, so it has
+/// a genuine jump at `d = 0`: the node there carries the right-hand limit and
+/// the node just below it the left-hand one. Interpolating that table straight
+/// across the jump -- which is what this did before P9.1c -- reads the wrong
+/// side for any query landing in the last 1/64 of a sample before the
+/// discontinuity, and hands back a correction of the wrong sign and nearly full
+/// magnitude. That is exactly what a master wrap does when its sub-sample
+/// position `xm` drifts through (0, 1/64) instead of sitting on a sample
+/// boundary: one oversampled sample per restart got a whole-step error, so the
+/// residual burst to about the naive saw's own level (-33 dB, `docs/notes/
+/// hard-sync-aliasing.md`) and back.
+///
+/// The one cell that spans the jump is `i == GS_BLEP_OFF - 1` (`d` in
+/// `[-1/64, 0)`). There the continuous band-limited step, which is what the
+/// table holds below the jump, runs from `tab[i]` to `tab[i + 1] + 1` -- the
+/// `+ 1` is the naive step the table has already taken out at the node above --
+/// so the interpolation is the plain one *plus* `f`. Everywhere else the plain
+/// interpolation is already exact, including for `d >= 0`, where the table
+/// carries the right-hand limit. `xm` still walks (the increment is f32), but
+/// the correction no longer cares.
+static inline float sync_kernel(const float *tab, float d, bool slope) {
     float t = (d + GS_BLEP_N) * GS_BLEP_R;
     if (t <= 0.0f || t >= (float)(GS_BLEP_M - 1)) return 0.0f;
     int i = (int)t;
     float f = t - (float)i;
-    return tab[i] + f * (tab[i + 1] - tab[i]);
+    float v = tab[i] + f * (tab[i + 1] - tab[i]);
+    // BLAMP is the integral of the residual and therefore continuous: there is
+    // no step to put back.
+    if (!slope && i == GS_BLEP_OFF - 1) v += f;
+    return v;
 }
 
 /// Add one discontinuity's correction to a ring accumulator.
@@ -172,7 +197,7 @@ static void sync_emit(float *acc, int head, double x, float amp, int slope) {
     for (int m = -GS_BLEP_N + 1; m <= GS_BLEP_N; ++m) {
         int idx = head + m + GS_BLEP_N;
         if (idx >= GS_SYNC_RING) idx -= GS_SYNC_RING;
-        acc[idx] += amp * sync_kernel(tab, (float)m - (float)x);
+        acc[idx] += amp * sync_kernel(tab, (float)m - (float)x, slope != 0);
     }
 }
 
