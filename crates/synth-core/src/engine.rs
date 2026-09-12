@@ -6087,6 +6087,76 @@ mod tests {
         );
     }
 
+
+    /// Off-grid energy measured on a **settled** note, exactly one second of it
+    /// (440 whole periods), with a rectangular window and the exact-bin DFT.
+    ///
+    /// Two things had to be right before this number meant anything: the phase
+    /// accumulator had to be double precision (P6.2b step one) and the note had
+    /// to be settled — 20 ms after the attack the limiter's peak detector is
+    /// still recovering from it, and that recovery is a slow gain change, i.e.
+    /// exactly the modulation an off-grid metric picks up.
+    fn settled_off_grid(e: &mut Engine, master: f32) -> f64 {
+        for _ in 0..200 {
+            e.process(128);
+        }
+        let mut out = Vec::with_capacity(375 * 128);
+        for _ in 0..375 {
+            e.process(128);
+            out.extend_from_slice(&e.left()[..128]);
+        }
+        let n = out.len();
+        let total: f64 = out.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / n as f64;
+        let mut lines = 0.0f64;
+        let mut k = 1;
+        while master * (k as f32) < 23_900.0 {
+            let w = core::f64::consts::TAU * (master * k as f32) as f64 / 48_000.0;
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (i, v) in out.iter().enumerate() {
+                let ph = w * i as f64;
+                re += *v as f64 * ph.cos();
+                im -= *v as f64 * ph.sin();
+            }
+            let amp = 2.0 * (re * re + im * im).sqrt() / n as f64;
+            lines += amp * amp / 2.0;
+            k += 1;
+        }
+        10.0 * ((total - lines).max(1e-30) / total).log10()
+    }
+
+    /// The sync's own figure, and the calibration that makes it readable: the
+    /// *unsynced* slave at the same non-integer ratio is entirely off the
+    /// master's grid (its whole signal is elsewhere), while the synced one keeps
+    /// all but about -32 dB of its energy on it. That -32 dB is the honest
+    /// current figure for hard sync in this engine — the plan's target is -60 dB
+    /// and it is **not** met, which `docs/notes/hard-sync-aliasing.md` records
+    /// along with what the remaining work is (band-limiting the restart itself,
+    /// not just the decimation).
+    #[test]
+    fn hard_sync_keeps_the_slave_on_the_masters_grid() {
+        let _guard = lock_engine();
+        for wave in [
+            crate::params::Wave::Saw,
+            crate::params::Wave::Square,
+            crate::params::Wave::Triangle,
+        ] {
+            let mut sync = sync_patch(true, wave, 1.41);
+            sync.note_on(57, 0.9);
+            let locked = settled_off_grid(&mut sync, 220.0);
+            let mut loose = sync_patch(false, wave, 1.41);
+            loose.note_on(57, 0.9);
+            let free = settled_off_grid(&mut loose, 220.0);
+            assert!(
+                free > -3.0,
+                "{wave:?}: an unsynced 1.41x slave is nowhere near the master's grid: {free:.1} dB"
+            );
+            assert!(
+                locked < -25.0,
+                "{wave:?}: the sync should put the slave on the master's grid: {locked:.1} dB"
+            );
+        }
+    }
+
     #[test]
     fn limiter_keeps_the_master_bus_bounded() {
         let _guard = lock_engine();
