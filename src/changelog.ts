@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.87.0',
+    date: '2026-09-12',
+    kind: 'fix',
+    items: [
+      [
+        '**界面被改坏会当场发现**：模块网格、信号流、钢琴卷帘、播放器和启动页现在都有一份「应该长什么样」的基线，深色/浅色、手机/桌面共 20 张；任何改动只要让其中一屏看起来不一样，就会在发布前报错，并留下「原来的样子 / 现在的样子 / 差在哪」三张图。以后「这次发布是不是把哪个面板弄花了」不再靠人眼抽查。',
+        '**A broken layout is caught at once**: the module grid, signal flow, piano roll, player and start screen each have a recorded "what it should look like" baseline — 20 of them, across the dark and light palettes on a phone and a desktop. A change that makes any of those screens look different now fails before release and leaves the expected, actual and difference images behind. "Did this release smudge a panel?" is no longer answered by eye.',
+      ],
+    ],
+  },
+  {
     version: '1.86.0',
     date: '2026-09-12',
     kind: 'feature',
