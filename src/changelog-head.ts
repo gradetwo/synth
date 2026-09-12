@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.92.0',
+    version: '1.93.0',
     date: '2026-09-12',
-    kind: 'feature',
+    kind: 'sound',
     items: [
       [
-        '**两个新效果：位粉碎与塑形 EQ**：路由图里多了「CRUSH」（降位 4–16 bit + 降采样 1–64 倍，带可调抗混叠，适合 lofi 与电子质感）和「EQ」（低架 + 可扫中频峰值 + 高架，各段独立增益与频率），都有干湿混合、默认关闭、随音色保存与分享；原来的六个效果节点与所有旧音色**完全不变**。',
-        '**Two new effects: bit-crusher and shaping EQ**: the routing graph gained CRUSH (4–16 bits, 1–64× downsampling, adjustable anti-aliasing — the lofi and digital texture) and EQ (low shelf + sweepable mid peak + high shelf, each with its own gain and frequency). Both have a dry/wet mix, are off by default, and save and share with the patch; the original six effect nodes and every existing patch are unchanged.',
+        '**过采样开关：更干净的失真与滤波**：滤波模块多了一个「2×」开关（默认关）。开启后失真与滤波在双倍采样率下运算、再带限降到原采样率，满驱动下的混叠与镜像分量实测**降低约 26 dB**，硬削波听起来更干净、毛刺更少；代价是 CPU 约翻倍（16 音密集音色从 16.6% 升到 31.1% 的实时预算）。默认关，关闭时与旧版本的渲染**逐位一致**。',
+        '**An oversampling switch for cleaner drive and filtering**: the filter module gained a 2× switch (off by default). With it on, the drive and the filter run at double the sample rate and are band-limited back down, measuring about **26 dB less aliasing and imaging** at full drive — a cleaner hard clip with less grit. It costs roughly double the CPU (a dense 16-voice patch goes from 16.6% to 31.1% of the real-time budget). Off by default, and off renders sample-for-sample what the old build did.',
       ],
     ],
   };

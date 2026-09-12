@@ -92,9 +92,13 @@ C 多轨与时间线、B 分层与分享、A 效果路由图（引擎 + 编辑�
 - **预算**：本特性 +17.3 KB（wasm +14.4、JS +2.9），dist 总量阈值 **1700 → 1712 KB**（`scripts/verify-budget.mjs` 有注释说明这笔账与 P8.5 要把它压回来）；首屏 JS 仍远低于 165 KB。
 - 未做：瞬态整形（可选）。接手方式：照 BitCrusher 模式加 `Transient{attack_amt,sustain_amt,env}`，`params.rs` 从 166 起加 id 与 `FxKind` 变体，`engine.rs` 两条渲染路径照抄 Crush 的 arm，`verify-audio` 照抄「mix 0 无伪影 + 时域猛拉」两条。
 
-**P6.5 过采样开关**（1 批）
-- 要点：失真/滤波路径可选 2× 过采样（默认关），基准记录开启后的成本；DSP 指纹分别记录两种模式。
-- 验收：频域（2× 下混叠/镜像分量下降 ≥ 12 dB）；基准（开启后仍在预算内，阈值写清）。
+**P6.5 过采样开关** — ✅ v1.93.0 完成
+- 已做：参数 `OVERSAMPLE = 166`（`PARAM_COUNT 167`，默认 0），滤波模块 KBD 旁的 `2×` LED；`crates/synth-core/src/dsp/oversample.rs` 的 **63 抽头 Kaiser 窗低通**（fc=0.21、beta=8，对 2× 归一化）**同一系数表同时做插值与抽取**，round trip 是纯延迟；每声部滤波链（阶梯 `lp` + C 桥 SVF 家族 + P6.3b 第二级）整体在 2× 下跑，FX 链的 **DRIVE 插入**也在 2× 下跑（干路加同样的 31 样本延迟保证自身干湿对齐）；`comb`/`formant` 是线性滤波器，跳过。
+- 实测（真 wasm，先清矩阵、满驱动、整秒矩形窗精确 bin + Parseval）：1× 非谐波能量 **−33.4 dB** → 2× **−59.5 dB**，**下降 26.1 dB**（要求 ≥12）；抽取器阻带单测：2× 域 30 kHz 不得变成 18 kHz 镜像。延迟补偿 **31 个 1× 样本（≈0.65 ms）**，`Engine::oversample_latency()` 上报并有单测。
+- 指纹**双基线**：关 → `tests/dsp-baseline.json`（`rms 0.030806` 未动）；开 → 新 `tests/dsp-baseline-2x.json`（`rms 0.030946`，`npm run verify:dsp:2x`）；两条都进 `npm run verify`、CI 作业与 `verify-ci.mjs` 必需清单。
+- 成本：`bench.mjs --oversampled`；16 音密集 patch **442 → 829 µs（16.6% → 31.1%）**，带 2 s IR 时 653 → 842 µs，仍在预算内；arena 3511 KB free、0 violations。
+- 验收：`verify:audio` 新增 26.1 dB 门禁；Rust **201**（抽取器阻带、延迟上报、开关有界）；E2E `e2e/oversample.spec.ts`（默认关、双向可切、分享码/重载保持）；完整 `npm run verify` exit 0（dist 1679.9 ≤ 1712 KB）。文档：`docs/notes/oversampling.md`。
+- **已知边界**：自由图 FX（`FX_GRAPH`）模式不过采样（缺逐节点延迟补偿，硬开会与干路错 31 样本成梳状；链模式为默认路径）；host 与 wasm 同场景混叠数字不一致（10.6 vs 26.1 dB，指向硬削波 codegen/末位差异），故 12 dB 硬线由 wasm 门禁持有、Rust 只钉 ≥8 dB；开关切换未做交叉淡化，整条路径一起移动 31 样本（不梳状）。
 
 ### P7 节点图二期与内存模型（中 / 高 / 3 批）
 
@@ -160,7 +164,7 @@ C 多轨与时间线、B 分层与分享、A 效果路由图（引擎 + 编辑�
 | 9 | P6.3 滤波补全：P6.3a SEM 连续多模 ✅ v1.89.0；P6.3b 双滤波 ✅ v1.90.0 | — | 中 |
 | 10 | P7.1 延迟/卷积多实例（预研 → 实现） | 内存模型设计 | 大 |
 | 11 | P5.4 录音 take ✅ v1.91.0 | — | 中 |
-| 12 | P6.4 效果补强 ✅ v1.92.0（瞬态整形可选未做）/ P6.5 过采样 | — | 中 |
+| 12 | P6.4 效果补强 ✅ v1.92.0 / P6.5 过采样 ✅ v1.93.0 | — | 中 |
 | 13 | P7.2 图内调制 / P7.3 图模板 | P7.1 | 中大 |
 | 14 | P8.5 体积与启动预算（收尾） | 全部 | 中 |
 
