@@ -143,12 +143,6 @@ const LIMIT_RELEASE_S: f32 = 0.15;
 /// Peak-detector hold: how long the limiter remembers a transient.
 const LIMIT_PEAK_HOLD_S: f32 = 0.05;
 
-/// Crossfade applied when the second filter stage's routing changes (P6.3b).
-/// 2 ms: short enough to read as an instant switch, long enough that the
-/// difference between the old and the new mix is a ramp rather than a step. It
-/// is counted in samples, not seconds, so a voice's fade never straddles two
-/// render blocks and the buffer arithmetic stays a plain loop.
-
 /// Frequency of a note number with an explicit master tune and tuning table.
 #[inline]
 fn pitch_hz_with(note: f32, master_tune: f32, tuning: &[f32; crate::params::TUNING_NOTES]) -> f32 {
