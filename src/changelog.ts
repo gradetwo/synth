@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.83.0',
+    date: '2026-09-12',
+    kind: 'feature',
+    items: [
+      [
+        '**片段编排：把一层折叠成片段，然后拖动、复制、循环铺排**：播放器面板的层条上多了「折叠成片段」——这一层的音符变成一个片段（循环窗口默认对齐到整小节，所以折叠后听起来完全一样），选中片段后可以前后移一个窗口、**复制**、改**循环窗口长度**、加减**铺排次数**，时间线上画出片段块与每一次循环的分隔线。片段内容仍用钢琴卷帘编辑（卷帘工具栏多一个「片段」选择器）。这一层被编排后，这一层就按片段播放；其它层没被折叠就照原样播放。导出 MIDI / WAV / MP3 跟随编排。',
+        '**Arrangement clips: fold a layer into a clip, then drag, copy and loop it**: the player panel’s layer strip gained “Fold into a clip” — the layer’s notes become one clip (its loop window lines up with whole bars, so a folded layer sounds exactly as it did), and a selected clip can be moved a window at a time, **duplicated**, have its **loop window** widened or narrowed and its **repeat count** raised or lowered, with the timeline drawing the clip blocks and a tick at every loop. The clip’s notes are still edited in the piano roll (its toolbar gained a clip picker). A layer that is arranged plays its clips; a layer that is not keeps playing as written, and MIDI / WAV / MP3 exports follow the arrangement.',
+      ],
+    ],
+  },
+  {
     version: '1.82.0',
     date: '2026-09-12',
     kind: 'sound',
