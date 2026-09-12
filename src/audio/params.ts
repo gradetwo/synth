@@ -106,6 +106,11 @@ export const Param = {
   /** Output trim for the impulse-response reverb. */
   FX_CONV_TRIM: 95,
   /** Sampler: the MIDI note at which the imported sample plays at its own pitch (A). */
+  /** OSC 2 -> OSC 1 phase modulation, 0..1 (P6.1). Appended so old share codes
+      keep lining up: the ids are the wire format. */
+  OSC_FM: 137,
+  /** Ring modulation between the oscillators, 0 = plain mix, 1 = the product. */
+  OSC_RING: 138,
   SMP_ROOT: 96,
   /** Sampler: 0 = one-shot, 1 = loop, 2 = ping-pong. */
   SMP_MODE: 97,
@@ -298,6 +303,8 @@ export type ParamId = (typeof Param)[keyof typeof Param];
 /** AudioParam name for every parameter id (used by the worklet + UI). */
 export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.MASTER_VOLUME]: 'masterVolume',
+  [Param.OSC_FM]: 'oscFm',
+  [Param.OSC_RING]: 'oscRing',
   [Param.PATCH_GAIN]: 'patchGain',
   [Param.WT_USER]: 'wtUser',
   [Param.FX_DELAY_DAMP]: 'fxDelayDamp',
@@ -459,7 +466,7 @@ export type ModSrc =
   | 'aftertouch'
   | 'random'
   | 'keytrack';
-export type ModDst = 'cutoff' | 'pitch' | 'volume' | 'pwm' | 'pan' | 'res';
+export type ModDst = 'cutoff' | 'pitch' | 'volume' | 'pwm' | 'pan' | 'res' | 'fm' | 'ring';
 export type DelaySync = '1/4' | '1/8.' | '1/8' | '1/16';
 
 /** Note names for the sampler's root note readout. */
@@ -506,7 +513,8 @@ export const MOD_SOURCES: ModSrc[] = [
   'random',
   'keytrack',
 ];
-export const MOD_DESTS: ModDst[] = ['cutoff', 'pitch', 'volume', 'pwm', 'pan', 'res'];
+// Appended, never reordered: the index is what a share code stores.
+export const MOD_DESTS: ModDst[] = ['cutoff', 'pitch', 'volume', 'pwm', 'pan', 'res', 'fm', 'ring'];
 /** Compact labels for the matrix rows (kept short so the panel stays tidy). */
 export const MOD_SRC_LABELS: Record<ModSrc, string> = {
   lfo: 'LFO',
@@ -525,6 +533,8 @@ export const MOD_DST_LABELS: Record<ModDst, string> = {
   pwm: 'PWM',
   pan: 'PAN',
   res: 'RES',
+  fm: 'FM',
+  ring: 'RING',
 };
 export const DELAY_SYNCS: DelaySync[] = ['1/4', '1/8.', '1/8', '1/16'];
 
@@ -604,6 +614,9 @@ export function clamp01(v: number): number {
 /** Default patch, mirroring the reference prototype's "Future Saw Lead". */
 export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.MASTER_VOLUME]: 0.75,
+  // Off by default: a patch that predates them sounds exactly as it did.
+  [Param.OSC_FM]: 0,
+  [Param.OSC_RING]: 0,
   // Per-patch loudness trim (presets set it; see `PATCH_TRIM` in state/presets).
   [Param.PATCH_GAIN]: 1,
   // Factory banks by default; the player flips this after importing a cycle.
@@ -844,6 +857,9 @@ export const PARAM_SPECS: ParamSpec[] = [
   spec(Param.OSC1_PAN, 'PAN', -1, 1, 0, fmt.pan),
   spec(Param.OSC1_UNISON, 'UNI', 1, 7, 1, (v) => `${Math.round(v)}`, { discrete: true }),
   spec(Param.OSC1_SPREAD, 'SPREAD', 0, 1, 0.35, fmt.pct),
+  // How OSC 2 shapes OSC 1: its phase (FM) and its amplitude (RING).
+  spec(Param.OSC_FM, 'FM', 0, 1, 0, fmt.pct),
+  spec(Param.OSC_RING, 'RING', 0, 1, 0, fmt.pct),
   spec(Param.OSC2_PITCH, 'PITCH', -24, 24, 0, fmt.st),
   spec(Param.OSC2_DETUNE, 'DETUNE', -50, 50, 0, fmt.ct),
   spec(Param.OSC2_LEVEL, 'LEVEL', 0, 1, 0.55, fmt.pct),

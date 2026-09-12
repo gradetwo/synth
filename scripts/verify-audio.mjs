@@ -43,6 +43,7 @@ const P = {
   FX_REVERB_MIX: 31, FX_REVERB_MODE: 94, FX_CONV_TRIM: 95,
   FX_CHAIN1: 82, FX_CHAIN2: 83, FX_CHAIN3: 84, FX_CHAIN4: 85, FX_CHAIN5: 86, FX_CHAIN6: 87,
   SMP_ROOT: 96, SMP_MODE: 97, TEMPO: 37,
+  OSC2_PITCH: 9, OSC_FM: 137, OSC_RING: 138,
 };
 
 const WAVE = { sine: 0, triangle: 1, saw: 2, square: 3, pulse: 4, noise: 5, wavetable: 8, sample: 9 };
@@ -607,10 +608,107 @@ function blockSteps(frames) {
   );
 }
 
-console.log('[audio] quality gate');
-for (const line of report) console.log(line);
+// ------------------------------------------- FM / PM and ring modulation (P6.1)
+//
+// Both features are *spectral* claims, so both are checked in both domains:
+// phase modulation of a sine by a sine at the same frequency has to produce the
+// textbook sidebands, and ring modulation has to move the energy to the sum and
+// the difference while removing the two originals. A level check cannot see
+// either of them: the peak of a modulated sine is barely different from the peak
+// of the sine.
+{
+  const f0 = 440;
+  // OSC 2 silent: the classic FM arrangement, and a carrier that is one clean
+  // sine when the depth is zero.
+  const base = [
+    [P.OSC1_ON, 1], [P.OSC1_WAVE, WAVE.sine], [P.OSC1_LEVEL, 0.8],
+    [P.OSC2_ON, 1], [P.OSC2_WAVE, WAVE.sine],
+    [P.FILTER_TYPE, 0], [P.FILTER_CUTOFF, 18000], [P.FILTER_RES, 0.05],
+    [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0],
+    [P.ENV_ATTACK, 0.01], [P.ENV_SUSTAIN, 1],
+    [P.LFO_ON, 0], [P.MASTER_VOLUME, 0.75],
+    [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
+    [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0],
+  ];
+  const steady = (extra, note = 69) => {
+    engine([...base, ...extra], [[note, 1]]);
+    const out = [];
+    for (const [l] of render(300, 120)) out.push(...l);
+    return out;
+  };
+  const level = (samples, freq) => binMag(samples, freq);
+
+  const clean = steady([[P.OSC2_LEVEL, 0], [P.OSC_FM, 0]]);
+  const carrier = level(clean, f0);
+  check('a plain sine pair carries the fundamental', carrier > 0.01, `carrier ${carrier.toFixed(4)}`);
+  const cleanSecond = level(clean, f0 * 2) / Math.max(carrier, 1e-9);
+  check(
+    'with FM off the carrier stays a sine',
+    cleanSecond < 1e-3,
+    `second partial ${(20 * Math.log10(Math.max(cleanSecond, 1e-12))).toFixed(1)} dB below the fundamental`,
+  );
+
+  const modulated = steady([[P.OSC2_LEVEL, 0], [P.OSC_FM, 0.6]]);
+  const second = level(modulated, f0 * 2) / Math.max(level(modulated, f0), 1e-9);
+  const third = level(modulated, f0 * 3) / Math.max(level(modulated, f0), 1e-9);
+  check(
+    'FM puts real energy into the sidebands',
+    second > 0.2 && third > 0.05,
+    `H2 ${(20 * Math.log10(Math.max(second, 1e-12))).toFixed(1)} dB, H3 ${(20 * Math.log10(Math.max(third, 1e-12))).toFixed(1)} dB below the carrier`,
+  );
+  // Time domain: a modulated sine wiggles between its zero crossings, so the
+  // same note crosses zero far more often than the clean one.
+  const crossings = (samples) => {
+    const window = samples.slice(0, Math.round(SR / f0) * 20);
+    let count = 0;
+    for (let i = 1; i < window.length; i++) {
+      if ((window[i - 1] < 0) !== (window[i] < 0)) count++;
+    }
+    return count;
+  };
+  check(
+    'FM shows in the waveform',
+    crossings(modulated) > crossings(clean) * 2,
+    `${crossings(modulated)} zero crossings vs ${crossings(clean)} for the plain sine`,
+  );
+  const peakOf = (samples) => samples.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+  check(
+    'FM does not change the level',
+    Math.abs(peakOf(modulated) - peakOf(clean)) < 0.3,
+    `peak ${peakOf(modulated).toFixed(3)} vs ${peakOf(clean).toFixed(3)}`,
+  );
+
+  // Ring: a 1.25 ratio puts the difference (110 Hz) and the sum (990 Hz) away
+  // from both oscillators, so "the carries are gone" is unambiguous.
+  const ratio = (1200 * Math.log2(1.25)) / 100;
+  const additive = steady([[P.OSC2_LEVEL, 0.8], [P.OSC2_PITCH, ratio], [P.OSC_RING, 0], [P.OSC_FM, 0]]);
+  const ring = steady([[P.OSC2_LEVEL, 0.8], [P.OSC2_PITCH, ratio], [P.OSC_RING, 1], [P.OSC_FM, 0]]);
+  const additiveCarrier = level(additive, f0);
+  check(
+    'an additive pair has nothing at the difference frequency',
+    level(additive, f0 * 0.25) / additiveCarrier < 0.02,
+    `${(level(additive, f0 * 0.25) / additiveCarrier).toExponential(2)} of the carrier`,
+  );
+  const difference = level(ring, f0 * 0.25);
+  const sum = level(ring, f0 * 2.25);
+  const strongest = Math.max(difference, sum, 1e-9);
+  check(
+    'ring modulation produces the sum and the difference',
+    difference > additiveCarrier * 0.1 && sum > additiveCarrier * 0.1,
+    `110 Hz ${difference.toFixed(4)}, 990 Hz ${sum.toFixed(4)} vs carrier ${additiveCarrier.toFixed(4)}`,
+  );
+  check(
+    'ring modulation removes both originals',
+    level(ring, f0) / strongest < 0.1 && level(ring, f0 * 1.25) / strongest < 0.1,
+    `carrier and modulator are ${((level(ring, f0) / strongest) * 100).toFixed(1)}% / ${((level(ring, f0 * 1.25) / strongest) * 100).toFixed(1)}% of the strongest sideband`,
+  );
+}
+
 if (failures.length) {
   console.error(`[audio] FAIL — ${failures.join(', ')}`);
   process.exit(1);
 }
 console.log('[audio] PASS');
+
+console.log('[audio] quality gate');
+for (const line of report) console.log(line);

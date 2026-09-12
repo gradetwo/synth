@@ -108,6 +108,16 @@ class Oscillator
     /** Adds a value 0.0-1.0 (equivalent to 0.0-TWO_PI) to the current phase. Useful for PM and "FM" synthesis.
     */
     void PhaseAdd(float _phase) { phase_ += _phase; }
+    /** The phase Process() will read on its next call, 0..1. GS-1 addition: the
+        phase-modulation block in the C bridge needs to place the phase exactly,
+        not add to it, or a deep modulation index would drift out of 0..1 where
+        the band-limited waveforms are only defined.
+    */
+    float Phase() const { return phase_; }
+    /** The phase advance per sample, in cycles. GS-1 addition: a phase-modulated
+        oscillator has to keep its own free-running phase, which means advancing
+        it by this itself while the carrier is being modulated. */
+    float PhaseInc() const { return phase_inc_; }
     /** Resets the phase to the input argument. If no argumeNt is present, it will reset phase to 0.0;
     */
     void Reset(float _phase = 0.0f) { phase_ = _phase; }

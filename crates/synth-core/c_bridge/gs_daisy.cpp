@@ -24,6 +24,11 @@ namespace {
 struct VoiceDsp {
     /// [sub-voice][oscillator]; unison stacks up to GS_MAX_UNISON copies.
     daisysp::Oscillator osc[GS_MAX_UNISON][2];
+    /// Phase-modulation state: the carrier's own free-running phase, kept here
+    /// because a modulated oscillator cannot read it back from DaisySP (the
+    /// offset would be inside it). `pm_ready` re-syncs after a voice reset.
+    float pm_phase[GS_MAX_UNISON][2];
+    bool pm_ready[GS_MAX_UNISON][2];
     /// One filter chain per oscillator (side 0 = OSC 1, side 1 = OSC 2) so a
     /// patch that pans its oscillators apart is filtered independently per
     /// oscillator instead of sharing one mono filter.
@@ -97,6 +102,10 @@ void gs_voice_reset(int v) {
     for (int s = 0; s < GS_MAX_UNISON; ++s) {
         d.osc[s][0].Init(g_sample_rate);
         d.osc[s][1].Init(g_sample_rate);
+        d.pm_phase[s][0] = 0.0f;
+        d.pm_phase[s][1] = 0.0f;
+        d.pm_ready[s][0] = false;
+        d.pm_ready[s][1] = false;
     }
     for (int side = 0; side < 2; ++side) {
         d.ladder[side].Init(g_sample_rate);
@@ -117,6 +126,8 @@ void gs_voice_phase(int v, float p0, float p1) {
         float spread = static_cast<float>(s) * 0.618034f;
         d.osc[s][0].Reset(fmodf(p0 + spread, 1.0f));
         d.osc[s][1].Reset(fmodf(p1 + spread, 1.0f));
+        d.pm_ready[s][0] = false;
+        d.pm_ready[s][1] = false;
     }
 }
 
@@ -141,6 +152,37 @@ void gs_voice_osc_block(int v, int which, int sub, float *out, uint32_t frames) 
     }
     daisysp::Oscillator &o = voice(v).osc[sub][which ? 1 : 0];
     for (uint32_t i = 0; i < frames; ++i) out[i] = o.Process();
+}
+
+void gs_voice_osc_pm_block(int v, int which, int sub, const float *mod, float depth,
+                           float *out, uint32_t frames) {
+    if (sub < 0 || sub >= GS_MAX_UNISON) {
+        for (uint32_t i = 0; i < frames; ++i) out[i] = 0.0f;
+        return;
+    }
+    VoiceDsp &d = voice(v);
+    const int side = which ? 1 : 0;
+    daisysp::Oscillator &o = d.osc[sub][side];
+    // The carrier's own phase, advanced by its own increment: the modulation
+    // is *added to the read phase* for one sample and then gone. Adding it to
+    // the oscillator's phase instead would integrate the modulator, which is
+    // frequency modulation by the integral of the signal — a different, much
+    // brighter sound than the one the knob promises.
+    float base = d.pm_phase[sub][side];
+    if (!d.pm_ready[sub][side]) {
+        base = o.Phase();
+        d.pm_ready[sub][side] = true;
+    }
+    const float inc = o.PhaseInc();
+    for (uint32_t i = 0; i < frames; ++i) {
+        float phase = fmodf(base + mod[i] * depth, 1.0f);
+        if (phase < 0.0f) phase += 1.0f;
+        o.Reset(phase);
+        out[i] = o.Process();
+        base += inc;
+        if (base >= 1.0f) base -= 1.0f;
+    }
+    d.pm_phase[sub][side] = base;
 }
 
 void gs_voice_filter_set(int v, int side, int type, float freq, float res, float drive) {

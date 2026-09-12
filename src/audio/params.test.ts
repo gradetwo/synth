@@ -56,7 +56,9 @@ describe('modulation model', () => {
       'random',
       'keytrack',
     ]);
-    expect(MOD_DESTS).toEqual(['cutoff', 'pitch', 'volume', 'pwm', 'pan', 'res']);
+    // Appended in the order the engine resolves them (`ModDst::from_u32`); a
+    // share code stores the index, so this list is append-only.
+    expect(MOD_DESTS).toEqual(['cutoff', 'pitch', 'volume', 'pwm', 'pan', 'res', 'fm', 'ring']);
   });
 
   it('has a label and room for every row', () => {

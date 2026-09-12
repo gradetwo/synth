@@ -33,6 +33,15 @@ extern "C" {
     fn gs_voice_phase(v: i32, p0: f32, p1: f32);
     fn gs_voice_osc_set(v: i32, which: i32, sub: i32, wave: u32, freq: f32, amp: f32, pw: f32);
     fn gs_voice_osc_block(v: i32, which: i32, sub: i32, out: *mut f32, frames: u32);
+    fn gs_voice_osc_pm_block(
+        v: i32,
+        which: i32,
+        sub: i32,
+        modulator: *const f32,
+        depth: f32,
+        out: *mut f32,
+        frames: u32,
+    );
     fn gs_voice_filter_set(v: i32, side: i32, kind: i32, freq: f32, res: f32, drive: f32);
     fn gs_voice_filter_block(
         v: i32,
@@ -213,6 +222,10 @@ pub struct Engine {
     // Scratch buffers — all statically sized, all reused per voice.
     osc_a: [f32; MAX_BLOCK_SIZE],
     osc_b: [f32; MAX_BLOCK_SIZE],
+    /// The modulator's block, copied out of `osc_b` when OSC 1's phase is
+    /// modulated by it (P6.1): the carrier renders into `osc_a` while reading
+    /// this, and two separate fields are the only way to say that in Rust.
+    pm_buf: [f32; MAX_BLOCK_SIZE],
     /// One output buffer per effect node of the routing graph (A1), plus the
     /// scratch the node input mix is summed into. Allocated once in `init`:
     /// the render loop must never allocate, and six nodes cost ~64 KB.
@@ -374,6 +387,7 @@ impl Engine {
             filter_envs: [Adsr::new(); MAX_VOICES],
             osc_a: [0.0; MAX_BLOCK_SIZE],
             osc_b: [0.0; MAX_BLOCK_SIZE],
+            pm_buf: [0.0; MAX_BLOCK_SIZE],
             graph_node_l: Vec::new(),
             graph_node_r: Vec::new(),
             graph_in_l: Vec::new(),
@@ -1474,6 +1488,8 @@ impl Engine {
         let mut mod_pwm = 0.0f32;
         let mut mod_pan = 0.0f32;
         let mut mod_res = 0.0f32;
+        let mut mod_fm = 0.0f32;
+        let mut mod_ring = 0.0f32;
         for route in params.routes.iter() {
             if !route.enabled || route.amount == 0.0 {
                 continue;
@@ -1498,6 +1514,8 @@ impl Engine {
                 ModDst::Pwm => mod_pwm += v,
                 ModDst::Pan => mod_pan += v,
                 ModDst::Resonance => mod_res += v,
+                ModDst::Fm => mod_fm += v,
+                ModDst::Ring => mod_ring += v,
             }
         }
 
@@ -1526,11 +1544,21 @@ impl Engine {
         let bend = semitone_ratio(pitch_mod + note_bend);
 
         // --- oscillators ----------------------------------------------------
+        // Phase modulation (P6.1): OSC 2 is the modulator, so it is rendered
+        // first and OSC 1 reads it while it renders. The index is squared so the
+        // bottom of the knob has usable resolution; 0 keeps the old order and
+        // the old code path exactly.
+        let fm_depth = (params.osc_fm + mod_fm).clamp(0.0, 1.0);
+        let ring = (params.osc_ring + mod_ring).clamp(0.0, 1.0);
+        let fm_cycles = FM_MAX_CYCLES * fm_depth * fm_depth;
+        let modulator = fm_cycles > 0.0 && params.osc[1].on;
+        let order: [usize; 2] = if modulator { [1, 0] } else { [0, 1] };
+
         // Unison renders each sub-voice through this scratch buffer; it is moved
         // out of `self` first so the loop can still borrow `osc_a`/`osc_b`.
         let mut scratch: [f32; MAX_BLOCK_SIZE] = self.unison_buf;
         let mut osc_level = [0.0f32; 2];
-        for which in 0..2 {
+        for which in order {
             let o = params.osc[which];
             let level = if o.on { o.level } else { 0.0 };
             osc_level[which] = level;
@@ -1539,7 +1567,9 @@ impl Engine {
             } else {
                 &mut self.osc_b[..frames]
             };
-            if level <= 0.0 {
+            // A silent OSC 2 is still rendered when it modulates: its level is
+            // how loud it is in the mix, not how much it modulates.
+            if level <= 0.0 && !(which == 1 && modulator) {
                 out.fill(0.0);
                 continue;
             }
@@ -1551,6 +1581,11 @@ impl Engine {
             } else {
                 (o.pw + pw_mod).clamp(0.05, 0.95)
             };
+            let pm = if which == 0 && modulator {
+                Some((&self.pm_buf[..frames], fm_cycles))
+            } else {
+                None
+            };
             render_oscillator(
                 slot,
                 which,
@@ -1559,6 +1594,7 @@ impl Engine {
                 pw,
                 frames,
                 out,
+                pm,
                 &mut self.rng,
                 &mut self.noise[slot][which],
                 &self.tables,
@@ -1576,6 +1612,12 @@ impl Engine {
                 sr,
                 &mut scratch[..],
             );
+            if which == 1 && modulator {
+                // The carrier reads this on the next iteration; copying now,
+                // after OSC 2 has been rendered, is what makes the modulation
+                // sample-aligned instead of one block late.
+                self.pm_buf[..frames].copy_from_slice(&self.osc_b[..frames]);
+            }
         }
         self.unison_buf = scratch;
 
@@ -1589,6 +1631,7 @@ impl Engine {
             && params.osc[1].on
             && osc_level[0] > 0.0
             && osc_level[1] > 0.0
+            && ring <= 0.0
             && (params.osc[0].pan - params.osc[1].pan).abs() > 0.02;
 
         if stereo {
@@ -1596,6 +1639,22 @@ impl Engine {
             for i in 0..frames {
                 self.voice_buf[i] = self.osc_a[i] * osc_level[0] * trim;
                 self.voice_buf_r[i] = self.osc_b[i] * osc_level[1] * trim;
+            }
+        } else if ring > 0.0 {
+            // Ring modulation multiplies the two oscillators, so the product is
+            // level-compensated by the geometric mean of the two levels: fading
+            // one oscillator out fades the product out too, exactly as it fades
+            // its own part of the sum.
+            let trim = FILTER_TRIM;
+            let l1 = osc_level[0] * trim;
+            let l2 = osc_level[1] * trim;
+            let pair = (osc_level[0] * osc_level[1]).sqrt() * trim;
+            for i in 0..frames {
+                let a = self.osc_a[i];
+                let b = self.osc_b[i];
+                let sum = a * l1 + b * l2;
+                let product = a * b * pair;
+                self.voice_buf[i] = sum + (product - sum) * ring;
             }
         } else {
             simd::mix2_into(
@@ -2290,7 +2349,13 @@ impl Engine {
     }
 }
 
-/// Render one oscillator into `out` (block ABI, noise handled in Rust).
+/// Render one oscillator block into `out` (block ABI, noise handled in Rust).
+///
+/// `pm` is the phase-modulation input: the modulator's samples and the index in
+/// carrier cycles (P6.1). It applies to the oscillators that have a phase — the
+/// band-limited shapes and the wavetable — and is ignored by noise and by the
+/// sampler, which are not periodic in the same sense. Ring modulation is done
+/// after this, on the two finished blocks, so it applies to every wave.
 #[allow(clippy::too_many_arguments)]
 fn render_oscillator(
     slot: usize,
@@ -2300,6 +2365,7 @@ fn render_oscillator(
     pw: f32,
     frames: usize,
     out: &mut [f32],
+    pm: Option<(&[f32], f32)>,
     rng: &mut Rng,
     noise: &mut NoiseGen,
     tables: &[crate::dsp::wavetable::Table],
@@ -2317,7 +2383,20 @@ fn render_oscillator(
             let unison = (params.unison.max(1) as usize).min(MAX_UNISON as usize);
             if unison == 1 {
                 gs_voice_osc_set(slot as i32, which as i32, 0, daisy_wave, freq, 1.0, pw);
-                gs_voice_osc_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32);
+                match pm {
+                    Some((modulator, cycles)) => gs_voice_osc_pm_block(
+                        slot as i32,
+                        which as i32,
+                        0,
+                        modulator.as_ptr(),
+                        cycles,
+                        out.as_mut_ptr(),
+                        frames as u32,
+                    ),
+                    None => {
+                        gs_voice_osc_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32)
+                    }
+                }
                 return;
             }
             // Unison: stack detuned copies. The detune spread is symmetric
@@ -2344,13 +2423,24 @@ fn render_oscillator(
                     1.0,
                     pw,
                 );
-                gs_voice_osc_block(
-                    slot as i32,
-                    which as i32,
-                    sub as i32,
-                    scratch.as_mut_ptr(),
-                    frames as u32,
-                );
+                match pm {
+                    Some((modulator, cycles)) => gs_voice_osc_pm_block(
+                        slot as i32,
+                        which as i32,
+                        sub as i32,
+                        modulator.as_ptr(),
+                        cycles,
+                        scratch.as_mut_ptr(),
+                        frames as u32,
+                    ),
+                    None => gs_voice_osc_block(
+                        slot as i32,
+                        which as i32,
+                        sub as i32,
+                        scratch.as_mut_ptr(),
+                        frames as u32,
+                    ),
+                }
                 for i in 0..frames {
                     out[i] += scratch[i] * gain;
                 }
@@ -2375,8 +2465,15 @@ fn render_oscillator(
                 let level = table.level_for(freq, sample_rate);
                 let step = freq / sample_rate;
                 let mut phase = *wt_phase;
-                for sample in out.iter_mut() {
-                    *sample = table.sample(level, phase);
+                for (i, sample) in out.iter_mut().enumerate() {
+                    // The offset is added to the read phase only: the oscillator
+                    // keeps running at its own frequency, so a deep index cannot
+                    // pull it out of tune or out of the table.
+                    let read = match pm {
+                        Some((modulator, cycles)) => (phase + modulator[i] * cycles).rem_euclid(1.0),
+                        None => phase,
+                    };
+                    *sample = table.sample(level, read);
                     phase += step;
                     if phase >= 1.0 {
                         phase -= 1.0;
@@ -2419,6 +2516,12 @@ impl Default for Engine {
         Self::new()
     }
 }
+
+/// Full-scale phase-modulation index, in carrier cycles (P6.1). Two cycles is a
+/// bright, clangorous FM tone with sidebands well past the twentieth harmonic,
+/// and the squared curve below keeps the bottom of the knob's travel usable for
+/// the subtle end.
+const FM_MAX_CYCLES: f32 = 2.0;
 
 /// Process-wide engine instance. The AudioWorklet is single threaded, and the
 /// engine is only ever touched from `process()` / message handlers on that
@@ -5093,6 +5196,369 @@ mod tests {
             }
         }
         assert!(peak_mix < 1.2, "in-phase stacking suspected, mix peaked at {peak_mix}");
+    }
+
+
+    // ------------------------------------------------- FM / PM and ring (P6.1)
+
+    /// A four-second A4 through a sine pair, with nothing else in the way.
+    ///
+    /// Both oscillators are sines at the *same* frequency, which is the one
+    /// setting where the spectrum says exactly what happened: phase modulation
+    /// moves energy into harmonics of the carrier, and ring modulation moves it
+    /// to the sum and difference of the two.
+    fn fm_patch_with_level(fm: f32, ring: f32, osc2_pitch: f32, osc2_level: f32) -> Box<Engine> {
+        let mut e = new_engine(8);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC2_WAVE, crate::params::Wave::Sine as u32 as f32);
+        e.set_param(id::OSC2_LEVEL, osc2_level);
+        e.set_param(id::OSC2_PITCH, osc2_pitch);
+        e.set_param(id::OSC_FM, fm);
+        e.set_param(id::OSC_RING, ring);
+        e.set_param(id::FILTER_CUTOFF, 18_000.0);
+        e.set_param(id::FILTER_RES, 0.05);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::ENV_DECAY, 4.0);
+        e.set_param(id::FX_REVERB_ON, 0.0);
+        e.set_param(id::FX_DELAY_ON, 0.0);
+        e.set_param(id::FX_CHORUS_ON, 0.0);
+        e.set_param(id::FX_FLANGER_ON, 0.0);
+        e.set_param(id::FX_PHASER_ON, 0.0);
+        e.set_param(id::FX_DRIVE_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        e
+    }
+
+    /// Two sines, OSC 2 turned down to nothing: the classic FM arrangement, where
+    /// the modulator is heard only through the carrier and the reference render
+    /// is a single clean sine.
+    fn fm_patch(fm: f32, ring: f32, osc2_pitch: f32) -> Box<Engine> {
+        fm_patch_with_level(fm, ring, osc2_pitch, 0.0)
+    }
+
+    /// A steady note's left channel, skipping the attack so the envelope is flat.
+    ///
+    /// The samples are copied out `frames` at a time on purpose: `left()` hands
+    /// back the whole 1024-sample block buffer, so a test that took all of it
+    /// would be measuring 896 samples of stale data per block as well.
+    fn steady_note(e: &mut Engine, blocks: usize) -> Vec<f32> {
+        e.note_on(69, 0.9);
+        for _ in 0..8 {
+            e.process(128);
+        }
+        let mut out = Vec::with_capacity(blocks * 128);
+        for _ in 0..blocks {
+            e.process(128);
+            out.extend_from_slice(&e.left()[..128]);
+        }
+        out
+    }
+
+    /// How many carrier harmonics are above `floor` relative to the strongest
+    /// partial — the number of audible sidebands, which is what a modulation
+    /// index is measured by.
+    fn sideband_count(samples: &[f32], f0: f32, floor: f32) -> usize {
+        let strongest = (1..=30)
+            .map(|k| bin_mag(samples, f0 * k as f32, 48_000.0))
+            .fold(0.0f32, f32::max)
+            .max(1e-9);
+        (1..=30)
+            .filter(|k| bin_mag(samples, f0 * *k as f32, 48_000.0) / strongest > floor)
+            .count()
+    }
+
+    /// Frequency domain: OSC 2 modulating OSC 1's phase moves energy out of the
+    /// carrier and into its harmonics, and more depth means more of them.
+    #[test]
+    fn phase_modulation_adds_sidebands() {
+        let _guard = lock_engine();
+        let f0 = 440.0f32;
+
+        let clean = {
+            let mut e = fm_patch(0.0, 0.0, 0.0);
+            steady_note(&mut e, 240)
+        };
+        let carrier = bin_mag(&clean, f0, 48_000.0);
+        assert!(carrier > 0.01, "the plain pair should be loud: {carrier}");
+        // With no modulation the two sines are the same frequency, so there is
+        // nothing above the fundamental at all.
+        for harmonic in [2, 3, 4] {
+            let side = bin_mag(&clean, f0 * harmonic as f32, 48_000.0);
+            assert!(
+                side / carrier < 1e-3,
+                "depth 0 must stay a sine, but harmonic {harmonic} is {:.5} of the carrier",
+                side / carrier
+            );
+        }
+
+        let render = |depth: f32| {
+            let mut e = fm_patch(depth, 0.0, 0.0);
+            steady_note(&mut e, 240)
+        };
+        let shallow = render(0.3);
+        let deep = render(0.9);
+
+        // The first sidebands are there once the depth leaves zero…
+        let first = bin_mag(&shallow, f0 * 2.0, 48_000.0) / carrier;
+        assert!(first > 0.05, "depth 0.3 should produce a second partial: {first:.4}");
+        // …the carrier loses energy to them as the index grows…
+        let shallow_carrier = bin_mag(&shallow, f0, 48_000.0);
+        let deep_carrier = bin_mag(&deep, f0, 48_000.0);
+        assert!(
+            deep_carrier < shallow_carrier,
+            "a deeper index should eat into the carrier: {deep_carrier:.4} vs {shallow_carrier:.4}"
+        );
+        // …and the number of audible sidebands grows with it, step by step: a
+        // modulation index is exactly "how many harmonics are worth counting".
+        let counts: Vec<usize> = [0.0f32, 0.25, 0.5, 0.75, 1.0]
+            .iter()
+            .map(|depth| {
+                let rendered = if *depth == 0.0 { clean.clone() } else { render(*depth) };
+                sideband_count(&rendered, f0, 0.02)
+            })
+            .collect();
+        for pair in counts.windows(2) {
+            assert!(
+                pair[1] > pair[0],
+                "the index must open up the spectrum monotonically: {counts:?}"
+            );
+        }
+        assert!(
+            counts[0] <= 2 && *counts.last().unwrap() >= 6,
+            "the knob should span a sine to an obviously bright tone: {counts:?}"
+        );
+    }
+
+    /// Time domain: the same thing seen in the waveform. A sine crosses zero
+    /// twice per carrier period however deep the modulation, but the *shape*
+    /// between crossings gains the extra wiggles the sidebands describe.
+    #[test]
+    fn phase_modulation_shows_in_the_waveform() {
+        let _guard = lock_engine();
+        let period = (48_000.0 / 440.0) as usize;
+
+        let clean = {
+            let mut e = fm_patch(0.0, 0.0, 0.0);
+            steady_note(&mut e, 240)
+        };
+        let deep = {
+            let mut e = fm_patch(0.9, 0.0, 0.0);
+            steady_note(&mut e, 240)
+        };
+        let crossings = |samples: &[f32]| {
+            samples[..period * 20]
+                .windows(2)
+                .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+                .count()
+        };
+        let clean_crossings = crossings(&clean);
+        let deep_crossings = crossings(&deep);
+        assert!(
+            deep_crossings > clean_crossings * 2,
+            "a modulated carrier wiggles more between crossings: {deep_crossings} vs {clean_crossings}"
+        );
+        // Phase modulation moves the phase around; it must not add gain, and a
+        // deeper index must not walk the level up or down.
+        let peak = |samples: &[f32]| samples.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(
+            (peak(&deep) - peak(&clean)).abs() < 0.25,
+            "phase modulation must not change the level: {:.3} vs {:.3}",
+            peak(&deep),
+            peak(&clean)
+        );
+    }
+
+    /// Frequency and time domain for ring modulation: the product of two sines
+    /// carries the sum and the difference and *loses* both originals.
+    #[test]
+    fn ring_modulation_moves_energy_to_sum_and_difference() {
+        let _guard = lock_engine();
+        let carrier = 440.0f32;
+        // A ratio of 1.25: the difference (110 Hz) and the sum (990 Hz) are
+        // nowhere near either oscillator, so every measurement is unambiguous.
+        let ratio = 1200.0 * (1.25f32).log2() / 100.0;
+
+        let sum = {
+            let mut e = fm_patch_with_level(0.0, 0.0, ratio, 0.8);
+            steady_note(&mut e, 240)
+        };
+        let ring = {
+            let mut e = fm_patch_with_level(0.0, 1.0, ratio, 0.8);
+            steady_note(&mut e, 240)
+        };
+        let difference = carrier * 0.25;
+        let upper = carrier * 2.25;
+        let modulator = carrier * 1.25;
+
+        // The plain mix is the two oscillators and nothing else…
+        let plain = bin_mag(&sum, carrier, 48_000.0);
+        assert!(plain > 0.01, "the plain pair should be loud: {plain}");
+        assert!(bin_mag(&sum, modulator, 48_000.0) > 0.01, "and so should the modulator");
+        assert!(
+            bin_mag(&sum, difference, 48_000.0) / plain < 0.02,
+            "an additive mix has nothing at the difference frequency"
+        );
+        assert!(
+            bin_mag(&sum, upper, 48_000.0) / plain < 0.02,
+            "an additive mix has nothing at the sum frequency"
+        );
+
+        // …and the ring product has the sum and the difference instead.
+        let low = bin_mag(&ring, difference, 48_000.0);
+        let high = bin_mag(&ring, upper, 48_000.0);
+        let strongest = low.max(high).max(1e-9);
+        assert!(
+            low > plain * 0.1 && high > plain * 0.1,
+            "ring modulation should put real energy at 110 and 990: {low:.4}, {high:.4}"
+        );
+        assert!(
+            bin_mag(&ring, carrier, 48_000.0) / strongest < 0.1,
+            "the carrier itself should be suppressed by ring modulation"
+        );
+        assert!(
+            bin_mag(&ring, modulator, 48_000.0) / strongest < 0.1,
+            "the modulator should be suppressed too"
+        );
+
+        // Time domain: multiplication means the output has to vanish wherever
+        // the modulator does. A sum cannot do that — its carrier keeps sounding.
+        let modulated = {
+            let mut e = fm_patch_with_level(0.0, 0.0, ratio, 0.0);
+            steady_note(&mut e, 240)
+        };
+        let quiet_ratio = |samples: &[f32], modulator: &[f32]| {
+            // Rank samples by how small the modulator is, then compare the mean
+            // level of the quietest tenth with the mean over everything.
+            let mut order: Vec<usize> = (0..samples.len().min(modulator.len())).collect();
+            order.sort_by(|a, b| modulator[*a].abs().partial_cmp(&modulator[*b].abs()).unwrap());
+            let tenth = order.len() / 10;
+            let quiet: f32 = order[..tenth].iter().map(|i| samples[*i].abs()).sum::<f32>() / tenth as f32;
+            let all: f32 = samples.iter().map(|v| v.abs()).sum::<f32>() / samples.len() as f32;
+            quiet / all.max(1e-9)
+        };
+        let ring_ratio = quiet_ratio(&ring, &modulated);
+        let sum_ratio = quiet_ratio(&sum, &modulated);
+        assert!(
+            ring_ratio < 0.35,
+            "a ring-modulated tone is silent where its modulator is: ratio {ring_ratio:.3}"
+        );
+        assert!(
+            sum_ratio > ring_ratio * 1.8,
+            "the additive mix keeps sounding there: {sum_ratio:.3} vs {ring_ratio:.3}"
+        );
+    }
+
+    /// The matrix can drive both, which is what makes an FM patch playable: an
+    /// envelope on the index is the classic brightness sweep.
+    #[test]
+    fn the_matrix_can_drive_fm_and_ring() {
+        let _guard = lock_engine();
+        let f0 = 440.0f32;
+
+        let mut e = fm_patch(0.0, 0.0, 0.0);
+        // Route the (sustained) envelope to the FM index with full amount.
+        e.params.routes[0] = crate::params::ModRoute {
+            src: crate::params::ModSrc::Env,
+            dst: crate::params::ModDst::Fm,
+            amount: 1.0,
+            enabled: true,
+        };
+        let modulated = steady_note(&mut e, 240);
+        let carrier = bin_mag(&modulated, f0, 48_000.0);
+        let second = bin_mag(&modulated, f0 * 2.0, 48_000.0) / carrier.max(1e-9);
+        assert!(
+            second > 0.05,
+            "an envelope on the FM index should produce sidebands: {second:.4}"
+        );
+
+        let mut e = fm_patch_with_level(0.0, 0.0, 7.0, 0.8);
+        e.params.routes[0] = crate::params::ModRoute {
+            src: crate::params::ModSrc::Env,
+            dst: crate::params::ModDst::Ring,
+            amount: 1.0,
+            enabled: true,
+        };
+        let ring = steady_note(&mut e, 240);
+        let difference = bin_mag(&ring, f0 * 0.5, 48_000.0);
+        let plain = bin_mag(&ring, f0, 48_000.0);
+        assert!(
+            difference > plain,
+            "an envelope on the ring amount should reach a ring tone: {difference:.4} vs {plain:.4}"
+        );
+    }
+
+    /// Unison and phase modulation together: every sub-voice is modulated, and
+    /// nothing about the stack becomes unstable or silent.
+    #[test]
+    fn phase_modulation_survives_a_unison_stack() {
+        let _guard = lock_engine();
+        let mut e = fm_patch(0.7, 0.0, 0.0);
+        e.set_param(id::OSC1_UNISON, 5.0);
+        e.set_param(id::OSC1_SPREAD, 0.5);
+        let rendered = steady_note(&mut e, 120);
+        assert!(rendered.iter().all(|v| v.is_finite()), "unison FM must stay finite");
+        let peak = rendered.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak > 0.05 && peak <= 1.0, "unison FM level: {peak:.3}");
+        assert!(
+            bin_mag(&rendered, 880.0, 48_000.0) > 1e-4,
+            "a unison stack should still show the modulation's sidebands"
+        );
+    }
+
+
+
+
+    /// The C bridge on its own, against the textbook: phase modulation of a
+    /// sine by a sine at the same frequency is
+    /// `sin(x + β sin x) = Σ J_n(β) sin((1+n)x)`, so the harmonic *ratios* are
+    /// fixed by the index. A block that merely "sounds bright" — one that
+    /// integrates the modulator, say — sounds like frequency modulation with a
+    /// different index and fails here, which is exactly what happened while this
+    /// was being written.
+    #[test]
+    fn the_phase_modulation_block_matches_the_textbook_spectrum() {
+        let _guard = lock_engine();
+        let frames = 128usize;
+        let blocks = 240usize;
+        let depth = 0.18f32; // 1.13 rad of index
+        let modulator: Vec<f32> = (0..frames * blocks)
+            .map(|i| (core::f32::consts::TAU * 440.0 * i as f32 / 48_000.0).sin())
+            .collect();
+        let mut carrier = vec![0.0f32; modulator.len()];
+        unsafe {
+            gs_init(48_000.0, 1);
+            gs_voice_osc_set(0, 0, 0, 0, 440.0, 1.0, 0.5);
+            for block in 0..blocks {
+                let at = block * frames;
+                gs_voice_osc_pm_block(
+                    0,
+                    0,
+                    0,
+                    modulator[at..].as_ptr(),
+                    depth,
+                    carrier[at..].as_mut_ptr(),
+                    frames as u32,
+                );
+            }
+        }
+        let reference: Vec<f32> = (0..frames * blocks)
+            .map(|i| {
+                let x = core::f32::consts::TAU * 440.0 * i as f32 / 48_000.0;
+                (x + core::f32::consts::TAU * depth * x.sin()).sin()
+            })
+            .collect();
+        for harmonic in 1..=4 {
+            let freq = 440.0 * harmonic as f32;
+            let got = bin_mag(&carrier, freq, 48_000.0);
+            let want = bin_mag(&reference, freq, 48_000.0);
+            assert!(
+                (got - want).abs() <= want * 0.1 + 1e-4,
+                "harmonic {harmonic}: phase modulation should match the analytic spectrum, got {got:.5} want {want:.5}"
+            );
+        }
     }
 
     #[test]

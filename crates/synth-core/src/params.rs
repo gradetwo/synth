@@ -144,10 +144,18 @@ pub mod id {
     pub const FX_NODE_TO_OUT: u32 = 125;
     /// Gain on the way to the mix bus.
     pub const FX_NODE_OUT_GAIN: u32 = 131;
+    /// How far OSC 2 pushes OSC 1's phase around, 0..1 (P6.1). 0 keeps the
+    /// oscillators exactly as they were before this existed, which is why the
+    /// parameter is appended here rather than slotted in next to the other
+    /// oscillator controls: ids are the share-code wire format.
+    pub const OSC_FM: u32 = 137;
+    /// Ring modulation between OSC 1 and OSC 2, 0 = the plain mix, 1 = only the
+    /// product (P6.1).
+    pub const OSC_RING: u32 = 138;
 }
 
 /// Highest parameter id + 1.
-pub const PARAM_COUNT: usize = 137;
+pub const PARAM_COUNT: usize = 139;
 
 /// Positions in the effect chain (A5). Six is one per effect: the chain is a
 /// permutation, so reordering can never lose an effect or double one up.
@@ -226,6 +234,8 @@ pub fn is_continuous(param_id: u32) -> bool {
             | p::FX_REVERB_PREDELAY
             | p::OSC1_SPREAD
             | p::OSC2_SPREAD
+            | p::OSC_FM
+            | p::OSC_RING
             | p::FX_DELAY_FB
             | p::FX_DELAY_MIX
             | p::GLIDE
@@ -420,6 +430,11 @@ pub enum ModDst {
     Pwm,
     Pan,
     Resonance,
+    /// Phase-modulation depth (P6.1) — an envelope here is the classic FM
+    /// brightness sweep.
+    Fm,
+    /// Ring-modulation amount (P6.1).
+    Ring,
 }
 
 impl ModDst {
@@ -430,6 +445,8 @@ impl ModDst {
             3 => ModDst::Pwm,
             4 => ModDst::Pan,
             5 => ModDst::Resonance,
+            6 => ModDst::Fm,
+            7 => ModDst::Ring,
             _ => ModDst::Cutoff,
         }
     }
@@ -648,6 +665,10 @@ pub struct Params {
     pub pitch_bend_range: f32,
     pub tempo: f32,
     pub glide: f32,
+    /// OSC 2 -> OSC 1 phase-modulation depth, 0..1 (0 = no modulation).
+    pub osc_fm: f32,
+    /// Ring-modulation amount between the two oscillators, 0..1.
+    pub osc_ring: f32,
     pub osc: [OscParams; 2],
     pub filter: FilterParams,
     pub env: EnvParams,
@@ -675,6 +696,8 @@ impl Params {
             pitch_bend_range: 2.0,
             tempo: 120.0,
             glide: 0.0,
+            osc_fm: 0.0,
+            osc_ring: 0.0,
             osc: [OscParams::new(Wave::Sine), OscParams::new(Wave::Saw)],
             filter: FilterParams {
                 kind: FilterType::Lp,
@@ -836,6 +859,8 @@ impl Params {
             p::PITCH_BEND_RANGE => self.pitch_bend_range = value.clamp(0.0, 24.0),
             p::TEMPO => self.tempo = value.clamp(20.0, 300.0),
             p::GLIDE => self.glide = clamp01(value),
+            p::OSC_FM => self.osc_fm = clamp01(value),
+            p::OSC_RING => self.osc_ring = clamp01(value),
             p::OSC1_ON => self.osc[0].on = value > 0.5,
             p::OSC1_WAVE => self.osc[0].wave = Wave::from_u32(value as u32),
             p::OSC1_PITCH => self.osc[0].pitch = value.clamp(-48.0, 48.0),

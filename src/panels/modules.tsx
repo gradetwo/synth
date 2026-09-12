@@ -95,6 +95,11 @@ function OscModule({ which }: { which: 1 | 2 }) {
   // With the wavetable wave the PW knob picks the harmonic table, so say which
   // one it is rather than leaving the player to discover it.
   const wave = intToWave(useParam(which === 1 ? Param.OSC1_WAVE : Param.OSC2_WAVE));
+  // OSC 2 shapes OSC 1: its phase (FM, P6.1) and its amplitude (RING). They live
+  // on OSC 1's module because that is the oscillator being shaped, and they do
+  // nothing without OSC 2, which the hint under them says.
+  const fm = SPEC_BY_ID[Param.OSC_FM];
+  const ring = SPEC_BY_ID[Param.OSC_RING];
   const pwValue = useParam(pw.id);
   const pwSpec =
     wave === 'wavetable'
@@ -112,6 +117,15 @@ function OscModule({ which }: { which: 1 | 2 }) {
         <Knob spec={unison} />
         <Knob spec={spread} />
       </div>
+      {which === 1 ? (
+        <>
+          <div className="knob-row">
+            <Knob spec={fm} />
+            <Knob spec={ring} />
+          </div>
+          <div className="mini-label">{t('module.oscShaping')}</div>
+        </>
+      ) : null}
       {wave === 'wavetable' && <UserWavePicker which={which} />}
       {wave === 'sample' && <UserSamplePicker which={which} />}
       <MiniWave which={which} color={color} />

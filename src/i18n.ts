@@ -379,6 +379,10 @@ const DICT: Record<string, [string, string]> = {
   // --- settings drawer -----------------------------------------------------
   'settings.title': ['设置', 'Settings'],
   'settings.workspace': ['工作区', 'Workspace'],
+  'module.oscShaping': [
+    'OSC 2 → OSC 1 · FM 相位调制 / RING 环形调制（需要 OSC 2 打开）',
+    'OSC 2 → OSC 1 · FM phase modulation / RING ring modulation (needs OSC 2 on)',
+  ],
   'layer.mute': ['静音', 'Mute'],
   'layer.volume': ['音量', 'Volume'],
   'layer.pan': ['声像', 'Pan'],

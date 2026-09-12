@@ -86,6 +86,8 @@ const PARAMS = [
   ['osc1Spread', 71, 0.35, 0, 1],
   ['osc2Unison', 72, 1, 1, 7],
   ['osc2Spread', 73, 0.35, 0, 1],
+  ['oscFm', 137, 0, 0, 1],
+  ['oscRing', 138, 0, 0, 1],
   ['lfoRetrig', 74, 0, 0, 1],
   ['lfoOneshot', 75, 0, 0, 1],
   ['lfo2Retrig', 76, 0, 0, 1],

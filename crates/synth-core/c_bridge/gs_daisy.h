@@ -63,6 +63,12 @@ void gs_voice_phase(int v, float p0, float p1);
 void gs_voice_osc_set(int v, int which, int sub, uint32_t wave, float freq, float amp, float pw);
 void gs_voice_osc_reset(int v, int which, float phase);
 void gs_voice_osc_block(int v, int which, int sub, float *out, uint32_t frames);
+/// Render one oscillator with its phase modulated by `mod` (one value per
+/// sample, usually -1..1) times `depth` cycles. The phase is *placed* for each
+/// sample rather than added, so the carrier keeps running at its own frequency
+/// and the 0..1 range the band-limited shapes need is never left.
+void gs_voice_osc_pm_block(int v, int which, int sub, const float *mod, float depth,
+                           float *out, uint32_t frames);
 
 /* --- per-voice filter ------------------------------------------------------ */
 void gs_voice_filter_set(int v, int side, int type, float freq, float res, float drive);
