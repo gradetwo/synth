@@ -42,3 +42,35 @@ test('boots with a service worker controlling the page', async ({ page }) => {
   await expect.poll(async () => meter.textContent(), { timeout: 8000 }).not.toMatch(/^— · —/);
   await page.mouse.up();
 });
+
+/**
+ * The app has to open with the network switched off.
+ *
+ * This is the case the redirect bug above was hiding, and it survived every
+ * check that looked at the cache: `cache.addAll` follows the host's redirect of
+ * `/index.html` to `/`, so the *precached* shell carries the `redirected` flag,
+ * and a navigation request refuses to consume such a response. The worker
+ * answered offline from a full, correct cache and the browser still showed its
+ * own error page. Online nothing looked wrong, which is why the suite now pulls
+ * the plug and starts the engine from the cached core.
+ */
+test('opens from the precache with the network off', async ({ page, context }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/');
+  await page.waitForFunction(() => navigator.serviceWorker?.controller != null, null, { timeout: 30_000 });
+  await page.reload();
+  await expect(page.getByRole('button', { name: /启动音频引擎/ })).toBeVisible();
+
+  await context.setOffline(true);
+  try {
+    await page.reload();
+    await expect(page.getByRole('button', { name: /启动音频引擎/ })).toBeVisible();
+    // The gate is not enough: the shell has to be styled and the engine has to
+    // come up from the precached wasm and worklet, which is what "offline" means.
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await expect(page.locator('.kbd-dock.open')).toBeVisible({ timeout: 30_000 });
+  } finally {
+    await context.setOffline(false);
+  }
+});

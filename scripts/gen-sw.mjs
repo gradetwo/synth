@@ -68,6 +68,21 @@ self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
+/**
+ * Rebuild a response that came from a redirect.
+ *
+ * A navigation request has redirect mode "manual", so the browser refuses to
+ * consume a response whose redirected flag is set and shows its own error
+ * page instead. Both the network shell and the *precached* one can carry that
+ * flag on a host that redirects /index.html to / — the second one is what made
+ * the app fail to open offline while everything about the cache looked right.
+ */
+const legal = async (response) => {
+  if (!response.redirected) return response;
+  const body = await response.blob();
+  return new Response(body, { status: 200, statusText: 'OK', headers: response.headers });
+};
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET') return;
@@ -93,19 +108,20 @@ self.addEventListener('fetch', (event) => {
     //   * Even so, rebuild the response if it arrives redirected: a host is
     //     free to redirect for its own reasons, and a rebuilt response is
     //     always legal to return.
+    //
+    // The same rule has to hold for the *cached* shell, and that is a bug this
+    // file shipped for a while: cache.addAll follows redirects, so on a host
+    // that redirects /index.html to / the precached entry carries
+    // redirected: true, and handing that to a navigation aborts the load —
+    // "opened online, net::ERR_FAILED offline", with a full cache and a
+    // controlling worker. legal() below is applied to every branch, network
+    // and cache alike, which is why e2e/pwa.spec.ts now opens the app with
+    // the network switched off.
     event.respondWith(
       fetch('./?v=' + CACHE, { cache: 'no-store' })
         .then(async (response) => {
           if (!response.ok) throw new Error('shell');
-          if (response.redirected) {
-            const body = await response.blob();
-            return new Response(body, {
-              status: 200,
-              statusText: 'OK',
-              headers: response.headers,
-            });
-          }
-          return response;
+          return legal(response);
         })
         .catch(() =>
           caches
@@ -113,6 +129,7 @@ self.addEventListener('fetch', (event) => {
             .then((cached) => cached || caches.match('./'))
             .then((cached) => cached || fetch(request, { cache: 'no-store' })),
         )
+        .then(legal)
     );
     return;
   }
