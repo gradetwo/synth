@@ -79,7 +79,7 @@ function setup(options: {
   });
 
   window.sessionStorage.clear();
-  if (options.prod) vi.stubEnv('PROD', 'true');
+  if (options.prod) vi.stubEnv('PROD', true);
 
   return { registration, serviceWorker, posted, controllerListeners, reloads, replaced, cacheKeys, deleted };
 }

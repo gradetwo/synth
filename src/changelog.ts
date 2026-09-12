@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.89.0',
+    date: '2026-09-12',
+    kind: 'feature',
+    items: [
+      [
+        '**滤波多了一个「连续可变」的档（SEM）**：滤波类型里新增 SEM 风格的多模滤波，12 dB/oct，一个 MORPH 旋钮从低通连续扫过带通、陷波到高通——扫它就像把滤波器的开口慢慢拧开，适合长音渐亮的 pad 和扫频，中间的陷波位置能把一个频段整个挖掉。原来的 LP/HP/BP/NT/CMB/FRM 六档与所有旧音色的声音**完全不变**（新档默认不启用）。',
+        '**The filter gained a continuous mode (SEM)**: a 12 dB/oct multimode whose single MORPH knob travels from low-pass through band-pass and notch to high-pass — a continuous opening rather than one more switch position, which is what a slowly brightening pad or a sweep wants, and the notch position digs one band right out. The original LP/HP/BP/NT/CMB/FRM settings and every existing patch sound exactly as before (the new mode is off by default).',
+      ],
+      [
+        '**断网也能打开应用了**：以前在完全离线时重新打开会看到浏览器的错误页——缓存其实齐全、Service Worker 也在控制页面，只是缓存里那份首页带着「经过重定向」的标记，而浏览器的导航请求拒绝使用这种响应（在线时这条路早就处理过，离线那条没有）。现在离线会正常进入应用，离线启动音频引擎也能用（内核与 worklet 都在缓存里）。',
+        '**The app opens with the network off**: reopening it offline used to land on the browser’s own error page — the cache was complete and the Service Worker was in control, but the cached shell carried a “came from a redirect” flag that a navigation request refuses to use (the online path already handled that; the offline one did not). It now opens offline, and the engine starts offline too: the core and the worklet are both in the cache.',
+      ],
+    ],
+  },
+  {
     version: '1.88.0',
     date: '2026-09-12',
     kind: 'fix',
