@@ -51,7 +51,6 @@ import { getLang, t } from '@/i18n';
 import { toast } from '@/components/Toast';
 import { midiPlayer } from '@/midi/player';
 import { recorder } from '@/midi/recorder';
-import { midiLibrary } from '@/midi/library';
 import { setResolvedTheme } from '@/state/theme';
 
 wireAnalysis();
@@ -428,15 +427,11 @@ export default function App() {
     if (recorder.getState().recording) {
       const clip = recorder.stop();
       if (clip) {
-        midiLibrary.put({
-          id: 'clip',
-          title: [t('player.recordingName'), t('player.recordingName')],
-          composer: t('player.recordedBy'),
-          song: clip,
-          group: 'clip',
-        })
-      store.mark();
-        toast(t('player.clipSaved', { n: clip.notes.length }));
+        // Opening the editor while recording finishes the pass as a take, on
+        // the same path the transport's stop button uses (P5.4). The recording
+        // commit is imported on demand: the take model belongs to the recording
+        // flow, and pulling it in here would put it in the first-load bundle.
+        void import('@/state/recording').then(({ finishRecording }) => finishRecording(clip));
       }
     }
     midiPlayer.stop();

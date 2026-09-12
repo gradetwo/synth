@@ -1345,6 +1345,29 @@ input,textarea,[contenteditable='true']{
   background:var(--bg-inset);color:var(--txt-dim);font:700 10px/1 var(--grot);cursor:pointer}
 .layer-mode:hover{border-color:var(--border-hi);color:var(--txt-1)}
 .layer-mode.on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
+/* Recorded takes (P5.4): one chip per pass of the recorded layer. Chips wrap
+   rather than scroll, so the newest take is never hiding off the edge. */
+.take-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 16px 0}
+.take-title{font:700 8.5px/1 var(--mono);letter-spacing:.16em;color:var(--txt-dim);flex:none}
+.take-chip{display:flex;align-items:center;gap:7px;min-height:36px;padding:0 10px;flex:none;
+  border-radius:9px;border:1px solid var(--border);background:var(--bg-inset);color:var(--txt-2);
+  font:600 10.5px/1 var(--grot);cursor:pointer;transition:.15s}
+.take-chip:hover{border-color:var(--border-hi);color:var(--txt-1)}
+.take-chip.on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
+.take-name{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.take-notes{font:600 9px/1 var(--mono);color:var(--txt-dim)}
+.take-chip.on .take-notes{color:var(--accent)}
+.take-btn{min-height:36px;padding:0 11px;flex:none;border-radius:9px;border:1px solid var(--border);
+  background:var(--bg-inset);color:var(--txt-2);font:700 10px/1 var(--grot);cursor:pointer}
+.take-btn:hover:not(:disabled){border-color:var(--accent-dim);color:var(--accent)}
+.take-btn:disabled{opacity:.4;cursor:default}
+.take-btn.del{color:var(--txt-dim);min-width:36px}
+.take-btn.del:hover:not(:disabled){border-color:var(--danger,#e2554f);color:var(--danger,#e2554f)}
+/* A finger needs the full target, not the 36 px a mouse is happy with. */
+@media (pointer: coarse){
+  .take-chip,.take-btn{min-height:44px;padding:0 13px}
+  .take-btn.del{min-width:44px}
+}
 .layer-strip{display:flex;flex-direction:column;gap:4px;padding:6px 16px 0}
 /* Wraps rather than crushes: a long track name or an extra control moves to a
    second line instead of squeezing the sliders to nothing. */

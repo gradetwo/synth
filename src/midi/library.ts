@@ -9,6 +9,7 @@ import { getLang } from '@/i18n';
 import { midiPlayer } from './player';
 import { DEMO_SONGS, specToSong } from './songs';
 import { normalizeClips, withClips } from './clips';
+import { normalizeTakes } from './takes';
 import type { MidiSong } from './smf';
 import { unwrap, wrap } from '@/state/persist';
 
@@ -78,11 +79,38 @@ function validSong(value: unknown): value is MidiSong {
  * different expansion rule) the clips are the source of truth. Broken clips are
  * dropped, and a song whose clips all turn out to be broken keeps the flat list
  * it was stored with.
+ *
+ * Takes are *validated* here but not re-expanded (P5.4): unlike an arrangement,
+ * a take is not a plan that derives the notes — the selected take's notes are
+ * the layer's notes, an identity the editing session keeps on every write
+ * (`syncTakeFromLayer`), so the stored `tracks`/`notes` are the take that was
+ * selected when the file was written. Re-expanding them belongs to the
+ * recording session, which is a lazy chunk; doing it here would pull the whole
+ * take editor into the first-load bundle.
  */
 function readSong(value: MidiSong): MidiSong {
+  const takes = normalizeTakes(value.takes);
+  if (!takes.length) {
+    // No usable takes: an older file has none at all, a corrupt one may still
+    // carry the fields, and either way the layer's own notes are the song.
+    if (value.takes || value.takeId) {
+      const { takes: _drop, takeId: _dropId, ...rest } = value;
+      value = rest;
+    }
+  } else {
+    // A selected id that matches nothing falls back to the newest take, the
+    // same choice `removeTake` makes when the selected take is deleted.
+    const takeId =
+      typeof value.takeId === 'string' && takes.some((take) => take.id === value.takeId)
+        ? value.takeId
+        : takes[takes.length - 1].id;
+    value = { ...value, takes, takeId };
+  }
   if (!value.clips) return value;
   const clips = normalizeClips(value.clips);
-  return clips.length ? withClips(value, clips) : { ...value, clips: undefined };
+  if (clips.length) return withClips(value, clips);
+  const { clips: _drop, ...rest } = value;
+  return rest;
 }
 
 function readStoredTracks(): Track[] {

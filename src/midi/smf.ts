@@ -48,11 +48,66 @@ export interface MidiSong {
    * without clips is a song that is played as written.
    */
   clips?: MidiClip[];
+  /**
+   * Recorded takes of the layers (P5.4), oldest first. The selected one
+   * (`takeId`) is what its layer plays, so `notes` above is again only the
+   * expansion and everything downstream keeps reading one flat list. Optional:
+   * a song without takes is a song that is played as written.
+   */
+  takes?: import('./takes').MidiTake[];
+  /** Which take is selected, when the song has takes. */
+  takeId?: string;
 }
 
 /** The layers of a song, with the single-layer fallback for hand-built songs. */
 export function songTracks(song: MidiSong): MidiTrack[] {
   return song.tracks && song.tracks.length ? song.tracks : [{ name: 'Track 1', notes: song.notes }];
+}
+
+/**
+ * Validate a stored note list: junk entries and non-finite values are dropped,
+ * the rest is clamped to what the player can schedule.
+ *
+ * Both user-data readers share it — arrangement clips (P5.2) and recorded takes
+ * (P5.4) are the same shape of untrusted JSON — so there is one rule about what
+ * a stored note is. `tidy` rounds start and length to the 1/10000 s grid the
+ * rest of the model stores.
+ */
+export function normalizeStoredNotes(raw: unknown, tidy = false): MidiNote[] {
+  if (!Array.isArray(raw)) return [];
+  const round = tidy ? (v: number) => Math.round(v * 10000) / 10000 : (v: number) => v;
+  const out: MidiNote[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const note = entry as Partial<MidiNote>;
+    if (
+      !Number.isFinite(note.note) ||
+      !Number.isFinite(note.start) ||
+      !Number.isFinite(note.duration) ||
+      !Number.isFinite(note.velocity)
+    ) {
+      continue;
+    }
+    out.push({
+      note: Math.max(0, Math.min(127, Math.round(note.note as number))),
+      velocity: Math.max(0.05, Math.min(1, note.velocity as number)),
+      start: Math.max(0, round(note.start as number)),
+      duration: Math.max(0.01, round(note.duration as number)),
+    });
+  }
+  return out;
+}
+
+/**
+ * The notes of one layer, in seconds.
+ *
+ * It lives next to `songTracks` because both are the "what does this song
+ * actually contain" half of the format, and because the piano roll, the
+ * recorded takes and the exporter all need the same answer: a song without an
+ * explicit track list has exactly one layer, which is its flat note list.
+ */
+export function layerNotes(song: MidiSong, layerIndex: number): MidiNote[] {
+  return songTracks(song)[layerIndex]?.notes ?? [];
 }
 
 const DEFAULT_TEMPO = 500_000; // 120 BPM in µs per quarter note

@@ -8,10 +8,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { SCHEMA_VERSION } from './persist';
 import { MidiLibrary } from '@/midi/library';
-import type { MidiSong } from '@/midi/smf';
+import { parseMidi, writeMidi, type MidiSong } from '@/midi/smf';
+import { normalizeTakes, type MidiTake } from '@/midi/takes';
+import { takesOf, withTakes } from '@/midi/take-edit';
 import { SynthStore } from './store';
 import { SCENES_KEY } from './scenes';
 import { decodePatch, encodePatch } from './share';
+import { parsePatchFile } from './patchfile';
 import { DEFAULT_PARAMS, Param, createDefaultState } from '@/audio/params';
 
 const STATE_KEY = 'gs1:state:v1';
@@ -110,6 +113,56 @@ describe('document migration', () => {
     const store = new SynthStore();
     expect(store.getSnapshot().userPresets.map((preset) => preset.id)).toEqual(['mine']);
   });
+
+  it('reads a schema-3 library, takes and all (P5.4 is an additive bump)', () => {
+    // Schema 4 added recorded takes to a song. A document written under 3 has
+    // none, so it has to read back exactly as it played — this is the migration
+    // sample this batch asks for. (Schema 2 without clips is the previous one,
+    // above.)
+    const three: MidiSong = {
+      name: 'old song',
+      bpm: 120,
+      duration: 1,
+      notes: [{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }],
+      clips: [
+        {
+          id: 'c1',
+          name: 'Clip',
+          layer: 0,
+          start: 0,
+          length: 1,
+          repeat: 2,
+          notes: [{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }],
+        },
+      ],
+    };
+    localStorage.setItem(
+      LIBRARY_KEY,
+      JSON.stringify({
+        schema: 3,
+        data: {
+          tracks: [
+            {
+              id: 'file:old3.mid:1',
+              title: ['old', 'old'],
+              composer: 'imported',
+              group: 'imported',
+              song: three,
+            },
+          ],
+          currentId: 'file:old3.mid:1',
+        },
+      }),
+    );
+    const library = new MidiLibrary();
+    const stored = library.getCurrent()!;
+    expect(stored.song.takes).toBeUndefined();
+    expect(stored.song.takeId).toBeUndefined();
+    // The clip was re-expanded on the way in: two passes of the same note.
+    expect(stored.song.notes).toHaveLength(2);
+    const written = JSON.parse(localStorage.getItem(LIBRARY_KEY)!) as { schema: number };
+    expect(written.schema).toBe(SCHEMA_VERSION);
+  });
 });
 
 describe('share codes', () => {
@@ -147,5 +200,66 @@ describe('share codes', () => {
     const code =
       'gs1.1.' + Buffer.from(JSON.stringify({ s: SCHEMA_VERSION + 1, v: [], r: [] }), 'utf8').toString('base64url');
     expect(decodePatch(code)).toBeNull();
+  });
+
+  it('round-trips the takes a code carries, selection included (P5.4)', () => {
+    // A code carries *all* the takes plus which one was selected: the receiver
+    // gets the same list to switch between, not just the performance that
+    // happened to be playing. The MIDI in the code is the selected take.
+    const state = createDefaultState();
+    const first: MidiTake = {
+      id: 'takeA',
+      name: 'Take 1',
+      layer: 0,
+      notes: [{ note: 60, velocity: 64 / 127, start: 0, duration: 0.5 }],
+    };
+    const second: MidiTake = {
+      id: 'takeB',
+      name: 'Take 2',
+      layer: 0,
+      notes: [
+        { note: 60, velocity: 64 / 127, start: 0, duration: 0.5 },
+        { note: 67, velocity: 64 / 127, start: 1, duration: 0.5 },
+      ],
+    };
+    const song: MidiSong = {
+      name: 'takes',
+      bpm: 120,
+      duration: 1.9,
+      notes: second.notes,
+      takes: [first, second],
+      takeId: second.id,
+    };
+    const shared = {
+      name: 'takes',
+      midi: writeMidi(song.notes, { bpm: 120, name: 'takes' }),
+      mix: [] as [boolean, number, number, number][],
+      takes: song.takes,
+      takeId: song.takeId,
+    };
+    const code = encodePatch(state, { song: shared });
+    const decoded = decodePatch(code);
+    expect(decoded).not.toBeNull();
+    expect(decoded!.song?.takes?.map((take) => take.id)).toEqual(['takeA', 'takeB']);
+    expect(decoded!.song?.takeId).toBe('takeB');
+    expect(decoded!.song?.takes?.[1].notes.map((note) => note.note)).toEqual([60, 67]);
+    expect(decoded!.song?.takes?.[0].notes[0].velocity).toBeCloseTo(64 / 127, 3);
+
+    // What `importSharedSong` does with it: the MIDI comes back as the current
+    // performance and the take list is put back on top, so switching still
+    // works on the receiving side.
+    const parsed = parseMidi(decoded!.song!.midi, 'takes');
+    const restored = withTakes(parsed, normalizeTakes(decoded!.song!.takes), decoded!.song!.takeId);
+    expect(restored.notes.map((note) => note.note)).toEqual([60, 67]);
+    const asFirst = withTakes(restored, takesOf(restored), 'takeA');
+    expect(asFirst.notes.map((note) => note.note)).toEqual([60]);
+
+    // A `.gs1song` file is that same code in a box, so it carries the takes
+    // too: parse the file back and the same list comes out.
+    const file = parsePatchFile(JSON.stringify({ format: 'gs1-song', schema: SCHEMA_VERSION, code }));
+    expect(file?.kind).toBe('song');
+    const fromFile = decodePatch((file as { kind: 'song'; code: string }).code);
+    expect(fromFile?.song?.takes?.map((take) => take.id)).toEqual(['takeA', 'takeB']);
+    expect(fromFile?.song?.takeId).toBe('takeB');
   });
 });

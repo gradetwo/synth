@@ -21,7 +21,7 @@
  * nothing else has to learn.
  */
 
-import { songTracks } from './smf';
+import { normalizeStoredNotes, songTracks } from './smf';
 import type { MidiNote, MidiSong, MidiTrack } from './smf';
 
 export interface MidiClip {
@@ -289,25 +289,7 @@ export function normalizeClips(raw: unknown): MidiClip[] {
     if (typeof clip.start !== 'number' || !Number.isFinite(clip.start) || clip.start < 0) continue;
     if (typeof clip.length !== 'number' || !Number.isFinite(clip.length)) continue;
     if (!Array.isArray(clip.notes)) continue;
-    const notes: MidiNote[] = [];
-    for (const note of clip.notes) {
-      if (!note || typeof note !== 'object') continue;
-      const entryNote = note as Partial<MidiNote>;
-      if (
-        !Number.isFinite(entryNote.note) ||
-        !Number.isFinite(entryNote.start) ||
-        !Number.isFinite(entryNote.duration) ||
-        !Number.isFinite(entryNote.velocity)
-      ) {
-        continue;
-      }
-      notes.push({
-        note: clamp(Math.round(entryNote.note as number), 0, 127),
-        velocity: clamp(entryNote.velocity as number, 0.05, 1),
-        start: Math.max(0, entryNote.start as number),
-        duration: Math.max(0.01, entryNote.duration as number),
-      });
-    }
+    const notes = normalizeStoredNotes(clip.notes);
     out.push({
       id: clip.id,
       name: typeof clip.name === 'string' && clip.name.trim() ? clip.name.trim().slice(0, 60) : 'Clip',

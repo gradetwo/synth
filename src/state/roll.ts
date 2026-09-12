@@ -38,6 +38,7 @@ import {
 } from '@/midi/clips';
 import { midiLibrary } from '@/midi/library';
 import { midiPlayer } from '@/midi/player';
+import { syncTakeFromLayer } from '@/midi/take-edit';
 import {
   emptyDoc,
   notesToRoll,
@@ -317,6 +318,10 @@ class RollSession {
     if (!this.base) return;
     const song = this.getSong();
     if (!song) return;
+    // While a take is selected its notes *are* the layer's notes, so an edit
+    // made here has to land in the take as well or the take the chips show
+    // (and switch back to) would be the one from before the edit (P5.4).
+    const stored = syncTakeFromLayer(song);
     this.writing = true;
     try {
       // A built-in demo is not ours to overwrite; the library makes a copy, and
@@ -328,11 +333,11 @@ class RollSession {
       const current = midiLibrary.getCurrent();
       const needsCopy = !current || current.id.startsWith('demo:');
       this.trackId = midiLibrary.putSong(
-        song,
+        stored,
         needsCopy && this.copyTitle ? { copyOf: this.copyTitle } : {},
       );
       // What was written is what the next edit builds on, arrangement and all.
-      this.base = song;
+      this.base = stored;
       if (this.trackId !== before) {
         this.justCopied = true;
         this.copiedName = midiLibrary.getCurrent()?.title[0] ?? song.name;
@@ -424,8 +429,7 @@ class RollSession {
   arrange(mutate: (clips: MidiClip[]) => MidiClip[]): void {
     if (!this.base) return;
     const next = mutate(clipsOf(this.base));
-    const song = withClips(this.base, next);
-    this.base = song;
+    this.base = withClips(this.base, next);
     // A clip that is gone takes the document with it.
     if (this.clipId && !next.some((clip) => clip.id === this.clipId)) {
       this.clipId = next.find((clip) => (clip.layer ?? 0) === this.layerIndex)?.id ?? null;

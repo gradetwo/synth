@@ -10,7 +10,7 @@
  * input, which keeps the editor's undo stack trivial.
  */
 
-import type { MidiNote, MidiSong } from './smf';
+import { layerNotes, type MidiNote, type MidiSong } from './smf';
 
 export interface RollNote {
   id: string;
@@ -149,12 +149,10 @@ export function rollToSong(doc: RollDoc): MidiSong {
 /**
  * The notes of one layer, in seconds. A song without an explicit track list has
  * exactly one layer, which is its flat note list — the same fallback the player
- * uses, so what the editor edits is what is heard.
+ * uses, so what the editor edits is what is heard. Re-exported from `smf` so the
+ * editor, the recorder and the exporter share one definition.
  */
-export function layerNotes(song: MidiSong, layerIndex: number): MidiNote[] {
-  const tracks = song.tracks && song.tracks.length ? song.tracks : [{ name: 'Track 1', notes: song.notes }];
-  return tracks[layerIndex]?.notes ?? [];
-}
+export { layerNotes };
 
 /** An empty document, for a library with no track in it. */
 export function emptyDoc(): RollDoc {

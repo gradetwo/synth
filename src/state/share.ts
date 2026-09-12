@@ -15,6 +15,7 @@ import {
   type SynthState,
 } from '@/audio/params';
 import { SCHEMA_VERSION } from './persist';
+import { normalizeTakes, type MidiTake } from '@/midi/takes';
 
 const PREFIX = 'gs1.1.';
 /**
@@ -75,6 +76,16 @@ export interface SharedSong {
   midi: Uint8Array;
   /** Per layer: [muted, volume, pan, offset]. */
   mix: [boolean, number, number, number][];
+  /**
+   * The recorded takes, when the code carries any (P5.4). All of them travel,
+   * not just the selected one: "switch take" is the feature, and a receiver who
+   * got only the performance that was selected would have nothing to switch to.
+   * The MIDI above still carries the selected take, so a reader that ignores
+   * takes hears the same music.
+   */
+  takes?: MidiTake[];
+  /** Which take was selected when the code was written. */
+  takeId?: string;
 }
 
 export interface PatchPayload {
@@ -142,6 +153,26 @@ function buildPayload(
             Math.round(offset * 100) / 100,
           ]),
           st: options.song.name,
+          // Takes ride alongside the MIDI as compact arrays — [id, name,
+          // layer, createdAt, [[pitch, velocity, start, length], …]] — because
+          // the point of a take is that there is more than one of it.
+          ...(options.song.takes?.length
+            ? {
+                sk: options.song.takes.map((take) => [
+                  take.id,
+                  take.name,
+                  take.layer,
+                  take.createdAt ?? 0,
+                  take.notes.map((note) => [
+                    note.note,
+                    Math.round(note.velocity * 127),
+                    note.start,
+                    note.duration,
+                  ]),
+                ]),
+                ...(options.song.takeId ? { si: options.song.takeId } : {}),
+              }
+            : {}),
         }
       : {}),
   };
@@ -240,6 +271,8 @@ function parsePayload(json: string): PatchPayload | null {
     sg?: unknown;
     sl?: unknown;
     st?: unknown;
+    sk?: unknown;
+    si?: unknown;
   };
   try {
     parsed = JSON.parse(json);
@@ -305,7 +338,44 @@ function parsePayload(json: string): PatchPayload | null {
           ] as [boolean, number, number, number])
       : [];
     if (midi && midi.length > 0) {
-      song = { name: typeof parsed.st === 'string' ? parsed.st : 'Shared Song', midi, mix };
+      // Takes are validated like any other stored document: a broken entry is
+      // dropped and a take with no playable notes is not a take.
+      const takes = normalizeTakes(
+        Array.isArray(parsed.sk)
+          ? parsed.sk.map((row) =>
+              Array.isArray(row) && Array.isArray(row[4])
+                ? {
+                    id: row[0],
+                    name: row[1],
+                    layer: row[2],
+                    createdAt: row[3],
+                    notes: (row[4] as unknown[]).map((note) =>
+                      Array.isArray(note)
+                        ? {
+                            note: Number(note[0]),
+                            velocity: Number(note[1]) / 127,
+                            start: Number(note[2]),
+                            duration: Number(note[3]),
+                          }
+                        : null,
+                    ),
+                  }
+                : null,
+            )
+          : [],
+      );
+      // The selection travels too, but a code whose id does not match a take
+      // still arrives with a usable selection: the first one.
+      const selected =
+        typeof parsed.si === 'string' && takes.some((take) => take.id === parsed.si)
+          ? parsed.si
+          : takes[0]?.id;
+      song = {
+        name: typeof parsed.st === 'string' ? parsed.st : 'Shared Song',
+        midi,
+        mix,
+        ...(takes.length ? { takes, ...(selected ? { takeId: selected } : {}) } : {}),
+      };
     }
   }
 

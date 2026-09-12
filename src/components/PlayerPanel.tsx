@@ -21,9 +21,18 @@ import { clipsDuration, clipsOf, clipsOfLayer, expandClips } from '@/midi/clips'
 import { barBeatAt, secondsToBeats, tempoMapOf, withTempoMap, type TempoSegment } from '@/midi/tempo';
 import { rollSession, useRollSession } from '@/state/roll';
 import { midiLibrary, trackTitle, type TrackGroup } from '@/midi/library';
+
+import { activeTakeOfLayer, takesOf, takesOfLayer } from '@/midi/take-edit';
+import {
+  deleteTake,
+  finishRecording,
+  mergeLayerTakes,
+  recordingLayer,
+  selectTake,
+} from '@/state/recording';
 import { store } from '@/state/store';
 import { exportSongMidi, exportSongMp3, exportSongWav } from '@/midi/export';
-import { QUANTISE_GRIDS, quantiseLabel, quantiseNotes, type QuantiseGrid } from '@/midi/quantise';
+import { QUANTISE_GRIDS, quantiseLabel } from '@/midi/quantise';
 import { TransportIcon } from './TransportIcon';
 
 /** Bar.beat at a time, through a tempo map — shown next to the clock (P5.3). */
@@ -200,6 +209,16 @@ export function PlayerPanel({
   }, [current]);
   const selectedClip = roll.clipId ? rollSession.clip(roll.clipId) : undefined;
 
+  /**
+   * The takes of the layer a recording would land on (P5.4). Only that layer's
+   * are shown: a take belongs to one layer, and the strip is already a
+   * per-layer view, so mixing the layers' alternates into one row would make
+   * the chips mean two different things.
+   */
+  const takeLayer = recordingLayer();
+  const layerTakes = current ? takesOfLayer(takesOf(current.song), takeLayer) : [];
+  const takeId = current ? activeTakeOfLayer(current.song, takeLayer)?.id : undefined;
+
   /** Width of the resize handle in bar-percent units, from the pixel width. */
   const edgePercent = (width: number): number => Math.min(12, (EDGE_PX / Math.max(1, width)) * 100);
 
@@ -256,25 +275,9 @@ export function PlayerPanel({
     haptic(HAPTIC.medium);
     if (rec.recording) {
       const clip = recorder.stop();
-      if (clip) {
-        // Quantising is a per-recording decision, applied as the take is saved.
-        const grid = store.getSnapshot().layout.recordQuantise as QuantiseGrid;
-        const quantised = grid === 'off' ? clip : { ...clip, notes: quantiseNotes(clip.notes, grid, clip.bpm) };
-        midiLibrary.put({
-          id: 'clip',
-          title: [t('player.recordingName'), t('player.recordingName')],
-          composer: t('player.recordedBy'),
-          song: quantised,
-          group: 'clip',
-        })
-      store.mark();
-        toast(
-          t(grid === 'off' ? 'player.clipSaved' : 'player.clipSavedQuantised', {
-            n: String(quantised.notes.length),
-            grid: quantiseLabel(grid, getLang()),
-          }),
-        );
-      }
+      // The finished pass becomes a take over the current one: nothing that was
+      // already there is lost, and the pass before it stays in the list (P5.4).
+      if (clip) finishRecording(clip);
       return;
     }
     midiPlayer.stop();
@@ -518,6 +521,63 @@ export function PlayerPanel({
                 }}
               >
                 {editNotes ? t('layer.modeNote') : t('layer.modeArrange')}
+              </button>
+            </div>
+            {/* Takes (P5.4): the performance that is playing, the alternates
+                kept beside it, and merge/delete. A chip is a tap target, not a
+                hover target, because recording is what a phone is good at. */}
+            <div className="take-tools" data-act="take-tools" role="group" aria-label={t('take.title')}>
+              <span className="take-title">{t('take.title')}</span>
+              {layerTakes.map((take) => (
+                  <button
+                    key={take.id}
+                    type="button"
+                    className={`take-chip${take.id === takeId ? ' on' : ''}`}
+                    data-act="take"
+                    data-take={take.id}
+                    aria-pressed={take.id === takeId}
+                    title={`${take.name} · ${take.notes.length} ${t('player.notes')}`}
+                    onClick={() => {
+                      haptic();
+                      // Selecting *is* auditioning: the take is loaded and plays
+                      // from the top, which is the only way to hear a difference
+                      // between two passes without reading note counts.
+                      if (take.id !== takeId) selectTake(take.id);
+                      midiPlayer.seek(0);
+                      midiPlayer.play();
+                    }}
+                  >
+                    <span className="take-name">{take.name}</span>
+                    <span className="take-notes">{take.notes.length}</span>
+                  </button>
+                ))}
+              <button
+                type="button"
+                className="take-btn"
+                data-act="take-merge"
+                disabled={layerTakes.length < 2}
+                aria-label={t('take.merge')}
+                title={t('take.merge')}
+                onClick={() => {
+                  haptic();
+                  mergeLayerTakes();
+                }}
+              >
+                {t('take.merge')}
+              </button>
+              <button
+                type="button"
+                className="take-btn del"
+                data-act="take-delete"
+                disabled={!takeId}
+                aria-label={t('layer.delete')}
+                title={t('layer.delete')}
+                onClick={() => {
+                  haptic(HAPTIC.medium);
+                  if (takeId) deleteTake(takeId);
+                }}
+              >
+                ✕
               </button>
             </div>
             <div className="layer-strip" data-layers={layers.length} data-mode={editNotes ? 'notes' : 'arrange'}>

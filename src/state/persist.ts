@@ -1,5 +1,5 @@
 /**
- * Versioned persistence (schema 3).
+ * Versioned persistence (schema 4).
  *
  * Every document the app keeps — the autosaved patch, the workspace layout, user
  * presets, scenes, share links, the imported waveform and impulse response — is
@@ -16,11 +16,12 @@
 /**
  * Bump when a stored document changes shape in a way a merge cannot fix.
  *
- * 3 adds arrangement clips to a song (P5.2). It is an *additive* bump: a song
- * without clips is a complete song, so a schema-2 document reads back exactly as
- * it played, which `migrate.test.ts` pins with a stored sample.
+ * 3 adds arrangement clips to a song (P5.2), 4 recorded takes (P5.4). Both are
+ * *additive* bumps: a song without clips and without takes is a complete song,
+ * so a schema-2 or schema-3 document reads back exactly as it played, which
+ * `migrate.test.ts` pins with stored samples.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export interface Envelope {
   schema: number;

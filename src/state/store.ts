@@ -422,6 +422,9 @@ export class SynthStore {
       name: trackTitle(track),
       midi,
       mix: midiPlayer.getLayers().map((layer) => [layer.muted, layer.volume, layer.pan, layer.offset]),
+      // Takes travel with the song (P5.4): the MIDI above is the selected take,
+      // and the alternates ride alongside so the receiver can switch too.
+      ...(song.takes?.length ? { takes: song.takes, takeId: song.takeId } : {}),
     };
   }
 
@@ -509,6 +512,14 @@ export class SynthStore {
       return false;
     }
     if (!song.notes.length) return false;
+    // The code may also carry the takes the sender recorded (P5.4). They are
+    // attached as they came (the share reader already validated them) without
+    // re-expanding: the MIDI in the code *is* the selected take, so the parsed
+    // notes are that take's already, and the editing session expands whichever
+    // take is selected next.
+    if (shared.takes?.length) {
+      song = { ...song, takes: shared.takes, takeId: shared.takeId ?? shared.takes[0].id };
+    }
     midiLibrary.put({
       id: `share:${shared.midi.length}:${shared.name}`,
       title: [shared.name, shared.name],

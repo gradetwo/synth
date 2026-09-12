@@ -11,9 +11,9 @@ import { analysis } from '@/audio/analysis';
 import { midiPlayer, type PlayerState } from '@/midi/player';
 import { recorder, type RecorderState } from '@/midi/recorder';
 import { midiLibrary, trackTitle } from '@/midi/library';
+import { finishRecording } from '@/state/recording';
 import { ModuleFor } from '@/panels/modules';
 import { PlainModules } from '@/components/Module';
-import { toast } from './Toast';
 import { fxGraphOpen } from '@/state/overlays';
 import { Transport } from './PlayerPanel';
 
@@ -772,17 +772,9 @@ export function SignalFlow() {
     haptic(HAPTIC.medium);
     if (rec.recording) {
       const clip = recorder.stop();
-      if (clip) {
-        midiLibrary.put({
-          id: 'clip',
-          title: [t('player.recordingName'), t('player.recordingName')],
-          composer: t('player.recordedBy'),
-          song: clip,
-          group: 'clip',
-        })
-      store.mark();
-        toast(t('player.clipSaved', { n: clip.notes.length }));
-      }
+      // Same commit path as the player panel: a pass becomes a take over the
+      // current one, quantised with the transport's setting (P5.4).
+      if (clip) finishRecording(clip);
       return;
     }
     midiPlayer.stop();

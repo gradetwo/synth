@@ -287,6 +287,11 @@ const DICT: Record<string, [string, string]> = {
     'Classical and folk pieces are public domain and fully arranged; modern film/game themes are short demonstrations and remain the property of their owners.',
   ],
 
+  // --- recorded takes (P5.4) ----------------------------------------------
+  'take.title': ['录音分层', 'Takes'],
+  'take.defaultName': ['第 {n} 遍', 'Take {n}'],
+  'take.merge': ['合并', 'Merge'],
+
   // --- piano roll ----------------------------------------------------------
   'roll.title': ['钢琴卷帘', 'Piano roll'],
   'roll.open': ['钢琴卷帘编辑', 'Piano roll editor'],
