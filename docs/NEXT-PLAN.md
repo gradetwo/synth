@@ -121,6 +121,12 @@ C 多轨与时间线、B 分层与分享、A 效果路由图（引擎 + 编辑�
 - 要点：LFO/ENV 作为节点，边带深度连到任意节点参数（与现有矩阵并存），区分音频率与块率调制。
 - 验收：单测（图内调制与矩阵叠加正确、无环）；E2E（拉调制线 → 看得到变化 → 重开保持）。
 
+**P7.3 图模板** — ✅ v1.95.0 完成（与 P7.2 同批发布）
+- 已做：`src/state/fxtemplates.ts` —— `FxTemplate{id,name,nameKey?,params}` 存进**工作区** `LayoutState.fxTemplates`（`gs1:layout:v1`，**不进音色/分享码**），白名单 `FX_TEMPLATE_PARAM_IDS` 共 **49** 个（`FX_CHAIN1..6` + `FX_PARALLEL1..6` + `GRAPH_FROM_CHAIN_IDS`），明确排除 `FX_REVERB_MODE`/IR、各效果 on/mix、`FX_MOD*` 边与一切音色参数；读盘逐条夹取（kind 0..8、src 0..7、gain 0..4、开关 0/1、前向/自环读成未连接、第 3 条 delay 夹成 none 以守 P7.1 池上限 2；算法混响不占池故不夹），无可识别 id 的条目被拒绝、条目 id 不得遮蔽内置；`applyFxTemplate` 用 `setParams(...,{immediate:true})` **一次提交**（1 次通知 / 1 个 undo 步）；内置 5 例（经典串联、双延迟、并行混响、失真分路、空图）。
+- UI：`FxGraphEditor` 头部模板 select + 「存为模板」+ 删除（i18n 16 个 key，`.fxg-tpl` 样式）。
+- 验收：`fxtemplates.test.ts` 10 条（套用后白名单 49 个 id 与模板逐位一致、**非白名单 id 逐位不变**（`toBe` 非容差）、坏存档夹取/拒绝、存→新 store 读回→套用→删除、模板列表不进分享码且导入分享码不带进模板）；E2E `fxgraph.spec.ts` **13 passed**（+2：套用内置模板→图变化→fresh load 保持；存为模板→改图→再套用→重载后仍在列表并生效）；Vitest **391**、Rust 207、完整 `npm run verify` PASS、`bench:long` arena 绿。
+- **已知边界**（见 `docs/notes/fx-templates.md`）：模板不在 scene 的 workspace 键里（scene 管模块排布，`resetLayout` 会清空模板列表，有意为之）；保存/套用跟随 store 的 `activeInstance`，而图编辑器显示实例 1 的 `snapshot`（既有的编辑器/实例显示不一致，本批未动）；分享码按现有语义仍会携带「被套用后的图参数」（它们就是 patch 参数），模板列表本身不进码。
+
 **P7.3 图模板**（1 批，可与 P7.2 合并）
 - 要点：把「图 + 节点参数」保存为工作区模板（不进音色），一键套用；内置 3–5 个示例（双延迟、并行混响、失真分路）。
 
@@ -175,7 +181,7 @@ C 多轨与时间线、B 分层与分享、A 效果路由图（引擎 + 编辑�
 | 10 | P7.1 延迟/卷积多实例（预研 → 实现）✅ v1.94.0（池 2+2） | 内存模型设计 | 大 |
 | 11 | P5.4 录音 take ✅ v1.91.0 | — | 中 |
 | 12 | P6.4 效果补强 ✅ v1.92.0 / P6.5 过采样 ✅ v1.93.0 | — | 中 |
-| 13 | P7.2 图内调制 ✅ v1.95.0 / P7.3 图模板 ⏳ | P7.1 | 中大 |
+| 13 | P7.2 图内调制 ✅ v1.95.0 / P7.3 图模板 ✅ v1.95.0 | P7.1 | 中大 |
 | 14 | P8.5 体积与启动预算（收尾） | 全部 | 中 |
 
 ## 四、风险与对策
