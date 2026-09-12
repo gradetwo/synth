@@ -120,6 +120,13 @@ export const Param = {
   OSC2_SUB_LEVEL: 143,
   /** White noise blended into the voice after the oscillators. */
   NOISE_MIX: 144,
+  /**
+   * Continuous multimode position for `FilterType.SEM` (P6.3a): 0 low-pass,
+   * 1/3 band-pass, 2/3 notch, 1 high-pass, straight ramps between the four.
+   * Every other filter type ignores it, so the default 0 leaves existing
+   * patches exactly as they were.
+   */
+  FILTER_MORPH: 145,
   SMP_ROOT: 96,
   /** Sampler: 0 = one-shot, 1 = loop, 2 = ping-pong. */
   SMP_MODE: 97,
@@ -320,6 +327,7 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.OSC2_SUB]: 'osc2Sub',
   [Param.OSC2_SUB_LEVEL]: 'osc2SubLevel',
   [Param.NOISE_MIX]: 'noiseMix',
+  [Param.FILTER_MORPH]: 'filterMorph',
   [Param.PATCH_GAIN]: 'patchGain',
   [Param.WT_USER]: 'wtUser',
   [Param.FX_DELAY_DAMP]: 'fxDelayDamp',
@@ -469,7 +477,7 @@ export type Wave =
   | 'brown'
   | 'wavetable'
   | 'sample';
-export type FilterType = 'lp' | 'hp' | 'bp' | 'nt' | 'comb' | 'formant';
+export type FilterType = 'lp' | 'hp' | 'bp' | 'nt' | 'comb' | 'formant' | 'sem';
 export type LfoWave = 'sine' | 'triangle' | 'square' | 'saw';
 export type LfoTarget = 'cutoff' | 'pitch' | 'volume' | 'pwm';
 export type ModSrc =
@@ -513,7 +521,7 @@ export const WAVE_CN: Record<Wave, string> = {
   wavetable: '波表',
   sample: '采样',
 };
-export const FILTER_TYPES: FilterType[] = ['lp', 'hp', 'bp', 'nt', 'comb', 'formant'];
+export const FILTER_TYPES: FilterType[] = ['lp', 'hp', 'bp', 'nt', 'comb', 'formant', 'sem'];
 export const LFO_WAVES: LfoWave[] = ['sine', 'triangle', 'square', 'saw'];
 export const LFO_TARGETS: LfoTarget[] = ['cutoff', 'pitch', 'volume', 'pwm'];
 /** Engine-side modulation slots (must match `MOD_ROUTES` in params.rs). */
@@ -638,6 +646,7 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.OSC2_SUB]: 0,
   [Param.OSC2_SUB_LEVEL]: 0.4,
   [Param.NOISE_MIX]: 0,
+  [Param.FILTER_MORPH]: 0,
   // Per-patch loudness trim (presets set it; see `PATCH_TRIM` in state/presets).
   [Param.PATCH_GAIN]: 1,
   // Factory banks by default; the player flips this after importing a cycle.
@@ -899,6 +908,8 @@ export const PARAM_SPECS: ParamSpec[] = [
   spec(Param.FILTER_RES, 'RES', 0, 1, 0.25, fmt.pct),
   spec(Param.FILTER_DRIVE, 'DRIVE', 0, 1, 0.15, fmt.pct),
   spec(Param.FILTER_ENV_AMT, 'ENV AMT', 0, 1, 0.5, fmt.pct),
+  // Only the `sem` type reads this; on every other type the knob is hidden.
+  spec(Param.FILTER_MORPH, 'MORPH', 0, 1, 0, fmt.pct),
   spec(Param.ENV_ATTACK, 'ATTACK', 0.0005, 8, 0.003, fmt.ms, { curve: 'log' }),
   spec(Param.ENV_DECAY, 'DECAY', 0.001, 12, 0.16, fmt.ms, { curve: 'log' }),
   spec(Param.ENV_SUSTAIN, 'SUSTAIN', 0, 1, 0.55, fmt.pct),

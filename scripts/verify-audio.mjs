@@ -36,8 +36,8 @@ const KNEE = 0.82;
 const P = {
   MASTER_VOLUME: 0, OSC1_ON: 1, OSC1_WAVE: 2, OSC1_LEVEL: 5, OSC2_ON: 7, OSC2_WAVE: 8,
   OSC2_LEVEL: 11, FILTER_TYPE: 13, FILTER_CUTOFF: 14, FILTER_RES: 15, FILTER_DRIVE: 16,
-  FILTER_ENV_AMT: 17, ENV_ATTACK: 19, ENV_DECAY: 20, ENV_SUSTAIN: 21, ENV_RELEASE: 22,
-  LFO_ON: 23, FX_REVERB_ON: 29, FX_DELAY_ON: 32, FX_CHORUS_ON: 43, FX_FLANGER_ON: 47,
+  FILTER_ENV_AMT: 17, FILTER_KBD: 18, ENV_ATTACK: 19, ENV_DECAY: 20, ENV_SUSTAIN: 21, ENV_RELEASE: 22,
+  LFO_ON: 23, LFO2_ON: 62, FX_REVERB_ON: 29, FX_DELAY_ON: 32, FX_CHORUS_ON: 43, FX_FLANGER_ON: 47,
   FX_PHASER_ON: 51, FX_DRIVE_ON: 55, VOICE_MODE: 42, OSC1_PW: 6, WT_USER: 79,
   FX_DELAY_FB: 34, FX_DELAY_MIX: 35, FX_DELAY_SYNC: 33, FX_DRIVE_AMT: 56, FX_DRIVE_MIX: 57,
   FX_REVERB_MIX: 31, FX_REVERB_MODE: 94, FX_CONV_TRIM: 95,
@@ -45,7 +45,7 @@ const P = {
   SMP_ROOT: 96, SMP_MODE: 97, TEMPO: 37,
   OSC2_PITCH: 9, OSC_FM: 137, OSC_RING: 138,
   OSC1_PITCH: 3, OSC1_SYNC: 139, OSC1_SUB: 140, OSC1_SUB_LEVEL: 141,
-  OSC2_SUB: 142, OSC2_SUB_LEVEL: 143, NOISE_MIX: 144,
+  OSC2_SUB: 142, OSC2_SUB_LEVEL: 143, NOISE_MIX: 144, FILTER_MORPH: 145,
 };
 
 const WAVE = { sine: 0, triangle: 1, saw: 2, square: 3, pulse: 4, noise: 5, wavetable: 8, sample: 9 };
@@ -839,6 +839,109 @@ function blockSteps(frames) {
     'and leaves the tone where it was',
     Math.abs(binMag(wet, 440) - binMag(dry, 440)) < binMag(dry, 440) * 0.1,
     `440 Hz ${binMag(wet, 440).toFixed(4)} vs ${binMag(dry, 440).toFixed(4)}`,
+  );
+}
+
+// ------------------------------- SEM continuous multimode filter (P6.3a)
+//
+// The mode is one knob that walks four canonical responses — low-pass, then
+// band-pass, then the notch (`low + high`, an exact null at the cutoff), then
+// high-pass — so the gate measures all four through the real wasm build and
+// then slams the knob end to end: a filter that changes its zeros *and* its
+// poles while the knob moves is exactly where a click would come from.
+{
+  const cutoff = 400;
+  const sem = 6; // FilterType::Sem on the wire (the bridge maps it to its own id)
+  const flat = [
+    [P.FILTER_CUTOFF, cutoff], [P.FILTER_RES, 0.3], [P.FILTER_DRIVE, 0],
+    [P.FILTER_ENV_AMT, 0], [P.FILTER_KBD, 0], [P.FILTER_TYPE, sem],
+    [P.OSC1_WAVE, WAVE.sine], [P.OSC1_LEVEL, 0.8], [P.OSC1_SYNC, 0], [P.OSC1_SUB, 0],
+    [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0], [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0],
+    [P.ENV_ATTACK, 0.005], [P.ENV_SUSTAIN, 1], [P.LFO_ON, 0], [P.LFO2_ON, 0],
+    [P.MASTER_VOLUME, 1], [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0],
+    [P.FX_CHORUS_ON, 0], [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0],
+  ];
+  // The default patch routes the envelope and the LFO at the cutoff (amounts
+  // 0.55 and 0.8, both enabled), so a scenario that does not clear the matrix
+  // measures the modulation instead of the filter: with the route live, the
+  // low-pass end of the morph *rose* with frequency by 1.3 dB where it has to
+  // fall by 12. This section pins the matrix, like the Rust tests do.
+  const quietMatrix = () => {
+    for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
+  };
+  const tone = (freq, morph, cut = cutoff) => {
+    // The tone is played by pitch, and the oscillator's range is ±48 semitones
+    // around C4 (the same ceiling the Rust tests keep bumping into): a silent
+    // clamp there would be measured as a filter error.
+    const pitch = 12 * Math.log2(freq / 261.6256);
+    if (Math.abs(pitch) > 48) throw new Error(`gate frequency ${freq} Hz is outside the oscillator's range`);
+    engine([...flat, [P.FILTER_CUTOFF, cut], [P.FILTER_MORPH, morph], [P.OSC1_PITCH, pitch]], [[60, 1]]);
+    quietMatrix();
+    const out = [];
+    for (const [l] of render(90, 40)) out.push(...l);
+    return binMag(out, freq);
+  };
+  // A cutoff four octaves up is flat across this grid, so it divides out the
+  // oscillator's own level without colouring the shape.
+  const response = (freq, morph) => tone(freq, morph) / tone(freq, 0, 6400);
+
+  const lowSlope = 20 * Math.log10(response(800, 0) / response(200, 0));
+  const highSlope = 20 * Math.log10(response(800, 1) / response(200, 1));
+  check(
+    'the low-pass end of the morph falls 12 dB/oct',
+    lowSlope < -9 && lowSlope > -15,
+    `${lowSlope.toFixed(2)} dB over two octaves`,
+  );
+  check(
+    'the high-pass end rises 12 dB/oct',
+    highSlope > 9 && highSlope < 15,
+    `${highSlope.toFixed(2)} dB over two octaves`,
+  );
+
+  const bandCentre = response(cutoff, 1 / 3);
+  const bandBelow = response(cutoff / 4, 1 / 3);
+  check(
+    'morph 1/3 is a band-pass at the cutoff',
+    bandCentre > bandBelow * 4,
+    `centre ${bandCentre.toFixed(3)} vs one octave below ${bandBelow.toFixed(3)}`,
+  );
+
+  const notchDepth = 20 * Math.log10(response(cutoff, 2 / 3) / response(cutoff / 4, 2 / 3));
+  const notchEnds = 20 * Math.log10(response(cutoff * 2.5, 2 / 3) / response(cutoff / 4, 2 / 3));
+  check(
+    'morph 2/3 is a notch: a deep null with both ends still passing',
+    notchDepth < -25 && Math.abs(notchEnds) < 4,
+    `${notchDepth.toFixed(1)} dB at the centre, ends ${notchEnds.toFixed(1)} dB apart`,
+  );
+
+  // Time domain: the knob is not allowed to click when it moves. The engine's
+  // parameter smoother is what has to absorb a full-range jump per block, so
+  // this measures the sample-to-sample step of the rendered signal rather than
+  // the parameter it came from.
+  engine([...flat, [P.FILTER_MORPH, 0]], [[45, 1]]);
+  quietMatrix();
+  let worstStep = 0;
+  let peak = 0;
+  let finite = true;
+  let prev = null;
+  for (let b = 0; b < 240; b++) {
+    ex.gs_set_param(P.FILTER_MORPH, Math.floor(b / 8) % 2 === 0 ? 0 : 1);
+    ex.gs_set_param(P.FILTER_CUTOFF, Math.floor(b / 12) % 2 === 0 ? 300 : 6000);
+    ex.gs_process(BLOCK);
+    const heap = new Float32Array(ex.memory.buffer);
+    const ptr = ex.gs_left_ptr() / 4;
+    for (let i = 0; i < BLOCK; i++) {
+      const v = heap[ptr + i];
+      if (!Number.isFinite(v)) finite = false;
+      peak = Math.max(peak, Math.abs(v));
+      if (prev !== null) worstStep = Math.max(worstStep, Math.abs(v - prev));
+      prev = v;
+    }
+  }
+  check(
+    'slamming the morph and the cutoff does not click',
+    finite && peak < 1 && worstStep < 0.5,
+    `peak ${peak.toFixed(3)}, worst sample step ${worstStep.toFixed(3)}`,
   );
 }
 

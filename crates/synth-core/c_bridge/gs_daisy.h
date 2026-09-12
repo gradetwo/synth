@@ -36,6 +36,10 @@ enum {
     GS_FILTER_HP = 1,
     GS_FILTER_BP = 2,
     GS_FILTER_NOTCH = 3,
+    /* SEM-style continuous multimode: one SVF, its low/band/high outputs mixed
+     * by `morph` (see gs_voice_filter_block). Appended so the four ids above
+     * keep the numbering every existing patch stores. */
+    GS_FILTER_SEM = 4,
 };
 
 /* SVF outputs */
@@ -81,8 +85,13 @@ void gs_voice_osc_sync_block(int v, int sub, const float *mod, float depth, floa
                              float *slave_out, uint32_t frames);
 
 /* --- per-voice filter ------------------------------------------------------ */
+/* `morph` (0..1) is only read for GS_FILTER_SEM: it walks four canonical
+ * points — 0 low-pass, 1/3 band-pass, 2/3 notch (low + high), 1 high-pass —
+ * with linear ramps between them (see sem_mix). Every other type ignores it,
+ * which is what lets the engine pass the same parameter block to both paths. */
 void gs_voice_filter_set(int v, int side, int type, float freq, float res, float drive);
-void gs_voice_filter_block(int v, int side, int type, const float *in, float *out, uint32_t frames);
+void gs_voice_filter_block(int v, int side, int type, float morph, const float *in, float *out,
+                           uint32_t frames);
 
 /* --- per-voice DC blocker -------------------------------------------------- */
 void gs_voice_dc_block(int v, int side, const float *in, float *out, uint32_t frames);

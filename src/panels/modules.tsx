@@ -176,6 +176,7 @@ function FilterModule() {
           { label: 'NT', value: filterToInt('nt'), title: t('filter.nt') },
           { label: 'CMB', value: filterToInt('comb'), title: t('filter.comb') },
           { label: 'FRM', value: filterToInt('formant'), title: t('filter.formant') },
+          { label: 'SEM', value: filterToInt('sem'), title: t('filter.sem') },
         ]}
       />
       <div className="filter-grid">
@@ -184,6 +185,9 @@ function FilterModule() {
           <Knob spec={SPEC_BY_ID[Param.FILTER_RES]} />
           <Knob spec={SPEC_BY_ID[Param.FILTER_DRIVE]} />
           <Knob spec={SPEC_BY_ID[Param.FILTER_ENV_AMT]} />
+          {/* Only the continuous multimode reads a morph position; on the other
+              six types the knob would do nothing, so it is not shown. */}
+          {type === 'sem' ? <Knob spec={SPEC_BY_ID[Param.FILTER_MORPH]} /> : null}
           <div className="toggle-cell">
             <span className="lbl">KBD</span>
             <ParamLed id={Param.FILTER_KBD} label={t('module.kbdTrack')} />
@@ -196,7 +200,9 @@ function FilterModule() {
           ? 'FREQ RESPONSE · COMB RESONATOR'
           : type === 'formant'
             ? 'FREQ RESPONSE · VOWEL A–E–I–O–U'
-            : `FREQ RESPONSE · ${type === 'lp' ? '-24dB/OCT' : '-12dB/OCT'}`}
+            : type === 'sem'
+              ? 'FREQ RESPONSE · 12dB/OCT · LP→BP→NT→HP'
+              : `FREQ RESPONSE · ${type === 'lp' ? '-24dB/OCT' : '-12dB/OCT'}`}
       </div>
     </ModuleShell>
   );

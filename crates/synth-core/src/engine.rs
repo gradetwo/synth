@@ -56,11 +56,14 @@ extern "C" {
         v: i32,
         side: i32,
         kind: i32,
+        morph: f32,
         input: *const f32,
         out: *mut f32,
         frames: u32,
     );
     fn gs_voice_dc_block(v: i32, side: i32, input: *const f32, out: *mut f32, frames: u32);
+    #[link_name = "_ZN12_GLOBAL__N_1L13g_dbg_filterE"]
+    static mut g_dbg_filter: i32;
     fn gs_init(sample_rate: f32, max_polyphony: u32) -> u32;
     fn gs_voice_formant_set(v: i32, side: i32, vowel: f32, res: f32);
     fn gs_voice_formant_block(
@@ -1992,7 +1995,7 @@ impl Engine {
             gs_voice_filter_set(
                 slot as i32,
                 0,
-                kind.to_u32() as i32,
+                kind.bridge_id(),
                 cutoff,
                 resonance,
                 params.filter.drive,
@@ -2000,7 +2003,8 @@ impl Engine {
             gs_voice_filter_block(
                 slot as i32,
                 0,
-                kind.to_u32() as i32,
+                kind.bridge_id(),
+                params.filter.morph,
                 self.voice_buf.as_ptr(),
                 self.osc_a.as_mut_ptr(),
                 frames as u32,
@@ -2017,7 +2021,7 @@ impl Engine {
                 gs_voice_filter_set(
                     slot as i32,
                     1,
-                    kind.to_u32() as i32,
+                    kind.bridge_id(),
                     cutoff,
                     resonance,
                     params.filter.drive,
@@ -2025,7 +2029,8 @@ impl Engine {
                 gs_voice_filter_block(
                     slot as i32,
                     1,
-                    kind.to_u32() as i32,
+                    kind.bridge_id(),
+                    params.filter.morph,
                     self.voice_buf_r.as_ptr(),
                     self.osc_b.as_mut_ptr(),
                     frames as u32,
@@ -4111,6 +4116,428 @@ mod tests {
             mag_at(&u, 325.0) > mag_at(&a, 325.0) * 1.3,
             "U should have more energy near 325 Hz than A"
         );
+    }
+
+    /// Measured magnitude of one morph position at one sine frequency, with
+    /// every other block of the voice patched out so the number is the filter
+    /// and nothing else (P6.3a).
+    ///
+    /// The tone is played by *pitch*, so it is limited to the oscillator's own
+    /// range: `OSC1_PITCH` clamps at ±48 semitones around C4, about 16 Hz to
+    /// 4.2 kHz. Asking for more does not fail loudly — the pitch clamps and the
+    /// measurement silently becomes one of a different frequency, which is how
+    /// a first version of these tests reported the oscillator's ceiling as a
+    /// filter bug. The grids below stay inside that range.
+    fn sem_magnitude(freq: f32, cutoff: f32, res: f32, morph: f32) -> f32 {
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        // C4 is 261.63 Hz, so this pitch offset puts the played note at `freq`.
+        let pitch = 12.0 * (freq / 261.6256).log2();
+        assert!(pitch.abs() <= 48.0, "test frequency {freq} Hz is outside the oscillator's range");
+        e.set_param(id::OSC1_PITCH, pitch);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_TYPE, crate::params::FilterType::Sem as u32 as f32);
+        e.set_param(id::FILTER_CUTOFF, cutoff);
+        e.set_param(id::FILTER_RES, res);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::FILTER_MORPH, morph);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::FILTER_KBD, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::LFO2_ON, 0.0);
+        e.set_param(id::NOISE_MIX, 0.0);
+        for index in 0..crate::params::MOD_ROUTES {
+            e.set_route(index, 0, 0, 0.0, false);
+        }
+        e.note_on(60, 1.0);
+        for _ in 0..80 {
+            e.process(128);
+        }
+        let mut buf = vec![0.0f32; 8192];
+        for chunk in buf.chunks_mut(128) {
+            e.process(128);
+            chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+        }
+        bin_mag(&buf, freq, 48_000.0)
+    }
+
+    /// The morph has to be exactly the weighted sum of the four taps.
+    ///
+    /// The taps are rendered from the engine itself — which the test above ties
+    /// to the discrete band, high and notch responses — and combined here with
+    /// the weights the ramp prescribes. That is a stronger statement than a
+    /// curve that is "close to" a prototype: a wrong weight, a wrong segment or
+    /// a swapped tap changes the samples, and nothing in the comparison shares
+    /// code with the C bridge that does the mixing.
+    #[test]
+    fn sem_mix_is_the_weighted_sum_of_its_taps() {
+        let _guard = lock_engine();
+        let render = |morph: f32| -> Vec<f32> {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_TYPE, crate::params::FilterType::Sem as u32 as f32);
+            e.set_param(id::FILTER_MORPH, morph);
+            e.set_param(id::FILTER_CUTOFF, 900.0);
+            e.set_param(id::FILTER_RES, 0.5);
+            e.set_param(id::FILTER_DRIVE, 0.0);
+            e.set_param(id::FILTER_ENV_AMT, 0.0);
+            e.set_param(id::FILTER_KBD, 0.0);
+            e.set_param(id::ENV_ATTACK, 0.001);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::LFO_ON, 0.0);
+            e.set_param(id::LFO2_ON, 0.0);
+            for index in 0..crate::params::MOD_ROUTES {
+                e.set_route(index, 0, 0, 0.0, false);
+            }
+            e.note_on(60, 1.0);
+            for _ in 0..40 {
+                e.process(128);
+            }
+            let mut buf = vec![0.0f32; 4096];
+            for chunk in buf.chunks_mut(128) {
+                e.process(128);
+                chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+            }
+            buf
+        };
+        let low = render(0.0);
+        let band = render(1.0 / 3.0);
+        let high = render(1.0);
+        // The exact expressions the C bridge uses, in the same order, so a
+        // match is bit-for-bit and not merely close.
+        let expected = |morph: f32| -> Vec<f32> {
+            (0..low.len())
+                .map(|i| {
+                    let l = low[i];
+                    let b = band[i];
+                    let h = high[i];
+                    if morph <= 0.0 {
+                        l
+                    } else if morph >= 1.0 {
+                        h
+                    } else if morph <= 1.0 / 3.0 {
+                        let t = 3.0 * morph;
+                        (1.0 - t) * l + t * b
+                    } else if morph <= 2.0 / 3.0 {
+                        let t = 3.0 * morph - 1.0;
+                        (1.0 - t) * b + t * (l + h)
+                    } else {
+                        let t = 3.0 * morph - 2.0;
+                        (1.0 - t) * (l + h) + t * h
+                    }
+                })
+                .collect()
+        };
+        for morph in [0.0f32, 1.0 / 6.0, 1.0 / 3.0, 0.45, 0.55, 2.0 / 3.0, 5.0 / 6.0, 1.0] {
+            let actual = render(morph);
+            let want = expected(morph);
+            let worst = actual
+                .iter()
+                .zip(&want)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                worst < 1e-6,
+                "morph {morph:.4}: the render is not the weighted sum of the taps (worst {worst:e})"
+            );
+        }
+    }
+
+    /// The endpoints have to be the slopes a 12 dB/oct multimode promises: the
+    /// low-pass falls and the high-pass rises by 12 dB per octave, measured on
+    /// the rendered signal with the tone's own level divided out.
+    #[test]
+    fn sem_endpoints_have_twelve_db_per_octave_slopes() {
+        let _guard = lock_engine();
+        let cutoff = 400.0f32;
+        let res = 0.25f32;
+        // A cutoff four octaves up is flat across this grid, so it cancels the
+        // oscillator's level without colouring the measurement.
+        let reference = |freq: f32| sem_magnitude(freq, 6400.0, 0.0, 0.0) as f64;
+        let response = |freq: f32, morph: f32| -> f64 {
+            (sem_magnitude(freq, cutoff, res, morph) as f64) / reference(freq)
+        };
+        let octave_pair = [200.0f32, 800.0]; // two octaves, straddling the cutoff
+        let low_slope = 20.0 * (response(octave_pair[1], 0.0) / response(octave_pair[0], 0.0)).log10();
+        let high_slope = 20.0 * (response(octave_pair[1], 1.0) / response(octave_pair[0], 1.0)).log10();
+        assert!(
+            (low_slope + 12.0).abs() < 2.5,
+            "the low-pass end falls {low_slope:.2} dB over two octaves, not -12"
+        );
+        assert!(
+            (high_slope - 12.0).abs() < 2.5,
+            "the high-pass end rises {high_slope:.2} dB over two octaves, not +12"
+        );
+        // And they are opposite ends of one knob, not two filters.
+        assert!(
+            response(cutoff / 4.0, 0.0) > response(cutoff / 4.0, 1.0) * 4.0,
+            "the low end does not pass what the high end rejects"
+        );
+    }
+
+    /// At the four canonical morph points the `sem` path has to reproduce the
+    /// discrete SVF responses — the band and high taps bit for bit, the notch
+    /// to rounding. The low end has no discrete twin to compare against: the
+    /// discrete `lp` is a 24 dB/oct Moog ladder, deliberately a *different*
+    /// filter from the 12 dB/oct SVF tap `sem` starts at.
+    #[test]
+    fn sem_canonical_points_are_the_discrete_responses() {
+        let _guard = lock_engine();
+        let render = |kind: f32, morph: f32| -> Vec<f32> {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_TYPE, kind);
+            e.set_param(id::FILTER_MORPH, morph);
+            e.set_param(id::FILTER_CUTOFF, 1200.0);
+            e.set_param(id::FILTER_RES, 0.45);
+            e.set_param(id::FILTER_DRIVE, 0.0);
+            e.set_param(id::FILTER_ENV_AMT, 0.0);
+            e.set_param(id::FILTER_KBD, 0.0);
+            e.set_param(id::ENV_ATTACK, 0.001);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::LFO_ON, 0.0);
+            e.set_param(id::LFO2_ON, 0.0);
+            for index in 0..crate::params::MOD_ROUTES {
+                e.set_route(index, 0, 0, 0.0, false);
+            }
+            e.note_on(60, 1.0);
+            for _ in 0..40 {
+                e.process(128);
+            }
+            let mut buf = vec![0.0f32; 4096];
+            for chunk in buf.chunks_mut(128) {
+                e.process(128);
+                chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+            }
+            buf
+        };
+        // Sample for sample, not merely close. The band and high points are
+        // exact single taps of the same SVF, so those two must be *bit*
+        // identical to the discrete types; the notch is the same transfer
+        // function derived from `notch_` rather than `band_`, so it agrees to
+        // rounding.
+        let worst_difference = |a: &[f32], b: &[f32]| -> f32 {
+            a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max)
+        };
+        let sem = |morph: f32| render(crate::params::FilterType::Sem as u32 as f32, morph);
+        let band = sem(1.0 / 3.0);
+        let notch = sem(2.0 / 3.0);
+        let high = sem(1.0);
+        let low = sem(0.0);
+
+        let d_band = worst_difference(&band, &render(2.0, 0.0));
+        assert!(
+            d_band == 0.0,
+            "sem at morph 1/3 is not the discrete BP response: worst {d_band:e}"
+        );
+        let peak = low.iter().fold(0.0f32, |m, v| m.max(v.abs())).max(1e-6);
+        let d_notch = worst_difference(&notch, &render(3.0, 0.0));
+        assert!(
+            d_notch / peak < 1e-4,
+            "sem at morph 2/3 is not the discrete notch response: worst {d_notch:e} ({:.1e} relative)",
+            d_notch / peak
+        );
+        let d_high = worst_difference(&high, &render(1.0, 0.0));
+        assert!(
+            d_high == 0.0,
+            "sem at morph 1 is not the discrete HP response: worst {d_high:e}"
+        );
+        // The four points have to actually differ, or the checks above would
+        // pass for a filter that ignores the morph entirely.
+        for (name, a, b) in [
+            ("low/band", &low, &band),
+            ("band/notch", &band, &notch),
+            ("notch/high", &notch, &high),
+        ] {
+            let span = worst_difference(a, b);
+            assert!(span > 1e-3, "{name} render the same thing (worst {span:e})");
+        }
+    }
+
+    /// The notch position is the one morph point a two-line LP→BP→HP mix can
+    /// never reach, so it is asserted on its own: a deep minimum at the cutoff
+    /// with both ends still at 0 dB.
+    #[test]
+    fn sem_notch_position_is_a_notch_at_the_cutoff() {
+        let _guard = lock_engine();
+        let res = 0.3f32;
+        // The oscillator's pitch clamps at ±48 semitones (about 4.2 kHz), so
+        // both ends of the check stay inside that: a wider sweep would panic in
+        // `sem_magnitude` rather than measure a filter.
+        for cutoff in [300.0f32, 700.0, 1000.0] {
+            let low = sem_magnitude(cutoff / 4.0, cutoff, res, 2.0 / 3.0);
+            let high = sem_magnitude(cutoff * 3.0, cutoff, res, 2.0 / 3.0);
+            // The notch is an exact zero in the analog prototype, so in the
+            // digital filter it sits a little below the nominal cutoff (the
+            // bilinear map's warping). Straddle it rather than assuming it
+            // lands on the knob value.
+            let mut dip = (0.0f32, f32::INFINITY);
+            let mut f = cutoff * 0.7;
+            while f <= cutoff * 1.3 {
+                let m = sem_magnitude(f, cutoff, res, 2.0 / 3.0);
+                if m < dip.1 {
+                    dip = (f, m);
+                }
+                f *= 1.01;
+            }
+            let (dip_f, dip_m) = dip;
+            let depth = 20.0 * (dip_m / low.max(1e-12)).log10();
+            assert!(
+                depth < -40.0,
+                "cutoff {cutoff}: the notch position is not a notch — deepest point {dip_f:.0} Hz \
+                 is only {depth:.1} dB below the low end (low {low:.6}, dip {dip_m:.6}, high {high:.6})"
+            );
+            // 0 dB at both ends is what makes it a notch rather than a
+            // band-pass with a hole: a 12 dB band-pass would be ~18 dB down
+            // eight times below its centre.
+            let tilt = 20.0 * (high / low.max(1e-12)).log10();
+            assert!(
+                tilt.abs() < 3.0,
+                "cutoff {cutoff}: notch ends are {tilt:.1} dB apart (low {low:.6}, high {high:.6})"
+            );
+        }
+    }
+
+    #[test]
+    fn sem_centre_frequency_follows_the_cutoff_knob() {
+        let _guard = lock_engine();
+        let res = 0.4f32;
+        // At the band position the response *peaks* at the cutoff, and the peak
+        // has to travel with the knob. Two octaves either side is roughly 12 dB
+        // down at Q = 2, which is far more than the margin asserted here.
+        for cutoff in [300.0f32, 700.0, 1200.0] {
+            let at = sem_magnitude(cutoff, cutoff, res, 1.0 / 3.0);
+            let below = sem_magnitude(cutoff * 0.25, cutoff, res, 1.0 / 3.0);
+            let above = sem_magnitude(cutoff * 2.0, cutoff, res, 1.0 / 3.0);
+            assert!(
+                at > below * 3.0 && at > above * 3.0,
+                "cutoff {cutoff}: band peak should sit at the cutoff, got \
+                 {below:.6} / {at:.6} / {above:.6}"
+            );
+        }
+        // …and the LP/HP endpoints must attenuate on the side they always did:
+        // 12 dB/oct means two octaves out is about 24 dB down. The cutoff stays
+        // put across the comparison so the two numbers share one input gain.
+        for cutoff in [300.0f32, 700.0, 1200.0] {
+            let lp_low = sem_magnitude(cutoff * 0.25, cutoff, res, 0.0);
+            let lp_high = sem_magnitude(cutoff * 2.0, cutoff, res, 0.0);
+            assert!(
+                lp_low > lp_high * 3.0,
+                "cutoff {cutoff}: LP endpoint did not roll off ({lp_low:.6} vs {lp_high:.6})"
+            );
+            let hp_low = sem_magnitude(cutoff * 0.25, cutoff, res, 1.0);
+            let hp_high = sem_magnitude(cutoff * 2.0, cutoff, res, 1.0);
+            assert!(
+                hp_high > hp_low * 3.0,
+                "cutoff {cutoff}: HP endpoint did not roll off ({hp_low:.6} vs {hp_high:.6})"
+            );
+        }
+    }
+
+    /// The morph is a knob, not a switch: moving it while a note sounds must
+    /// not click. A zipper or an unstable mix shows up as a sample step far
+    /// above what the signal itself can produce.
+    #[test]
+    fn sem_morph_step_is_click_free() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_TYPE, crate::params::FilterType::Sem as u32 as f32);
+        e.set_param(id::FILTER_CUTOFF, 800.0);
+        e.set_param(id::FILTER_RES, 0.5);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::FILTER_KBD, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::LFO2_ON, 0.0);
+        for index in 0..crate::params::MOD_ROUTES {
+            e.set_route(index, 0, 0, 0.0, false);
+        }
+        e.note_on(45, 1.0);
+        for _ in 0..120 {
+            e.process(128);
+        }
+        // Slam the knob end to end every block. The smoother's 20 ms time
+        // constant is what has to absorb it; without that this is a square
+        // wave on the filter's numerator.
+        let mut out = Vec::new();
+        for block in 0..240 {
+            e.set_param(id::FILTER_MORPH, if (block / 8) % 2 == 0 { 0.0 } else { 1.0 });
+            e.set_param(id::FILTER_CUTOFF, if (block / 12) % 2 == 0 { 300.0 } else { 6000.0 });
+            e.process(128);
+            out.extend_from_slice(e.left());
+        }
+        assert!(out.iter().all(|v| v.is_finite()), "the morph sweep produced a non-finite sample");
+        let peak = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak < 1.0, "the morph sweep ran away: peak {peak}");
+        let worst = out
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max);
+        // A 110 Hz saw at unity voice gain cannot step by more than its own
+        // reset transient; 0.5 is an order of magnitude above anything the
+        // signal does and an order below a step that would be audible as a
+        // click at this level.
+        assert!(worst < 0.5, "morph step clicked: worst sample step {worst}");
+    }
+
+    /// A fast sweep across the whole morph range with the cutoff moving too:
+    /// the filter has to stay bounded and finite at 128- and 1024-sample
+    /// blocks, which is the block range the worklet may hand it.
+    #[test]
+    fn sem_sweep_stays_bounded() {
+        let _guard = lock_engine();
+        for block in [128usize, 1024] {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_TYPE, crate::params::FilterType::Sem as u32 as f32);
+            e.set_param(id::FILTER_RES, 0.9);
+            e.set_param(id::FILTER_DRIVE, 1.0);
+            e.set_param(id::FILTER_ENV_AMT, 0.0);
+            e.set_param(id::FILTER_KBD, 0.0);
+            e.set_param(id::ENV_ATTACK, 0.001);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::LFO_ON, 0.0);
+            e.set_param(id::LFO2_ON, 0.0);
+            for index in 0..crate::params::MOD_ROUTES {
+                e.set_route(index, 0, 0, 0.0, false);
+            }
+            e.note_on(60, 1.0);
+            let mut peak = 0.0f32;
+            let mut frames = 0usize;
+            while frames < 240_000 {
+                // 0..1 over ~0.12 s, and a cutoff sweeping 200 Hz..8 kHz.
+                let t = frames as f32 / 48_000.0;
+                e.set_param(id::FILTER_MORPH, 0.5 - 0.5 * (t * 8.0 * core::f32::consts::TAU).cos());
+                e.set_param(id::FILTER_CUTOFF, 200.0 * (t * 6.0 * core::f32::consts::TAU).sin().abs() * 40.0 + 200.0);
+                e.process(block);
+                for v in e.left() {
+                    assert!(v.is_finite(), "non-finite sample at block {block}");
+                    peak = peak.max(v.abs());
+                }
+                frames += block;
+            }
+            assert!(peak < 1.0, "sweep at block {block} ran away: peak {peak}");
+            assert!(peak > 1e-4, "sweep at block {block} was silent");
+        }
     }
 
     /// A single pure sine note must not glitch at render-block boundaries.

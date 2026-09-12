@@ -161,10 +161,16 @@ pub mod id {
     pub const OSC2_SUB_LEVEL: u32 = 143;
     /// White noise blended into the voice, after the oscillators (P6.2).
     pub const NOISE_MIX: u32 = 144;
+    /// Continuous multimode position for `FilterType::Sem` (P6.3a): the
+    /// response travels 0 = low-pass, 1/3 = band-pass, 2/3 = notch (the exact
+    /// `low + high` null) and 1 = high-pass, with straight ramps between the
+    /// four. Ignored by every other type, so the default 0 — the low-pass end,
+    /// where every older patch already sits — leaves existing sounds untouched.
+    pub const FILTER_MORPH: u32 = 145;
 }
 
 /// Highest parameter id + 1.
-pub const PARAM_COUNT: usize = 145;
+pub const PARAM_COUNT: usize = 146;
 
 /// Positions in the effect chain (A5). Six is one per effect: the chain is a
 /// permutation, so reordering can never lose an effect or double one up.
@@ -248,6 +254,7 @@ pub fn is_continuous(param_id: u32) -> bool {
             | p::OSC1_SUB_LEVEL
             | p::OSC2_SUB_LEVEL
             | p::NOISE_MIX
+            | p::FILTER_MORPH
             | p::FX_DELAY_FB
             | p::FX_DELAY_MIX
             | p::GLIDE
@@ -339,6 +346,11 @@ pub enum FilterType {
     /// Three parallel band-passes tuned to the vowels A-E-I-O-U; the cutoff
     /// knob morphs between them.
     Formant,
+    /// SEM-style continuous multimode (P6.3a): one 12 dB state-variable filter
+    /// whose low/band/high outputs are crossfaded by `FILTER_MORPH`, so the
+    /// response travels LP → BP → (notch) → HP without a switch. Appended
+    /// after `Formant` so the ids above keep their numbering.
+    Sem,
 }
 
 impl FilterType {
@@ -349,6 +361,7 @@ impl FilterType {
             3 => FilterType::Notch,
             4 => FilterType::Comb,
             5 => FilterType::Formant,
+            6 => FilterType::Sem,
             _ => FilterType::Lp,
         }
     }
@@ -361,6 +374,31 @@ impl FilterType {
             FilterType::Notch => 3,
             FilterType::Comb => 4,
             FilterType::Formant => 5,
+            FilterType::Sem => 6,
+        }
+    }
+
+    /// The id the C bridge knows this type by.
+    ///
+    /// Deliberately not `to_u32() as i32`: the enum above is the parameter wire
+    /// format (append-only, shared with the UI), while the C bridge's ids are
+    /// an implementation detail with their own numbering — `sem` is 6 on the
+    /// wire and `GS_FILTER_SEM` is 4 in `gs_daisy.h`. Casting between them
+    /// silently lands on the wrong filter, which is a bug that sounds like a
+    /// feature (a `sem` patch quietly becomes a low-pass).
+    pub fn bridge_id(self) -> i32 {
+        match self {
+            FilterType::Lp => 0,
+            FilterType::Hp => 1,
+            FilterType::Bp => 2,
+            FilterType::Notch => 3,
+            FilterType::Sem => 4,
+            // The comb and the formant filters run in Rust and never reach the
+            // bridge; the engine branches on them before this is called.
+            FilterType::Comb | FilterType::Formant => {
+                debug_assert!(false, "comb and formant have no bridge id");
+                0
+            }
         }
     }
 }
@@ -526,6 +564,9 @@ pub struct FilterParams {
     pub cutoff: f32,
     pub res: f32,
     pub drive: f32,
+    /// Continuous multimode position for [`FilterType::Sem`] (P6.3a). Read by
+    /// nothing else.
+    pub morph: f32,
     pub env_amt: f32,
     pub kbd: bool,
 }
@@ -728,6 +769,9 @@ impl Params {
                 cutoff: 18000.0,
                 res: 0.05,
                 drive: 0.0,
+                // 0 is the low-pass end, which is where every patch written
+                // before `sem` existed already sits.
+                morph: 0.0,
                 env_amt: 0.0,
                 kbd: false,
             },
@@ -913,6 +957,7 @@ impl Params {
             p::FILTER_CUTOFF => self.filter.cutoff = value.clamp(20.0, 20000.0),
             p::FILTER_RES => self.filter.res = clamp01(value),
             p::FILTER_DRIVE => self.filter.drive = clamp01(value),
+            p::FILTER_MORPH => self.filter.morph = clamp01(value),
             p::FILTER_ENV_AMT => self.filter.env_amt = clamp01(value),
             p::FILTER_KBD => self.filter.kbd = value > 0.5,
             p::ENV_ATTACK => self.env.attack = value.clamp(0.0005, 8.0),
@@ -1067,6 +1112,9 @@ mod tests {
             (1, FilterType::Hp),
             (2, FilterType::Bp),
             (3, FilterType::Notch),
+            (4, FilterType::Comb),
+            (5, FilterType::Formant),
+            (6, FilterType::Sem),
         ] {
             assert_eq!(FilterType::from_u32(raw), kind);
             assert_eq!(kind.to_u32(), raw);

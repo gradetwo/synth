@@ -94,6 +94,7 @@ const PARAMS = [
   ['osc2Sub', 142, 0, 0, 2],
   ['osc2SubLevel', 143, 0.4, 0, 1],
   ['noiseMix', 144, 0, 0, 1],
+  ['filterMorph', 145, 0, 0, 1],
   ['lfoRetrig', 74, 0, 0, 1],
   ['lfoOneshot', 75, 0, 0, 1],
   ['lfo2Retrig', 76, 0, 0, 1],

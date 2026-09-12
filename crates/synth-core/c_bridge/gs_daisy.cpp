@@ -21,6 +21,7 @@
 
 namespace {
 
+
 // A 95-tap Kaiser-windowed low-pass (beta 6, cutoff 0.229 of the oversampled
 // rate), used to decimate the oversampled hard-sync pair. The passband is flat
 // to 19.2 kHz and the stopband is below -72 dB from 24 kHz, which is what a
@@ -119,8 +120,43 @@ inline VoiceDsp &voice(int v) {
 }
 
 inline int clamp_type(int type) {
-    if (type < GS_FILTER_LP || type > GS_FILTER_NOTCH) return GS_FILTER_LP;
+    if (type < GS_FILTER_LP || type > GS_FILTER_SEM) return GS_FILTER_LP;
     return type;
+}
+
+/// Blend the three SVF outputs for the SEM-style continuous multimode filter.
+///
+/// Four canonical responses, in the order the knob travels — low (L), band (B),
+/// notch (N = L + H), high (H) — joined by straight weight lines. The notch is
+/// what makes four points necessary: it is `L + H`, so the two are *not*
+/// independent, and a two-line L→B→H mix can only reach it where wL + wH is not
+/// forced to zero (`wL = 1 - 2m`, `wH = 2m - 1` cancel everywhere).
+///
+///   p ∈ [0, 1/3]    t = 3p          out = (1-t)L       + t B
+///   p ∈ [1/3, 2/3]  t = 3p - 1      out = (1-t)B       + t (L + H)
+///   p ∈ [2/3, 1]    t = 3p - 2      out = (1-t)(L + H) + t H
+///
+/// Every segment is a straight line in the weights, the seams agree on both
+/// sides (p = 1/3 is B, p = 2/3 is L + H), and no segment normalises: the three
+/// taps are one filter's outputs, so their mix is continuous by construction.
+/// The endpoints are exact single taps, which is what lets `sem` reproduce the
+/// discrete BP/HP responses bit for bit there.
+///
+/// Note that the p = 0 end is the 12 dB/oct *SVF* low-pass, not the discrete
+/// `lp` type (a 24 dB/oct Moog ladder) — different filter, deliberately.
+inline float sem_mix(float low, float band, float high, float morph) {
+    if (!(morph > 0.0f)) return low;   // also catches NaN
+    if (morph >= 1.0f) return high;
+    if (morph <= 1.0f / 3.0f) {
+        const float t = 3.0f * morph;
+        return (1.0f - t) * low + t * band;
+    }
+    if (morph <= 2.0f / 3.0f) {
+        const float t = 3.0f * morph - 1.0f;
+        return (1.0f - t) * band + t * (low + high);
+    }
+    const float t = 3.0f * morph - 2.0f;
+    return (1.0f - t) * (low + high) + t * high;
 }
 
 void init_slot(int i, float sample_rate) {
@@ -317,12 +353,24 @@ void gs_voice_filter_set(int v, int side, int type, float freq, float res, float
     }
 }
 
-void gs_voice_filter_block(int v, int side, int type, const float *in, float *out, uint32_t frames) {
+void gs_voice_filter_block(int v, int side, int type, float morph, const float *in, float *out,
+                           uint32_t frames) {
     VoiceDsp &d = voice(v);
     const int s = side ? 1 : 0;
     type = clamp_type(type);
     if (type == GS_FILTER_LP) {
         for (uint32_t i = 0; i < frames; ++i) out[i] = d.ladder[s].Process(in[i]);
+        return;
+    }
+    if (type == GS_FILTER_SEM) {
+        // One Process() per sample feeds all three taps, so the morph is a
+        // weighted sum of one filter's outputs rather than three filters in
+        // parallel: the poles (and therefore the resonance peak) stay put
+        // while the zeros travel, which is what makes the sweep continuous.
+        for (uint32_t i = 0; i < frames; ++i) {
+            d.svf[s].Process(in[i]);
+            out[i] = sem_mix(d.svf[s].Low(), d.svf[s].Band(), d.svf[s].High(), morph);
+        }
         return;
     }
     for (uint32_t i = 0; i < frames; ++i) {

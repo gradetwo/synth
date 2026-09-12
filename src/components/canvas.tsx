@@ -322,6 +322,7 @@ export function FilterCurve() {
     const type = intToFilter(store.getParam(13 as ParamId));
     const cutoff = store.getParam(14 as ParamId);
     const res = store.getParam(15 as ParamId);
+    const morph = store.getParam(145 as ParamId);
     ctx.clearRect(0, 0, w, h);
     const fc = (Math.log(cutoff / 40) / Math.log(18000 / 40)) * w;
     const peak = res * (h * 0.38);
@@ -333,7 +334,23 @@ export function FilterCurve() {
     for (let x = 0; x <= w; x += 2) {
       const d = x - fc;
       let y: number;
-      if (type === 'lp') {
+      if (type === 'sem') {
+        // The same four points the filter walks, drawn as gains so the shape
+        // follows the knob: low-pass → band-pass → notch → high-pass. The
+        // notch has to *dip* below the flat line, which is why this is built
+        // from gains rather than by averaging the other three sketches.
+        const span = w * 0.28;
+        const gL = d > 0 ? Math.max(0, 1 - d / span) : 1;
+        const gH = d < 0 ? Math.max(0, 1 + d / span) : 1;
+        const gB = Math.max(0, 1 - Math.abs(d) / (w * 0.35));
+        const gN = Math.max(0, Math.min(gL, gH) - Math.max(0, 1 - Math.abs(d) / 6));
+        const m = morph <= 0 ? 0 : morph >= 1 ? 1 : morph;
+        const wL = m <= 1 / 3 ? 1 - 3 * m : m <= 2 / 3 ? 3 * m - 1 : 1 - (3 * m - 2);
+        const wB = m <= 1 / 3 ? 3 * m : m <= 2 / 3 ? 1 - (3 * m - 1) : 0;
+        const wH = m <= 1 / 3 ? 0 : m <= 2 / 3 ? 3 * m - 1 : 1;
+        const gain = wL * gL + wB * gB + wH * gH + Math.max(0, 1 - Math.abs(wL - wH)) * gN;
+        y = h * 0.5 - gain * (h * 0.42) + (Math.abs(d) < 5 ? -peak * (1 - gN) : 0);
+      } else if (type === 'lp') {
         y = h * 0.5 - (d > 0 ? Math.min(d * 1.1, h * 0.46) * Math.min(d * 0.12, 1) : 0) + (Math.abs(d) < 5 ? -peak : 0);
       } else if (type === 'hp') {
         y = h * 0.5 - (d < 0 ? Math.min(-d * 1.1, h * 0.46) * Math.min(-d * 0.12, 1) : 0) + (Math.abs(d) < 5 ? -peak * 0.6 : 0);
@@ -360,6 +377,7 @@ export function FilterCurve() {
         store.getParam(13 as ParamId),
         store.getParam(14 as ParamId),
         store.getParam(15 as ParamId),
+        store.getParam(145 as ParamId),
       ].join(':');
       if (signature.current === next) return false;
       signature.current = next;
