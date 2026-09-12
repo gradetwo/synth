@@ -42,7 +42,11 @@ export function applyUpdate() {
  * exactly how a fixed bug appears to survive an update.
  */
 export async function checkForUpdate(): Promise<'updated' | 'current' | 'unsupported'> {
-  if (!('serviceWorker' in navigator) || !import.meta.env.PROD) return 'unsupported';
+  // `navigator.serviceWorker` exists but is undefined on an insecure origin
+  // (plain http:// that is not localhost), which is why this checks the value
+  // rather than the property: the property version threw a TypeError here
+  // instead of saying "this browser cannot do it".
+  if (!navigator.serviceWorker || !import.meta.env.PROD) return 'unsupported';
   const registration = await navigator.serviceWorker.getRegistration();
   if (!registration) return 'unsupported';
   const before = registration.waiting?.state ?? null;
@@ -70,7 +74,7 @@ export async function checkForUpdate(): Promise<'updated' | 'current' | 'unsuppo
  * reload in a loop.
  */
 export async function recoverFromStaleBuild(): Promise<boolean> {
-  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return false;
+  if (typeof window === 'undefined' || !navigator.serviceWorker) return false;
   const KEY = 'gs1:recovered';
   try {
     if (window.sessionStorage.getItem(KEY) === '1') return false;
@@ -93,7 +97,7 @@ export async function recoverFromStaleBuild(): Promise<boolean> {
 }
 
 export async function registerServiceWorker() {
-  if (!('serviceWorker' in navigator) || !import.meta.env.PROD) return;
+  if (!navigator.serviceWorker || !import.meta.env.PROD) return;
   try {
     const base = import.meta.env.BASE_URL || '/';
     const registration = await navigator.serviceWorker.register(`${base}sw.js`, {
