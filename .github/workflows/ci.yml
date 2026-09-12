@@ -61,6 +61,9 @@ jobs:
       - name: Audio quality gates (time + frequency domain)
         run: npm run verify:audio
 
+      - name: Preset fingerprints (every factory preset)
+        run: npm run verify:presets
+
       - name: Sustained-load benchmark
         run: npm run verify:bench
 

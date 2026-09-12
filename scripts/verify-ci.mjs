@@ -65,6 +65,7 @@ const required = [
   ['dist integrity', 'npm run verify:dist'],
   ['payload budget', 'npm run verify:budget'],
   ['audio quality gates', 'npm run verify:audio'],
+  ['preset fingerprints', 'npm run verify:presets'],
   ['sustained-load benchmark', 'npm run verify:bench'],
   ['DSP regression baseline', 'npm run test:dsp'],
   ['Chromium E2E', 'npm run test:e2e'],
