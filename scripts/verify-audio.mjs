@@ -44,6 +44,8 @@ const P = {
   FX_CHAIN1: 82, FX_CHAIN2: 83, FX_CHAIN3: 84, FX_CHAIN4: 85, FX_CHAIN5: 86, FX_CHAIN6: 87,
   SMP_ROOT: 96, SMP_MODE: 97, TEMPO: 37,
   OSC2_PITCH: 9, OSC_FM: 137, OSC_RING: 138,
+  OSC1_PITCH: 3, OSC1_SYNC: 139, OSC1_SUB: 140, OSC1_SUB_LEVEL: 141,
+  OSC2_SUB: 142, OSC2_SUB_LEVEL: 143, NOISE_MIX: 144,
 };
 
 const WAVE = { sine: 0, triangle: 1, saw: 2, square: 3, pulse: 4, noise: 5, wavetable: 8, sample: 9 };
@@ -704,11 +706,148 @@ function blockSteps(frames) {
   );
 }
 
+// ------------------------------------- hard sync, sub and noise (P6.2)
+//
+// Hard sync is a discontinuity by construction, so the only way to ship it is
+// with a measurement: the whole signal has to stay on the *master's* harmonic
+// grid and be periodic at the master's period. Both are checked here through the
+// real wasm build, next to the sub oscillator's octave and the noise blend's
+// broadband nature.
+//
+// Every scenario pins the parameters it depends on. The engine keeps its
+// parameter block across `gs_init`, so an unset pitch or ring amount is the
+// *previous* section's — which is exactly how this section was silent the first
+// few times it ran.
+{
+  const master = 220;
+  const quiet = [
+    [P.FILTER_TYPE, 0], [P.FILTER_CUTOFF, 18000], [P.FILTER_RES, 0.05],
+    [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0],
+    [P.ENV_ATTACK, 0.01], [P.ENV_SUSTAIN, 1], [P.LFO_ON, 0], [P.MASTER_VOLUME, 1],
+    [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
+    [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0],
+  ];
+  // 1.41x the master: not a multiple, so without sync the slave has its own
+  // period and with sync it can only have the master's.
+  const slaveRatio = 12 * Math.log2(1.41);
+  const renderSync = (sync) => {
+    engine(
+      [
+        ...quiet,
+        [P.OSC1_WAVE, WAVE.saw], [P.OSC1_LEVEL, 0.9], [P.OSC1_PITCH, slaveRatio],
+        [P.OSC1_SYNC, sync], [P.OSC1_SUB, 0],
+        [P.OSC2_WAVE, WAVE.sine], [P.OSC2_ON, 1], [P.OSC2_LEVEL, 0], [P.OSC2_PITCH, 0],
+        [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0],
+      ],
+      [[57, 1]],
+    );
+    const out = [];
+    for (const [l] of render(300, 120)) out.push(...l);
+    return out;
+  };
+
+  const energy = (samples, f) => binMag(samples, f) ** 2;
+  const periodCorrelation = (samples) => {
+    const period = Math.round(SR / master);
+    let num = 0;
+    let left = 0;
+    let right = 0;
+    for (let i = 0; i + period < samples.length; i++) {
+      num += samples[i] * samples[i + period];
+      left += samples[i] ** 2;
+      right += samples[i + period] ** 2;
+    }
+    return num / Math.max(Math.sqrt(left * right), 1e-30);
+  };
+
+  const loose = renderSync(0);
+  const locked = renderSync(1);
+  const slaveLine = (samples) => binMag(samples, master * 1.41);
+  check(
+    'sync replaces the slave pitch with the master grid',
+    slaveLine(loose) > slaveLine(locked) * 20,
+    `${slaveLine(loose).toFixed(4)} free vs ${slaveLine(locked).toFixed(5)} synced at 310 Hz`,
+  );
+  const corr = periodCorrelation(locked);
+  check(
+    'a synced slave is periodic at the master period',
+    corr > 0.95,
+    `period correlation ${corr.toFixed(4)} (free: ${periodCorrelation(loose).toFixed(4)})`,
+  );
+  // The sub oscillator: one sine an octave or two down.
+  const subPatch = (octaves, level) => {
+    engine(
+      [
+        ...quiet,
+        [P.OSC1_WAVE, WAVE.sine], [P.OSC1_LEVEL, 0.9], [P.OSC1_PITCH, 0], [P.OSC1_SYNC, 0],
+        [P.OSC1_SUB, octaves], [P.OSC1_SUB_LEVEL, level],
+        [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0], [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0],
+      ],
+      [[69, 1]],
+    );
+    const out = [];
+    for (const [l] of render(200, 80)) out.push(...l);
+    return out;
+  };
+  const plain = subPatch(0, 0.5);
+  const oneDown = subPatch(1, 0.5);
+  const twoDown = subPatch(2, 0.5);
+  check(
+    'the sub sits one octave down',
+    binMag(oneDown, 220) > binMag(plain, 220) * 50 &&
+      binMag(oneDown, 110) < binMag(oneDown, 220) * 0.01,
+    `220 Hz ${binMag(oneDown, 220).toFixed(4)} vs ${binMag(plain, 220).toFixed(5)} with no sub`,
+  );
+  check(
+    'and two octaves when asked',
+    binMag(twoDown, 110) > binMag(oneDown, 110) * 50,
+    `110 Hz ${binMag(twoDown, 110).toFixed(4)}`,
+  );
+
+  // The noise blend: broadband, and it leaves the tone's own partial alone.
+  const noisePatch = (mix) => {
+    engine(
+      [
+        ...quiet,
+        [P.OSC1_WAVE, WAVE.sine], [P.OSC1_LEVEL, 0.6], [P.OSC1_PITCH, 0], [P.OSC1_SYNC, 0],
+        [P.OSC1_SUB, 0], [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0], [P.OSC_FM, 0], [P.OSC_RING, 0],
+        [P.NOISE_MIX, mix],
+      ],
+      [[69, 1]],
+    );
+    const out = [];
+    for (const [l] of render(200, 80)) out.push(...l);
+    return out;
+  };
+  const offTone = (samples) => {
+    let off = 0;
+    for (let f = 100; f <= 20000; f += 10) {
+      let near = false;
+      for (let k = 1; k <= 46 && !near; k++) near = Math.abs(f - 440 * k) < 25;
+      if (!near) off += energy(samples, f);
+    }
+    return off;
+  };
+  const dry = noisePatch(0);
+  const wet = noisePatch(0.5);
+  check(
+    'the noise blend adds broadband energy',
+    offTone(wet) > offTone(dry) * 1000,
+    `${(10 * Math.log10(offTone(wet) / Math.max(offTone(dry), 1e-30))).toFixed(1)} dB more off-harmonic energy`,
+  );
+  check(
+    'and leaves the tone where it was',
+    Math.abs(binMag(wet, 440) - binMag(dry, 440)) < binMag(dry, 440) * 0.1,
+    `440 Hz ${binMag(wet, 440).toFixed(4)} vs ${binMag(dry, 440).toFixed(4)}`,
+  );
+}
+
+console.log('[audio] quality gate');
+for (const line of report) console.log(line);
+// The verdict comes last on purpose: every section above reports into `report`,
+// and one added at the end of the file would otherwise report into nothing.
 if (failures.length) {
   console.error(`[audio] FAIL — ${failures.join(', ')}`);
   process.exit(1);
 }
 console.log('[audio] PASS');
-
-console.log('[audio] quality gate');
-for (const line of report) console.log(line);

@@ -98,3 +98,47 @@ test.describe('FM and ring modulation', () => {
     await expect(select).toHaveValue('7');
   });
 });
+
+test.describe('sync, sub and noise', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('are reachable on the oscillators and travel with the patch', async ({ page, browser }) => {
+    await boot(page);
+    const osc1 = page.locator('[data-module-id="osc1"]');
+    // Hard sync is a switch on OSC 1, next to FM and RING.
+    const sync = osc1.locator('[role="group"][aria-label="SYNC"]');
+    await sync.getByRole('button', { name: 'ON' }).click();
+    // The sub oscillator has a segment and a level on each oscillator.
+    const sub = osc1.locator('[role="group"][aria-label="SUB"]');
+    await sub.getByRole('button', { name: '-1' }).click();
+    const subLevel = await turn(page, 'SUB LVL', 40);
+    expect(subLevel).toBeGreaterThan(0.4);
+    const noise = await turn(page, 'NOISE', 30);
+    expect(noise).toBeGreaterThan(0.05);
+    await expect(sub.getByRole('button', { name: '-1' })).toHaveAttribute('aria-pressed', 'true');
+
+    // A share link reproduces all three in a browser that has never seen this
+    // one, which is what "they are patch parameters" means.
+    await page.getByRole('button', { name: '预设库' }).click();
+    await page.locator('.preset-drawer button', { hasText: '分享' }).first().click();
+    await expect.poll(async () => page.evaluate(() => location.hash)).toContain('gs1.');
+    const url = await page.evaluate(() => location.href);
+    const other = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const receiver = await other.newPage();
+    await receiver.goto(url);
+    await receiver.getByRole('button', { name: /启动音频引擎/ }).click();
+    await receiver.waitForTimeout(500);
+    const received = receiver.locator('[data-module-id="osc1"]');
+    await expect(
+      received.locator('[role="group"][aria-label="SYNC"]').getByRole('button', { name: 'ON' }),
+    ).toHaveAttribute('aria-pressed', 'true');
+    await expect(
+      received.locator('[role="group"][aria-label="SUB"]').getByRole('button', { name: '-1' }),
+    ).toHaveAttribute('aria-pressed', 'true');
+    await expect(received.getByRole('slider', { name: 'SUB LVL', exact: true })).toHaveAttribute(
+      'aria-valuenow',
+      String(subLevel),
+    );
+    await other.close();
+  });
+});

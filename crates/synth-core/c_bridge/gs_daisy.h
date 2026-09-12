@@ -69,6 +69,16 @@ void gs_voice_osc_block(int v, int which, int sub, float *out, uint32_t frames);
 /// and the 0..1 range the band-limited shapes need is never left.
 void gs_voice_osc_pm_block(int v, int which, int sub, const float *mod, float depth,
                            float *out, uint32_t frames);
+/// Render OSC 2 (the master) and OSC 1 (the slave) as a hard-synced pair, the
+/// slave's cycle restarting whenever the master completes one. Both are
+/// oversampled by GS_SYNC_OS and decimated through a half-band filter, because
+/// the restart is a discontinuity and a naive one aliases; `mod`/`depth` apply
+/// the same phase modulation as `gs_voice_osc_pm_block` to the slave, or pass
+/// NULL for none. The frequencies must already be set through
+/// `gs_voice_osc_set` for one *oversampled* step, i.e. divided by GS_SYNC_OS:
+/// the block calls Process() that many times per output sample.
+void gs_voice_osc_sync_block(int v, int sub, const float *mod, float depth, float *master_out,
+                             float *slave_out, uint32_t frames);
 
 /* --- per-voice filter ------------------------------------------------------ */
 void gs_voice_filter_set(int v, int side, int type, float freq, float res, float drive);

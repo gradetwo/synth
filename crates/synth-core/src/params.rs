@@ -152,10 +152,19 @@ pub mod id {
     /// Ring modulation between OSC 1 and OSC 2, 0 = the plain mix, 1 = only the
     /// product (P6.1).
     pub const OSC_RING: u32 = 138;
+    /// Hard sync: OSC 2 restarts OSC 1's cycle (P6.2).
+    pub const OSC1_SYNC: u32 = 139;
+    /// Sub oscillator per oscillator: 0 = off, 1 = one octave down, 2 = two.
+    pub const OSC1_SUB: u32 = 140;
+    pub const OSC1_SUB_LEVEL: u32 = 141;
+    pub const OSC2_SUB: u32 = 142;
+    pub const OSC2_SUB_LEVEL: u32 = 143;
+    /// White noise blended into the voice, after the oscillators (P6.2).
+    pub const NOISE_MIX: u32 = 144;
 }
 
 /// Highest parameter id + 1.
-pub const PARAM_COUNT: usize = 139;
+pub const PARAM_COUNT: usize = 145;
 
 /// Positions in the effect chain (A5). Six is one per effect: the chain is a
 /// permutation, so reordering can never lose an effect or double one up.
@@ -236,6 +245,9 @@ pub fn is_continuous(param_id: u32) -> bool {
             | p::OSC2_SPREAD
             | p::OSC_FM
             | p::OSC_RING
+            | p::OSC1_SUB_LEVEL
+            | p::OSC2_SUB_LEVEL
+            | p::NOISE_MIX
             | p::FX_DELAY_FB
             | p::FX_DELAY_MIX
             | p::GLIDE
@@ -484,6 +496,10 @@ pub struct OscParams {
     pub unison: u32,
     /// Detune spread across the stack, 0..1 (±35 cents at full).
     pub spread: f32,
+    /// Sub oscillator: 0 = off, 1 = one octave below, 2 = two octaves below.
+    pub sub: u32,
+    /// Sub oscillator level, 0..1.
+    pub sub_level: f32,
 }
 
 impl OscParams {
@@ -498,6 +514,8 @@ impl OscParams {
             pan: 0.0,
             unison: 1,
             spread: 0.35,
+            sub: 0,
+            sub_level: 0.4,
         }
     }
 }
@@ -669,6 +687,10 @@ pub struct Params {
     pub osc_fm: f32,
     /// Ring-modulation amount between the two oscillators, 0..1.
     pub osc_ring: f32,
+    /// Hard sync: OSC 2 restarts OSC 1's cycle (P6.2).
+    pub osc_sync: bool,
+    /// White noise blended into the voice after the oscillators, 0..1.
+    pub noise_mix: f32,
     pub osc: [OscParams; 2],
     pub filter: FilterParams,
     pub env: EnvParams,
@@ -698,6 +720,8 @@ impl Params {
             glide: 0.0,
             osc_fm: 0.0,
             osc_ring: 0.0,
+            osc_sync: false,
+            noise_mix: 0.0,
             osc: [OscParams::new(Wave::Sine), OscParams::new(Wave::Saw)],
             filter: FilterParams {
                 kind: FilterType::Lp,
@@ -861,6 +885,12 @@ impl Params {
             p::GLIDE => self.glide = clamp01(value),
             p::OSC_FM => self.osc_fm = clamp01(value),
             p::OSC_RING => self.osc_ring = clamp01(value),
+            p::OSC1_SYNC => self.osc_sync = value >= 0.5,
+            p::NOISE_MIX => self.noise_mix = clamp01(value),
+            p::OSC1_SUB => self.osc[0].sub = (value as u32).min(2),
+            p::OSC1_SUB_LEVEL => self.osc[0].sub_level = clamp01(value),
+            p::OSC2_SUB => self.osc[1].sub = (value as u32).min(2),
+            p::OSC2_SUB_LEVEL => self.osc[1].sub_level = clamp01(value),
             p::OSC1_ON => self.osc[0].on = value > 0.5,
             p::OSC1_WAVE => self.osc[0].wave = Wave::from_u32(value as u32),
             p::OSC1_PITCH => self.osc[0].pitch = value.clamp(-48.0, 48.0),

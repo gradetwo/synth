@@ -21,6 +21,57 @@
 
 namespace {
 
+// A 95-tap Kaiser-windowed low-pass (beta 6, cutoff 0.229 of the oversampled
+// rate), used to decimate the oversampled hard-sync pair. The passband is flat
+// to 19.2 kHz and the stopband is below -72 dB from 24 kHz, which is what a
+// sync reset needs: it is a discontinuity, and everything it throws above the
+// base Nyquist has to be gone before the pair is decimated, or it folds back
+// into the audible band as broadband hash.
+//
+// A half-band filter was the first attempt and is not enough: it has no guard
+// band, so the octave just below Nyquist folds onto itself with barely any
+// attenuation. This one costs 47 multiply-adds per output sample (the
+// coefficients are symmetric) and is the price of shipping sync at all.
+#define GS_SYNC_OS 2
+#define GS_SYNC_TAPS 95
+static const float GS_SYNC_H[GS_SYNC_TAPS] = {
+    -0.000099741f, -0.000039086f, 0.000184196f, 0.000134602f, -0.000268980f,
+    -0.000307211f, 0.000321500f, 0.000568299f, -0.000295986f, -0.000913282f,
+    0.000137354f, 0.001314628f, 0.000211489f, -0.001716680f, -0.000799195f,
+    0.002033740f, 0.001653315f, -0.002152588f, -0.002766906f, 0.001940100f,
+    0.004086262f, -0.001255865f, -0.005501646f, -0.000031137f, 0.006842571f,
+    0.002023576f, -0.007878331f, -0.004776923f, 0.008323109f, 0.008283465f,
+    -0.007842903f, -0.012461851f, 0.006058127f, 0.017154332f, -0.002529277f,
+    -0.022132978f, -0.003302059f, 0.027114975f, 0.012288422f, -0.031785825f,
+    -0.026095010f, 0.035828112f, 0.049004750f, -0.038952515f, -0.096970518f,
+    0.040927346f, 0.315226368f, 0.458431718f, 0.315226368f, 0.040927346f,
+    -0.096970518f, -0.038952515f, 0.049004750f, 0.035828112f, -0.026095010f,
+    -0.031785825f, 0.012288422f, 0.027114975f, -0.003302059f, -0.022132978f,
+    -0.002529277f, 0.017154332f, 0.006058127f, -0.012461851f, -0.007842903f,
+    0.008283465f, 0.008323109f, -0.004776923f, -0.007878331f, 0.002023576f,
+    0.006842571f, -0.000031137f, -0.005501646f, -0.001255865f, 0.004086262f,
+    0.001940100f, -0.002766906f, -0.002152588f, 0.001653315f, 0.002033740f,
+    -0.000799195f, -0.001716680f, 0.000211489f, 0.001314628f, 0.000137354f,
+    -0.000913282f, -0.000295986f, 0.000568299f, 0.000321500f, -0.000307211f,
+    -0.000268980f, 0.000134602f, 0.000184196f, -0.000039086f, -0.000099741f,
+};
+
+/// Push `count` oversampled samples and read one decimated sample.
+///
+/// The history is a plain shifted buffer: at two samples per output sample the
+/// moves are cheaper than the modulo arithmetic a ring buffer would need, and
+/// the symmetric coefficients halve the multiply-adds.
+static inline float sync_decimate(float *history, const float *input, int count) {
+    for (int i = GS_SYNC_TAPS - 1; i >= count; --i) history[i] = history[i - count];
+    for (int k = 0; k < count; ++k) history[k] = input[k];
+    const int centre = GS_SYNC_TAPS / 2;
+    float out = GS_SYNC_H[centre] * history[centre];
+    for (int i = 0; i < centre; ++i) {
+        out += GS_SYNC_H[i] * (history[i] + history[GS_SYNC_TAPS - 1 - i]);
+    }
+    return out;
+}
+
 struct VoiceDsp {
     /// [sub-voice][oscillator]; unison stacks up to GS_MAX_UNISON copies.
     daisysp::Oscillator osc[GS_MAX_UNISON][2];
@@ -29,6 +80,12 @@ struct VoiceDsp {
     /// offset would be inside it). `pm_ready` re-syncs after a voice reset.
     float pm_phase[GS_MAX_UNISON][2];
     bool pm_ready[GS_MAX_UNISON][2];
+    /// Hard-sync state: the slave's free-running phase and one decimation
+    /// history per oscillator (see `gs_voice_osc_sync_block`).
+    float sync_base[GS_MAX_UNISON];
+    bool sync_ready[GS_MAX_UNISON];
+    float sync_hist_m[GS_MAX_UNISON][GS_SYNC_TAPS];
+    float sync_hist_s[GS_MAX_UNISON][GS_SYNC_TAPS];
     /// One filter chain per oscillator (side 0 = OSC 1, side 1 = OSC 2) so a
     /// patch that pans its oscillators apart is filtered independently per
     /// oscillator instead of sharing one mono filter.
@@ -106,6 +163,11 @@ void gs_voice_reset(int v) {
         d.pm_phase[s][1] = 0.0f;
         d.pm_ready[s][0] = false;
         d.pm_ready[s][1] = false;
+        d.sync_ready[s] = false;
+        for (int t = 0; t < GS_SYNC_TAPS; ++t) {
+            d.sync_hist_m[s][t] = 0.0f;
+            d.sync_hist_s[s][t] = 0.0f;
+        }
     }
     for (int side = 0; side < 2; ++side) {
         d.ladder[side].Init(g_sample_rate);
@@ -128,6 +190,7 @@ void gs_voice_phase(int v, float p0, float p1) {
         d.osc[s][1].Reset(fmodf(p1 + spread, 1.0f));
         d.pm_ready[s][0] = false;
         d.pm_ready[s][1] = false;
+        d.sync_ready[s] = false;
     }
 }
 
@@ -183,6 +246,56 @@ void gs_voice_osc_pm_block(int v, int which, int sub, const float *mod, float de
         if (base >= 1.0f) base -= 1.0f;
     }
     d.pm_phase[sub][side] = base;
+}
+
+void gs_voice_osc_sync_block(int v, int sub, const float *mod, float depth, float *master_out,
+                             float *slave_out, uint32_t frames) {
+    if (sub < 0 || sub >= GS_MAX_UNISON) {
+        for (uint32_t i = 0; i < frames; ++i) {
+            master_out[i] = 0.0f;
+            slave_out[i] = 0.0f;
+        }
+        return;
+    }
+    VoiceDsp &d = voice(v);
+    daisysp::Oscillator &master = d.osc[sub][1];
+    daisysp::Oscillator &slave = d.osc[sub][0];
+    // The oscillators are already set to their real frequency divided by
+    // GS_SYNC_OS, so calling Process() that many times per output sample *is*
+    // the oversampling. The slave's phase is tracked here rather than read back,
+    // because a reset would otherwise be inside it.
+    float base = d.sync_ready[sub] ? d.sync_base[sub] : slave.Phase();
+    d.sync_ready[sub] = true;
+    const float inc = slave.PhaseInc();
+    const float master_inc = master.PhaseInc();
+    float hi_m[GS_SYNC_OS];
+    float hi_s[GS_SYNC_OS];
+    for (uint32_t i = 0; i < frames; ++i) {
+        for (int k = 0; k < GS_SYNC_OS; ++k) {
+            hi_m[k] = master.Process();
+            // The master's own wrap *is* the sync point. It lands *between*
+            // oversampled steps, and resetting to phase 0 at the step boundary
+            // instead was the whole difference between a clean sync and a
+            // broadband hash: the restart moved by up to half a step every
+            // period, which is jitter, and jitter is exactly what shows up
+            // between the harmonics. `Phase()` is how far past the wrap the
+            // master already is, so the slave restarts that far into its own
+            // step.
+            if (master.IsEOC()) {
+                base = inc * (master.Phase() / master_inc);
+            }
+            float phase = base + (mod != nullptr ? mod[i] * depth : 0.0f);
+            phase = fmodf(phase, 1.0f);
+            if (phase < 0.0f) phase += 1.0f;
+            slave.Reset(phase);
+            hi_s[k] = slave.Process();
+            base += inc;
+            if (base >= 1.0f) base -= 1.0f;
+        }
+        master_out[i] = sync_decimate(d.sync_hist_m[sub], hi_m, GS_SYNC_OS);
+        slave_out[i] = sync_decimate(d.sync_hist_s[sub], hi_s, GS_SYNC_OS);
+    }
+    d.sync_base[sub] = base;
 }
 
 void gs_voice_filter_set(int v, int side, int type, float freq, float res, float drive) {

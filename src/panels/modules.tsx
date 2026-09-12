@@ -100,6 +100,10 @@ function OscModule({ which }: { which: 1 | 2 }) {
   // nothing without OSC 2, which the hint under them says.
   const fm = SPEC_BY_ID[Param.OSC_FM];
   const ring = SPEC_BY_ID[Param.OSC_RING];
+  const sync = SPEC_BY_ID[Param.OSC1_SYNC];
+  const noise = SPEC_BY_ID[Param.NOISE_MIX];
+  const sub = SPEC_BY_ID[which === 1 ? Param.OSC1_SUB : Param.OSC2_SUB];
+  const subLevel = SPEC_BY_ID[which === 1 ? Param.OSC1_SUB_LEVEL : Param.OSC2_SUB_LEVEL];
   const pwValue = useParam(pw.id);
   const pwSpec =
     wave === 'wavetable'
@@ -117,11 +121,32 @@ function OscModule({ which }: { which: 1 | 2 }) {
         <Knob spec={unison} />
         <Knob spec={spread} />
       </div>
+      <div className="knob-row">
+        <ParamSegment
+          id={sub.id}
+          label={sub.label}
+          options={[
+            { label: 'OFF', value: 0, title: t('module.subOff') },
+            { label: '-1', value: 1, title: t('module.subOne') },
+            { label: '-2', value: 2, title: t('module.subTwo') },
+          ]}
+        />
+        <Knob spec={subLevel} />
+      </div>
       {which === 1 ? (
         <>
           <div className="knob-row">
             <Knob spec={fm} />
             <Knob spec={ring} />
+            <ParamSegment
+              id={sync.id}
+              label={sync.label}
+              options={[
+                { label: 'OFF', value: 0, title: t('module.syncOff') },
+                { label: 'ON', value: 1, title: t('module.syncOn') },
+              ]}
+            />
+            <Knob spec={noise} />
           </div>
           <div className="mini-label">{t('module.oscShaping')}</div>
         </>

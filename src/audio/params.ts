@@ -111,6 +111,15 @@ export const Param = {
   OSC_FM: 137,
   /** Ring modulation between the oscillators, 0 = plain mix, 1 = the product. */
   OSC_RING: 138,
+  /** Hard sync: OSC 2 restarts OSC 1's cycle. */
+  OSC1_SYNC: 139,
+  /** Sub oscillator per oscillator: 0 = off, 1 = one octave down, 2 = two. */
+  OSC1_SUB: 140,
+  OSC1_SUB_LEVEL: 141,
+  OSC2_SUB: 142,
+  OSC2_SUB_LEVEL: 143,
+  /** White noise blended into the voice after the oscillators. */
+  NOISE_MIX: 144,
   SMP_ROOT: 96,
   /** Sampler: 0 = one-shot, 1 = loop, 2 = ping-pong. */
   SMP_MODE: 97,
@@ -305,6 +314,12 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.MASTER_VOLUME]: 'masterVolume',
   [Param.OSC_FM]: 'oscFm',
   [Param.OSC_RING]: 'oscRing',
+  [Param.OSC1_SYNC]: 'osc1Sync',
+  [Param.OSC1_SUB]: 'osc1Sub',
+  [Param.OSC1_SUB_LEVEL]: 'osc1SubLevel',
+  [Param.OSC2_SUB]: 'osc2Sub',
+  [Param.OSC2_SUB_LEVEL]: 'osc2SubLevel',
+  [Param.NOISE_MIX]: 'noiseMix',
   [Param.PATCH_GAIN]: 'patchGain',
   [Param.WT_USER]: 'wtUser',
   [Param.FX_DELAY_DAMP]: 'fxDelayDamp',
@@ -617,6 +632,12 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   // Off by default: a patch that predates them sounds exactly as it did.
   [Param.OSC_FM]: 0,
   [Param.OSC_RING]: 0,
+  [Param.OSC1_SYNC]: 0,
+  [Param.OSC1_SUB]: 0,
+  [Param.OSC1_SUB_LEVEL]: 0.4,
+  [Param.OSC2_SUB]: 0,
+  [Param.OSC2_SUB_LEVEL]: 0.4,
+  [Param.NOISE_MIX]: 0,
   // Per-patch loudness trim (presets set it; see `PATCH_TRIM` in state/presets).
   [Param.PATCH_GAIN]: 1,
   // Factory banks by default; the player flips this after importing a cycle.
@@ -857,9 +878,16 @@ export const PARAM_SPECS: ParamSpec[] = [
   spec(Param.OSC1_PAN, 'PAN', -1, 1, 0, fmt.pan),
   spec(Param.OSC1_UNISON, 'UNI', 1, 7, 1, (v) => `${Math.round(v)}`, { discrete: true }),
   spec(Param.OSC1_SPREAD, 'SPREAD', 0, 1, 0.35, fmt.pct),
-  // How OSC 2 shapes OSC 1: its phase (FM) and its amplitude (RING).
+  // How OSC 2 shapes OSC 1: its phase (FM), its amplitude (RING) and its cycle
+  // (SYNC, a switch); plus the noise blend and each oscillator's sub.
   spec(Param.OSC_FM, 'FM', 0, 1, 0, fmt.pct),
   spec(Param.OSC_RING, 'RING', 0, 1, 0, fmt.pct),
+  spec(Param.OSC1_SYNC, 'SYNC', 0, 1, 0, (v) => (v >= 0.5 ? 'ON' : 'OFF'), { discrete: true }),
+  spec(Param.NOISE_MIX, 'NOISE', 0, 1, 0, fmt.pct),
+  spec(Param.OSC1_SUB, 'SUB', 0, 2, 0, (v) => (v < 0.5 ? 'OFF' : `-${Math.round(v)}`), { discrete: true }),
+  spec(Param.OSC1_SUB_LEVEL, 'SUB LVL', 0, 1, 0.4, fmt.pct),
+  spec(Param.OSC2_SUB, 'SUB', 0, 2, 0, (v) => (v < 0.5 ? 'OFF' : `-${Math.round(v)}`), { discrete: true }),
+  spec(Param.OSC2_SUB_LEVEL, 'SUB LVL', 0, 1, 0.4, fmt.pct),
   spec(Param.OSC2_PITCH, 'PITCH', -24, 24, 0, fmt.st),
   spec(Param.OSC2_DETUNE, 'DETUNE', -50, 50, 0, fmt.ct),
   spec(Param.OSC2_LEVEL, 'LEVEL', 0, 1, 0.55, fmt.pct),

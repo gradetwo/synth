@@ -379,9 +379,17 @@ const DICT: Record<string, [string, string]> = {
   // --- settings drawer -----------------------------------------------------
   'settings.title': ['设置', 'Settings'],
   'settings.workspace': ['工作区', 'Workspace'],
+  'module.subOff': ['无 sub', 'No sub oscillator'],
+  'module.subOne': ['低一个八度', 'One octave down'],
+  'module.subTwo': ['低两个八度', 'Two octaves down'],
+  'module.syncOff': ['OSC 1 自由振荡', 'OSC 1 runs free'],
+  'module.syncOn': [
+    '硬同步：OSC 2 每完成一个周期就把 OSC 1 的相位拉回起点（同步主音色；OSC 2 的 PITCH 就是比例）',
+    'Hard sync: OSC 2 restarts OSC 1 every time it completes a cycle (the classic sync lead; OSC 2’s PITCH is the ratio)',
+  ],
   'module.oscShaping': [
-    'OSC 2 → OSC 1 · FM 相位调制 / RING 环形调制（需要 OSC 2 打开）',
-    'OSC 2 → OSC 1 · FM phase modulation / RING ring modulation (needs OSC 2 on)',
+    'OSC 2 → OSC 1 · FM 相位调制 / RING 环形调制 / SYNC 硬同步（需要 OSC 2 打开）· NOISE 混入白噪',
+    'OSC 2 → OSC 1 · FM phase modulation / RING ring modulation / SYNC hard sync (needs OSC 2 on) · NOISE blends white noise in',
   ],
   'clip.lane': ['片段编排', 'Clip lane'],
   'clip.fold': ['折叠成片段', 'Fold into a clip'],

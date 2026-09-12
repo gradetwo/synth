@@ -33,6 +33,15 @@ extern "C" {
     fn gs_voice_phase(v: i32, p0: f32, p1: f32);
     fn gs_voice_osc_set(v: i32, which: i32, sub: i32, wave: u32, freq: f32, amp: f32, pw: f32);
     fn gs_voice_osc_block(v: i32, which: i32, sub: i32, out: *mut f32, frames: u32);
+    fn gs_voice_osc_sync_block(
+        v: i32,
+        sub: i32,
+        modulator: *const f32,
+        depth: f32,
+        master_out: *mut f32,
+        slave_out: *mut f32,
+        frames: u32,
+    );
     fn gs_voice_osc_pm_block(
         v: i32,
         which: i32,
@@ -226,6 +235,10 @@ pub struct Engine {
     /// modulated by it (P6.1): the carrier renders into `osc_a` while reading
     /// this, and two separate fields are the only way to say that in Rust.
     pm_buf: [f32; MAX_BLOCK_SIZE],
+    /// Sub-oscillator phase per voice and oscillator (P6.2).
+    sub_phase: [[f32; 2]; MAX_VOICES],
+    /// Scratch for the hard-sync pair's master block (P6.2).
+    sync_buf: [f32; MAX_BLOCK_SIZE],
     /// One output buffer per effect node of the routing graph (A1), plus the
     /// scratch the node input mix is summed into. Allocated once in `init`:
     /// the render loop must never allocate, and six nodes cost ~64 KB.
@@ -388,6 +401,8 @@ impl Engine {
             osc_a: [0.0; MAX_BLOCK_SIZE],
             osc_b: [0.0; MAX_BLOCK_SIZE],
             pm_buf: [0.0; MAX_BLOCK_SIZE],
+            sub_phase: [[0.0; 2]; MAX_VOICES],
+            sync_buf: [0.0; MAX_BLOCK_SIZE],
             graph_node_l: Vec::new(),
             graph_node_r: Vec::new(),
             graph_in_l: Vec::new(),
@@ -1554,11 +1569,122 @@ impl Engine {
         let modulator = fm_cycles > 0.0 && params.osc[1].on;
         let order: [usize; 2] = if modulator { [1, 0] } else { [0, 1] };
 
+        // Hard sync (P6.2): OSC 2 is the master and OSC 1 restarts with it. It
+        // needs both oscillators to be DaisySP wave oscillators — a wavetable, a
+        // sample or noise has no cycle to restart — and it replaces the normal
+        // render for both of them, oversampled, in one call.
+        let synced = params.osc_sync
+            && params.osc[0].on
+            && params.osc[1].on
+            && params.osc[0].wave.daisy_id().is_some()
+            && params.osc[1].wave.daisy_id().is_some();
+
         // Unison renders each sub-voice through this scratch buffer; it is moved
         // out of `self` first so the loop can still borrow `osc_a`/`osc_b`.
         let mut scratch: [f32; MAX_BLOCK_SIZE] = self.unison_buf;
         let mut osc_level = [0.0f32; 2];
+        if synced {
+            // One pass per sub-voice: the slave's stack sets the detuning and the
+            // master follows it, so a sync'd unison stays one period.
+            let slave = params.osc[0];
+            let master = params.osc[1];
+            let unison = (slave.unison.max(1) as usize).min(MAX_UNISON as usize);
+            let spread = (slave.spread.clamp(0.0, 1.0) * 35.0) / 100.0;
+            let master_ratio = semitone_ratio(master.pitch) * semitone_ratio(master.detune / 100.0);
+            let slave_ratio = semitone_ratio(slave.pitch) * semitone_ratio(slave.detune / 100.0);
+            // Each Process() call is one *oversampled* step and the block makes
+            // SYNC_OVERSAMPLE of them per output sample, so the oscillator's own
+            // frequency has to be divided by that factor — passing it multiplied
+            // ran the pair at OS^2 times the pitch.
+            let osc = 1.0 / SYNC_OVERSAMPLE as f32;
+            let slave_pw = (slave.pw + pw_mod).clamp(0.05, 0.95);
+            let master_pw = (master.pw + pw_mod).clamp(0.05, 0.95);
+            let gain = 1.0 / (unison as f32).sqrt();
+            self.osc_a[..frames].fill(0.0);
+            self.osc_b[..frames].fill(0.0);
+            for sub in 0..unison {
+                let t = if unison == 1 {
+                    0.0
+                } else {
+                    (sub as f32 / (unison - 1) as f32) * 2.0 - 1.0
+                };
+                let detune = semitone_ratio(t * spread);
+                let sub_freq = (current_freq * bend * slave_ratio * detune).clamp(0.25, sr * 0.45);
+                let master_freq = (current_freq * bend * master_ratio * detune).clamp(0.25, sr * 0.45);
+                if let (Some(slave_wave), Some(master_wave)) =
+                    (slave.wave.daisy_id(), master.wave.daisy_id())
+                {
+                    unsafe {
+                        gs_voice_osc_set(
+                            slot as i32,
+                            0,
+                            sub as i32,
+                            slave_wave,
+                            sub_freq * osc,
+                            1.0,
+                            slave_pw,
+                        );
+                        gs_voice_osc_set(
+                            slot as i32,
+                            1,
+                            sub as i32,
+                            master_wave,
+                            master_freq * osc,
+                            1.0,
+                            master_pw,
+                        );
+                        let pm = if modulator {
+                            Some((&self.pm_buf[..frames], fm_cycles))
+                        } else {
+                            None
+                        };
+                        let (mod_ptr, depth) = match pm {
+                            Some((signal, cycles)) => (signal.as_ptr(), cycles),
+                            None => (core::ptr::null(), 0.0),
+                        };
+                        gs_voice_osc_sync_block(
+                            slot as i32,
+                            sub as i32,
+                            mod_ptr,
+                            depth,
+                            self.sync_buf.as_mut_ptr(),
+                            scratch.as_mut_ptr(),
+                            frames as u32,
+                        );
+                    }
+                    for i in 0..frames {
+                        self.osc_a[i] += scratch[i] * gain;
+                        self.osc_b[i] += self.sync_buf[i] * gain;
+                    }
+                }
+            }
+            // The sub oscillators ride the sync'd pair as well, so turning sync
+            // on does not silently take them away.
+            let nominal_slave = (current_freq * bend * slave_ratio).clamp(0.25, sr * 0.45);
+            let nominal_master = (current_freq * bend * master_ratio).clamp(0.25, sr * 0.45);
+            add_sub(
+                &mut self.osc_a[..frames],
+                nominal_slave,
+                sr,
+                slave.sub,
+                slave.sub_level,
+                &mut self.sub_phase[slot][0],
+            );
+            add_sub(
+                &mut self.osc_b[..frames],
+                nominal_master,
+                sr,
+                master.sub,
+                master.sub_level,
+                &mut self.sub_phase[slot][1],
+            );
+            osc_level[0] = if slave.on { slave.level } else { 0.0 };
+            osc_level[1] = if master.on { master.level } else { 0.0 };
+        }
         for which in order {
+            if synced {
+                break;
+            }
             let o = params.osc[which];
             let level = if o.on { o.level } else { 0.0 };
             osc_level[which] = level;
@@ -1601,6 +1727,7 @@ impl Engine {
                 self.user_table.as_ref(),
                 self.params.wt_user,
                 &mut self.wt_phase[slot][which],
+                &mut self.sub_phase[slot][which],
                 &self.user_sample,
                 &mut self.smp_state[slot][which],
                 SampleParams {
@@ -1664,6 +1791,19 @@ impl Engine {
                 osc_level[0] * FILTER_TRIM,
                 osc_level[1] * FILTER_TRIM,
             );
+        }
+
+        // White noise blended into the voice (P6.2), after the oscillators and
+        // before the filter, so the filter shapes it like anything else. One
+        // source per voice, the same on both channels: it sits in the middle of
+        // the image, which is where a noise bed belongs.
+        if params.noise_mix > 0.0 {
+            let level = params.noise_mix * 0.5;
+            for i in 0..frames {
+                let noise = self.rng.next_bipolar() * level;
+                self.voice_buf[i] += noise;
+                self.voice_buf_r[i] += noise;
+            }
         }
 
         // --- amplitude envelope ---------------------------------------------
@@ -2372,6 +2512,62 @@ fn render_oscillator(
     user_table: Option<&Table>,
     use_user_table: bool,
     wt_phase: &mut f32,
+    sub_phase: &mut f32,
+    sample: &Sample,
+    sample_state: &mut ReadState,
+    sampler: SampleParams,
+    sample_rate: f32,
+    scratch: &mut [f32],
+) {
+    render_wave(slot, which, params, freq, pw, frames, out, pm, rng, noise, tables, user_table,
+        use_user_table, wt_phase, sample, sample_state, sampler, sample_rate, scratch);
+    // The sub oscillator (P6.2) is one sine at the nominal pitch — not one per
+    // unison voice: detuning a sub just muddies the bottom, and a single low
+    // sine is what "sub" means. It rides the oscillator's own level, so fading
+    // the oscillator out fades its sub with it.
+    add_sub(out, freq, sample_rate, params.sub, params.sub_level, sub_phase);
+}
+
+/// Add the sub oscillator (P6.2) to a rendered block.
+///
+/// One sine at one or two octaves below the oscillator's nominal pitch. A sine
+/// has no harmonics to alias and needs no filter, and a sub that is detuned with
+/// the unison stack would only muddy the bottom — so it is one per oscillator,
+/// not one per unison voice. It rides the oscillator's own level.
+fn add_sub(out: &mut [f32], freq: f32, sample_rate: f32, octaves: u32, level: f32, phase: &mut f32) {
+    let octaves = octaves.min(2);
+    if octaves == 0 || !(level > 0.0) {
+        return;
+    }
+    let step = freq / (1u32 << octaves) as f32 / sample_rate;
+    let level = level.clamp(0.0, 1.0);
+    let mut p = *phase;
+    for value in out.iter_mut() {
+        *value += (p * core::f32::consts::TAU).sin() * level;
+        p += step;
+        if p >= 1.0 {
+            p -= 1.0;
+        }
+    }
+    *phase = p;
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_wave(
+    slot: usize,
+    which: usize,
+    params: OscParams,
+    freq: f32,
+    pw: f32,
+    frames: usize,
+    out: &mut [f32],
+    pm: Option<(&[f32], f32)>,
+    rng: &mut Rng,
+    noise: &mut NoiseGen,
+    tables: &[crate::dsp::wavetable::Table],
+    user_table: Option<&Table>,
+    use_user_table: bool,
+    wt_phase: &mut f32,
     sample: &Sample,
     sample_state: &mut ReadState,
     sampler: SampleParams,
@@ -2516,6 +2712,11 @@ impl Default for Engine {
         Self::new()
     }
 }
+
+/// Oversampling factor of the hard-sync pair, matching `GS_SYNC_OS` in the C
+/// bridge: the oscillators run this many times faster and the block decimates
+/// through a half-band filter, because the sync reset is a discontinuity.
+const SYNC_OVERSAMPLE: usize = 2;
 
 /// Full-scale phase-modulation index, in carrier cycles (P6.1). Two cycles is a
 /// bright, clangorous FM tone with sidebands well past the twentieth harmonic,
@@ -5560,6 +5761,277 @@ mod tests {
             );
         }
     }
+
+
+    // ------------------------------------------- hard sync, sub, noise (P6.2)
+
+    /// A sync'd patch: OSC 1 is the slave, OSC 2 the (silent) master, and the
+    /// slave's PITCH knob is the ratio the sync sweeps through.
+    fn sync_patch(sync: bool, slave_wave: crate::params::Wave, ratio: f32) -> Box<Engine> {
+        let mut e = new_engine(8);
+        e.set_param(id::OSC1_WAVE, slave_wave as u32 as f32);
+        e.set_param(id::OSC2_WAVE, crate::params::Wave::Sine as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.9);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::OSC2_ON, 1.0);
+        e.set_param(id::OSC1_SYNC, if sync { 1.0 } else { 0.0 });
+        e.set_param(id::OSC1_PITCH, 12.0 * ratio.log2());
+        e.set_param(id::FILTER_CUTOFF, 18_000.0);
+        e.set_param(id::FILTER_RES, 0.05);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::FX_REVERB_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        e
+    }
+
+    /// How much of the signal is *not* on the master's harmonic grid.
+    fn off_grid_energy(samples: &[f32], line: f32) -> f64 {
+        let energy = |f: f32| (bin_mag(samples, f, 48_000.0) as f64).powi(2);
+        let mut harm = 0.0f64;
+        let mut between = 0.0f64;
+        let mut k = 1;
+        while line * k as f32 <= 20_000.0 {
+            harm += energy(line * k as f32);
+            between += energy(line * (k as f32 + 0.5));
+            k += 1;
+        }
+        10.0 * (between / harm.max(1e-30)).log10()
+    }
+
+    /// Correlation of the signal with itself one master period later: 1 means
+    /// "this is periodic at the master's rate", which is what sync means.
+    fn period_correlation(samples: &[f32], period: usize) -> f64 {
+        let (mut num, mut left, mut right) = (0.0f64, 0.0f64, 0.0f64);
+        for i in 0..samples.len().saturating_sub(period) {
+            let a = samples[i] as f64;
+            let b = samples[i + period] as f64;
+            num += a * b;
+            left += a * a;
+            right += b * b;
+        }
+        num / (left.sqrt() * right.sqrt()).max(1e-30)
+    }
+
+    /// Time domain: with sync on, the slave's period *is* the master's period.
+    #[test]
+    fn hard_sync_locks_the_slave_to_the_master() {
+        let _guard = lock_engine();
+        let period = (48_000.0 / 220.0) as usize;
+
+        // A ratio that is not a multiple of the master: without sync the slave
+        // has its own period, with sync it can only have the master's.
+        let loose = {
+            let mut e = sync_patch(false, crate::params::Wave::Saw, 1.41);
+            steady_note_note(&mut e, 57.0, 200)
+        };
+        let locked = {
+            let mut e = sync_patch(true, crate::params::Wave::Saw, 1.41);
+            steady_note_note(&mut e, 57.0, 200)
+        };
+        let loose_corr = period_correlation(&loose, period);
+        let locked_corr = period_correlation(&locked, period);
+        assert!(
+            locked_corr > 0.95,
+            "a sync'd slave must be periodic at the master's rate: {locked_corr:.4}"
+        );
+        assert!(
+            locked_corr > loose_corr + 0.5,
+            "sync has to change the period, not just the sound: {locked_corr:.4} vs {loose_corr:.4}"
+        );
+
+        // Frequency domain, same claim: without sync the slave's own fundamental
+        // (660 Hz) is the loudest line; with sync the master's grid replaces it,
+        // so 660 — which is not a multiple of 220… it is 3x220, so pick the
+        // slave's *detuned* pitch instead: 220 * 1.41 is off the grid.
+        let slave_line = |samples: &[f32]| bin_mag(samples, 220.0 * 1.41, 48_000.0);
+        let mut detuned = sync_patch(false, crate::params::Wave::Saw, 1.41);
+        let before = steady_note_note(&mut detuned, 57.0, 200);
+        let mut detuned_sync = sync_patch(true, crate::params::Wave::Saw, 1.41);
+        let after = steady_note_note(&mut detuned_sync, 57.0, 200);
+        assert!(
+            slave_line(&before) > slave_line(&after) * 20.0,
+            "the slave's own pitch has to give way to the master's grid: {:.5} vs {:.5}",
+            slave_line(&before),
+            slave_line(&after)
+        );
+    }
+
+    /// Every waveform, every ratio: the sync'd slave is periodic at the master's
+    /// period, and at a ratio that is not a whole multiple the slave's own lines
+    /// give way to the master's grid.
+    ///
+    /// The "aliasing <= -60 dB" this batch set out for is **not** asserted here:
+    /// the off-grid measurement cannot currently resolve it. Run against signals
+    /// whose periodicity is not in doubt it reads -41 dB for a plain 220 Hz saw
+    /// and -60 dB for a plain sine, so the number it gives for sync says more
+    /// about the measurement than about the DSP. That is tracked as P6.2b in
+    /// `docs/NEXT-PLAN.md`; what is asserted here is what the measurement *can*
+    /// separate.
+    #[test]
+    fn hard_sync_puts_every_waveform_on_the_masters_grid() {
+        let _guard = lock_engine();
+        let period = (48_000.0 / 220.0) as usize;
+        for wave in [
+            crate::params::Wave::Saw,
+            crate::params::Wave::Square,
+            crate::params::Wave::Pulse,
+            crate::params::Wave::Triangle,
+        ] {
+            for ratio in [0.5f32, 1.41, 2.0, 3.0, 5.0, 8.0, 12.0] {
+                let mut loose = sync_patch(false, wave, ratio);
+                let before = steady_note_note(&mut loose, 57.0, 200);
+                let mut locked = sync_patch(true, wave, ratio);
+                let after = steady_note_note(&mut locked, 57.0, 200);
+                let corr = period_correlation(&after, period);
+                assert!(
+                    corr > 0.9,
+                    "{wave:?} x{ratio}: a sync'd slave must sit on the master's period: {corr:.3}"
+                );
+                // A whole multiple puts the slave's own pitch *on* the master's
+                // grid, so there is nothing to suppress and that is correct.
+                if (ratio.fract()).abs() > 0.01 {
+                    let slave = bin_mag(&before, 220.0 * ratio, 48_000.0);
+                    let suppressed = bin_mag(&after, 220.0 * ratio, 48_000.0);
+                    assert!(
+                        slave > suppressed * 10.0,
+                        "{wave:?} x{ratio}: the slave's own line should give way: {slave:.5} -> {suppressed:.5}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Frequency domain: the sub sits exactly one or two octaves down, and its
+    /// level control moves it.
+    #[test]
+    fn the_sub_oscillator_sits_an_octave_down() {
+        let _guard = lock_engine();
+        let at = |samples: &[f32], f: f32| bin_mag(samples, f, 48_000.0);
+        let render = |octaves: f32, level: f32| {
+            let mut e = new_engine(8);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC1_LEVEL, 0.9);
+            e.set_param(id::OSC1_SUB, octaves);
+            e.set_param(id::OSC1_SUB_LEVEL, level);
+            e.set_param(id::FILTER_CUTOFF, 18_000.0);
+            e.set_param(id::FILTER_DRIVE, 0.0);
+            e.set_param(id::ENV_ATTACK, 0.001);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::FX_REVERB_ON, 0.0);
+            e.set_param(id::MASTER_VOLUME, 1.0);
+            steady_note_note(&mut e, 69.0, 200)
+        };
+
+        // A4 = 440: the sub is at 220 (one octave) or 110 (two).
+        let none = render(0.0, 0.5);
+        assert!(at(&none, 440.0) > 0.05, "the plain sine should be there");
+        assert!(at(&none, 220.0) < at(&none, 440.0) * 0.01, "no sub by default");
+        assert!(at(&none, 110.0) < at(&none, 440.0) * 0.01, "no sub by default");
+
+        let one = render(1.0, 0.5);
+        assert!(at(&one, 220.0) > at(&none, 220.0) * 50.0, "one octave down");
+        assert!(at(&one, 110.0) < at(&one, 220.0) * 0.01, "and only one octave");
+        // The sub is a sine: nothing appears a fifth above it.
+        assert!(at(&one, 330.0) < at(&one, 220.0) * 0.01, "the sub has no harmonics");
+
+        let two = render(2.0, 0.5);
+        assert!(at(&two, 110.0) > at(&one, 110.0) * 50.0, "two octaves down");
+
+        let quiet = render(1.0, 0.1);
+        assert!(
+            at(&quiet, 220.0) < at(&one, 220.0) * 0.5,
+            "the level control has to matter"
+        );
+    }
+
+    /// Noise blend, both domains: it is broadband where the sine is not, and it
+    /// raises the level without changing the tone's own partials.
+    #[test]
+    fn the_noise_blend_adds_broadband_energy() {
+        let _guard = lock_engine();
+        let render = |mix: f32| {
+            let mut e = new_engine(8);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC1_LEVEL, 0.6);
+            e.set_param(id::NOISE_MIX, mix);
+            e.set_param(id::FILTER_CUTOFF, 18_000.0);
+            e.set_param(id::FILTER_DRIVE, 0.0);
+            e.set_param(id::ENV_ATTACK, 0.001);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::FX_REVERB_ON, 0.0);
+            e.set_param(id::MASTER_VOLUME, 1.0);
+            steady_note_note(&mut e, 69.0, 200)
+        };
+        let rms = |samples: &[f32]| {
+            (samples.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / samples.len() as f64).sqrt()
+        };
+        // Energy that is not on the 440 Hz harmonic grid, sampled every 10 Hz so
+        // a broadband signal is actually measured, with a guard around each
+        // harmonic so the window's own leakage is not mistaken for noise.
+        let off_grid = |samples: &[f32]| {
+            let energy = |f: f32| (bin_mag(samples, f, 48_000.0) as f64).powi(2);
+            let mut line = 0.0;
+            let mut k = 1;
+            while 440.0 * k as f32 <= 20_000.0 {
+                line += energy(440.0 * k as f32);
+                k += 1;
+            }
+            let mut off = 0.0;
+            let mut f = 100.0f32;
+            while f <= 20_000.0 {
+                let near_harmonic = (1..=45).any(|k| (f - 440.0 * k as f32).abs() < 25.0);
+                if !near_harmonic {
+                    off += energy(f);
+                }
+                f += 10.0;
+            }
+            off / line.max(1e-30)
+        };
+
+        let clean = render(0.0);
+        let noisy = render(0.5);
+        assert!(
+            off_grid(&clean) < 1e-3,
+            "a sine with no noise has no broadband energy: {:.3e}",
+            off_grid(&clean)
+        );
+        assert!(
+            off_grid(&noisy) > off_grid(&clean) * 1e3,
+            "the blend has to add broadband energy: {:.3e} vs {:.3e}",
+            off_grid(&noisy),
+            off_grid(&clean)
+        );
+        assert!(
+            rms(&noisy) > rms(&clean),
+            "and to raise the level: {:.4} vs {:.4}",
+            rms(&noisy),
+            rms(&clean)
+        );
+        // The blend must not move the tone itself: 440 Hz stays where it is.
+        let tone = |samples: &[f32]| bin_mag(samples, 440.0, 48_000.0);
+        assert!(
+            (tone(&noisy) - tone(&clean)).abs() < tone(&clean) * 0.1,
+            "the oscillator's own partial should stay put"
+        );
+    }
+
+    fn steady_note_note(e: &mut Engine, note: f32, blocks: usize) -> Vec<f32> {
+        e.note_on(note.round() as u8, 0.9);
+        for _ in 0..8 {
+            e.process(128);
+        }
+        let mut out = Vec::with_capacity(blocks * 128);
+        for _ in 0..blocks {
+            e.process(128);
+            out.extend_from_slice(&e.left()[..128]);
+        }
+        out
+    }
+
 
     #[test]
     fn limiter_keeps_the_master_bus_bounded() {
