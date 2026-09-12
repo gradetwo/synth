@@ -108,9 +108,11 @@ C 多轨与时间线、B 分层与分享、A 效果路由图（引擎 + 编辑�
 - 可选套件（`npm run test:visual` / `test:visual:update`）：文字栅格化是宿主字体栈的属性，本机基线不该判 CI runner 的对错，CI 的 `test:e2e` 会跳过它；详见 `docs/notes/visual-regression.md`（含「service worker 会喂上一个构建」这个实测坑与 `serviceWorkers: 'block'` 的修法）。
 - 验收：基线入库 ✅；故意改样式让它失败 ✅（标定表 + 自证用例）。
 
-**P8.3 音频指纹扩到预设**（1 批）
-- 要点：81 个工厂预设的频谱指纹基线（在现有 DSP 指纹与响度门禁之外再加一层），变化必须显式确认。
-- 验收：新增 `verify:presets` 进 `verify`；故意改一个预设参数必须失败。
+**P8.3 音频指纹扩到预设** — ✅ v1.88.0 完成
+- 已完成：`scripts/verify-presets.mjs` —— 81 个工厂预设各渲染同一句固定乐句（和弦 + 低音，1.8 s，每个预设独立 wasm 实例，跑法与 `store.applyPreset` 一致：params / routes / 第二层 + instance route），记录 26 个数字（rms、peak、左右平衡、24 个三分倍频程频段的 Goertzel 幅度），基线 `tests/preset-fingerprint.json`（每个预设一行，便于 review）；参数 ABI 变化先报错要求重生成。
+- **变化必须显式确认**：`npm run verify:presets` 比较；`npm run presets:update -- --reason "..."` 才写新基线，理由存进 JSON。
+- 实测敏感度（`pluck` 预设）：截止频率 −5 % 或包络衰减 +5 % 即失败（0.84 / 0.89 dB，比值 1.67 / 1.77），−1 % 微调通过；电平 −5 % 失败、−1 % 通过；同份 wasm 两次运行噪声底 **0.000 dB**。详见 `docs/notes/preset-fingerprint.md`。
+- 验收：`verify:presets` 已进 `npm run verify` **与 CI verify 作业**（`verify-ci.mjs` 的必需清单同步，删步骤会红）；故意改一个预设参数实测失败 ✅。
 
 **P8.4 解析器模糊测试** — ✅ v1.81.0 完成
 - 已做：`src/fuzz.test.ts` 覆盖 8 类外部输入（分享码、补丁文件、`.gs1song`、MIDI、Scala、WAV、存储波形、Web MIDI 消息），每类 **10 000 个固定种子输入**（随机 + 合法文件变异 + 对抗性结构），断言「要么拒绝、要么合法、不抛未文档化异常、10 000 次 < 4 s（不卡死）」；失败信息带种子/序号/样本，复现即读错误信息。
@@ -139,7 +141,7 @@ C 多轨与时间线、B 分层与分享、A 效果路由图（引擎 + 编辑�
 | 6 | P6.2 硬同步 + sub 🔶 v1.84.0（P6.2b 待做） | — | 中 |
 | 6b | P6.2b 混叠度量与非周期底噪 ✅ 度量已可用；专用带限同步振荡器 ⏸ 技术债 | P6.2 | 中 |
 | 7 | P5.3 tempo map ✅ v1.86.0 | P5.2 | 中 |
-| 8 | P8.2 视觉回归 ✅ v1.87.0 + P8.3 预设指纹 | — | 中 |
+| 8 | P8.2 视觉回归 ✅ v1.87.0 + P8.3 预设指纹 ✅ v1.88.0 | — | 中 |
 | 9 | P6.3 滤波补全 | — | 中 |
 | 10 | P7.1 延迟/卷积多实例（预研 → 实现） | 内存模型设计 | 大 |
 | 11 | P5.4 录音 take | — | 中 |
