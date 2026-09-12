@@ -155,6 +155,13 @@ C 多轨与时间线、B 分层与分享、A 效果路由图（引擎 + 编辑�
 - 结构调整：补丁文件解析抽成纯函数 `parsePatchFile`（`src/state/patchfile.ts`）+ 上限（参数 512、路由 64、名字 120、code 20 万）；每条修复在模块单测里留最小回归样本。文档：`docs/notes/parser-fuzzing.md`。
 - 验收：Vitest 287 → **311**（模糊测试进 `npm test`，CI 每次跑这 10 万个输入，约 7 秒）；E2E 103 → **104**（补丁文件导入：导入成功 + 垃圾文件被拒 + 顶栏显示文件名）。
 
+**P8.5 体积与启动预算** — ✅ v1.96.0 完成
+- 已做：**真实节省** —— 图标 PNG24 → PNG8（75 423 → 25 271 B，**−48.97 KB**，RMSE ≤0.10% 肉眼不可分，尺寸/格式/manifest 引用不变；`scripts/gen-icons.mjs` 加 `shrinkPng()`，注释记下「临时文件必须用 `.png` 扩展名，`.png8` 会走质量差 12 倍的 PNG8 coder」这个坑）；**收紧阈值** —— dist 总量 1712→**1672 KB**、首屏 JS 165→**134 KB**、CSS 22→**21 KB**、最大 WASM 230→**70 KB**（均按实测 + 小余量，依据写在 `verify-budget.mjs` 注释里）；**新增首屏可交互时间门禁** —— `e2e/performance.spec.ts` 里用 `addInitScript` 在应用前装轮询、用页面自己的 `performance.now()`（零点=导航开始）测「`.start-btn` 在 DOM 且 enabled **且已发生 FCP**」（实测按钮 ~190 ms 进 DOM、首次绘制 ~1250 ms，只看 DOM 会报空屏时刻），FCP 由 `PerformanceObserver(paint, buffered)` 提供；阈值 **3200 ms**（整套并行最慢 2450 + ~30%）。
+- 前后数字：dist 总量 **1711.7 → 1662.8 KB**；首屏 JS 131.2（不变）；启动可交互最慢 **2264 → 2096 ms**（整套并行 2450 ms）。
+- **结论：`songs.ts` 不该拆**（实测记录在 `docs/notes/bundle-budget.md` 第四节）——用临时 manualChunks 量到 index.js raw −16.1 KB、新 chunk +16.2 KB，**dist 总量净 +93 B**，首屏 gzip 只 −3.7 KB；代价是 `midiLibrary` 是 eager 单例（构造函数里就 `midiPlayer.load` + persist），拆懒要把初始化改异步并动 store/PlayerPanel/两个 vitest，等于拿启动时间换 3.7 KB，不值。它在首屏的唯一路径：`App.tsx → store.ts → midi/library.ts → songs.ts`。
+- **还能怎么省**（文档列出）：最大未利用项是 `wasm-opt -Oz`（两核 560 KB raw），本机无该二进制故未做。
+- 验收：完整 `npm run verify` exit 0；Chromium E2E **124 passed / 5 skipped**；红线全绿（预设 81 不变、DSP 0.030806 / 2× 0.030946、零分配 0 violations、arena 4770 KB free）。
+
 **P8.5 体积与启动预算**（1 批）
 - 要点：初始 JS 150.8 → **140 KB gzip**（`songs.ts` 按需化或改曲包、指南/更新记录再拆）；新增「首屏可交互时间」预算（E2E 用 PerformanceObserver 测）。
 - 验收：收紧后 `verify:budget` 仍绿；启动耗时不回退。
@@ -182,7 +189,7 @@ C 多轨与时间线、B 分层与分享、A 效果路由图（引擎 + 编辑�
 | 11 | P5.4 录音 take ✅ v1.91.0 | — | 中 |
 | 12 | P6.4 效果补强 ✅ v1.92.0 / P6.5 过采样 ✅ v1.93.0 | — | 中 |
 | 13 | P7.2 图内调制 ✅ v1.95.0 / P7.3 图模板 ✅ v1.95.0 | P7.1 | 中大 |
-| 14 | P8.5 体积与启动预算（收尾） | 全部 | 中 |
+| 14 | P8.5 体积与启动预算（收尾）✅ v1.96.0 | 全部 | 中 |
 
 ## 四、风险与对策
 

@@ -7,7 +7,7 @@
  * then reused, so a release build never depends on a rasteriser).
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -74,8 +74,50 @@ function has(cmd) {
   }
 }
 
+/**
+ * Ship PNG8 icons, not PNG24.
+ *
+ * The mark is three flat colours plus an antialiased rim, so a 256-colour
+ * palette is visually identical (measured RMSE 0.06–0.10 % of full scale) while
+ * the four PNGs drop from 73.7 KB to 24.7 KB. The manifest icons are part of
+ * `dist/`, and the byte budget there counts raw file size, so this is 49 KB —
+ * 2.9 % of the whole payload — for no user-visible change.
+ *
+ * ImageMagick is optional, exactly like the rasteriser: without it the existing
+ * (already shrunk) PNGs are kept, and `npm run build` never invokes this script.
+ */
+const shrinkPng = (pngPath) => {
+  if (!existsSync(pngPath)) return;
+  if (!has('magick')) {
+    console.warn(`[icons] no ImageMagick; keeping ${pngPath} as committed`);
+    return;
+  }
+  const before = statSync(pngPath).size;
+  // The temp file must keep a `.png` extension: ImageMagick picks its *coder*
+  // from the output extension, and the `PNG8:`/`.png8` coder quantises with a
+  // visibly worse palette (RMSE 0.71 % vs 0.06 % here) for barely fewer bytes.
+  const tmp = `${pngPath}.tmp.png`;
+  try {
+    execFileSync(
+      'magick',
+      [pngPath, '-strip', '-colors', '256', '-define', 'png:compression-level=9', tmp],
+      { stdio: 'ignore' },
+    );
+    renameSync(tmp, pngPath);
+    console.log(`[icons] png8 ${pngPath} ${before} -> ${statSync(pngPath).size} bytes`);
+  } catch (err) {
+    console.warn(`[icons] png8 failed for ${pngPath}: ${err.message}`);
+    if (existsSync(tmp)) unlinkSync(tmp);
+  }
+};
+
 raster(resolve(icons, 'icon-192.svg'), resolve(icons, 'icon-192.png'), 192);
 raster(resolve(icons, 'icon-512.svg'), resolve(icons, 'icon-512.png'), 512);
 raster(resolve(icons, 'maskable-512.svg'), resolve(icons, 'maskable-512.png'), 512);
 raster(resolve(icons, 'favicon.svg'), resolve(icons, 'apple-touch-icon.png'), 180);
+// Shrink whatever is on disk, so a machine with a rasteriser but no ImageMagick
+// still ends up with the committed (small) PNGs rather than freshly fat ones.
+for (const png of ['icon-192.png', 'icon-512.png', 'maskable-512.png', 'apple-touch-icon.png']) {
+  shrinkPng(resolve(icons, png));
+}
 console.log(`[icons] ${existsSync(resolve(icons, 'icon-512.png')) ? 'ok' : 'SVG only'}`);

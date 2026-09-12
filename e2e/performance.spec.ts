@@ -76,6 +76,107 @@ test.describe('envelope handle dragging on touch', () => {
 });
 
 /**
+ * First-interactive budget (P8.5).
+ *
+ * What is measured, and from where:
+ *   * The clock is the page's own `performance.now()`, whose zero is
+ *     `performance.timeOrigin` — the navigation start — so no timestamp crosses
+ *     a CDP round trip and there is nothing to align by hand.
+ *   * The observable is `.start-btn`, the gate's "启动音频引擎" button: the same
+ *     element every other spec's `boot()` taps. "Interactive" is the moment the
+ *     paint observer reports a first-contentful-paint while that button is in
+ *     the DOM and enabled (`disabled` is only ever true while a start is
+ *     already in flight); if the button turns up *after* that paint, the next
+ *     animation frame resolves it. Paint is part of the definition on purpose:
+ *     this box measures the button in the DOM at ~190 ms but the first paint of
+ *     it at ~1 250 ms, so a DOM-only number would report a moment when the user
+ *     still sees an empty screen.
+ *   * `addInitScript` installs the poller before a single app byte runs, and a
+ *     `PerformanceObserver` on `paint` supplies the FCP gate; engines without
+ *     paint timing fall back to the first frame that shows an enabled button.
+ *
+ * Measured here (headless Chromium, software rendering, `vite preview`, dist
+ * build — which is why the numbers are in the seconds, not the tens of ms):
+ *   before P8.5 (1711.7 KB dist): 1 561 / 1 815 / 1 870 / 2 132 / 2 264 ms
+ *   after  P8.5 (1662.8 KB dist): 1 595 / 1 872 / 1 878 / 1 971 / 1 973 / 2 096 ms
+ *   in the full parallel `test:e2e` run: 2 450 ms (other workers booting too)
+ * The icons change is off the critical path, so the before/after sides overlap:
+ * boot time did not move. The budget is the slowest run seen under the real
+ * suite (2 450 ms) plus ~30 %: it catches a boot that has actually regressed (an
+ * extra round trip, a chunk that stopped being lazy, a blocking main-thread
+ * task) without policing a busy host by a frame. `npm run verify` does not run
+ * E2E; `npm run test:e2e` does.
+ */
+const BOOT_BUDGET_MS = 3200;
+
+test.describe('first interactive', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test('the start gate is clickable and painted inside the boot budget', async ({ page }) => {
+    await page.addInitScript(() => {
+      const boot = { interactive: -1, fcp: -1 };
+      (window as unknown as { __gs1Boot: typeof boot }).__gs1Boot = boot;
+      let painted = false;
+      let done = false;
+      const buttonReady = () => {
+        const button = document.querySelector<HTMLButtonElement>('.start-btn');
+        return Boolean(button && !button.disabled);
+      };
+      const settle = () => {
+        if (done || !painted || !buttonReady()) return;
+        done = true;
+        boot.interactive = performance.now();
+      };
+      try {
+        new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            if (entry.name === 'first-contentful-paint') {
+              boot.fcp = entry.startTime;
+              painted = true;
+              settle();
+            }
+          }
+        }).observe({ type: 'paint', buffered: true });
+      } catch {
+        // No paint timing anywhere: fall back to "the first frame that shows an
+        // enabled button", which is the DOM-only reading this budget replaced.
+        painted = true;
+      }
+      const tick = () => {
+        settle();
+        if (!done) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+
+    await page.goto('/', { waitUntil: 'load' });
+    await expect(page.locator('.start-btn')).toBeEnabled();
+    // The FCP entry is delivered as its own task, so give it a moment; if it
+    // never lands the assertion below fails with a readable message.
+    await page
+      .waitForFunction(
+        () => (window as unknown as { __gs1Boot: { interactive: number } }).__gs1Boot.interactive >= 0,
+        undefined,
+        { timeout: 8_000 },
+      )
+      .catch(() => {});
+    const boot = await page.evaluate(
+      () =>
+        (window as unknown as { __gs1Boot: { interactive: number; fcp: number } }).__gs1Boot,
+    );
+    const fcp = boot.fcp >= 0 ? `${boot.fcp.toFixed(0)} ms` : 'n/a';
+    console.log(
+      `[boot] interactive ${boot.interactive.toFixed(0)} ms · FCP ${fcp} · budget ${BOOT_BUDGET_MS} ms`,
+    );
+    expect(boot.interactive, 'the start button never became clickable').toBeGreaterThan(0);
+    expect(
+      boot.interactive,
+      `interactive at ${boot.interactive.toFixed(0)} ms, FCP ${fcp} (budget ${BOOT_BUDGET_MS} ms)`,
+    ).toBeLessThanOrEqual(BOOT_BUDGET_MS);
+  });
+});
+
+/**
  * The interface has to stay out of the browser's way.
  *
  * Everything on this page used to repaint every animation frame whether or not

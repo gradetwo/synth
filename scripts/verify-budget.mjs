@@ -49,20 +49,27 @@ const wasmGz = files
   .reduce((max, file) => Math.max(max, gz(file)), 0);
 const lame = files.find((file) => /lamejs-.*\.js$/.test(file));
 
+// Every number below is "what this build measured + a small margin", not a
+// round target. They were re-based in P8.5 (v1.95.0) after the payload was
+// clawed back: the four PWA icons moved from PNG24 to a PNG8 palette (73.7 KB
+// -> 24.7 KB, visually identical, measured RMSE <= 0.10 %), which took the
+// whole dist from 1711.7 KB to 1662.8 KB. That is why the old 1712 KB ceiling
+// (raised from 1700 KB for the P6.4 bit-crusher and shaping EQ — a trade that is
+// now repaid in full) could be *lowered* rather than raised again, and why the
+// margin is now ~0.5 % instead of the ~12 KB that P6.4 spent: the next batch
+// that grows the payload has to come back and name its trade here.
 const BUDGETS = {
-  // 1700 → 1712 KB when the bit-crusher and the shaping EQ landed (P6.4):
-  // +14.4 KB of wasm (both cores) and +2.9 KB of JS for two effects that are
-  // off by default. Measured, not guessed — and P8.5 is the batch that has to
-  // claw it back, which is why this comment names the trade.
-  total: 1712 * 1024,
+  // Measured 1662.8 KB. +9.2 KB (+0.55 %).
+  total: 1672 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
-  // Raised from 150 KB when the routing graph and song sharing landed
-  // (measured 151.7 KB): the editor, piano roll, drawers and the flow canvas
-  // were moved into their own chunks first, and this covers what is genuinely
-  // needed to paint the first screen.
-  initialJs: 165 * 1024,
-  initialCss: 22 * 1024,
-  wasm: 230 * 1024,
+  // Measured 131.2 KB gzip. +2.8 KB (+2.1 %); the P8.5 plan target was 140 KB,
+  // so this is the tight version of an already-reached goal.
+  initialJs: 134 * 1024,
+  // Measured 19.7 KB gzip. +1.3 KB.
+  initialCss: 21 * 1024,
+  // The larger of the two cores. Measured 67.9 KB gzip. +2.1 KB: any change to
+  // the DSP core should be a deliberate, reviewed bump.
+  wasm: 70 * 1024,
 };
 
 let failures = 0;

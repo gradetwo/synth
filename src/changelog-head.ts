@@ -16,17 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.95.0',
+    version: '1.96.0',
     date: '2026-09-12',
-    kind: 'feature',
+    kind: 'fix',
     items: [
       [
-        '**路由图里可以拉调制线了**：新增 **LFO1 / LFO2 / ENV** 三个调制源卡片，拖到任意节点的输入/输出增益即可调制它——虚线表示这条边，线上的深度可改可删；也可用键盘可达的「MOD」一行按源/目标/深度设置。深度为 0 时与没有调制**逐位相同**；它与原有 8 槽调制矩阵并存（矩阵管音高/滤波/音量等声部参数，图内边管节点增益）。',
-        '**Modulation wires in the routing graph**: three source cards (**LFO1, LFO2, ENV**) drag onto any node’s input or output gain to modulate it — a dashed wire shows the edge and its depth chip can be edited or deleted, and the keyboard-reachable **MOD** row does the same without dragging. At depth 0 the render is **bit-for-bit** what it was; it sits beside the eight-slot matrix (voice parameters) rather than replacing it (node gains).',
-      ],
-      [
-        '**效果图可以存成模板**：图头部多了模板一栏，把当前的节点类型、并联、连线与增益**存为模板**，一键套用；内置 5 例（经典串联、双延迟、并行混响、失真分路、空图）。模板存在**工作区**、不进音色也不进分享码，读取时按白名单校验（只认图结构与节点增益，不会碰到混响模式、IR 或音色参数）。',
-        '**Effect graphs can be saved as templates**: the graph header can save the current node kinds, parallel sends, wires and gains as a template and apply it in one click, with five built-ins (classic chain, dual delay, parallel reverb, drive split, empty). Templates live in the **workspace**, never in a patch or share link, and load through a whitelist (graph structure and node gains only).',
+        '**装得更小、启动更快，而且启动时间也有了门禁**：图标从 24 位 PNG 换成 8 位（肉眼无差别，体积少约 49 KB）；从打开页面到「启动音频引擎」可点的实测最慢约 2.1 秒，现在由 E2E 门禁盯着（超过约 3.2 秒就红）。体积门禁同时**收紧**：总量 1712→1672 KB、首屏 JS 165→134 KB、CSS 22→21 KB、内核 230→70 KB，以后体积回涨会当场被发现。',
+        '**A smaller download, a faster start, and a guard on startup time**: the icons went from 24-bit PNG to 8-bit (visually indistinguishable, about 49 KB less); opening the page to the Start button being clickable measures at worst about 2.1 s and is now held by an end-to-end gate that fails past about 3.2 s. The size budgets were tightened at the same time — total 1712→1672 KB, first-screen JS 165→134 KB, CSS 22→21 KB, core 230→70 KB — so a future regression shows up immediately.',
       ],
     ],
   };
