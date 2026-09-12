@@ -1347,6 +1347,19 @@ input,textarea,[contenteditable='true']{
 .layer-btn.on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
 .layer-vol,.layer-pan{width:74px;height:20px;flex:none;accent-color:var(--accent);
   touch-action:pan-y;background:none}
+/* Clip lane: one block per clip, as wide as the whole arrangement it plays,
+   with a tick at every loop point. */
+.clip-lane{position:relative;flex:1 1 100%;height:15px;border-radius:4px;margin:2px 0 0;
+  background:var(--bg-inset);border:1px solid var(--line-soft-2);overflow:hidden}
+.clip-block{position:absolute;top:1px;bottom:1px;padding:0;border-radius:3px;overflow:hidden;
+  border:1px solid var(--accent-dim);background:color-mix(in srgb,var(--accent) 22%,transparent);
+  color:var(--txt-2);font:600 8.5px/1 var(--grot);text-align:left;cursor:pointer}
+.clip-block:hover{border-color:var(--accent)}
+.clip-block.sel{background:color-mix(in srgb,var(--accent) 45%,transparent);color:var(--txt-1)}
+.clip-name{position:absolute;left:4px;top:50%;transform:translateY(-50%);white-space:nowrap;
+  max-width:calc(100% - 6px);overflow:hidden;text-overflow:ellipsis}
+.clip-loop{position:absolute;top:0;bottom:0;width:1px;background:color-mix(in srgb,var(--accent) 70%,transparent)}
+.clip-info{flex:none;font:600 10px/1 var(--mono);color:var(--accent);padding:0 2px}
 /* Layer mini-map: the arrangement as a bar of note blocks plus a playhead. */
 .layer-map{position:relative;flex:1 1 auto;min-width:0;height:14px;border-radius:4px;
   background:var(--bg-socket);border:1px solid var(--line-soft-2);overflow:hidden}

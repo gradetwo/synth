@@ -156,23 +156,28 @@ export function layerNotes(song: MidiSong, layerIndex: number): MidiNote[] {
   return tracks[layerIndex]?.notes ?? [];
 }
 
-/** Open one layer of a song as an editable document. */
 /** An empty document, for a library with no track in it. */
 export function emptyDoc(): RollDoc {
   return { name: '', bpm: 120, beats: 4, notes: [] };
 }
 
-export function songLayerToRoll(song: MidiSong, layerIndex = 0): RollDoc {
-  const bpm = clamp(Math.round(song.bpm || 120), MIN_BPM, MAX_BPM);
-  const spb = secondsPerBeat(bpm);
-  const notes: RollNote[] = layerNotes(song, layerIndex).map((n) => ({
+/** A note list in seconds as an editable document, at a given tempo. */
+export function notesToRoll(notes: MidiNote[], bpm: number, name: string): RollDoc {
+  const tempo = clamp(Math.round(bpm || 120), MIN_BPM, MAX_BPM);
+  const spb = secondsPerBeat(tempo);
+  const out: RollNote[] = notes.map((n) => ({
     id: nextId(),
     note: clamp(Math.round(n.note), MIN_NOTE, MAX_NOTE),
     start: tidy(n.start / spb),
     length: Math.max(MIN_LENGTH, tidy(n.duration / spb)),
     velocity: clamp(n.velocity, 0.05, 1),
   }));
-  return { name: song.name, bpm, beats: fitBeats(notes), notes };
+  return { name, bpm: tempo, beats: fitBeats(out), notes: out };
+}
+
+/** Open one layer of a song as an editable document. */
+export function songLayerToRoll(song: MidiSong, layerIndex = 0): RollDoc {
+  return notesToRoll(layerNotes(song, layerIndex), song.bpm, song.name);
 }
 
 /**

@@ -5,7 +5,7 @@ import { toast } from './Toast';
 import { haptic, HAPTIC } from '@/hooks/useInputMode';
 import { midiPlayer, type PlayerState } from '@/midi/player';
 import { recorder, type RecorderState } from '@/midi/recorder';
-import { parseMidi, songTracks } from '@/midi/smf';
+import { parseMidi, songTracks, type MidiNote } from '@/midi/smf';
 import {
   EDGE_PX,
   dragSeconds,
@@ -17,6 +17,7 @@ import {
   resizeNote,
 } from '@/midi/timeline';
 import { MIN_LENGTH, removeNote, rollToSeconds, updateNote, type RollDoc } from '@/midi/roll';
+import { clipsDuration, clipsOf, clipsOfLayer, expandClips } from '@/midi/clips';
 import { rollSession, useRollSession } from '@/state/roll';
 import { midiLibrary, trackTitle, type TrackGroup } from '@/midi/library';
 import { store } from '@/state/store';
@@ -151,7 +152,26 @@ export function PlayerPanel({
   const maps = useMemo(() => {
     const song = current?.song ?? null;
     if (!song) return [];
-    const worked = roll.trackId === current?.id ? rollToSeconds(roll.doc) : null;
+    // The layer being edited reads from the session — a drag updates the working
+    // copy long before it is written out — and when that layer is arranged, what
+    // it draws is the *arrangement* of the clip being edited, so the loops are
+    // visible while they are being shaped.
+    let worked: (MidiNote & { id: string })[] | null = null;
+    if (roll.trackId === current?.id) {
+      if (roll.clipId) {
+        const clips = clipsOf(song).map((clip) =>
+          clip.id === roll.clipId ? { ...clip, notes: rollToSeconds(roll.doc) } : clip,
+        );
+        // The looped view: an id is only used as the block key in the strip, and
+        // the expansion is what the lane above is showing.
+        worked = expandClips(clipsOfLayer(clips, roll.layerIndex)).notes.map((note, i) => ({
+          ...note,
+          id: `x${i}`,
+        }));
+      } else {
+        worked = rollToSeconds(roll.doc);
+      }
+    }
     return songTracks(song).map((track, index) =>
       layoutNotes(
         worked && index === roll.layerIndex ? worked : track.notes,
@@ -160,6 +180,18 @@ export function PlayerPanel({
       ),
     );
   }, [current, layers, roll]);
+
+  /** The clips that arrange each layer, and the scale the lane is drawn on. */
+  const clipRows = useMemo(() => {
+    const song = current?.song ?? null;
+    if (!song) return { rows: [] as ReturnType<typeof clipsOfLayer>[], scale: 1 };
+    const all = clipsOf(song);
+    return {
+      rows: songTracks(song).map((_track, index) => clipsOfLayer(all, index)),
+      scale: Math.max(song.duration, clipsDuration(all), 1),
+    };
+  }, [current]);
+  const selectedClip = roll.clipId ? rollSession.clip(roll.clipId) : undefined;
 
   /** Width of the resize handle in bar-percent units, from the pixel width. */
   const edgePercent = (width: number): number => Math.min(12, (EDGE_PX / Math.max(1, width)) * 100);
@@ -360,6 +392,112 @@ export function PlayerPanel({
             <div className="layer-tools">
               <button
                 type="button"
+                className="layer-mode"
+                data-act="clip-fold"
+                title={t('clip.foldHint')}
+                onClick={() => {
+                  haptic();
+                  rollSession.fold(roll.layerIndex, trackTitle(current));
+                  setSelected(null);
+                }}
+              >
+                {t('clip.fold')}
+              </button>
+              {selectedClip ? (
+                <>
+                  <span className="clip-info" data-act="clip-info">
+                    {selectedClip.name} · {selectedClip.repeat}×
+                  </span>
+                  <button
+                    type="button"
+                    className="layer-edit-btn"
+                    data-act="clip-earlier"
+                    aria-label={t('clip.moveEarlier')}
+                    title={t('clip.moveEarlier')}
+                    onClick={() => rollSession.nudgeClip(selectedClip.id, -selectedClip.length)}
+                  >
+                    ◀
+                  </button>
+                  <button
+                    type="button"
+                    className="layer-edit-btn"
+                    data-act="clip-later"
+                    aria-label={t('clip.moveLater')}
+                    title={t('clip.moveLater')}
+                    onClick={() => rollSession.nudgeClip(selectedClip.id, selectedClip.length)}
+                  >
+                    ▶
+                  </button>
+                  <button
+                    type="button"
+                    className="layer-edit-btn"
+                    data-act="clip-copy"
+                    aria-label={t('clip.copy')}
+                    title={t('clip.copy')}
+                    onClick={() => {
+                      haptic();
+                      rollSession.copy(selectedClip.id);
+                    }}
+                  >
+                    ⧉
+                  </button>
+                  <button
+                    type="button"
+                    className="layer-edit-btn"
+                    data-act="clip-shorter"
+                    aria-label={t('clip.windowShorter')}
+                    title={t('clip.windowShorter')}
+                    onClick={() => rollSession.resize(selectedClip.id, -selectedClip.length / 4)}
+                  >
+                    −
+                  </button>
+                  <button
+                    type="button"
+                    className="layer-edit-btn"
+                    data-act="clip-longer"
+                    aria-label={t('clip.windowLonger')}
+                    title={t('clip.windowLonger')}
+                    onClick={() => rollSession.resize(selectedClip.id, selectedClip.length / 4)}
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    className="layer-edit-btn"
+                    data-act="clip-fewer"
+                    aria-label={t('clip.repeatLess')}
+                    title={t('clip.repeatLess')}
+                    onClick={() => rollSession.repeat(selectedClip.id, -1)}
+                  >
+                    ×−
+                  </button>
+                  <button
+                    type="button"
+                    className="layer-edit-btn"
+                    data-act="clip-more"
+                    aria-label={t('clip.repeatMore')}
+                    title={t('clip.repeatMore')}
+                    onClick={() => rollSession.repeat(selectedClip.id, 1)}
+                  >
+                    ×+
+                  </button>
+                  <button
+                    type="button"
+                    className="layer-edit-btn del"
+                    data-act="clip-delete"
+                    aria-label={t('clip.delete')}
+                    title={t('clip.delete')}
+                    onClick={() => {
+                      haptic(HAPTIC.medium);
+                      rollSession.remove(selectedClip.id);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </>
+              ) : null}
+              <button
+                type="button"
                 className={`layer-mode${editNotes ? ' on' : ''}`}
                 data-act="strip-mode"
                 aria-pressed={editNotes}
@@ -378,6 +516,43 @@ export function PlayerPanel({
             <div className="layer-strip" data-layers={layers.length} data-mode={editNotes ? 'notes' : 'arrange'}>
               {layers.map((layer, index) => (
               <div className="layer-row" key={`${layer.name}-${index}`} data-layer={index}>
+                {/* Arrangement lane: the layer's clips, placed and repeated.
+                    A clip is a window over its own material, so its block is as
+                    wide as the whole arrangement it plays, with a tick at every
+                    loop point. */}
+                {(clipRows.rows[index] ?? []).length ? (
+                  <div className="clip-lane" data-act="clips" aria-label={t('clip.lane')}>
+                    {(clipRows.rows[index] ?? []).map((clip) => (
+                      <button
+                        key={clip.id}
+                        type="button"
+                        className={`clip-block${clip.id === roll.clipId ? ' sel' : ''}`}
+                        data-act="clip"
+                        data-clip={clip.id}
+                        style={{
+                          left: `${(clip.start / clipRows.scale) * 100}%`,
+                          width: `${Math.max(2, ((clip.length * clip.repeat) / clipRows.scale) * 100)}%`,
+                        }}
+                        title={`${clip.name} · ${clip.repeat}×`}
+                        onClick={() => {
+                          haptic();
+                          rollSession.setClip(clip.id);
+                          setSelected(null);
+                        }}
+                      >
+                        <span className="clip-name">{clip.name}</span>
+                        {Array.from({ length: Math.min(clip.repeat, 32) - 1 }, (_, mark) => (
+                          <span
+                            key={mark}
+                            className="clip-loop"
+                            style={{ left: `${((mark + 1) / clip.repeat) * 100}%` }}
+                          />
+                        ))}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
                 {/* The layer's notes as a bar. Drag a note to move it, drag its
                     right edge to resize, double-click to delete; drag the
                     background to move the whole layer, tap it to scrub. */}

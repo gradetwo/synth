@@ -7,6 +7,8 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import { SCHEMA_VERSION } from './persist';
+import { MidiLibrary } from '@/midi/library';
+import type { MidiSong } from '@/midi/smf';
 import { SynthStore } from './store';
 import { SCENES_KEY } from './scenes';
 import { decodePatch, encodePatch } from './share';
@@ -15,6 +17,7 @@ import { DEFAULT_PARAMS, Param, createDefaultState } from '@/audio/params';
 const STATE_KEY = 'gs1:state:v1';
 const USER_KEY = 'gs1:user-presets:v1';
 const LAYOUT_KEY = 'gs1:layout:v1';
+const LIBRARY_KEY = 'gs1:library:v1';
 
 /** A state document as version 1 wrote it: flat, no schema, no envelope. */
 function legacyState(params: Record<number, number>, presetId?: string) {
@@ -54,6 +57,46 @@ describe('document migration', () => {
     const store = new SynthStore();
     expect(store.getSnapshot().layout.polyphony).toBe(8);
     expect(store.getSnapshot().scenes.map((scene) => scene.id)).toEqual(['s1']);
+  });
+
+  it('reads a schema-2 library, clips and all (P5.2 is an additive bump)', () => {
+    // Schema 3 added arrangement clips to a song. A document written under 2 has
+    // no clips and has to read back exactly as it played — this is the migration
+    // sample the batch asks for.
+    const two: MidiSong = {
+      name: 'old song',
+      bpm: 120,
+      duration: 1,
+      notes: [{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }],
+    };
+    localStorage.setItem(
+      LIBRARY_KEY,
+      JSON.stringify({
+        schema: 2,
+        data: {
+          tracks: [
+            {
+              id: 'file:old.mid:1',
+              title: ['old', 'old'],
+              composer: 'imported',
+              group: 'imported',
+              song: two,
+              mix: [{ muted: true, volume: 0.4, pan: -0.5, offset: -1.5 }],
+            },
+          ],
+          currentId: 'file:old.mid:1',
+        },
+      }),
+    );
+    const library = new MidiLibrary();
+    const stored = library.getCurrent()!;
+    expect(stored.id).toBe('file:old.mid:1');
+    expect(stored.song.notes).toEqual(two.notes);
+    expect(stored.song.clips).toBeUndefined();
+    expect(stored.mix?.[0]).toMatchObject({ muted: true, volume: 0.4 });
+    // Re-writing it stores the current schema, so the next load is a 3.
+    const written = JSON.parse(localStorage.getItem(LIBRARY_KEY)!) as { schema: number };
+    expect(written.schema).toBe(SCHEMA_VERSION);
   });
 
   it('loads user presets from a bare array and drops broken entries', () => {

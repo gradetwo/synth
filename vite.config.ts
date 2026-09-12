@@ -31,6 +31,28 @@ function prettyUrlPlugin(): Plugin {
   };
 }
 
+/**
+ * Ship one font format, not two.
+ *
+ * `@fontsource/*` declares every face as woff2 *plus* a woff fallback for
+ * browsers older than anything this synth can run in — it needs WebAssembly, an
+ * AudioWorklet and ES2022. Those woff files are 108 KB of the payload and the
+ * same again in the offline cache, so the fallback is dropped here, before Vite
+ * emits anything: the file never reaches `dist/` and the service worker never
+ * precaches it.
+ */
+function woff2Only(): Plugin {
+  return {
+    name: 'gs1-fonts-woff2',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.includes('@fontsource') || !id.endsWith('.css')) return null;
+      const stripped = code.replace(/,\s*url\([^)]+\.woff\)\s*format\('woff'\)/g, '');
+      return stripped === code ? null : { code: stripped, map: null };
+    },
+  };
+}
+
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf8')) as {
   version: string;
 };
@@ -39,7 +61,7 @@ const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'ut
 // runtime (JS/CSS, the Rust WASM core, the AudioWorklet processor, self-hosted
 // fonts and icons) is emitted into `dist/` and precached by the service worker.
 export default defineConfig({
-  plugins: [react(), prettyUrlPlugin()],
+  plugins: [woff2Only(), react(), prettyUrlPlugin()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },

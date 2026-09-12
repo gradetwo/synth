@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { midiLibrary, type Track } from '@/midi/library';
 import { midiPlayer } from '@/midi/player';
 import { addNote, removeNote, type RollDoc } from '@/midi/roll';
+import { foldLayer, makeClip, withClips } from '@/midi/clips';
 import type { MidiSong } from '@/midi/smf';
 import { rollSession } from './roll';
 
@@ -171,5 +172,50 @@ describe('editing session', () => {
     // Settling on the same document it already has is not a step either.
     rollSession.settle(rollSession.getDoc());
     expect(rollSession.getState().canUndo).toBe(false);
+  });
+});
+
+describe('editing a clip', () => {
+  const arranged = (): MidiSong => {
+    const clip = makeClip('loop', [{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }], {
+      start: 0,
+      length: 1,
+      repeat: 3,
+    });
+    return withClips(twoLayerSong(), [clip]);
+  };
+
+  it('edits the clip a layer is arranged with, and re-expands it', () => {
+    putUserTrack(arranged());
+    rollSession.open(0);
+    // The session is pointed at the clip, not at the expansion: its document is
+    // the material, which is where an edit belongs.
+    expect(rollSession.getState().clipId).not.toBeNull();
+    expect(rollSession.getDoc().notes.map((n) => n.note)).toEqual([60]);
+    expect(storedLayer(0).map((n) => n.note)).toEqual([60, 60, 60]);
+
+    rollSession.commit(addNote(rollSession.getDoc(), 72, 0, 0.5).doc, { sync: true });
+    // The clip grew, so every repeat grew with it…
+    expect(storedLayer(0).map((n) => n.note)).toEqual([60, 72, 60, 72, 60, 72]);
+    rollSession.undo();
+    expect(storedLayer(0).map((n) => n.note)).toEqual([60, 60, 60]);
+  });
+
+  it('follows the layer when there is no arrangement', () => {
+    putUserTrack(twoLayerSong());
+    rollSession.open(0);
+    expect(rollSession.getState().clipId).toBeNull();
+    expect(rollSession.getDoc().notes).toHaveLength(1);
+  });
+
+  it('keeps the other layers playing when one is arranged', () => {
+    const song = twoLayerSong();
+    song.notes = [...song.tracks![0].notes, ...song.tracks![1].notes];
+    const folded = foldLayer(song, 0, { name: 'Lead', bpm: 120 });
+    putUserTrack(folded.song);
+    rollSession.open(0);
+    expect(rollSession.getState().clipId).toBe(folded.clip.id);
+    // The bass layer has no clips, so its note is still the layer's own.
+    expect(storedLayer(1).map((n) => n.note)).toEqual([67]);
   });
 });

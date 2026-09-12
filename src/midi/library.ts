@@ -8,6 +8,7 @@
 import { getLang } from '@/i18n';
 import { midiPlayer } from './player';
 import { DEMO_SONGS, specToSong } from './songs';
+import { normalizeClips, withClips } from './clips';
 import type { MidiSong } from './smf';
 import { unwrap, wrap } from '@/state/persist';
 
@@ -69,6 +70,21 @@ function validSong(value: unknown): value is MidiSong {
   );
 }
 
+/**
+ * A song as it comes off disk.
+ *
+ * A stored arrangement is re-expanded rather than trusted: the flat note list is
+ * what plays, and if a file was edited by hand (or written by a build with a
+ * different expansion rule) the clips are the source of truth. Broken clips are
+ * dropped, and a song whose clips all turn out to be broken keeps the flat list
+ * it was stored with.
+ */
+function readSong(value: MidiSong): MidiSong {
+  if (!value.clips) return value;
+  const clips = normalizeClips(value.clips);
+  return clips.length ? withClips(value, clips) : { ...value, clips: undefined };
+}
+
 function readStoredTracks(): Track[] {
   try {
     const raw = localStorage.getItem(KEY);
@@ -86,6 +102,7 @@ function readStoredTracks(): Track[] {
       if (typeof track.id !== 'string' || track.id.startsWith('demo:')) continue;
       if (!Array.isArray(track.title) || track.title.length < 2) continue;
       if (!validSong(track.song)) continue;
+      const song = readSong(track.song);
       const mix = Array.isArray(track.mix)
         ? track.mix
             .filter((entry) => entry && typeof entry === 'object')
@@ -106,7 +123,7 @@ function readStoredTracks(): Track[] {
                   : 0,
             }))
         : undefined;
-      out.push({ ...track, mix, group: track.id.startsWith('clip') ? 'clip' : 'imported' });
+      out.push({ ...track, song, mix, group: track.id.startsWith('clip') ? 'clip' : 'imported' });
     }
     return out;
   } catch {
@@ -126,7 +143,8 @@ function readStoredId(): string | null {
   }
 }
 
-class MidiLibrary {
+/** Exported for the migration tests, which build one over a stored document. */
+export class MidiLibrary {
   private tracks: Track[] = builtinTracks();
   private currentId: string;
   private listeners = new Set<() => void>();

@@ -22,10 +22,26 @@
  * drag emits one per pointermove without that debounce.
  */
 import { useSyncExternalStore } from 'react';
+import {
+  CLIP_MIN_LENGTH,
+  clipWithNotes,
+  clipsOf,
+  clipsOfLayer,
+  duplicateClip,
+  foldLayer,
+  moveClip,
+  removeClip,
+  repeatClip,
+  resizeClip,
+  withClips,
+  type MidiClip,
+} from '@/midi/clips';
 import { midiLibrary } from '@/midi/library';
 import { midiPlayer } from '@/midi/player';
 import {
   emptyDoc,
+  notesToRoll,
+  rollToNotes,
   secondsPerBeat,
   songLayerToRoll,
   updateNote,
@@ -49,6 +65,11 @@ export interface RollState {
   trackId: string | null;
   /** Which layer of that track is loaded. */
   layerIndex: number;
+  /**
+   * Which of that layer's arrangement clips is loaded, when the layer has any
+   * (P5.2). Null means the layer's notes themselves are the document.
+   */
+  clipId: string | null;
   /** Grid in beats, shared by both editors. */
   snap: number;
   canUndo: boolean;
@@ -69,6 +90,7 @@ class RollSession {
   private base: MidiSong | null = null;
   private trackId: string | null = null;
   private layerIndex = 0;
+  private clipId: string | null = null;
   private snap = STRIP_SNAP;
   private past: RollDoc[] = [];
   private future: RollDoc[] = [];
@@ -99,6 +121,7 @@ class RollSession {
       doc: this.doc,
       trackId: this.trackId,
       layerIndex: this.layerIndex,
+      clipId: this.clipId,
       snap: this.snap,
       canUndo: this.past.length > 0,
       canRedo: this.future.length > 0,
@@ -125,9 +148,15 @@ class RollSession {
     return this.doc;
   }
 
-  /** The song the document belongs to, with the edited layer written back. */
+  /** The song the document belongs to, with the edit written back. */
   getSong(): MidiSong | null {
     if (!this.base) return null;
+    if (this.clipId) {
+      const clips = clipWithNotes(clipsOf(this.base), this.clipId, rollToNotes(this.doc));
+      // A clip that vanished (an undo, a track switch) falls back to the layer:
+      // the document is still the user's music, it just has nowhere else to go.
+      if (clips.some((clip) => clip.id === this.clipId)) return withClips(this.base, clips);
+    }
     return withLayerNotes(this.base, this.layerIndex, this.doc);
   }
 
@@ -144,14 +173,46 @@ class RollSession {
    * is clamped to the song's layers, so a stale index from a previous song
    * cannot point at nothing.
    */
-  open(layerIndex = this.layerIndex): void {
+  open(layerIndex = this.layerIndex, clipId?: string | null): void {
     const track = midiLibrary.getCurrent();
     this.base = track?.song ?? null;
     this.source = track?.song ?? null;
     this.trackId = track?.id ?? null;
     const layers = this.layerCount(track?.song ?? null);
     this.layerIndex = Math.max(0, Math.min(layerIndex, layers - 1));
-    this.doc = this.base ? songLayerToRoll(this.base, this.layerIndex) : emptyDoc();
+    // A layer with an arrangement is edited through its clips: the flat note
+    // list is their expansion, and editing that would be editing a copy.
+    const mine = this.base ? clipsOfLayer(clipsOf(this.base), this.layerIndex) : [];
+    const chosen =
+      clipId === null
+        ? null
+        : clipId !== undefined
+          ? (mine.find((clip) => clip.id === clipId) ?? null)
+          : (mine[0] ?? null);
+    this.clipId = chosen?.id ?? null;
+    this.doc = this.base ? this.documentFor() : emptyDoc();
+    this.past = [];
+    this.future = [];
+    this.emit();
+  }
+
+  /** The document the session is pointed at: a clip's notes, or the layer's. */
+  private documentFor(): RollDoc {
+    if (!this.base) return emptyDoc();
+    if (this.clipId) {
+      const clip = clipsOf(this.base).find((entry) => entry.id === this.clipId);
+      if (clip) return notesToRoll(clip.notes, this.base.bpm, clip.name);
+    }
+    return songLayerToRoll(this.base, this.layerIndex);
+  }
+
+  /** Switch to another clip of the current layer (the strip and the roll both do). */
+  setClip(clipId: string | null): void {
+    if (clipId === this.clipId) return;
+    this.clipId = clipId;
+    this.doc = this.documentFor();
+    // The document changed wholesale, so the history starts over, exactly as it
+    // does across a layer switch.
     this.past = [];
     this.future = [];
     this.emit();
@@ -167,8 +228,10 @@ class RollSession {
     if (index === this.layerIndex) return;
     const limit = this.layerCount(this.base);
     const next = Math.max(0, Math.min(index, limit - 1));
-    if (this.base) this.doc = songLayerToRoll(this.base, next);
     this.layerIndex = next;
+    // Each layer is edited through its own clips, if it has any.
+    this.clipId = this.base ? (clipsOfLayer(clipsOf(this.base), next)[0]?.id ?? null) : null;
+    if (this.base) this.doc = this.documentFor();
     // Undo across a layer switch would drop the user into another layer's
     // history; the document changed wholesale, so the stack starts over.
     this.past = [];
@@ -268,6 +331,8 @@ class RollSession {
         song,
         needsCopy && this.copyTitle ? { copyOf: this.copyTitle } : {},
       );
+      // What was written is what the next edit builds on, arrangement and all.
+      this.base = song;
       if (this.trackId !== before) {
         this.justCopied = true;
         this.copiedName = midiLibrary.getCurrent()?.title[0] ?? song.name;
@@ -345,6 +410,92 @@ class RollSession {
   nudge(id: string, patch: NotePatch, options: { record?: boolean } = {}): void {
     const next = updateNote(this.doc, id, patch);
     this.commit(next, { record: options.record ?? true, sync: true });
+  }
+
+  // ------------------------------------------------------------ arrangement
+
+  /**
+   * Change the arrangement (move a clip, repeat it, copy it…) and write it out.
+   *
+   * The clip list is part of the song, so a change goes through the same path a
+   * note edit does: persisted at once, one store history entry, the player
+   * reloaded with the listener's place kept.
+   */
+  arrange(mutate: (clips: MidiClip[]) => MidiClip[]): void {
+    if (!this.base) return;
+    const next = mutate(clipsOf(this.base));
+    const song = withClips(this.base, next);
+    this.base = song;
+    // A clip that is gone takes the document with it.
+    if (this.clipId && !next.some((clip) => clip.id === this.clipId)) {
+      this.clipId = next.find((clip) => (clip.layer ?? 0) === this.layerIndex)?.id ?? null;
+      this.doc = this.documentFor();
+      this.past = [];
+      this.future = [];
+    }
+    this.persist();
+    this.syncNow();
+    this.emit();
+  }
+
+  /** Fold one layer into a clip: its notes become the arrangement. */
+  fold(layerIndex: number, name?: string): string | null {
+    if (!this.base) return null;
+    const { song, clip } = foldLayer(this.base, layerIndex, { name });
+    this.base = song;
+    this.layerIndex = Math.max(0, Math.min(layerIndex, this.layerCount(song) - 1));
+    this.clipId = clip.id;
+    this.doc = this.documentFor();
+    this.past = [];
+    this.future = [];
+    this.persist();
+    this.syncNow();
+    this.emit();
+    return clip.id;
+  }
+
+  /** Auto-arrangement helpers, applied to whichever clip is selected. */
+  moveClip(id: string, start: number): void {
+    this.arrange((clips) => moveClip(clips, id, start));
+  }
+
+  nudgeClip(id: string, delta: number): void {
+    const clip = this.clip(id);
+    if (clip) this.arrange((clips) => moveClip(clips, id, clip.start + delta));
+  }
+
+  repeat(id: string, delta: number): void {
+    const clip = this.clip(id);
+    if (clip) this.arrange((clips) => repeatClip(clips, id, clip.repeat + delta));
+  }
+
+  /** Widen or narrow a clip's loop window, by a fraction of its own length. */
+  resize(id: string, delta: number): void {
+    const clip = this.clip(id);
+    if (clip) this.arrange((clips) => resizeClip(clips, id, Math.max(CLIP_MIN_LENGTH, clip.length + delta)));
+  }
+
+  copy(id: string): string | null {
+    const before = this.base ? clipsOf(this.base).map((clip) => clip.id) : [];
+    this.arrange((clips) => duplicateClip(clips, id));
+    const added = this.base ? clipsOf(this.base).find((clip) => !before.includes(clip.id)) : undefined;
+    if (added) this.setClip(added.id);
+    return added?.id ?? null;
+  }
+
+  remove(id: string): void {
+    this.arrange((clips) => removeClip(clips, id));
+  }
+
+  rename(id: string, name: string): void {
+    this.arrange((clips) =>
+      clips.map((clip) => (clip.id === id ? { ...clip, name: name.trim().slice(0, 60) || clip.name } : clip)),
+    );
+  }
+
+  /** One clip of the current song, by id. */
+  clip(id: string): MidiClip | undefined {
+    return this.base ? clipsOf(this.base).find((clip) => clip.id === id) : undefined;
   }
 
   /** Called once the copy message has been shown. */

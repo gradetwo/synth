@@ -6,6 +6,8 @@
  * seconds, so the player never has to think about ticks, channels or tracks.
  */
 
+import type { MidiClip } from './clips';
+
 export interface MidiNote {
   /** MIDI note number, 0–127. */
   note: number;
@@ -31,6 +33,13 @@ export interface MidiSong {
    * hand-built songs (a recording, a demo, a test fixture) stay valid.
    */
   tracks?: MidiTrack[];
+  /**
+   * The arrangement, when the song has one (P5.2): clips placed and repeated on
+   * the timeline. `notes` above is always their expansion, so the player, the
+   * exports and the piano roll keep reading one flat list. Optional: a song
+   * without clips is a song that is played as written.
+   */
+  clips?: MidiClip[];
 }
 
 /** The layers of a song, with the single-layer fallback for hand-built songs. */

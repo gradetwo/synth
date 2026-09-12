@@ -41,6 +41,7 @@ import {
 } from '@/midi/roll';
 import { rollSession, useRollSession } from '@/state/roll';
 import { songTracks } from '@/midi/smf';
+import { clipsOf, clipsOfLayer } from '@/midi/clips';
 import { Keyboard } from './Keyboard';
 import { TransportIcon } from './TransportIcon';
 
@@ -465,6 +466,8 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   const bars = Math.max(1, Math.round(doc.beats / 4));
   // Multi-track files are edited one layer at a time, exactly like the strip.
   const tracksInSong = track ? songTracks(track.song) : [];
+  // A layer arranged with clips is edited through them (P5.2).
+  const layerClips = track ? clipsOfLayer(clipsOf(track.song), session.layerIndex) : [];
   const touch = useInputMode() === 'touch';
   const light = useResolvedTheme() === 'light';
 
@@ -533,6 +536,26 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
             </span>
           </div>
 
+          {layerClips.length ? (
+            <label className="roll-field" title={t('clip.pickHint')}>
+              {t('clip.label')}
+              <select
+                value={session.clipId ?? ''}
+                data-act="roll-clip"
+                onChange={(event) => {
+                  haptic();
+                  rollSession.setClip(event.target.value || null);
+                  setSelected(null);
+                }}
+              >
+                {layerClips.map((clip) => (
+                  <option key={clip.id} value={clip.id}>
+                    {clip.name} ×{clip.repeat}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {tracksInSong.length > 1 ? (
             <label className="roll-field" title={t('roll.layerHint')}>
               {t('roll.layer')}

@@ -46,6 +46,7 @@ describe('MIDI library persistence', () => {
     expect(localStorage.getItem(KEY)).toBeTruthy();
 
     vi.resetModules();
+    vi.resetModules();
     const reloaded = await loadLibrary();
     const stored = reloaded.getTracks().find((entry) => entry.id === track.id);
     expect(stored?.song.notes).toHaveLength(1);
@@ -95,6 +96,7 @@ describe('MIDI library persistence', () => {
     library.saveMix();
 
     // …and a reload brings the mix back with the song.
+    vi.resetModules();
     vi.resetModules();
     const reloaded = await loadLibrary();
     const { midiPlayer: player2 } = await import('./player');
@@ -159,5 +161,75 @@ describe('MIDI library persistence', () => {
     localStorage.setItem(KEY, JSON.stringify({ schema: 99, data: { tracks: [track], currentId: track.id } }));
     const library = await loadLibrary();
     expect(library.getTracks().some((entry) => entry.id === track.id)).toBe(false);
+  });
+});
+
+describe('stored arrangements', () => {
+  it('re-expands the clips instead of trusting the stored flat list', async () => {
+    // A file whose flat list disagrees with its clips (hand-edited, or written
+    // by a build with another expansion rule): the clips are the arrangement.
+    localStorage.setItem(
+      KEY,
+      JSON.stringify(
+        wrap({
+          tracks: [
+            {
+              ...track,
+              id: 'file:clips.mid:1',
+              song: {
+                ...song,
+                notes: [{ note: 99, velocity: 1, start: 0, duration: 0.5 }],
+                clips: [
+                  {
+                    id: 'c1',
+                    name: 'loop',
+                    start: 0,
+                    length: 1,
+                    repeat: 3,
+                    notes: [{ note: 60, velocity: 0.8, start: 0, duration: 0.5 }],
+                  },
+                ],
+              },
+            },
+          ],
+          currentId: 'file:clips.mid:1',
+        }),
+      ),
+    );
+    vi.resetModules();
+    const reloaded = await loadLibrary();
+    const stored = reloaded.getCurrent()!;
+    expect(stored.song.clips).toHaveLength(1);
+    expect(stored.song.notes.map((n) => [n.note, n.start])).toEqual([
+      [60, 0],
+      [60, 1],
+      [60, 2],
+    ]);
+    expect(stored.song.duration).toBeCloseTo(2.9, 6);
+  });
+
+  it('drops broken clips and keeps the song playable', async () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify(
+        wrap({
+          tracks: [
+            {
+              ...track,
+              id: 'file:broken.mid:1',
+              song: { ...song, clips: [{ id: 'x' }, null, 'nope'] },
+            },
+          ],
+          currentId: 'file:broken.mid:1',
+        }),
+      ),
+    );
+    vi.resetModules();
+    const reloaded = await loadLibrary();
+    const stored = reloaded.getCurrent()!;
+    // Nothing survived validation, so the song is the flat list it was stored
+    // with — not silence, and not a crash.
+    expect(stored.song.clips).toBeUndefined();
+    expect(stored.song.notes).toEqual(song.notes);
   });
 });
