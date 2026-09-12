@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.84.0',
+    date: '2026-09-12',
+    kind: 'sound',
+    items: [
+      [
+        '**硬同步（SYNC）、sub 振荡器与噪声混合**：OSC 1 模块多了一个 **SYNC** 开关——OSC 2 每完成一个周期就把 OSC 1 的相位拉回起点，得到经典的同步主音色，用 OSC 2 的 PITCH 设比例；每个振荡器多了一组 **SUB**（关 / 低一个八度 / 低两个八度）与 **SUB LVL**，低音更厚；OSC 1 上还多了 **NOISE** 旋钮，把白噪混进声音（风声、打击感、铺底都用得上）。三者默认都是关/0，老音色一点不变。',
+        '**Hard sync (SYNC), a sub oscillator and a noise blend**: the OSC 1 module gained a **SYNC** switch — OSC 2 restarts OSC 1 every time it completes a cycle, for the classic sync lead, with OSC 2’s PITCH setting the ratio; each oscillator gained **SUB** (off / one octave down / two down) with a **SUB LVL** level for a thicker bottom end; and OSC 1 gained a **NOISE** knob that blends white noise into the voice (wind, percussion, beds). All three default to off/zero, so every existing patch sounds exactly as it did.',
+      ],
+      [
+        '**同步是带抗混叠处理的**：重启相位是一个不连续点，直接做会撒出宽带噪声，所以同步对（主振 + 从振）以 2 倍过采样运行，并经过一个 95 抽头低通（通带 19.2 kHz、阻带 −72 dB）再降采样；重启点也按**亚采样精度**对齐（用主振已越过零点多少来定从振的起始相位），而不是落在采样格上。',
+        '**Sync is anti-aliased**: restarting a phase is a discontinuity, and doing it naively sprays broadband hash, so the sync pair runs at 2x oversampling through a 95-tap low-pass (flat to 19.2 kHz, -72 dB stopband) before being decimated; the restart is also placed at **sub-sample accuracy** (from how far past the wrap the master already is) instead of on the sample grid.',
+      ],
+    ],
+  },
+  {
     version: '1.83.0',
     date: '2026-09-12',
     kind: 'feature',
