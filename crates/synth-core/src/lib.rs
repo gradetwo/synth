@@ -24,6 +24,9 @@ pub mod voice;
 #[cfg(test)]
 mod dual_filter;
 
+/// Bit-crusher and shaping EQ (P6.4), with their own measurement rig.
+mod fx_shaping;
+
 mod shim;
 
 #[cfg(target_arch = "wasm32")]

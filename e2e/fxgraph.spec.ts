@@ -269,3 +269,47 @@ test('edits the graph from the list view, which is what phones get', async ({ pa
   await page.locator('[data-act="fx-graph-open"]').click();
   await expect(page.locator('[data-act="in2"][data-node="2"]')).toHaveValue('2');
 });
+
+test('puts the bit-crusher in a node, edits it, and keeps it across a fresh load', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(400);
+  await openEditor(page);
+
+  const kind = (slot: number) => page.locator('[data-act="kind"][data-node="' + slot + '"]');
+  const on = (slot: number) => page.locator('[data-act="on"][data-node="' + slot + '"]');
+  const mix = (slot: number) => page.locator('[data-act="mix"][data-node="' + slot + '"]');
+
+  // Node 2 is the reverb in the default chain. Swap it for the bit-crusher,
+  // which the graph editor offers as one of the effects with its own state.
+  await kind(1).selectOption('crush');
+  await expect(kind(1)).toHaveValue('crush');
+  // Picking a kind is the first edit, so the graph takes over from the chain.
+  await expect(page.locator('.fxg-hint')).toContainText('从左往右');
+
+  // Every insert effect gets its on/off and its mix in the card.
+  await expect(on(1)).toBeVisible();
+  await expect(on(1)).toHaveAttribute('aria-pressed', 'false');
+  await clickIn(on(1));
+  await expect(on(1)).toHaveAttribute('aria-pressed', 'true');
+  await expect(mix(1)).toHaveValue('100');
+  await mix(1).fill('60');
+  await expect(mix(1)).toHaveValue('60');
+
+  // Patch data, so it comes back in a fresh load.
+  const { next: view, closeOld } = await freshLoad(page);
+  await view.getByRole('button', { name: /启动音频引擎/ }).click();
+  await closeOld();
+  await view.waitForTimeout(400);
+  await openEditor(view);
+  await expect(view.locator('[data-act="kind"][data-node="1"]')).toHaveValue('crush');
+  await expect(view.locator('[data-act="on"][data-node="1"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(view.locator('[data-act="mix"][data-node="1"]')).toHaveValue('60');
+
+  // The shaping EQ is offered from the same dropdown and is not a single
+  // instance, so a graph can hold more than one.
+  await expect(view.locator('[data-act="kind"][data-node="1"] option[value="eq"]')).toBeEnabled();
+  await view.locator('[data-act="kind"][data-node="1"]').selectOption('eq');
+  await expect(view.locator('[data-act="kind"][data-node="1"]')).toHaveValue('eq');
+  await expect(view.locator('[data-act="mix"][data-node="1"]')).toHaveValue('100');
+});

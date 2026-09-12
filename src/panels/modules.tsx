@@ -697,6 +697,30 @@ function Fx2Module() {
           ledId={Param.FX_DRIVE_ON}
           specs={[SPEC_BY_ID[Param.FX_DRIVE_AMT], SPEC_BY_ID[Param.FX_DRIVE_MIX]]}
         />
+        <FxStrip
+          title={t('module.crush')}
+          ledId={Param.FX_CRUSH_ON}
+          specs={[
+            SPEC_BY_ID[Param.FX_CRUSH_BITS],
+            SPEC_BY_ID[Param.FX_CRUSH_DOWN],
+            SPEC_BY_ID[Param.FX_CRUSH_AA],
+            SPEC_BY_ID[Param.FX_CRUSH_MIX],
+          ]}
+        />
+        <FxStrip
+          title={t('module.eq')}
+          ledId={Param.FX_EQ_ON}
+          specs={[
+            SPEC_BY_ID[Param.FX_EQ_LOW_GAIN],
+            SPEC_BY_ID[Param.FX_EQ_LOW_FREQ],
+            SPEC_BY_ID[Param.FX_EQ_MID_GAIN],
+            SPEC_BY_ID[Param.FX_EQ_MID_FREQ],
+            SPEC_BY_ID[Param.FX_EQ_MID_Q],
+            SPEC_BY_ID[Param.FX_EQ_HIGH_GAIN],
+            SPEC_BY_ID[Param.FX_EQ_HIGH_FREQ],
+            SPEC_BY_ID[Param.FX_EQ_MIX],
+          ]}
+        />
       </div>
     </ModuleShell>
   );

@@ -102,6 +102,8 @@ const MIX_PARAM: Partial<Record<FxKind, ParamId>> = {
   flanger: Param.FX_FLANGER_MIX,
   phaser: Param.FX_PHASER_MIX,
   drive: Param.FX_DRIVE_MIX,
+  crush: Param.FX_CRUSH_MIX,
+  eq: Param.FX_EQ_MIX,
 };
 
 const ON_PARAM: Partial<Record<FxKind, ParamId>> = {
@@ -111,6 +113,8 @@ const ON_PARAM: Partial<Record<FxKind, ParamId>> = {
   flanger: Param.FX_FLANGER_ON,
   phaser: Param.FX_PHASER_ON,
   drive: Param.FX_DRIVE_ON,
+  crush: Param.FX_CRUSH_ON,
+  eq: Param.FX_EQ_ON,
 };
 
 export function FxGraphEditor({ onClose }: { onClose: () => void }) {

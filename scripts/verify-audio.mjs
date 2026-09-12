@@ -48,6 +48,10 @@ const P = {
   OSC2_SUB: 142, OSC2_SUB_LEVEL: 143, NOISE_MIX: 144, FILTER_MORPH: 145,
   FILTER_ROUTING: 146, FILTER2_TYPE: 147, FILTER2_CUTOFF: 148, FILTER2_RES: 149,
   FILTER2_DRIVE: 150, FILTER_BLEND: 151,
+  FX_CRUSH_ON: 152, FX_CRUSH_BITS: 153, FX_CRUSH_DOWN: 154, FX_CRUSH_AA: 155, FX_CRUSH_MIX: 156,
+  FX_EQ_ON: 157, FX_EQ_LOW_GAIN: 158, FX_EQ_LOW_FREQ: 159, FX_EQ_MID_GAIN: 160,
+  FX_EQ_MID_FREQ: 161, FX_EQ_MID_Q: 162, FX_EQ_HIGH_GAIN: 163, FX_EQ_HIGH_FREQ: 164,
+  FX_EQ_MIX: 165,
 };
 
 const WAVE_TYPES = { lp: 0, hp: 1, bp: 2, notch: 3, sem: 6 };
@@ -1068,6 +1072,200 @@ function blockSteps(frames) {
     finite && peak < 1 && worstStep < 0.5,
     `peak ${peak.toFixed(3)}, worst sample step ${worstStep.toFixed(3)}`,
   );
+}
+
+// ------------------------- bit-crusher and shaping EQ (P6.4)
+//
+// The Rust tests pin the DSP itself: grid membership and half-step error at
+// every bit depth, the mirror's position for every divisor, anti-aliasing on
+// both the image and true aliasing, the cookbook gains of each EQ band, and a
+// bit-for-bit bypass at mix 0. What this section adds is the same two effects
+// measured through the real wasm build and the whole parameter path: the
+// divider's mirror, each EQ band's measured gain against the analytic one, the
+// shelf shape, and that slamming the controls mid-note stays bounded and
+// finite. Every frequency-domain number is a *response* (divided by the same
+// render with the slot empty), never a comparison of samples from two
+// separately rendered engines.
+{
+  const flat = [
+    [P.FILTER_TYPE, WAVE_TYPES.sem], [P.FILTER_CUTOFF, 20000], [P.FILTER_RES, 0],
+    [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0], [P.FILTER_KBD, 0], [P.FILTER_MORPH, 0],
+    [P.FILTER_ROUTING, 0], [P.FILTER2_CUTOFF, 20000],
+    [P.OSC1_WAVE, WAVE.sine], [P.OSC1_LEVEL, 0.25], [P.OSC1_SYNC, 0], [P.OSC1_SUB, 0],
+    [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0], [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0],
+    [P.ENV_ATTACK, 0.005], [P.ENV_SUSTAIN, 1], [P.LFO_ON, 0], [P.LFO2_ON, 0],
+    [P.MASTER_VOLUME, 0.4], [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0],
+    [P.FX_CHORUS_ON, 0], [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0],
+    // An empty chain, so the only thing in the path is the effect under test.
+    [P.FX_CHAIN1, 0], [P.FX_CHAIN2, 0], [P.FX_CHAIN3, 0],
+    [P.FX_CHAIN4, 0], [P.FX_CHAIN5, 0], [P.FX_CHAIN6, 0],
+    // The parameter block survives `gs_init` (the worklet pushes it every
+    // block), so every P6.4 control is reset here. Without this a measurement
+    // inherits the previous one's EQ gain and reads several dB off.
+    [P.FX_CRUSH_ON, 0], [P.FX_CRUSH_BITS, 8], [P.FX_CRUSH_DOWN, 4],
+    [P.FX_CRUSH_AA, 0.5], [P.FX_CRUSH_MIX, 1],
+    [P.FX_EQ_ON, 0], [P.FX_EQ_LOW_GAIN, 0], [P.FX_EQ_LOW_FREQ, 200],
+    [P.FX_EQ_MID_GAIN, 0], [P.FX_EQ_MID_FREQ, 1000], [P.FX_EQ_MID_Q, 0.9],
+    [P.FX_EQ_HIGH_GAIN, 0], [P.FX_EQ_HIGH_FREQ, 4000], [P.FX_EQ_MIX, 1],
+  ];
+  // The default patch's ENV/LFO -> CUTOFF routes are live; without clearing the
+  // matrix these numbers are measurements of the modulation (P6.3a's lesson).
+  const quietMatrix = () => {
+    for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
+  };
+  const toDb = (v) => 20 * Math.log10(Math.max(v, 1e-12));
+  // C6 is 1046.5 Hz, and the pitch control spans ±48 semitones around it, so
+  // this covers 65 Hz .. 16.7 kHz — both the crusher's mirror and every EQ
+  // probe below.
+  const BIN = (freq, probe, extra) => {
+    const pitch = 12 * Math.log2(freq / 1046.502);
+    if (Math.abs(pitch) > 48) throw new Error(`gate frequency ${freq} Hz is outside the oscillator's range`);
+    engine([...flat, [P.OSC1_PITCH, pitch], ...extra], [[84, 1]]);
+    quietMatrix();
+    // 120 blocks (`render(220, 120)`) is a 320 ms warm-up, not the 100 ms the
+    // other sections get: these probes jump between 70 Hz and 16 kHz, and the
+    // pitch is a *smoothed* parameter, so a shorter warm-up measures a tone
+    // still gliding towards the probe frequency (it read 4.7 dB instead of 9 on
+    // the high shelf).
+    const out = [];
+    for (const [l] of render(220, 120)) out.push(...l);
+    return binMag(out, probe);
+  };
+  /** The effect's gain at `freq`, against the same tone with an empty chain. */
+  const response = (freq, extra) => toDb(BIN(freq, freq, extra)) - toDb(BIN(freq, freq, []));
+
+  // --- bit-crusher -------------------------------------------------------
+  const crush = (extra) => [
+    [P.FX_CHAIN1, 7], [P.FX_CRUSH_ON, 1], [P.FX_CRUSH_MIX, 1], ...extra,
+  ];
+  // A 1 kHz tone divided by 8 mirrors to 6000 - 1000 = 5000 Hz.
+  const mirror = (aa) =>
+    toDb(BIN(1000, 5000, crush([[P.FX_CRUSH_BITS, 8], [P.FX_CRUSH_DOWN, 8], [P.FX_CRUSH_AA, aa]]))) -
+    toDb(BIN(1000, 1000, []));
+  const rawMirror = mirror(0);
+  const smoothMirror = mirror(1);
+  check(
+    'The bit-crusher divider mirrors, and anti-aliasing removes it',
+    rawMirror > -30 && rawMirror - smoothMirror > 10,
+    `mirror ${rawMirror.toFixed(1)} dB at 5000 Hz, ${(rawMirror - smoothMirror).toFixed(1)} dB lower with AA`,
+  );
+  // True aliasing: 8 kHz is above the 3 kHz decimated Nyquist and folds to 2 kHz.
+  const fold = (aa) =>
+    toDb(BIN(8000, 2000, crush([[P.FX_CRUSH_BITS, 8], [P.FX_CRUSH_DOWN, 8], [P.FX_CRUSH_AA, aa]]))) -
+    toDb(BIN(8000, 8000, []));
+  const rawFold = fold(0);
+  const smoothFold = fold(1);
+  check(
+    'Anti-aliasing also suppresses the folded tone',
+    rawFold > -30 && rawFold - smoothFold > 10,
+    `8 kHz folded to 2 kHz: ${rawFold.toFixed(1)} dB raw, ${smoothFold.toFixed(1)} dB with AA`,
+  );
+  // A deeper divisor mirrors a different frequency: 700 Hz divided by 16 lands
+  // on 3000 - 700 = 2300 Hz.
+  const deep =
+    toDb(BIN(700, 2300, crush([[P.FX_CRUSH_BITS, 16], [P.FX_CRUSH_DOWN, 16], [P.FX_CRUSH_AA, 0]]))) -
+    toDb(BIN(700, 700, []));
+  check('The mirror follows the divisor', deep > -40, `700 Hz / 16 mirrors to 2300 Hz at ${deep.toFixed(1)} dB`);
+
+  // --- shaping EQ --------------------------------------------------------
+  const eq = (extra) => [[P.FX_CHAIN1, 8], [P.FX_EQ_ON, 1], [P.FX_EQ_MIX, 1], ...extra];
+  const lowShelf = [
+    [P.FX_EQ_LOW_GAIN, 12], [P.FX_EQ_LOW_FREQ, 400],
+    [P.FX_EQ_MID_GAIN, 0], [P.FX_EQ_HIGH_GAIN, 0],
+  ];
+  const lowBottom = response(70, eq(lowShelf));
+  const lowCorner = response(400, eq(lowShelf));
+  const lowAbove = response(3200, eq(lowShelf));
+  const lowTop = response(16000, eq(lowShelf));
+  check(
+    'The low shelf reaches +12 dB and slopes back to unity',
+    Math.abs(lowBottom - 12) < 1.5 &&
+      Math.abs(lowAbove) < 1.5 &&
+      Math.abs(lowTop) < 1.5 &&
+      lowBottom > lowCorner &&
+      lowCorner > lowAbove,
+    `70 Hz ${lowBottom.toFixed(1)} / 400 Hz ${lowCorner.toFixed(1)} / 3.2 kHz ${lowAbove.toFixed(1)} / 16 kHz ${lowTop.toFixed(1)} dB`,
+  );
+  const mid = [[P.FX_EQ_MID_GAIN, -9], [P.FX_EQ_MID_FREQ, 1000], [P.FX_EQ_MID_Q, 1.2]];
+  const midCentre = response(1000, eq(mid));
+  const midAway = response(2000, eq(mid));
+  check(
+    'The sweepable mid peak matches its gain at the centre and falls away',
+    Math.abs(midCentre + 9) < 1.5 && midAway > midCentre + 3,
+    `1000 Hz ${midCentre.toFixed(1)} dB, 2000 Hz ${midAway.toFixed(1)} dB`,
+  );
+  const high = [[P.FX_EQ_HIGH_GAIN, 9], [P.FX_EQ_HIGH_FREQ, 3000], [P.FX_EQ_MID_GAIN, 0]];
+  const highTop = response(16000, eq(high));
+  const highBottom = response(70, eq(high));
+  check(
+    'The high shelf reaches +9 dB and leaves the bottom alone',
+    Math.abs(highTop - 9) < 1.5 && Math.abs(highBottom) < 1.5,
+    `16 kHz ${highTop.toFixed(1)} dB, 70 Hz ${highBottom.toFixed(1)} dB`,
+  );
+  // Dry/wet at 0 must be a true bypass. Two separately rendered engines do not
+  // start the note at the same phase (the phase seed is not reset by
+  // `gs_init`), so this cannot be a sample-for-sample comparison here — the
+  // Rust test does that bit for bit. Through the wasm the equivalent statement
+  // is that a crusher set to 4 bits / divide-by-8 with mix 0 leaves no artefact,
+  // and an 18 dB EQ with mix 0 does not move the response.
+  const bypassMirror =
+    toDb(BIN(1000, 5000, crush([[P.FX_CRUSH_BITS, 4], [P.FX_CRUSH_DOWN, 8], [P.FX_CRUSH_AA, 0], [P.FX_CRUSH_MIX, 0]]))) -
+    toDb(BIN(1000, 1000, []));
+  check(
+    'Mix 0 on the bit-crusher leaves no crusher artefact',
+    bypassMirror < -60,
+    `the 4-bit / divide-by-8 mirror is ${bypassMirror.toFixed(1)} dB down at mix 0`,
+  );
+  const bypassEq = response(70, eq([[P.FX_EQ_LOW_GAIN, 18], [P.FX_EQ_MIX, 0]]));
+  check(
+    'Mix 0 on the shaping EQ is flat',
+    Math.abs(bypassEq) < 0.5,
+    `an 18 dB shelf moves the response ${bypassEq.toFixed(2)} dB at mix 0`,
+  );
+
+  // --- time domain: slamming the controls must not click -----------------
+  engine(
+    [
+      ...flat,
+      [P.OSC1_PITCH, 12 * Math.log2(1000 / 1046.502)],
+      // Both effects in two nodes of one chain, so both are live in the loop.
+      [P.FX_CHAIN1, 7], [P.FX_CRUSH_ON, 1], [P.FX_CRUSH_MIX, 1],
+      [P.FX_CHAIN2, 8], [P.FX_EQ_ON, 1], [P.FX_EQ_MIX, 1],
+    ],
+    [[84, 1]],
+  );
+  quietMatrix();
+  {
+    let peak = 0;
+    let worstStep = 0;
+    let finite = true;
+    let prev = null;
+    for (let b = 0; b < 240; b++) {
+      ex.gs_set_param(P.FX_CRUSH_BITS, 4 + (b % 13));
+      ex.gs_set_param(P.FX_CRUSH_DOWN, 1 + (b % 64));
+      ex.gs_set_param(P.FX_CRUSH_AA, (b % 11) / 10);
+      ex.gs_set_param(P.FX_CRUSH_MIX, (b % 40) < 20 ? 0 : 1);
+      ex.gs_set_param(P.FX_EQ_LOW_GAIN, ((b % 37) - 18));
+      ex.gs_set_param(P.FX_EQ_MID_FREQ, 200 + (b % 40) * 195);
+      ex.gs_set_param(P.FX_EQ_HIGH_GAIN, 18 - (b % 37));
+      ex.gs_set_param(P.FX_EQ_MIX, (b % 40) < 20 ? 1 : 0);
+      ex.gs_process(BLOCK);
+      const heap = new Float32Array(ex.memory.buffer);
+      const ptr = ex.gs_left_ptr() / 4;
+      for (let i = 0; i < BLOCK; i++) {
+        const v = heap[ptr + i];
+        if (!Number.isFinite(v)) finite = false;
+        peak = Math.max(peak, Math.abs(v));
+        if (prev !== null) worstStep = Math.max(worstStep, Math.abs(v - prev));
+        prev = v;
+      }
+    }
+    check(
+      'Slamming the crusher and EQ controls does not click',
+      finite && peak < 1 && worstStep < 0.5,
+      `peak ${peak.toFixed(3)}, worst sample step ${worstStep.toFixed(3)}`,
+    );
+  }
 }
 
 console.log('[audio] quality gate');

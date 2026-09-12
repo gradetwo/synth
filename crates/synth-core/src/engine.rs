@@ -19,8 +19,9 @@ use crate::dsp::sampler::{LoopMode, ReadState, Sample, SampleError, SampleParams
 use crate::dsp::wavetable::{CycleError, Table, BASE_LEN as WT_BASE_LEN};
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_limit, Rng};
 use crate::fft::Spectrum;
+use crate::fx_shaping::{BitCrusher, CrushParams, EqParams, ShapingEq};
 use crate::params::{
-    graph_node_src, id, is_continuous, FilterRouting, FxKind, GraphInput, LfoTarget, ModDst,
+    graph_node_src, id, is_continuous, FilterRouting, FxKind, FxParams, GraphInput, LfoTarget, ModDst,
     ModSrc, OscParams, Params, FX_SLOTS, GRAPH_DRY, MAX_BLOCK_SIZE, MAX_UNISON, MAX_VOICES,
     PARAM_COUNT,
 };
@@ -334,6 +335,11 @@ pub struct Engine {
     /// two places, and sharing one state would make them cross-talk. The
     /// impulse-response engine is a single instance (see `convolver`).
     reverbs: Vec<Reverb>,
+    /// Bit-crusher and shaping EQ state (P6.4), one set per effect node. Both
+    /// are fixed-size plain-Rust structs, so the pool costs nothing on the
+    /// audio thread and two nodes never share a filter.
+    crushers: [BitCrusher; FX_SLOTS],
+    eqs: [ShapingEq; FX_SLOTS],
     /// Whether this block has already used the single-instance effects. The
     /// delay line (768 KB) and the convolver (787 KB) do not fit in the arena
     /// six times over, so a second node of those kinds passes its input through
@@ -468,6 +474,8 @@ impl Engine {
                             tuning: [0.0; crate::params::TUNING_NOTES],
             bends: [0.0; crate::params::TUNING_NOTES],
             reverbs: Vec::new(),
+            crushers: [BitCrusher::new(); FX_SLOTS],
+            eqs: [ShapingEq::new(); FX_SLOTS],
             fx_delay_used: false,
             fx_conv_used: false,
             combs: [const { CombFilter::new() }; MAX_VOICES],
@@ -539,6 +547,14 @@ impl Engine {
         }
         for reverb in self.reverbs.iter_mut() {
             reverb.set_sample_rate(self.sample_rate);
+        }
+        // A re-init (or a fresh host) must not inherit a held sample or a
+        // ringing biquad from the previous sample rate.
+        for crusher in self.crushers.iter_mut() {
+            crusher.reset();
+        }
+        for eq in self.eqs.iter_mut() {
+            eq.reset();
         }
         self.delay.setup(self.sample_rate);
         self.convolver.prepare();
@@ -2403,6 +2419,34 @@ impl Engine {
                     }
                     self.mix_effect(frames, fx.drive_mix, parallel);
                 }
+                FxKind::Crush if fx.crush_on && fx.crush_mix > 0.0 => {
+                    self.crushers[slot].process(
+                        &self.fx_l[..frames],
+                        &self.fx_r[..frames],
+                        &mut self.osc_a,
+                        &mut self.osc_b,
+                        frames,
+                        CrushParams {
+                            bits: fx.crush_bits,
+                            down: fx.crush_down,
+                            aa: fx.crush_aa,
+                        },
+                        self.sample_rate,
+                    );
+                    self.mix_effect(frames, fx.crush_mix, parallel);
+                }
+                FxKind::Eq if fx.eq_on && fx.eq_mix > 0.0 => {
+                    self.eqs[slot].process(
+                        &self.fx_l[..frames],
+                        &self.fx_r[..frames],
+                        &mut self.osc_a,
+                        &mut self.osc_b,
+                        frames,
+                        eq_params(fx),
+                        self.sample_rate,
+                    );
+                    self.mix_effect(frames, fx.eq_mix, parallel);
+                }
                 _ => {}
             }
         }
@@ -2626,6 +2670,34 @@ impl Engine {
                 }
                 self.blend_node(slot, frames, fx.drive_mix, parallel);
             }
+            FxKind::Crush if fx.crush_on && fx.crush_mix > 0.0 => {
+                self.crushers[slot].process(
+                    &self.graph_node_l[base..base + frames],
+                    &self.graph_node_r[base..base + frames],
+                    &mut self.osc_a,
+                    &mut self.osc_b,
+                    frames,
+                    CrushParams {
+                        bits: fx.crush_bits,
+                        down: fx.crush_down,
+                        aa: fx.crush_aa,
+                    },
+                    self.sample_rate,
+                );
+                self.blend_node(slot, frames, fx.crush_mix, parallel);
+            }
+            FxKind::Eq if fx.eq_on && fx.eq_mix > 0.0 => {
+                self.eqs[slot].process(
+                    &self.graph_node_l[base..base + frames],
+                    &self.graph_node_r[base..base + frames],
+                    &mut self.osc_a,
+                    &mut self.osc_b,
+                    frames,
+                    eq_params(fx),
+                    self.sample_rate,
+                );
+                self.blend_node(slot, frames, fx.eq_mix, parallel);
+            }
             _ => {}
         }
     }
@@ -2656,6 +2728,20 @@ impl Engine {
             self.fx_l[i] = self.fx_l[i] * dry + self.osc_a[i] * mix;
             self.fx_r[i] = self.fx_r[i] * dry + self.osc_b[i] * mix;
         }
+    }
+}
+
+/// The shaping EQ's per-block controls (P6.4). A free function because both the
+/// chain and the graph render paths read exactly the same fields.
+fn eq_params(fx: FxParams) -> EqParams {
+    EqParams {
+        low_gain: fx.eq_low_gain,
+        low_freq: fx.eq_low_freq,
+        mid_gain: fx.eq_mid_gain,
+        mid_freq: fx.eq_mid_freq,
+        mid_q: fx.eq_mid_q,
+        high_gain: fx.eq_high_gain,
+        high_freq: fx.eq_high_freq,
     }
 }
 
@@ -3121,7 +3207,7 @@ mod tests {
         e.set_param(id::FX_PHASER_MIX, 0.4);
         e.set_param(id::FX_DRIVE_ON, 1.0);
         e.set_param(id::FX_DRIVE_MIX, 0.5);
-        let kinds = [0u32, 1, 2, 3, 4, 5, 6];
+        let kinds = [0u32, 1, 2, 3, 4, 5, 6, 7, 8];
         for (slot, kind) in chain.iter().enumerate() {
             let code = match kind {
                 FxKind::None => kinds[0],
@@ -3131,6 +3217,8 @@ mod tests {
                 FxKind::Flanger => kinds[4],
                 FxKind::Phaser => kinds[5],
                 FxKind::Drive => kinds[6],
+                FxKind::Crush => kinds[7],
+                FxKind::Eq => kinds[8],
             };
             e.set_param(id::FX_CHAIN1 + slot as u32, code as f32);
         }

@@ -195,6 +195,22 @@ export const Param = {
   FX_NODE4_OUT_GAIN: 134,
   FX_NODE5_OUT_GAIN: 135,
   FX_NODE6_OUT_GAIN: 136,
+  /** Bit-crusher (P6.4): quantiser + sample-rate divider, one per effect node. */
+  FX_CRUSH_ON: 152,
+  FX_CRUSH_BITS: 153,
+  FX_CRUSH_DOWN: 154,
+  FX_CRUSH_AA: 155,
+  FX_CRUSH_MIX: 156,
+  /** Shaping EQ (P6.4): low shelf, sweepable mid peak, high shelf. */
+  FX_EQ_ON: 157,
+  FX_EQ_LOW_GAIN: 158,
+  FX_EQ_LOW_FREQ: 159,
+  FX_EQ_MID_GAIN: 160,
+  FX_EQ_MID_FREQ: 161,
+  FX_EQ_MID_Q: 162,
+  FX_EQ_HIGH_GAIN: 163,
+  FX_EQ_HIGH_FREQ: 164,
+  FX_EQ_MIX: 165,
 } as const;
 
 /** The dry (pre-effect) bus, as a graph source code. */
@@ -226,9 +242,28 @@ export function graphOutGainId(slot: number): ParamId {
 export const FX_SLOTS = 6;
 
 /** What can run at a chain position. Keep in step with `FxKind` in params.rs. */
-export type FxKind = 'none' | 'delay' | 'reverb' | 'chorus' | 'flanger' | 'phaser' | 'drive';
+export type FxKind =
+  | 'none'
+  | 'delay'
+  | 'reverb'
+  | 'chorus'
+  | 'flanger'
+  | 'phaser'
+  | 'drive'
+  | 'crush'
+  | 'eq';
 
-export const FX_KINDS: FxKind[] = ['none', 'delay', 'reverb', 'chorus', 'flanger', 'phaser', 'drive'];
+export const FX_KINDS: FxKind[] = [
+  'none',
+  'delay',
+  'reverb',
+  'chorus',
+  'flanger',
+  'phaser',
+  'drive',
+  'crush',
+  'eq',
+];
 
 export const FX_KIND_LABELS: Record<FxKind, string> = {
   none: '—',
@@ -238,6 +273,8 @@ export const FX_KIND_LABELS: Record<FxKind, string> = {
   flanger: 'FLANGER',
   phaser: 'PHASER',
   drive: 'DRIVE',
+  crush: 'CRUSH',
+  eq: 'EQ',
 };
 
 export function fxKindToInt(kind: FxKind): number {
@@ -259,7 +296,14 @@ export function intToFxKind(value: number): FxKind {
  * nothing and the UI does not offer it.
  */
 export function fxKindCanBeParallel(kind: FxKind): boolean {
-  return kind === 'chorus' || kind === 'flanger' || kind === 'phaser' || kind === 'drive';
+  return (
+    kind === 'chorus' ||
+    kind === 'flanger' ||
+    kind === 'phaser' ||
+    kind === 'drive' ||
+    kind === 'crush' ||
+    kind === 'eq'
+  );
 }
 
 /**
@@ -406,6 +450,20 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.FX_NODE4_OUT_GAIN]: 'fxNode4OutGain',
   [Param.FX_NODE5_OUT_GAIN]: 'fxNode5OutGain',
   [Param.FX_NODE6_OUT_GAIN]: 'fxNode6OutGain',
+  [Param.FX_CRUSH_ON]: 'fxCrushOn',
+  [Param.FX_CRUSH_BITS]: 'fxCrushBits',
+  [Param.FX_CRUSH_DOWN]: 'fxCrushDown',
+  [Param.FX_CRUSH_AA]: 'fxCrushAa',
+  [Param.FX_CRUSH_MIX]: 'fxCrushMix',
+  [Param.FX_EQ_ON]: 'fxEqOn',
+  [Param.FX_EQ_LOW_GAIN]: 'fxEqLowGain',
+  [Param.FX_EQ_LOW_FREQ]: 'fxEqLowFreq',
+  [Param.FX_EQ_MID_GAIN]: 'fxEqMidGain',
+  [Param.FX_EQ_MID_FREQ]: 'fxEqMidFreq',
+  [Param.FX_EQ_MID_Q]: 'fxEqMidQ',
+  [Param.FX_EQ_HIGH_GAIN]: 'fxEqHighGain',
+  [Param.FX_EQ_HIGH_FREQ]: 'fxEqHighFreq',
+  [Param.FX_EQ_MIX]: 'fxEqMix',
   [Param.OSC1_ON]: 'osc1On',
   [Param.OSC1_WAVE]: 'osc1Wave',
   [Param.OSC1_PITCH]: 'osc1Pitch',
@@ -756,6 +814,22 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.FX_DRIVE_ON]: 0,
   [Param.FX_DRIVE_AMT]: 0.4,
   [Param.FX_DRIVE_MIX]: 0.6,
+  // Both new effects (P6.4) start switched off, so a patch that predates them
+  // renders exactly as it did.
+  [Param.FX_CRUSH_ON]: 0,
+  [Param.FX_CRUSH_BITS]: 8,
+  [Param.FX_CRUSH_DOWN]: 4,
+  [Param.FX_CRUSH_AA]: 0.5,
+  [Param.FX_CRUSH_MIX]: 1,
+  [Param.FX_EQ_ON]: 0,
+  [Param.FX_EQ_LOW_GAIN]: 0,
+  [Param.FX_EQ_LOW_FREQ]: 200,
+  [Param.FX_EQ_MID_GAIN]: 0,
+  [Param.FX_EQ_MID_FREQ]: 1000,
+  [Param.FX_EQ_MID_Q]: 0.9,
+  [Param.FX_EQ_HIGH_GAIN]: 0,
+  [Param.FX_EQ_HIGH_FREQ]: 4000,
+  [Param.FX_EQ_MIX]: 1,
   [Param.FILTER_ENV_ATTACK]: 0.01,
   [Param.FILTER_ENV_DECAY]: 0.3,
   [Param.FILTER_ENV_SUSTAIN]: 0.5,
@@ -863,6 +937,10 @@ export const fmt = {
   },
   ct(v: number): string {
     return `${v > 0 ? '+' : ''}${Math.round(v)} ct`;
+  },
+  /** A filter/EQ gain in dB, signed so a cut reads as one. */
+  db(v: number): string {
+    return `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`;
   },
   bpm(v: number): string {
     return `${Math.round(v)} BPM`;
@@ -977,6 +1055,19 @@ export const PARAM_SPECS: ParamSpec[] = [
   spec(Param.FX_PHASER_MIX, 'MIX', 0, 1, 0.5, fmt.pct),
   spec(Param.FX_DRIVE_AMT, 'DRIVE', 0, 1, 0.4, fmt.pct),
   spec(Param.FX_DRIVE_MIX, 'MIX', 0, 1, 0.6, fmt.pct),
+  // Bit-crusher and shaping EQ (P6.4). Both are inserts with their own mix.
+  spec(Param.FX_CRUSH_BITS, 'BITS', 4, 16, 8, (v) => `${Math.round(v)} bit`, { discrete: true }),
+  spec(Param.FX_CRUSH_DOWN, 'DOWN', 1, 64, 4, (v) => `${Math.round(v)}×`, { discrete: true }),
+  spec(Param.FX_CRUSH_AA, 'AA', 0, 1, 0.5, fmt.pct),
+  spec(Param.FX_CRUSH_MIX, 'MIX', 0, 1, 1, fmt.pct),
+  spec(Param.FX_EQ_LOW_GAIN, 'LOW', -18, 18, 0, fmt.db),
+  spec(Param.FX_EQ_LOW_FREQ, 'LOW F', 40, 1000, 200, fmt.hz, { curve: 'log' }),
+  spec(Param.FX_EQ_MID_GAIN, 'MID', -18, 18, 0, fmt.db),
+  spec(Param.FX_EQ_MID_FREQ, 'MID F', 200, 8000, 1000, fmt.hz, { curve: 'log' }),
+  spec(Param.FX_EQ_MID_Q, 'MID Q', 0.3, 6, 0.9, (v) => v.toFixed(2), { curve: 'log' }),
+  spec(Param.FX_EQ_HIGH_GAIN, 'HIGH', -18, 18, 0, fmt.db),
+  spec(Param.FX_EQ_HIGH_FREQ, 'HIGH F', 1000, 16000, 4000, fmt.hz, { curve: 'log' }),
+  spec(Param.FX_EQ_MIX, 'MIX', 0, 1, 1, fmt.pct),
   spec(Param.GLIDE, 'GLIDE', 0, 1, 0, fmt.pct),
   spec(Param.MASTER_VOLUME, 'VOLUME', 0, 1, 0.75, fmt.pct),
 ];

@@ -188,10 +188,28 @@ pub mod id {
     /// b = 1 is *exactly* stage 2 and both endpoints can be asserted bit for
     /// bit. Ignored while `FILTER_ROUTING` is 0 or 1.
     pub const FILTER_BLEND: u32 = 151;
+    /// Bit-crusher (P6.4): on/off, then bit depth 4..16, sample-rate divisor
+    /// 1..64, anti-alias amount 0..1 and the insert mix.
+    pub const FX_CRUSH_ON: u32 = 152;
+    pub const FX_CRUSH_BITS: u32 = 153;
+    pub const FX_CRUSH_DOWN: u32 = 154;
+    pub const FX_CRUSH_AA: u32 = 155;
+    pub const FX_CRUSH_MIX: u32 = 156;
+    /// Shaping EQ (P6.4): on/off, then low shelf (gain, corner), sweepable mid
+    /// peak (gain, centre, Q), high shelf (gain, corner) and the insert mix.
+    pub const FX_EQ_ON: u32 = 157;
+    pub const FX_EQ_LOW_GAIN: u32 = 158;
+    pub const FX_EQ_LOW_FREQ: u32 = 159;
+    pub const FX_EQ_MID_GAIN: u32 = 160;
+    pub const FX_EQ_MID_FREQ: u32 = 161;
+    pub const FX_EQ_MID_Q: u32 = 162;
+    pub const FX_EQ_HIGH_GAIN: u32 = 163;
+    pub const FX_EQ_HIGH_FREQ: u32 = 164;
+    pub const FX_EQ_MIX: u32 = 165;
 }
 
 /// Highest parameter id + 1.
-pub const PARAM_COUNT: usize = 152;
+pub const PARAM_COUNT: usize = 166;
 
 /// Positions in the effect chain (A5). Six is one per effect: the chain is a
 /// permutation, so reordering can never lose an effect or double one up.
@@ -208,6 +226,10 @@ pub enum FxKind {
     Flanger,
     Phaser,
     Drive,
+    /// Bit-crusher (P6.4): quantiser + sample-rate divider with anti-aliasing.
+    Crush,
+    /// Shaping EQ (P6.4): low shelf, sweepable mid peak, high shelf.
+    Eq,
 }
 
 impl FxKind {
@@ -219,6 +241,8 @@ impl FxKind {
             4 => FxKind::Flanger,
             5 => FxKind::Phaser,
             6 => FxKind::Drive,
+            7 => FxKind::Crush,
+            8 => FxKind::Eq,
             _ => FxKind::None,
         }
     }
@@ -229,7 +253,15 @@ impl FxKind {
     /// for them the parallel switch has nothing to change (and the UI does not
     /// offer it).
     pub fn can_be_parallel(self) -> bool {
-        matches!(self, FxKind::Chorus | FxKind::Flanger | FxKind::Phaser | FxKind::Drive)
+        matches!(
+            self,
+            FxKind::Chorus
+                | FxKind::Flanger
+                | FxKind::Phaser
+                | FxKind::Drive
+                | FxKind::Crush
+                | FxKind::Eq
+        )
     }
 }
 
@@ -303,6 +335,20 @@ pub fn is_continuous(param_id: u32) -> bool {
             | p::FILTER_ENV_RELEASE
             | p::LFO2_RATE
             | p::LFO2_DEPTH
+            // Bit-crusher and shaping EQ (P6.4): smoothed so a knob drag does
+            // not click. Their on/off switches stay stepped.
+            | p::FX_CRUSH_BITS
+            | p::FX_CRUSH_DOWN
+            | p::FX_CRUSH_AA
+            | p::FX_CRUSH_MIX
+            | p::FX_EQ_LOW_GAIN
+            | p::FX_EQ_LOW_FREQ
+            | p::FX_EQ_MID_GAIN
+            | p::FX_EQ_MID_FREQ
+            | p::FX_EQ_MID_Q
+            | p::FX_EQ_HIGH_GAIN
+            | p::FX_EQ_HIGH_FREQ
+            | p::FX_EQ_MIX
     )
 }
 
@@ -779,6 +825,28 @@ pub struct FxParams {
     pub drive_on: bool,
     pub drive_amt: f32,
     pub drive_mix: f32,
+    /// Bit-crusher (P6.4). Off by default so every patch written before it
+    /// existed renders through exactly the code path it did before.
+    pub crush_on: bool,
+    /// Quantiser bit depth, 4..16 (continuous so an abrupt change is smoothed).
+    pub crush_bits: f32,
+    /// Sample-and-hold divisor, 1..64: the sample rate is divided by this.
+    pub crush_down: f32,
+    /// Anti-alias amount, 0..1: how much of the pre-decimation low-pass and the
+    /// post sample-and-hold interpolation is mixed in. 0 is the raw, aliased
+    /// crusher; 1 is the smoothest.
+    pub crush_aa: f32,
+    pub crush_mix: f32,
+    /// Shaping EQ (P6.4): low shelf, sweepable mid peak, high shelf.
+    pub eq_on: bool,
+    pub eq_low_gain: f32,
+    pub eq_low_freq: f32,
+    pub eq_mid_gain: f32,
+    pub eq_mid_freq: f32,
+    pub eq_mid_q: f32,
+    pub eq_high_gain: f32,
+    pub eq_high_freq: f32,
+    pub eq_mix: f32,
 }
 
 /// Complete engine parameter snapshot. `Copy` keeps the render loop allocation
@@ -951,6 +1019,22 @@ impl Params {
                 drive_on: false,
                 drive_amt: 0.4,
                 drive_mix: 0.6,
+                // Both new effects start switched off, so a patch that predates
+                // them renders bit-for-bit as it did (P6.4).
+                crush_on: false,
+                crush_bits: 8.0,
+                crush_down: 4.0,
+                crush_aa: 0.5,
+                crush_mix: 1.0,
+                eq_on: false,
+                eq_low_gain: 0.0,
+                eq_low_freq: 200.0,
+                eq_mid_gain: 0.0,
+                eq_mid_freq: 1000.0,
+                eq_mid_q: 0.9,
+                eq_high_gain: 0.0,
+                eq_high_freq: 4000.0,
+                eq_mix: 1.0,
             },
             routes: [
                 ModRoute {
@@ -1132,6 +1216,20 @@ impl Params {
             p::LFO_ONESHOT => self.lfo.one_shot = value > 0.5,
             p::LFO2_RETRIG => self.lfo2.retrigger = value > 0.5,
             p::LFO2_ONESHOT => self.lfo2.one_shot = value > 0.5,
+            p::FX_CRUSH_ON => self.fx.crush_on = value > 0.5,
+            p::FX_CRUSH_BITS => self.fx.crush_bits = value.clamp(4.0, 16.0),
+            p::FX_CRUSH_DOWN => self.fx.crush_down = value.clamp(1.0, 64.0),
+            p::FX_CRUSH_AA => self.fx.crush_aa = clamp01(value),
+            p::FX_CRUSH_MIX => self.fx.crush_mix = clamp01(value),
+            p::FX_EQ_ON => self.fx.eq_on = value > 0.5,
+            p::FX_EQ_LOW_GAIN => self.fx.eq_low_gain = value.clamp(-18.0, 18.0),
+            p::FX_EQ_LOW_FREQ => self.fx.eq_low_freq = value.clamp(40.0, 1000.0),
+            p::FX_EQ_MID_GAIN => self.fx.eq_mid_gain = value.clamp(-18.0, 18.0),
+            p::FX_EQ_MID_FREQ => self.fx.eq_mid_freq = value.clamp(200.0, 8000.0),
+            p::FX_EQ_MID_Q => self.fx.eq_mid_q = value.clamp(0.3, 6.0),
+            p::FX_EQ_HIGH_GAIN => self.fx.eq_high_gain = value.clamp(-18.0, 18.0),
+            p::FX_EQ_HIGH_FREQ => self.fx.eq_high_freq = value.clamp(1000.0, 16000.0),
+            p::FX_EQ_MIX => self.fx.eq_mix = clamp01(value),
             _ => {}
         }
     }
