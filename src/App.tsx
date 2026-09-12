@@ -8,7 +8,7 @@ import { useContrast, useLayout, usePower, useTheme, useView } from '@/hooks/use
 import { useViewport } from '@/hooks/useViewport';
 import { wireAnalysis } from '@/audio/analysis';
 import { TopBar, DisplayRow, KeyboardDock } from '@/panels/layout';
-import { CHANGELOG } from '@/changelog';
+import { CHANGELOG_HEAD } from '@/changelog-head';
 import { fxGraphOpen, useFxGraphOpen } from '@/state/overlays';
 import { ModuleFor } from '@/panels/modules';
 import { ModulesGrid } from '@/components/Module';
@@ -114,7 +114,7 @@ function UpdateBanner() {
   if (!available) return null;
   // Say what arrived, not just that something did: the newest release's first
   // line is what a returning player wants to know before reloading.
-  const newest = CHANGELOG[0];
+  const newest = CHANGELOG_HEAD;
   const headline = newest?.items[0]?.[lang === 'zh' ? 0 : 1].replace(/\*\*/g, '') ?? '';
   return (
     <div className="update-banner" role="status">

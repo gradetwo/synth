@@ -21,7 +21,10 @@ export interface Release {
   items: [string, string][];
 }
 
+import { CHANGELOG_HEAD } from './changelog-head';
+
 export const CHANGELOG: Release[] = [
+  CHANGELOG_HEAD,
   {
     version: '1.90.0',
     date: '2026-09-12',
