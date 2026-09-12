@@ -17,7 +17,7 @@ export interface Release {
 
 export const CHANGELOG_HEAD: Release = {
     version: '1.98.0',
-    date: '2026-09-12',
+    date: '2026-09-13',
     kind: 'feature',
     items: [
       [
