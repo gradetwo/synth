@@ -457,6 +457,45 @@ test('edits a modulation edge from the list view', async ({ page }) => {
  * P7.3: templates. A template is a routing saved in the workspace, applied to
  * the patch in one change; the built-ins are always in the list.
  */
+/**
+ * P9.2: the transient shaper joins the node pool with its own on/off and mix,
+ * and it is patch data like every other node kind.
+ */
+test('puts the transient shaper in a node and keeps it across a fresh load', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(400);
+  await openEditor(page);
+
+  const kind = (slot: number) => page.locator('[data-act="kind"][data-node="' + slot + '"]');
+  const on = (slot: number) => page.locator('[data-act="on"][data-node="' + slot + '"]');
+  const mix = (slot: number) => page.locator('[data-act="mix"][data-node="' + slot + '"]');
+
+  // Node 2 is the reverb in the default chain; swap it for the shaper.
+  await kind(1).selectOption('transient');
+  await expect(kind(1)).toHaveValue('transient');
+  await expect(page.locator('.fxg-hint')).toContainText('从左往右');
+
+  // Every insert effect gets its on/off and its mix in the card.
+  await expect(on(1)).toBeVisible();
+  await expect(on(1)).toHaveAttribute('aria-pressed', 'false');
+  await clickIn(on(1));
+  await expect(on(1)).toHaveAttribute('aria-pressed', 'true');
+  await expect(mix(1)).toHaveValue('100');
+  await mix(1).fill('40');
+  await expect(mix(1)).toHaveValue('40');
+
+  // Patch data, so the kind, the switch and the mix come back in a fresh load.
+  const { next: view, closeOld } = await freshLoad(page);
+  await view.getByRole('button', { name: /启动音频引擎/ }).click();
+  await closeOld();
+  await view.waitForTimeout(400);
+  await openEditor(view);
+  await expect(view.locator('[data-act="kind"][data-node="1"]')).toHaveValue('transient');
+  await expect(view.locator('[data-act="on"][data-node="1"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(view.locator('[data-act="mix"][data-node="1"]')).toHaveValue('40');
+});
+
 test('applies a built-in template and keeps the routing across a fresh load', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /启动音频引擎/ }).click();

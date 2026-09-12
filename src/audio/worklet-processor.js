@@ -196,6 +196,11 @@ const PARAMS = [
   ['fxMod4Src', 176, 0, 0, 3],
   ['fxMod4Dst', 177, 0, 0, 18],
   ['fxMod4Depth', 178, 0, -1, 1],
+  // Transient shaper (P9.2): off with both amounts neutral until asked for.
+  ['fxTransientOn', 179, 0, 0, 1],
+  ['fxTransientAttack', 180, 0, -1, 1],
+  ['fxTransientSustain', 181, 0, -1, 1],
+  ['fxTransientMix', 182, 1, 0, 1],
 ];
 
 const SPECTRUM_BINS = 36;

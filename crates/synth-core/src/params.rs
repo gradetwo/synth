@@ -228,10 +228,18 @@ pub mod id {
     pub const FX_MOD4_SRC: u32 = 176;
     pub const FX_MOD4_DST: u32 = 177;
     pub const FX_MOD4_DEPTH: u32 = 178;
+    /// Transient shaper (P9.2): on/off, the two signed amounts in dB of gain
+    /// move per unit of transient at full scale, and the insert mix. Both
+    /// amounts default to 0, which makes the node a mathematical identity — so
+    /// a patch written before P9.2 renders bit for bit unchanged.
+    pub const FX_TRANSIENT_ON: u32 = 179;
+    pub const FX_TRANSIENT_ATTACK: u32 = 180;
+    pub const FX_TRANSIENT_SUSTAIN: u32 = 181;
+    pub const FX_TRANSIENT_MIX: u32 = 182;
 }
 
 /// Highest parameter id + 1.
-pub const PARAM_COUNT: usize = 179;
+pub const PARAM_COUNT: usize = 183;
 
 /// Positions in the effect chain (A5). Six is one per effect: the chain is a
 /// permutation, so reordering can never lose an effect or double one up.
@@ -291,6 +299,9 @@ pub enum FxKind {
     Crush,
     /// Shaping EQ (P6.4): low shelf, sweepable mid peak, high shelf.
     Eq,
+    /// Transient shaper (P9.2): fast/slow envelope difference driving a signed
+    /// gain on the attack and on the sustain of a note.
+    Transient,
 }
 
 impl FxKind {
@@ -304,6 +315,7 @@ impl FxKind {
             6 => FxKind::Drive,
             7 => FxKind::Crush,
             8 => FxKind::Eq,
+            9 => FxKind::Transient,
             _ => FxKind::None,
         }
     }
@@ -322,6 +334,7 @@ impl FxKind {
                 | FxKind::Drive
                 | FxKind::Crush
                 | FxKind::Eq
+                | FxKind::Transient
         )
     }
 }
@@ -410,6 +423,11 @@ pub fn is_continuous(param_id: u32) -> bool {
             | p::FX_EQ_HIGH_GAIN
             | p::FX_EQ_HIGH_FREQ
             | p::FX_EQ_MIX
+            // Transient shaper (P9.2): the three continuous controls are
+            // smoothed like every other knob; the on/off switch is stepped.
+            | p::FX_TRANSIENT_ATTACK
+            | p::FX_TRANSIENT_SUSTAIN
+            | p::FX_TRANSIENT_MIX
             // In-graph modulation depths (P7.2): smoothed like every other
             // gain, so an edge drawn onto a live graph ramps instead of
             // stepping. The source and destination codes are stepped.
@@ -925,6 +943,14 @@ pub struct FxParams {
     pub eq_high_gain: f32,
     pub eq_high_freq: f32,
     pub eq_mix: f32,
+    /// Transient shaper (P9.2). Both amounts start at 0 and the switch at off,
+    /// so an older patch renders exactly as it did.
+    pub transient_on: bool,
+    /// Signed gain on a note's onset, -1..1 (0 = leave it alone).
+    pub transient_attack: f32,
+    /// Signed gain on a note's falling envelope, -1..1 (0 = leave it alone).
+    pub transient_sustain: f32,
+    pub transient_mix: f32,
 }
 
 /// Complete engine parameter snapshot. `Copy` keeps the render loop allocation
@@ -1121,6 +1147,12 @@ impl Params {
                 eq_high_gain: 0.0,
                 eq_high_freq: 4000.0,
                 eq_mix: 1.0,
+                // The transient shaper (P9.2) starts off with both amounts at
+                // zero: a node that runs it is a mathematical identity.
+                transient_on: false,
+                transient_attack: 0.0,
+                transient_sustain: 0.0,
+                transient_mix: 1.0,
             },
             routes: [
                 ModRoute {
@@ -1325,6 +1357,10 @@ impl Params {
             p::FX_EQ_HIGH_GAIN => self.fx.eq_high_gain = value.clamp(-18.0, 18.0),
             p::FX_EQ_HIGH_FREQ => self.fx.eq_high_freq = value.clamp(1000.0, 16000.0),
             p::FX_EQ_MIX => self.fx.eq_mix = clamp01(value),
+            p::FX_TRANSIENT_ON => self.fx.transient_on = value > 0.5,
+            p::FX_TRANSIENT_ATTACK => self.fx.transient_attack = value.clamp(-1.0, 1.0),
+            p::FX_TRANSIENT_SUSTAIN => self.fx.transient_sustain = value.clamp(-1.0, 1.0),
+            p::FX_TRANSIENT_MIX => self.fx.transient_mix = clamp01(value),
             _ => {}
         }
     }
@@ -1395,7 +1431,11 @@ mod tests {
             id::FX_MOD4_DEPTH,
             "the edge block is three contiguous ids per slot"
         );
-        assert_eq!(PARAM_COUNT, id::FX_MOD4_DEPTH as usize + 1);
+        assert_eq!(PARAM_COUNT, id::FX_TRANSIENT_MIX as usize + 1);
+        // Every id from `FX_MOD1_SRC` to `FX_MOD4_DEPTH` belongs to the edge
+        // block and nothing past it does, so an edge can never be confused with
+        // the effect parameters appended after it.
+        assert_eq!(id::FX_MOD4_DEPTH + 1, id::FX_TRANSIENT_ON);
         for slot in 0..MOD_SLOTS {
             let base = id::FX_MOD1_SRC + slot as u32 * 3;
             assert_eq!(mod_param_field(base), Some((slot, ModField::Src)));

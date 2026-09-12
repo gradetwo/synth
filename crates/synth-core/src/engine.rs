@@ -20,7 +20,9 @@ use crate::dsp::sampler::{LoopMode, ReadState, Sample, SampleError, SampleParams
 use crate::dsp::wavetable::{CycleError, Table, BASE_LEN as WT_BASE_LEN};
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_limit, Rng};
 use crate::fft::Spectrum;
-use crate::fx_shaping::{BitCrusher, CrushParams, EqParams, ShapingEq};
+use crate::fx_shaping::{
+    BitCrusher, CrushParams, EqParams, ShapingEq, TransientParams, TransientShaper,
+};
 use crate::params::{
     graph_node_src, id, is_continuous, FilterRouting, FxKind, FxParams, GraphInput, LfoTarget, ModDst,
     ModSrc, OscParams, Params, FX_SLOTS, GRAPH_DRY, GRAPH_GAINS, MAX_BLOCK_SIZE, MAX_UNISON,
@@ -377,6 +379,9 @@ pub struct Engine {
     /// audio thread and two nodes never share a filter.
     crushers: [BitCrusher; FX_SLOTS],
     eqs: [ShapingEq; FX_SLOTS],
+    /// Transient-shaper state (P9.2), one set per effect node like the two
+    /// above: fixed size, allocation free, never shared between nodes.
+    transients: [TransientShaper; FX_SLOTS],
     /// Delay lines, one per node that can have one (P7.1). `instances ×
     /// MAX_DELAY_SECONDS`, allocated once in `init`; a node with no line left
     /// passes its input through (the editor disables that choice instead).
@@ -539,6 +544,7 @@ impl Engine {
             reverbs: Vec::new(),
             crushers: [BitCrusher::new(); FX_SLOTS],
             eqs: [ShapingEq::new(); FX_SLOTS],
+            transients: [TransientShaper::new(); FX_SLOTS],
             delays: Vec::new(),
             delay_of: [NO_INSTANCE; FX_SLOTS],
             convolvers: Vec::new(),
@@ -626,6 +632,9 @@ impl Engine {
         }
         for eq in self.eqs.iter_mut() {
             eq.reset();
+        }
+        for transient in self.transients.iter_mut() {
+            transient.reset();
         }
         // The delay pool (P7.1) is allocated once here, on the message path, so
         // changing a node's kind in the routing graph never allocates on the
@@ -2722,6 +2731,18 @@ impl Engine {
                     );
                     self.mix_effect(frames, fx.eq_mix, parallel);
                 }
+                FxKind::Transient if fx.transient_on && fx.transient_mix > 0.0 => {
+                    self.transients[slot].process(
+                        &self.fx_l[..frames],
+                        &self.fx_r[..frames],
+                        &mut self.osc_a,
+                        &mut self.osc_b,
+                        frames,
+                        transient_params(fx),
+                        self.sample_rate,
+                    );
+                    self.mix_effect(frames, fx.transient_mix, parallel);
+                }
                 _ => {}
             }
         }
@@ -3111,6 +3132,18 @@ impl Engine {
                 );
                 self.blend_node(slot, frames, fx.eq_mix, parallel);
             }
+            FxKind::Transient if fx.transient_on && fx.transient_mix > 0.0 => {
+                self.transients[slot].process(
+                    &self.graph_node_l[base..base + frames],
+                    &self.graph_node_r[base..base + frames],
+                    &mut self.osc_a,
+                    &mut self.osc_b,
+                    frames,
+                    transient_params(fx),
+                    self.sample_rate,
+                );
+                self.blend_node(slot, frames, fx.transient_mix, parallel);
+            }
             _ => {}
         }
     }
@@ -3233,6 +3266,15 @@ fn eq_params(fx: FxParams) -> EqParams {
         mid_q: fx.eq_mid_q,
         high_gain: fx.eq_high_gain,
         high_freq: fx.eq_high_freq,
+    }
+}
+
+/// The transient shaper's per-block controls (P9.2). A free function for the
+/// same reason as `eq_params`: both render paths read the same fields.
+fn transient_params(fx: FxParams) -> TransientParams {
+    TransientParams {
+        attack_amt: fx.transient_attack,
+        sustain_amt: fx.transient_sustain,
     }
 }
 
@@ -3877,7 +3919,7 @@ mod tests {
         e.set_param(id::FX_PHASER_MIX, 0.4);
         e.set_param(id::FX_DRIVE_ON, 1.0);
         e.set_param(id::FX_DRIVE_MIX, 0.5);
-        let kinds = [0u32, 1, 2, 3, 4, 5, 6, 7, 8];
+        let kinds = [0u32, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         for (slot, kind) in chain.iter().enumerate() {
             let code = match kind {
                 FxKind::None => kinds[0],
@@ -3889,6 +3931,7 @@ mod tests {
                 FxKind::Drive => kinds[6],
                 FxKind::Crush => kinds[7],
                 FxKind::Eq => kinds[8],
+                FxKind::Transient => kinds[9],
             };
             e.set_param(id::FX_CHAIN1 + slot as u32, code as f32);
         }

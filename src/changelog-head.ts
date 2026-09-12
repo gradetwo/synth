@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.97.0',
+    version: '1.98.0',
     date: '2026-09-12',
-    kind: 'sound',
+    kind: 'feature',
     items: [
       [
-        '**硬同步不再有可闻的毛刺**：给同步振荡器换成专用的带限实现（朴素波形 + 相位回绕与主振重启的 BLEP/BLAMP 修正，共用同一套高精度相位），锯齿/方波/三角在同步时的混叠能量从约 −32/−34/−50 dB 降到 **−69/−69/−77 dB**（实测，整秒矩形窗精确 bin），也就是比原来低约 28–37 dB；时域上从振仍严格对齐主振周期（相关 0.9995+）。同步**关闭**时（默认）渲染与之前逐位相同。',
-        '**Hard sync no longer has audible grit**: the synced oscillator now has its own band-limited implementation (naive shapes with BLEP/BLAMP corrections for both the phase wrap and the master restart, sharing one high-precision phase). Aliasing under sync drops from about −32/−34/−50 dB to **−69/−69/−77 dB** for saw, square and triangle (measured over an integer second with a rectangular window and exact bins) — roughly 28–37 dB lower — while the slave stays locked to the master’s period in the time domain (correlation above 0.9995). With sync **off** (the default) the render is sample-for-sample what it was.',
+        '**多了一个瞬态整形效果**：路由图里新增「TRANSIENT」——ATTACK 与 SUSTAIN 两个双向旋钮，用来提升或压低一个打点的起音与延音（满档约 ±7 dB，0 表示不变），另配 MIX 干湿比；默认关闭，持续音上不引入额外谐波（实测 THD 增量 0.00），关闭或中性设置时与之前逐位相同。',
+        '**A transient shaper**: the routing graph gained TRANSIENT — attack and sustain knobs that lift or push down a hit’s onset and its tail (about ±7 dB at full, 0 is unchanged), plus a dry/wet mix. It is off by default, adds no harmonic content to a held note (measured THD increase 0.00), and off or neutral renders bit-for-bit what it did before.',
       ],
     ],
   };

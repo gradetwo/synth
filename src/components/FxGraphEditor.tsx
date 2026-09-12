@@ -140,6 +140,7 @@ const MIX_PARAM: Partial<Record<FxKind, ParamId>> = {
   drive: Param.FX_DRIVE_MIX,
   crush: Param.FX_CRUSH_MIX,
   eq: Param.FX_EQ_MIX,
+  transient: Param.FX_TRANSIENT_MIX,
 };
 
 const ON_PARAM: Partial<Record<FxKind, ParamId>> = {
@@ -151,6 +152,7 @@ const ON_PARAM: Partial<Record<FxKind, ParamId>> = {
   drive: Param.FX_DRIVE_ON,
   crush: Param.FX_CRUSH_ON,
   eq: Param.FX_EQ_ON,
+  transient: Param.FX_TRANSIENT_ON,
 };
 
 export function FxGraphEditor({ onClose }: { onClose: () => void }) {

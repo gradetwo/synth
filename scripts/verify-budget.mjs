@@ -58,9 +58,16 @@ const lame = files.find((file) => /lamejs-.*\.js$/.test(file));
 // now repaid in full) could be *lowered* rather than raised again, and why the
 // margin is now ~0.5 % instead of the ~12 KB that P6.4 spent: the next batch
 // that grows the payload has to come back and name its trade here.
+//
+// P9.2 (the transient shaper) is the first batch to take that invitation and
+// the reason the total moved 1672 -> 1676 KB: +2.5 KB of wasm on the SIMD core,
+// +2.3 on the scalar one and +1.4 KB of JS for an effect that is off by default.
+// The clean tree had 4.1 KB of headroom, so the feature spent essentially all of
+// it. P11.1 (`wasm-opt -Oz`, a projected >=10 % off both cores) is the batch
+// that has to buy it back; if it does not, the next feature pays.
 const BUDGETS = {
-  // Measured 1662.8 KB. +9.2 KB (+0.55 %).
-  total: 1672 * 1024,
+  // Measured 1674.0 KB after P9.2. +2.0 KB (+0.12 %).
+  total: 1676 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   // Measured 131.2 KB gzip. +2.8 KB (+2.1 %); the P8.5 plan target was 140 KB,
   // so this is the tight version of an already-reached goal.

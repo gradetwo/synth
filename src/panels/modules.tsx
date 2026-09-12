@@ -728,6 +728,15 @@ function Fx2Module() {
             SPEC_BY_ID[Param.FX_EQ_MIX],
           ]}
         />
+        <FxStrip
+          title={t('module.transient')}
+          ledId={Param.FX_TRANSIENT_ON}
+          specs={[
+            SPEC_BY_ID[Param.FX_TRANSIENT_ATTACK],
+            SPEC_BY_ID[Param.FX_TRANSIENT_SUSTAIN],
+            SPEC_BY_ID[Param.FX_TRANSIENT_MIX],
+          ]}
+        />
       </div>
     </ModuleShell>
   );

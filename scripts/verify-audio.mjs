@@ -57,6 +57,10 @@ const P = {
   OSC1_UNISON: 70, OSC2_UNISON: 72, OSC1_SPREAD: 71, OSC2_SPREAD: 73, MASTER_TUNE: 41,
   /** P6.5: 2x oversampling of the drive/filter path. */
   OVERSAMPLE: 166,
+  /** P9.2 transient shaper: on/off, the two signed amounts and the mix. */
+  FX_TRANSIENT_ON: 179, FX_TRANSIENT_ATTACK: 180, FX_TRANSIENT_SUSTAIN: 181,
+  FX_TRANSIENT_MIX: 182, OSC1_DETUNE: 4, OSC1_UNISON: 70, OSC1_SPREAD: 71,
+  FX_GRAPH: 100,
 };
 
 const WAVE_TYPES = { lp: 0, hp: 1, bp: 2, notch: 3, sem: 6 };
@@ -1462,6 +1466,230 @@ function blockSteps(frames) {
     Math.abs(20 * Math.log10(twoX.fund / oneX.fund)) < 1.0,
     `fundamental ${(20 * Math.log10(twoX.fund / oneX.fund)).toFixed(2)} dB vs 1x`,
   );
+}
+
+// ---------------------------- transient shaper (P9.2)
+//
+// The Rust rig pins the DSP itself: the identity at neutral amounts, the exact
+// bit-for-bit mix-0 bypass, the attack and sustain gains and the bounded slam.
+// This section measures the same effect through the real wasm build and the
+// whole parameter path, in both domains:
+//
+//   * time domain — the attack gain on a note's onset and the sustain gain on
+//     its release, measured per render as a windowed single-bin *envelope*
+//     against the same render's settled plateau;
+//   * frequency domain — a held tone through a *neutral* shaper must not gain
+//     any harmonic content (THD increase at most 0.5%), and a mix-0 shaper must
+//     leave the spectrum untouched.
+//
+// Two separate `gs_init` calls do not start a note at the same phase (the
+// oscillator's phase counter survives init, and the default patch detunes by
+// 7 cents), so nothing here compares samples or RMS from two renders: a
+// windowed single-bin magnitude of a pure tone is phase independent, and the
+// release is compared as a *ratio of ratios* so both renders' envelopes cancel.
+{
+  const flat = [
+    [P.FILTER_TYPE, WAVE_TYPES.sem], [P.FILTER_CUTOFF, 20000], [P.FILTER_RES, 0],
+    [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0], [P.FILTER_KBD, 0], [P.FILTER_MORPH, 0],
+    [P.FILTER_ROUTING, 0], [P.FILTER2_CUTOFF, 20000],
+    [P.OSC1_WAVE, WAVE.sine], [P.OSC1_LEVEL, 0.25], [P.OSC1_SYNC, 0], [P.OSC1_SUB, 0],
+    // One voice, no detune: the default patch's two detuned voices beat against
+    // each other, and a short window would then read the beat, not the shaper.
+    [P.OSC1_DETUNE, 0], [P.OSC1_UNISON, 1], [P.OSC1_SPREAD, 0],
+    [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0], [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0],
+    // A zero attack so the note reaches its plateau at once, and a slow decay
+    // and release so the falling envelope lasts long enough to measure.
+    [P.ENV_ATTACK, 0.0], [P.ENV_DECAY, 4], [P.ENV_SUSTAIN, 1], [P.ENV_RELEASE, 0.5],
+    [P.LFO_ON, 0], [P.LFO2_ON, 0],
+    [P.MASTER_VOLUME, 0.4], [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0],
+    [P.FX_CHORUS_ON, 0], [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0],
+    // The transient shaper is the only thing in the chain.
+    [P.FX_CHAIN1, 9], [P.FX_CHAIN2, 0], [P.FX_CHAIN3, 0],
+    [P.FX_CHAIN4, 0], [P.FX_CHAIN5, 0], [P.FX_CHAIN6, 0],
+    // The parameter block survives `gs_init`, so every P9.2 control is reset
+    // here; without this a measurement inherits the previous one's amounts.
+    [P.FX_TRANSIENT_ON, 0], [P.FX_TRANSIENT_ATTACK, 0],
+    [P.FX_TRANSIENT_SUSTAIN, 0], [P.FX_TRANSIENT_MIX, 1],
+  ];
+  // The default patch's ENV/LFO -> CUTOFF routes are live; without clearing the
+  // matrix these numbers are measurements of the modulation (P6.3a's lesson).
+  const quietMatrix = () => {
+    for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
+  };
+  const pitch = (freq) => {
+    const semis = 12 * Math.log2(freq / 1046.502);
+    if (Math.abs(semis) > 48) throw new Error(`gate frequency ${freq} Hz is out of range`);
+    return semis;
+  };
+  /** The tone every window is measured at. */
+  const PROBE = 1000;
+  /**
+   * Block indices (128 samples each). The silence before the note is not
+   * padding: a continuous control that was set just before the note keeps
+   * moving for ~20 ms, and a measurement taken across that ramp would read the
+   * smoother rather than the effect. 16 blocks is 43 ms, five time constants.
+   */
+  const AT_ON = 64;
+  const AT_RELEASE = 100;
+  const BLOCKS = 140;
+  /**
+   * One scenario in a single pass, so the note has one phase seed throughout:
+   * two blocks of silence, the note for 36 blocks, then a release.
+   */
+  const renderNote = (extra) => {
+    engine([...flat, [P.OSC1_PITCH, pitch(PROBE)], ...extra]);
+    quietMatrix();
+    const out = [];
+    const capture = (blocks) => {
+      for (let b = 0; b < blocks; b++) {
+        ex.gs_process(BLOCK);
+        const heap = new Float32Array(ex.memory.buffer);
+        const ptr = ex.gs_left_ptr() / 4;
+        for (let i = 0; i < BLOCK; i++) out.push(heap[ptr + i]);
+      }
+    };
+    capture(AT_ON - 2);
+    ex.gs_note_on(84, 1);
+    capture(AT_RELEASE - AT_ON);
+    ex.gs_all_notes_off();
+    capture(BLOCKS - AT_RELEASE);
+    return out;
+  };
+  /**
+   * The tone's envelope over a block range, as a single-bin magnitude. A Hann
+   * window over a few tens of milliseconds is phase independent and follows the
+   * envelope, so the *ratio* of two windows is the gain the effect applied
+   * there. The floor keeps an empty window from producing -Infinity dB.
+   */
+  const windowLevel = (samples, from, to) =>
+    Math.max(binMag(samples.slice(from * BLOCK, to * BLOCK), PROBE), 1e-12);
+  const toDb = (v) => 20 * Math.log10(Math.max(v, 1e-12));
+  /**
+   * Where the shaper has let go: the detector's slow follower keeps returning
+   * towards unity for the best part of a second, so the plateau is read a full
+   * second into the note, where its residual is under a tenth of a decibel.
+   */
+  const PLATEAU = [AT_RELEASE - 16, AT_RELEASE - 2];
+  /**
+   * The gain the shaper applied to a window, against a *neutral* shaper's own
+   * envelope over the same window: both ratios are taken inside one render, so
+   * the note's phase and its natural onset-to-plateau decay cancel and what is
+   * left is the effect.
+   */
+  const windowGain = (amount, which, from, to) => {
+    const param = which === 'attack' ? P.FX_TRANSIENT_ATTACK : P.FX_TRANSIENT_SUSTAIN;
+    const on = [[P.FX_TRANSIENT_ON, 1], [P.FX_TRANSIENT_MIX, 1]];
+    const ratio = (samples) =>
+      toDb(windowLevel(samples, from, to)) - toDb(windowLevel(samples, PLATEAU[0], PLATEAU[1]));
+    const wet = renderNote([...on, [param, amount]]);
+    const dry = renderNote(on);
+    return ratio(wet) - ratio(dry);
+  };
+  const attackGain = (amount) => windowGain(amount, 'attack', AT_ON, AT_ON + 6);
+  /**
+   * The sustain gain: the release window against the plateau, compared with a
+   * neutral shaper's own release-to-plateau ratio. Both renders have the same
+   * envelope law, so dividing them leaves the shaper's contribution alone.
+   */
+  const sustainGain = (amount) => windowGain(amount, 'sustain', AT_RELEASE + 4, AT_RELEASE + 24);
+
+  const attackUp = attackGain(0.5);
+  const attackDown = attackGain(-0.5);
+  check(
+    'Transient attack = +0.5 lifts the onset by about 3 dB',
+    Math.abs(attackUp - 3) <= 1,
+    `${attackUp.toFixed(2)} dB on the onset against the plateau`,
+  );
+  check(
+    'Transient attack = -0.5 cuts the onset by about 3 dB',
+    Math.abs(attackDown + 3) <= 1,
+    `${attackDown.toFixed(2)} dB on the onset against the plateau`,
+  );
+  const sustainUp = sustainGain(0.5);
+  const sustainDown = sustainGain(-0.5);
+  check(
+    'Transient sustain = +0.5 shortens the tail by about 3 dB',
+    Math.abs(sustainUp + 3) <= 1,
+    `${sustainUp.toFixed(2)} dB on the release against a neutral shaper`,
+  );
+  check(
+    'Transient sustain = -0.5 lengthens the tail by about 3 dB',
+    Math.abs(sustainDown - 3) <= 1,
+    `${sustainDown.toFixed(2)} dB on the release against a neutral shaper`,
+  );
+
+  // --- frequency domain: neutral settings add no harmonics -----------------
+  //
+  // A held sine through a neutral shaper (both amounts 0), against the same
+  // tone with the effect switched off. Both are separate renders, so the THD is
+  // compared as a number, never sample against sample.
+  const thdOf = (extra) => {
+    engine([...flat, [P.OSC1_PITCH, pitch(PROBE)], ...extra]);
+    quietMatrix();
+    ex.gs_note_on(84, 1);
+    const out = [];
+    for (let b = 0; b < 260; b++) {
+      ex.gs_process(BLOCK);
+      if (b < 40) continue;
+      const heap = new Float32Array(ex.memory.buffer);
+      const ptr = ex.gs_left_ptr() / 4;
+      for (let i = 0; i < BLOCK; i++) out.push(heap[ptr + i]);
+    }
+    const fund = binMag(out, PROBE);
+    let harmonics = 0;
+    for (let k = 2; k * PROBE < SR / 2; k++) harmonics += binMag(out, k * PROBE) ** 2;
+    return (Math.sqrt(harmonics) / Math.max(fund, 1e-12)) * 100;
+  };
+  const thdOff = thdOf([]);
+  const thdNeutral = thdOf([[P.FX_TRANSIENT_ON, 1], [P.FX_TRANSIENT_MIX, 1]]);
+  check(
+    'A neutral transient shaper adds no harmonics',
+    thdNeutral - thdOff <= 0.5,
+    `THD ${thdOff.toFixed(3)}% -> ${thdNeutral.toFixed(3)}% (${(thdNeutral - thdOff).toFixed(3)} points)`,
+  );
+  // A mix-0 shaper with a violent setting must leave the spectrum where it was.
+  const thdMixed = thdOf([
+    [P.FX_TRANSIENT_ON, 1], [P.FX_TRANSIENT_MIX, 0],
+    [P.FX_TRANSIENT_ATTACK, 1], [P.FX_TRANSIENT_SUSTAIN, 1],
+  ]);
+  check(
+    'A mix-0 transient shaper leaves the spectrum untouched',
+    Math.abs(thdMixed - thdOff) <= 0.5,
+    `THD ${thdOff.toFixed(3)}% -> ${thdMixed.toFixed(3)}% at mix 0`,
+  );
+
+  // --- time domain: slamming the controls must not click -----------------
+  engine(
+    [...flat, [P.OSC1_PITCH, pitch(PROBE)], [P.FX_TRANSIENT_ON, 1], [P.FX_TRANSIENT_MIX, 1]],
+    [[84, 1]],
+  );
+  quietMatrix();
+  {
+    let peak = 0;
+    let worstStep = 0;
+    let finite = true;
+    let prev = null;
+    for (let b = 0; b < 240; b++) {
+      ex.gs_set_param(P.FX_TRANSIENT_ATTACK, ((b % 41) - 20) / 20);
+      ex.gs_set_param(P.FX_TRANSIENT_SUSTAIN, 1 - (b % 41) / 20);
+      ex.gs_set_param(P.FX_TRANSIENT_MIX, (b % 40) < 20 ? 0 : 1);
+      ex.gs_process(BLOCK);
+      const heap = new Float32Array(ex.memory.buffer);
+      const ptr = ex.gs_left_ptr() / 4;
+      for (let i = 0; i < BLOCK; i++) {
+        const v = heap[ptr + i];
+        if (!Number.isFinite(v)) finite = false;
+        peak = Math.max(peak, Math.abs(v));
+        if (prev !== null) worstStep = Math.max(worstStep, Math.abs(v - prev));
+        prev = v;
+      }
+    }
+    check(
+      'Slamming the transient shaper controls does not click',
+      finite && peak < 1 && worstStep < 0.5,
+      `peak ${peak.toFixed(3)}, worst sample step ${worstStep.toFixed(3)}`,
+    );
+  }
 }
 
 console.log('[audio] quality gate');

@@ -233,6 +233,15 @@ export const Param = {
   FX_MOD4_SRC: 176,
   FX_MOD4_DST: 177,
   FX_MOD4_DEPTH: 178,
+  /**
+   * Transient shaper (P9.2): on/off, a signed gain on a note's onset and on its
+   * falling envelope, and the insert mix. Both amounts are neutral at 0, so a
+   * patch that predates them renders exactly as it did.
+   */
+  FX_TRANSIENT_ON: 179,
+  FX_TRANSIENT_ATTACK: 180,
+  FX_TRANSIENT_SUSTAIN: 181,
+  FX_TRANSIENT_MIX: 182,
 } as const;
 
 /** The dry (pre-effect) bus, as a graph source code. */
@@ -340,7 +349,8 @@ export type FxKind =
   | 'phaser'
   | 'drive'
   | 'crush'
-  | 'eq';
+  | 'eq'
+  | 'transient';
 
 export const FX_KINDS: FxKind[] = [
   'none',
@@ -352,6 +362,7 @@ export const FX_KINDS: FxKind[] = [
   'drive',
   'crush',
   'eq',
+  'transient',
 ];
 
 export const FX_KIND_LABELS: Record<FxKind, string> = {
@@ -364,6 +375,7 @@ export const FX_KIND_LABELS: Record<FxKind, string> = {
   drive: 'DRIVE',
   crush: 'CRUSH',
   eq: 'EQ',
+  transient: 'TRANSIENT',
 };
 
 export function fxKindToInt(kind: FxKind): number {
@@ -391,7 +403,8 @@ export function fxKindCanBeParallel(kind: FxKind): boolean {
     kind === 'phaser' ||
     kind === 'drive' ||
     kind === 'crush' ||
-    kind === 'eq'
+    kind === 'eq' ||
+    kind === 'transient'
   );
 }
 
@@ -569,6 +582,10 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.FX_MOD4_SRC]: 'fxMod4Src',
   [Param.FX_MOD4_DST]: 'fxMod4Dst',
   [Param.FX_MOD4_DEPTH]: 'fxMod4Depth',
+  [Param.FX_TRANSIENT_ON]: 'fxTransientOn',
+  [Param.FX_TRANSIENT_ATTACK]: 'fxTransientAttack',
+  [Param.FX_TRANSIENT_SUSTAIN]: 'fxTransientSustain',
+  [Param.FX_TRANSIENT_MIX]: 'fxTransientMix',
   [Param.OSC1_ON]: 'osc1On',
   [Param.OSC1_WAVE]: 'osc1Wave',
   [Param.OSC1_PITCH]: 'osc1Pitch',
@@ -935,6 +952,13 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.FX_EQ_HIGH_GAIN]: 0,
   [Param.FX_EQ_HIGH_FREQ]: 4000,
   [Param.FX_EQ_MIX]: 1,
+  // The transient shaper (P9.2) starts switched off with both amounts neutral,
+  // exactly like the two P6.4 effects: a patch that predates it renders
+  // through the same code path it always did.
+  [Param.FX_TRANSIENT_ON]: 0,
+  [Param.FX_TRANSIENT_ATTACK]: 0,
+  [Param.FX_TRANSIENT_SUSTAIN]: 0,
+  [Param.FX_TRANSIENT_MIX]: 1,
   // P6.5 starts switched off, exactly like the two P6.4 effects: a patch that
   // predates it renders through the same code path it always did.
   [Param.OVERSAMPLE]: 0,
@@ -1190,6 +1214,10 @@ export const PARAM_SPECS: ParamSpec[] = [
   spec(Param.FX_EQ_HIGH_GAIN, 'HIGH', -18, 18, 0, fmt.db),
   spec(Param.FX_EQ_HIGH_FREQ, 'HIGH F', 1000, 16000, 4000, fmt.hz, { curve: 'log' }),
   spec(Param.FX_EQ_MIX, 'MIX', 0, 1, 1, fmt.pct),
+  // Transient shaper (P9.2): both amounts are bipolar and neutral at 0.
+  spec(Param.FX_TRANSIENT_ATTACK, 'ATTACK', -1, 1, 0, (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(0)}%`),
+  spec(Param.FX_TRANSIENT_SUSTAIN, 'SUSTAIN', -1, 1, 0, (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(0)}%`),
+  spec(Param.FX_TRANSIENT_MIX, 'MIX', 0, 1, 1, fmt.pct),
   // A stepped switch, so it is not offered as a MIDI CC target.
   spec(Param.OVERSAMPLE, '2×', 0, 1, 0, (v) => (v >= 0.5 ? 'ON' : 'OFF'), {
     discrete: true,

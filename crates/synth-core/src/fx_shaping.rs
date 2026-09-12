@@ -1,9 +1,10 @@
-//! P6.4 — the bit-crusher and the shaping EQ.
+//! P6.4 — the bit-crusher, the shaping EQ and the transient shaper.
 //!
-//! Both live in the effect-node pool next to the C effects, but they are plain
-//! Rust: one fixed-size state block per node, no allocation, no C bridge entry.
-//! Each node keeps its own state, which is what lets the routing graph put a
-//! crusher and an EQ in two different places without them sharing a filter.
+//! All three live in the effect-node pool next to the C effects, but they are
+//! plain Rust: one fixed-size state block per node, no allocation, no C bridge
+//! entry. Each node keeps its own state, which is what lets the routing graph
+//! put a crusher and an EQ in two different places without them sharing a
+//! filter.
 //!
 //! ## Bit-crusher
 //!
@@ -28,6 +29,30 @@
 //! patch routes the envelope and the LFO at the cutoff with both enabled, so a
 //! response measured without clearing the matrix is a measurement of the
 //! modulation, not of the filter.
+
+//! ## Transient shaper
+//!
+//! A fast envelope follower on the rectified signal and a slower one that
+//! chases the fast one: on a rise the fast one leads, on a fall it lags, and on
+//! a settled note the two are equal and the difference is exactly zero.
+//! `attack_amt` scales the leading half of that difference, `sustain_amt` the
+//! trailing half, both as a number of decibels, so `+1` is the strongest lift
+//! and `-1` the strongest cut. `0` for both is a mathematical identity — the
+//! gain is exactly 1 and the output is the input — which is what makes a
+//! default patch (both amounts at 0) render bit for bit unchanged.
+//!
+//! The rectifier is smoothed with two poles well above every note's carrier, so
+//! the ripple of a held tone is gone before the transient is taken; without
+//! that the shaper would gain-modulate a steady note at twice its own frequency
+//! and the gate would read it as harmonic distortion. The two followers then
+//! only see the envelope, and because the slower one tracks the fast one rather
+//! than the raw signal, a held note relaxes back to unity within a few tens of
+//! milliseconds instead of staying lifted for the length of the note.
+//!
+//! The gain is `2^(dB/6)`, i.e. exactly `dB` decibels, computed with `exp2`
+//! (a wasm instruction) rather than `powf`, and it is hard-clamped to `[0, 8]`
+//! so no combination of controls can invert the signal or send it to infinity.
+//! `MIX = 0` skips the node entirely, which keeps the dry path bit for bit.
 
 use crate::dsp::util::exp2;
 use core::f32::consts::TAU;
@@ -316,6 +341,134 @@ impl ShapingEq {
         self.mid.process_in_place(out_l, out_r, frames);
         self.high.process_in_place(out_l, out_r, frames);
     }
+}
+
+/// One block's worth of transient-shaper controls.
+#[derive(Clone, Copy)]
+pub struct TransientParams {
+    /// How hard a rising transient is lifted (`+`) or pushed down (`-`), -1..1.
+    pub attack_amt: f32,
+    /// The same for a falling envelope, -1..1.
+    pub sustain_amt: f32,
+}
+
+/// Rectifier-smoothing corner, in Hz. Above the carrier of every note (the
+/// lowest is 65 Hz, whose rectified ripple is at 130 Hz), so a steady tone's
+/// ripple is gone before the transient is taken and the shaper is not a
+/// distortion box on held notes.
+const RECT_HZ: f32 = 200.0;
+/// The fast follower's corner: it follows the envelope within a few
+/// milliseconds.
+const FAST_HZ: f32 = 60.0;
+/// The difference between the fast envelope and *its own* slow average is the
+/// transient. A held note settles to zero within a few tens of milliseconds —
+/// a slow reference that only catches up after a second would leave a note's
+/// first second permanently lifted, which is not what "attack" means.
+const SLOW_HZ: f32 = 4.0;
+/// Decibels of gain at a full-scale onset when `attack` is 1: `attack = 0.5`
+/// then moves the onset by about 3 dB. `attack = -1` is the mirror image.
+const ATTACK_DB: f32 = 8.5;
+/// The same for a falling envelope. The detector's excursion on a release is
+/// only about a quarter of its excursion on an onset — the fast follower has
+/// the slow one's tail to fall through — so the release needs a much larger
+/// number of decibels per unit for `sustain = ±0.5` to land in the same
+/// ±3 dB window as `attack = ±0.5`. Both branches stay bounded by
+/// [`MAX_GAIN`], so the worst case is still a finite gain.
+const SUSTAIN_DB: f32 = 22.0;
+/// `log2(10) / 20`: converts decibels to the exponent of a base-2 power.
+const DB_TO_LOG2: f32 = 0.166_096_2;
+/// Hard ceiling on the gain, so no control combination can invert the signal.
+const MAX_GAIN: f32 = 8.0;
+
+/// Transient-shaper state, one per effect node.
+#[derive(Clone, Copy)]
+pub struct TransientShaper {
+    /// Two-pole rectifier smoothing, per channel.
+    rect: [[f32; 2]; 2],
+    /// The fast envelope follower, per channel.
+    fast: [f32; 2],
+    /// The slow envelope follower, per channel.
+    slow: [f32; 2],
+}
+
+impl TransientShaper {
+    pub const fn new() -> Self {
+        Self {
+            rect: [[0.0; 2]; 2],
+            fast: [0.0; 2],
+            slow: [0.0; 2],
+        }
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Render the wet (shaped) signal into `out_*`; the caller crossfades.
+    ///
+    /// `inline(never)` for the same reason as the crusher: it is reached from
+    /// two places inside the already enormous render loop.
+    #[inline(never)]
+    pub fn process(
+        &mut self,
+        in_l: &[f32],
+        in_r: &[f32],
+        out_l: &mut [f32],
+        out_r: &mut [f32],
+        frames: usize,
+        params: TransientParams,
+        sample_rate: f32,
+    ) {
+        let rect_coeff = one_pole(RECT_HZ, sample_rate);
+        let fast_coeff = one_pole(FAST_HZ, sample_rate);
+        let slow_coeff = one_pole(SLOW_HZ, sample_rate);
+        let attack = params.attack_amt.clamp(-1.0, 1.0);
+        let sustain = params.sustain_amt.clamp(-1.0, 1.0);
+        // Both amounts at zero is a true identity: the gain below is exactly
+        // `exp2(0) = 1` and the output is the input sample for sample.
+        let neutral = attack == 0.0 && sustain == 0.0;
+        for i in 0..frames {
+            let raw = [in_l[i], in_r[i]];
+            let mut wet = [0.0f32; 2];
+            for ch in 0..2 {
+                // Rectify and smooth first: the carrier ripple of a steady tone
+                // has to be gone before the transient is taken, or a held note
+                // would be gain-modulated at twice its own frequency.
+                self.rect[ch][0] += rect_coeff * (raw[ch].abs() - self.rect[ch][0]);
+                self.rect[ch][1] += rect_coeff * (self.rect[ch][0] - self.rect[ch][1]);
+                let source = self.rect[ch][1];
+                self.fast[ch] += fast_coeff * (source - self.fast[ch]);
+                // The slow follower chases the fast one, not the rectified
+                // signal: both reach the same value once the envelope settles,
+                // so a held note has nothing to shift.
+                self.slow[ch] += slow_coeff * (self.fast[ch] - self.slow[ch]);
+                let fast = self.fast[ch];
+                let slow = self.slow[ch];
+                // The difference, normalised by the louder follower (so the
+                // shaper is level independent) and bounded to ±1 by
+                // construction. The floor keeps silence from dividing by zero:
+                // with nothing to shape the gain stays exactly 1.
+                let scale = 1.0 / fast.max(slow).max(1e-6);
+                let db = if neutral {
+                    0.0
+                } else if fast > slow {
+                    attack * (fast - slow) * scale * ATTACK_DB
+                } else {
+                    sustain * (fast - slow) * scale * SUSTAIN_DB
+                };
+                // `exp2` is a wasm instruction; `powf` would link libm.
+                let gain = exp2(db * DB_TO_LOG2).clamp(0.0, MAX_GAIN);
+                wet[ch] = raw[ch] * gain;
+            }
+            out_l[i] = wet[0];
+            out_r[i] = wet[1];
+        }
+    }
+}
+
+/// The one-pole coefficient for a corner at `hz`.
+fn one_pole(hz: f32, sample_rate: f32) -> f32 {
+    (1.0 - (-TAU * hz / sample_rate).exp()).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -663,6 +816,7 @@ mod tests {
         let code = match kind {
             Some(FxKind::Crush) => 7.0,
             Some(FxKind::Eq) => 8.0,
+            Some(FxKind::Transient) => 9.0,
             _ => 0.0,
         };
         for slot in 0..crate::params::FX_SLOTS {
@@ -751,6 +905,192 @@ mod tests {
             first_difference(&reference, &equalised).is_none(),
             "eq mix = 0 is not a bypass (first difference at {:?})",
             first_difference(&reference, &equalised)
+        );
+        // The transient shaper with the mix at 0, and also the *neutral* shaper
+        // (mix 1, both amounts 0): both have to be bit-for-bit the empty slot.
+        let shaped = render_slot(
+            Some(FxKind::Transient),
+            1000.0,
+            &[
+                (id::FX_TRANSIENT_ON, 1.0),
+                (id::FX_TRANSIENT_MIX, 0.0),
+                (id::FX_TRANSIENT_ATTACK, 1.0),
+                (id::FX_TRANSIENT_SUSTAIN, -1.0),
+            ],
+            64,
+        );
+        assert!(
+            first_difference(&reference, &shaped).is_none(),
+            "transient mix = 0 is not a bypass (first difference at {:?})",
+            first_difference(&reference, &shaped)
+        );
+        let neutral = render_slot(
+            Some(FxKind::Transient),
+            1000.0,
+            &[
+                (id::FX_TRANSIENT_ON, 1.0),
+                (id::FX_TRANSIENT_MIX, 1.0),
+                (id::FX_TRANSIENT_ATTACK, 0.0),
+                (id::FX_TRANSIENT_SUSTAIN, 0.0),
+            ],
+            64,
+        );
+        assert!(
+            first_difference(&reference, &neutral).is_none(),
+            "a neutral transient shaper is not an identity (first difference at {:?})",
+            first_difference(&reference, &neutral)
+        );
+    }
+
+    // -------------------------------------------------------- transient shaper
+
+    /// Render a note from silence, block by block, without the warm-up skip the
+    /// other rigs use — for the onset there is nothing to warm up, the first
+    /// block *is* the measurement. The parameter callbacks run before the note
+    /// starts, so the smoothed amounts have arrived by the time it does.
+    fn render_onset(params: &[(u32, f32)], blocks: usize) -> Vec<f32> {
+        let mut e = new_rig(Some(FxKind::Transient), 1000.0);
+        for (param, value) in params {
+            e.set_param(*param, *value);
+        }
+        e.note_on(84, 1.0);
+        let mut out = Vec::with_capacity(blocks * 128);
+        for _ in 0..blocks {
+            e.process(128);
+            out.extend_from_slice(&e.left()[..128]);
+        }
+        out
+    }
+
+    /// The transient shaper's gain over a block range, against the same run
+    /// with a neutral shaper, as dB.
+    fn transient_window_gain(params: &[(u32, f32)], from: usize, to: usize) -> f32 {
+        let base = [(id::FX_TRANSIENT_ON, 1.0), (id::FX_TRANSIENT_MIX, 1.0)];
+        let wet_params: Vec<(u32, f32)> = base.iter().copied().chain(params.iter().copied()).collect();
+        let wet = render_onset(&wet_params, to);
+        let dry = render_onset(&base, to);
+        let rms = |samples: &[f32]| {
+            let slice = &samples[from * 128..to * 128];
+            (slice.iter().map(|v| v * v).sum::<f32>() / slice.len() as f32).sqrt()
+        };
+        db(rms(&wet) / rms(&dry))
+    }
+
+    #[test]
+    fn engine_transient_attack_moves_the_onset() {
+        let _guard = lock_engine();
+        // Blocks 2..8 are the note's onset: the fast envelope has left the slow
+        // one behind and the gain is at its highest.
+        let loud = transient_window_gain(&[(id::FX_TRANSIENT_ATTACK, 0.5)], 2, 8);
+        let quiet = transient_window_gain(&[(id::FX_TRANSIENT_ATTACK, -0.5)], 2, 8);
+        assert!(
+            (loud - 3.0).abs() <= 1.0,
+            "attack = +0.5 lifted the onset by {loud:.2} dB, not about 3"
+        );
+        assert!(
+            (quiet + 3.0).abs() <= 1.0,
+            "attack = -0.5 cut the onset by {quiet:.2} dB, not about -3"
+        );
+        // The settled tail is not the onset: an attack-only setting must leave
+        // it much closer to unity than the onset was.
+        let tail = transient_window_gain(&[(id::FX_TRANSIENT_ATTACK, 0.5)], 40, 56);
+        assert!(
+            tail.abs() < 1.0,
+            "attack = +0.5 moved the settled tail by {tail:.2} dB"
+        );
+    }
+
+    #[test]
+    fn engine_transient_sustain_moves_the_release() {
+        let _guard = lock_engine();
+        // The release is the other half: render a held note, let go of it, and
+        // measure the falling tail, where the fast follower has dropped below
+        // the slow one.
+        let tail = |params: &[(u32, f32)]| {
+            let base = [(id::FX_TRANSIENT_ON, 1.0), (id::FX_TRANSIENT_MIX, 1.0)];
+            let mut e = new_rig(Some(FxKind::Transient), 1000.0);
+            for (param, value) in base.iter().chain(params.iter()) {
+                e.set_param(*param, *value);
+            }
+            e.note_on(84, 1.0);
+            for _ in 0..48 {
+                e.process(128);
+            }
+            e.note_off(84);
+            let mut energy = 0.0f32;
+            let mut count = 0usize;
+            for block in 0..24 {
+                e.process(128);
+                // Skip the first few blocks: the envelope release takes a
+                // moment to develop enough to be the dominant term.
+                if block < 4 {
+                    continue;
+                }
+                for &v in &e.left()[..128] {
+                    energy += v * v;
+                    count += 1;
+                }
+            }
+            energy / count as f32
+        };
+        let neutral = tail(&[]);
+        let shortened = tail(&[(id::FX_TRANSIENT_SUSTAIN, 0.5)]);
+        let lengthened = tail(&[(id::FX_TRANSIENT_SUSTAIN, -0.5)]);
+        let short_db = db((shortened / neutral).sqrt());
+        let long_db = db((lengthened / neutral).sqrt());
+        assert!(
+            (short_db + 3.0).abs() <= 1.0,
+            "sustain = +0.5 took {short_db:.2} dB off the release, not about -3"
+        );
+        assert!(
+            (long_db - 3.0).abs() <= 1.0,
+            "sustain = -0.5 added {long_db:.2} dB to the release, not about +3"
+        );
+    }
+
+    #[test]
+    fn engine_transient_is_harmonically_clean() {
+        let _guard = lock_engine();
+        // A held sine, with the shaper on but neutral: the detector must have
+        // settled and the gain must be exactly 1, so the tone's harmonic
+        // content cannot change. (This is the engine-level version of the
+        // `neutral` bit-for-bit check above, measured where the gate measures.)
+        let freq = 1000.0f32;
+        let base = [(id::FX_TRANSIENT_ON, 1.0), (id::FX_TRANSIENT_MIX, 1.0)];
+        let harmonic = |extra: &[(u32, f32)]| {
+            let mut params = base.to_vec();
+            params.extend_from_slice(extra);
+            let out = render_slot(Some(FxKind::Transient), freq, &params, 64);
+            let fund = bin_mag(&out, freq, SR);
+            let mut rest = 0.0f32;
+            let mut k = 2;
+            while (freq * k as f32) < SR * 0.5 {
+                rest += bin_mag(&out, freq * k as f32, SR).powi(2);
+                k += 1;
+            }
+            (rest.sqrt() / fund) * 100.0
+        };
+        let off = harmonic(&[]);
+        let neutral = harmonic(&[
+            (id::FX_TRANSIENT_ATTACK, 0.0),
+            (id::FX_TRANSIENT_SUSTAIN, 0.0),
+        ]);
+        // A setting that is *not* neutral, but has long since settled: the gain
+        // is a constant by then, so it is still a clean gain on the tone.
+        let active = harmonic(&[
+            (id::FX_TRANSIENT_ATTACK, 0.5),
+            (id::FX_TRANSIENT_SUSTAIN, -0.5),
+        ]);
+        assert!(
+            neutral - off <= 0.5,
+            "a neutral shaper added {:.3} points of THD",
+            neutral - off
+        );
+        println!("NUM thd off {off:.5}% neutral {neutral:.5}% active {active:.5}%");
+        assert!(
+            active - off <= 0.5,
+            "an active shaper added {:.3} points of THD on a held tone",
+            active - off
         );
     }
 
@@ -842,16 +1182,18 @@ mod tests {
     #[test]
     fn abrupt_changes_stay_bounded_and_finite() {
         let _guard = lock_engine();
-        for kind in [FxKind::Crush, FxKind::Eq] {
+        for kind in [FxKind::Crush, FxKind::Eq, FxKind::Transient] {
             let mut e = new_rig(Some(kind), 1000.0);
             e.note_on(84, 1.0);
             let on = match kind {
                 FxKind::Crush => id::FX_CRUSH_ON,
-                _ => id::FX_EQ_ON,
+                FxKind::Eq => id::FX_EQ_ON,
+                _ => id::FX_TRANSIENT_ON,
             };
             let mix = match kind {
                 FxKind::Crush => id::FX_CRUSH_MIX,
-                _ => id::FX_EQ_MIX,
+                FxKind::Eq => id::FX_EQ_MIX,
+                _ => id::FX_TRANSIENT_MIX,
             };
             e.set_param(on, 1.0);
             e.set_param(mix, 1.0);
@@ -876,6 +1218,12 @@ mod tests {
                 e.set_param(id::FX_EQ_MID_GAIN, -gain);
                 e.set_param(id::FX_EQ_HIGH_GAIN, gain);
                 e.set_param(id::FX_EQ_MID_FREQ, 200.0 + (block % 40) as f32 * 195.0);
+                // The transient shaper's three continuous controls, slammed the
+                // same way. `mix` above is the same-named parameter of whichever
+                // effect this iteration is running.
+                e.set_param(id::FX_TRANSIENT_ATTACK, (block % 41) as f32 / 20.0 - 1.0);
+                e.set_param(id::FX_TRANSIENT_SUSTAIN, 1.0 - (block % 41) as f32 / 20.0);
+                e.set_param(id::FX_TRANSIENT_MIX, if (block / 20) % 2 == 1 { 1.0 } else { 0.0 });
                 e.process(128);
                 for &sample in e.left() {
                     assert!(sample.is_finite(), "{kind:?}: non-finite sample at block {block}");
