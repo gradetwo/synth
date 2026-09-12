@@ -118,16 +118,25 @@ function UpdateBanner() {
   const headline = newest?.items[0]?.[lang === 'zh' ? 0 : 1].replace(/\*\*/g, '') ?? '';
   return (
     <div className="update-banner" role="status">
-      <span>🚀 {t('app.updateReady')}</span>
-      {headline ? (
-        <span className="update-what" data-act="update-what">
-          v{newest.version} · {headline}
-        </span>
-      ) : null}
-      <button type="button" onClick={() => applyUpdate()}>
+      {/* Two lines that can shrink, then two fixed-size actions: the version
+          and the headline on top, the buttons in their own column. */}
+      <div className="update-copy">
+        <span className="update-title">{t('app.updateReady')}</span>
+        {headline ? (
+          <span className="update-what" data-act="update-what">
+            v{newest.version} · {headline}
+          </span>
+        ) : null}
+      </div>
+      <button type="button" className="update-go" onClick={() => applyUpdate()}>
         {t('app.updateNow')}
       </button>
-      <button type="button" className="ghost" onClick={() => setAvailable(false)} aria-label={t('app.later')}>
+      <button
+        type="button"
+        className="update-x"
+        onClick={() => setAvailable(false)}
+        aria-label={t('app.later')}
+      >
         ✕
       </button>
     </div>

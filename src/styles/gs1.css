@@ -695,18 +695,35 @@ button{touch-action:manipulation}
 }
 
 /* PWA update banner. */
+/* Update banner: one compact bar whose copy block can actually shrink, plus
+   two fixed-size actions. The block used to be written twice and had no width
+   cap, no `min-width:0` on the text and no sizes on the buttons, so on a wide
+   window the headline could not ellipsize and the actions stretched with it. */
 .update-banner{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));
-  transform:translateX(-50%);z-index:75;display:flex;align-items:center;gap:12px;
-  background:var(--bg-pop);border:1px solid var(--border-hi);border-radius:12px;padding:11px 14px;
-  font:600 11.5px/1 var(--grot);color:var(--txt-1);box-shadow:0 12px 34px var(--shadow-2)}.update-banner{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));
-  transform:translateX(-50%);z-index:75;display:flex;align-items:center;gap:12px;
-  background:var(--bg-pop);border:1px solid var(--border-hi);border-radius:12px;padding:11px 14px;
-  font:600 11.5px/1 var(--grot);color:var(--txt-1);box-shadow:0 12px 34px var(--shadow-2)}
-.update-what{max-width:min(70vw,620px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  font:500 10px/1.2 var(--grot);color:var(--txt-2)}
-.update-banner button{font:700 11px/1 var(--grot);color:#1a1206;background:linear-gradient(180deg,#ffc76a,#e69a24);
-  border:none;border-radius:8px;padding:8px 14px;cursor:pointer}
-.update-banner button.ghost{background:none;color:var(--txt-2);border:1px solid var(--border);padding:8px 10px}
+  transform:translateX(-50%);z-index:75;display:flex;align-items:center;gap:10px;
+  width:min(660px,calc(100vw - 20px));box-sizing:border-box;
+  background:var(--bg-pop);border:1px solid var(--border-hi);border-radius:12px;
+  padding:10px 10px 10px 13px;font:600 11.5px/1.25 var(--grot);color:var(--txt-1);
+  box-shadow:0 12px 34px var(--shadow-2)}
+.update-copy{display:flex;flex-direction:column;gap:3px;flex:1 1 auto;min-width:0}
+.update-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.update-what{font:500 10px/1.35 var(--grot);color:var(--txt-2);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.update-banner .update-go{flex:none;font:700 11px/1 var(--grot);color:#1a1206;
+  background:linear-gradient(180deg,#ffc76a,#e69a24);border:none;border-radius:9px;
+  padding:0 14px;height:32px;cursor:pointer;transition:filter .15s}
+.update-banner .update-x{flex:none;display:grid;place-items:center;width:32px;height:32px;
+  padding:0;background:none;color:var(--txt-2);border:1px solid var(--border);
+  border-radius:9px;font:600 12px/1 var(--grot);cursor:pointer;transition:color .15s,border-color .15s}
+.update-banner .update-go:hover{filter:brightness(1.07)}
+.update-banner .update-x:hover{color:var(--txt-1);border-color:var(--border-hi)}
+/* Phones: the copy keeps the first row and the actions move under it, right
+   aligned, instead of squeezing the headline into three words per line. */
+@media (max-width:560px){
+  .update-banner{flex-wrap:wrap;gap:8px}
+  .update-copy{flex:1 1 100%}
+  .update-banner .update-x{margin-left:auto}
+}
 
 /* Focus visibility for keyboard users. */
 :focus-visible{outline:2px solid var(--accent-dim);outline-offset:2px}
