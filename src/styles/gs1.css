@@ -261,6 +261,21 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 .fxg-rebuild:hover,.fxg-close:hover{border-color:var(--accent-dim);color:var(--accent)}
 .fxg-hint{padding:8px 12px;font:500 9.5px/1.5 var(--grot);color:var(--txt-dim);
   border-bottom:1px solid var(--line-soft-2)}
+/* In-graph modulation (P7.2): four edge rows, then the canvas draws the same
+   edges as wires. */
+.fxg-mod{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 12px;
+  border-bottom:1px solid var(--line-soft-2)}
+.fxg-mod-title{font:700 9px/1 var(--grot);letter-spacing:.1em;color:var(--txt-2);flex:none;
+  cursor:help}
+.fxg-mod-row{display:flex;align-items:center;gap:4px}
+.fxg-mod-row .fxg-src{width:104px;flex:none}
+.fxg-port.mod{width:22px;height:16px;border-radius:5px;border:1px solid var(--accent-dim);
+  background:var(--bg-panel);color:var(--txt-dim);font:700 7.5px/1 var(--mono);cursor:crosshair;
+  padding:0;display:flex;align-items:center;justify-content:center}
+.fxg-port.mod.wired{background:var(--accent);color:var(--bg-panel)}
+.fxg-wire.mod{stroke:color-mix(in srgb,var(--env) 80%,transparent);stroke-dasharray:5 3;stroke-width:2}
+.fxg-wire.mod.selected{stroke:var(--env);stroke-width:3}
+.fxg-mod-src{border-style:dashed}
 .fxg-scroll{flex:1;overflow:auto;padding:10px}
 .fxg-canvas{position:relative;min-width:100%}
 .fxg-wires{position:absolute;inset:0;pointer-events:none}

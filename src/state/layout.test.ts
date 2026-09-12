@@ -66,6 +66,8 @@ describe('layout model', () => {
         dry: [40, 60],
         node3: [300.4, 120.6],
         out: [9999, -9999],
+        lfo1: [12, 158],
+        env: [12, 446],
         nope: [10, 10],
         node9: [10, 10],
         node2: ['x', 12],
@@ -75,6 +77,9 @@ describe('layout model', () => {
     expect(layout.fxGraphPos.node3).toEqual([300, 121]);
     // A card dragged off the board is pulled back to where it can be grabbed.
     expect(layout.fxGraphPos.out).toEqual([2400, -400]);
+    // The modulation source cards keep their place too (P7.2).
+    expect(layout.fxGraphPos.lfo1).toEqual([12, 158]);
+    expect(layout.fxGraphPos.env).toEqual([12, 446]);
     // Unknown keys and malformed pairs are dropped, not trusted.
     expect(layout.fxGraphPos.nope).toBeUndefined();
     expect(layout.fxGraphPos.node9).toBeUndefined();

@@ -352,3 +352,103 @@ test('puts the bit-crusher in a node, edits it, and keeps it across a fresh load
   await expect(view.locator('[data-act="kind"][data-node="1"]')).toHaveValue('eq');
   await expect(view.locator('[data-act="mix"][data-node="1"]')).toHaveValue('100');
 });
+
+/**
+ * P7.2: LFO/ENV are nodes in the graph, and a wire from one to a node gain is
+ * the modulation edge — the depth lives on the wire, not on the source.
+ */
+test('pulls a modulation wire, sees the change, and keeps it across a fresh load', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(400);
+  await openEditor(page);
+
+  // The strip starts with four disconnected edges.
+  const src = page.locator('[data-act="mod-src"][data-mod-row="0"]');
+  const dst = page.locator('[data-act="mod-dst"][data-mod-row="0"]');
+  const depth = page.locator('[data-act="mod-depth"][data-mod-row="0"]');
+  await expect(src).toHaveValue('0');
+  await expect(dst).toHaveValue('0');
+  await expect(depth).toHaveValue('0');
+
+  // Drag from the LFO 1 card's output to node 1's "O" (output gain) port.
+  const from = (await page.locator('[data-act="port-mod-src"][data-mod-src="1"]').boundingBox())!;
+  const to = (await page.locator('[data-mod="0:2"]').boundingBox())!;
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
+  await page.mouse.up();
+
+  // The edge exists as a wire, in the strip, and it switched the graph on
+  // (seeded from the chain, so the sound does not jump).
+  await expect(page.locator('[data-modwire="0"]')).toHaveCount(1);
+  await expect(src).toHaveValue('1');
+  await expect(dst).toHaveValue('3');
+  await expect(depth).toHaveValue('50');
+  await expect(page.locator('.fxg-hint')).toContainText('从左往右');
+
+  // Picking the wire opens its depth chip; the slider edits the depth on the
+  // edge and the strip follows.
+  await clickIn(page.locator('[data-modwire="0"]'));
+  await expect(page.locator('[data-mod-edit="0"]')).toBeVisible();
+  await page.locator('[data-act="mod-wire-depth"]').fill('80');
+  await expect(depth).toHaveValue('80');
+  await expect(dst).toHaveValue('3');
+
+  // A second edge from the envelope onto node 1's input 1 gain, from the strip
+  // (the path a phone or a keyboard user takes).
+  await page.locator('[data-act="mod-src"][data-mod-row="1"]').selectOption('3');
+  await page.locator('[data-act="mod-dst"][data-mod-row="1"]').selectOption('1');
+  await page.locator('[data-act="mod-depth"][data-mod-row="1"]').fill('35');
+  await expect(page.locator('[data-modwire="1"]')).toHaveCount(1);
+  await expect(page.locator('[data-mod="0:0"]')).toHaveClass(/wired/);
+
+  // Patch data, so both edges come back in a fresh load.
+  const { next: view, closeOld } = await freshLoad(page);
+  await view.getByRole('button', { name: /启动音频引擎/ }).click();
+  await closeOld();
+  await view.waitForTimeout(400);
+  await openEditor(view);
+  await expect(view.locator('[data-act="mod-src"][data-mod-row="0"]')).toHaveValue('1');
+  await expect(view.locator('[data-act="mod-dst"][data-mod-row="0"]')).toHaveValue('3');
+  await expect(view.locator('[data-act="mod-depth"][data-mod-row="0"]')).toHaveValue('80');
+  await expect(view.locator('[data-modwire="0"]')).toHaveCount(1);
+  await expect(view.locator('[data-act="mod-src"][data-mod-row="1"]')).toHaveValue('3');
+  await expect(view.locator('[data-act="mod-depth"][data-mod-row="1"]')).toHaveValue('35');
+
+  // Deleting an edge from its chip clears the row and the wire.
+  await clickIn(view.locator('[data-modwire="0"]'));
+  await clickIn(view.locator('[data-act="mod-wire-del"]'));
+  await expect(view.locator('[data-modwire="0"]')).toHaveCount(0);
+  await expect(view.locator('[data-act="mod-dst"][data-mod-row="0"]')).toHaveValue('0');
+});
+
+test('edits a modulation edge from the list view', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(400);
+
+  const openSettings = async () => {
+    await page.locator('.top-more > .tbtn.icon').first().click();
+    await page.locator('[data-act="settings"]').click();
+    await expect(page.locator('.settings-drawer.open')).toBeVisible();
+  };
+  await openSettings();
+  await page.locator('[data-act="fx-graph-open"]').click();
+  await expect(page.locator('.fxg-list')).toBeVisible();
+  // The modulation strip is reachable without the canvas.
+  await expect(page.locator('[data-view="mod"]')).toBeVisible();
+  await page.locator('[data-act="mod-src"][data-mod-row="0"]').selectOption('2');
+  await page.locator('[data-act="mod-dst"][data-mod-row="0"]').selectOption('6');
+  await page.locator('[data-act="mod-depth"][data-mod-row="0"]').fill('-40');
+  await expect(page.locator('[data-act="mod-depth"][data-mod-row="0"]')).toHaveValue('-40');
+
+  // The panel still fits the screen with the strip in it.
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
+});

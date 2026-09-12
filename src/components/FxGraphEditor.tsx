@@ -19,6 +19,9 @@ import {
   FX_DELAY_MAX_SECONDS,
   FX_KIND_LABELS,
   FX_KINDS,
+  FX_MOD_SLOTS,
+  FX_MOD_SOURCES,
+  FX_MOD_SRC_LABELS,
   FX_SLOTS,
   GRAPH_DRY,
   GRAPH_FROM_CHAIN_IDS,
@@ -28,11 +31,17 @@ import {
   graphFromChain,
   graphInGainId,
   graphInId,
+  graphModDepthId,
+  graphModDst,
+  graphModDstId,
+  graphModSrcId,
+  graphModTarget,
   graphNodeSrc,
   graphOutGainId,
   graphToOutId,
   intToFxKind,
   type FxKind,
+  type FxModSrc,
   type ParamId,
 } from '@/audio/params';
 import { getUserIr } from '@/audio/ir';
@@ -57,16 +66,32 @@ const OUT_PORT_Y = CARD_H / 2;
 
 const NODES_H = FX_SLOTS * (CARD_H + CARD_GAP) - CARD_GAP;
 
+/**
+ * The modulation sources that live in the graph (P7.2). They have no audio
+ * output: their card's port is the start of a modulation wire, and the depth
+ * is stored on the edge it lands on.
+ */
+const MOD_CARDS: { key: string; src: FxModSrc; label: string }[] = [
+  { key: 'lfo1', src: 1, label: 'LFO 1' },
+  { key: 'lfo2', src: 2, label: 'LFO 2' },
+  { key: 'env', src: 3, label: 'ENV' },
+];
+
 /** Where a card sits when the user has never moved it. */
 function defaultPos(key: string): [number, number] {
   if (key === 'dry') return [COL_X[0], 12];
   if (key === 'out') return [COL_X[2], 12 + Math.round((NODES_H - CARD_H) / 2)];
+  // The modulation sources stack under the dry card, so they do not move any
+  // card an existing workspace has already arranged.
+  const mod = MOD_CARDS.findIndex((card) => card.key === key);
+  if (mod !== -1) return [COL_X[0], 12 + (mod + 1) * (CARD_H + CARD_GAP)];
   const slot = Number(key.slice(4)) - 1;
   return [COL_X[1], 12 + (Number.isFinite(slot) ? slot : 0) * (CARD_H + CARD_GAP)];
 }
 
 const isDry = (key: string) => key === 'dry';
-const cardWidth = (key: string) => (isDry(key) ? DRY_W : CARD_W);
+const cardWidth = (key: string) =>
+  isDry(key) || MOD_CARDS.some((card) => card.key === key) ? DRY_W : CARD_W;
 
 /** A source code that can feed an input: the dry bus, or an earlier node. */
 function sourcesFor(slot: number): number[] {
@@ -95,6 +120,13 @@ function sourceLabel(src: number): string {
   if (src === GRAPH_DRY) return t('fxg.dry');
   if (src >= 2 && src < 2 + FX_SLOTS) return `${t('fxg.node')} ${src - 1}`;
   return t('fxg.none');
+}
+
+/** The gain a modulation destination code names, as text. */
+function modPortLabel(which: 0 | 1 | 2): string {
+  if (which === 0) return t('fxg.modPortIn1');
+  if (which === 1) return t('fxg.modPortIn2');
+  return t('fxg.modPortOut');
 }
 
 /** Which mix parameter belongs to each effect kind. */
@@ -155,6 +187,10 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
     fromY: number;
     moved: boolean;
   } | null>(null);
+  /** The modulation source waiting for a node gain port to be tapped (P7.2). */
+  const [armedMod, setArmedMod] = useState<FxModSrc | null>(null);
+  /** The modulation edge whose depth is being edited. */
+  const [selectedMod, setSelectedMod] = useState<number | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
   const graphOn = (params[Param.FX_GRAPH] ?? 0) >= 0.5;
@@ -167,7 +203,12 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
   const canvasSize = useMemo(() => {
     let w = 720;
     let h = 420;
-    for (const key of ['dry', 'out', ...Array.from({ length: FX_SLOTS }, (_, i) => `node${i + 1}`)]) {
+    for (const key of [
+      'dry',
+      'out',
+      ...MOD_CARDS.map((card) => card.key),
+      ...Array.from({ length: FX_SLOTS }, (_, i) => `node${i + 1}`),
+    ]) {
       const [x, y] = posOf(key);
       w = Math.max(w, x + cardWidth(key) + PAD);
       h = Math.max(h, y + CARD_H + PAD);
@@ -244,6 +285,59 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
     );
   }, [graphOn]);
 
+  /**
+   * In-graph modulation edges as the patch has them (P7.2). An edge is live
+   * when it has a source, a gain target and a non-zero depth; the DSP ignores
+   * it otherwise, which is why a fresh patch behaves exactly as it did.
+   */
+  const modEdges = Array.from({ length: FX_MOD_SLOTS }, (_, edge) => ({
+    edge,
+    src: Math.round(params[graphModSrcId(edge)] ?? 0) as FxModSrc,
+    dst: Math.round(params[graphModDstId(edge)] ?? 0),
+    depth: params[graphModDepthId(edge)] ?? 0,
+  }));
+  const liveMods = modEdges.filter((e) => e.src !== 0 && e.dst !== 0 && e.depth !== 0);
+
+  const setModEdge = (edge: number, src: number, dst: number, depth: number) => {
+    ensureGraph();
+    store.setParams(
+      [
+        [graphModSrcId(edge), src],
+        [graphModDstId(edge), dst],
+        [graphModDepthId(edge), depth],
+      ],
+      { immediate: true },
+    );
+  };
+
+  /** Drop a source onto a node's gain: reuse the edge already there, else a free one. */
+  const connectMod = (src: FxModSrc, slot: number, which: 0 | 1 | 2) => {
+    haptic(HAPTIC.light);
+    const dst = graphModDst(slot, which);
+    const existing = modEdges.find((e) => e.dst === dst && e.src !== 0);
+    const free = modEdges.find((e) => e.src === 0 || e.dst === 0 || e.depth === 0);
+    const edge = existing?.edge ?? free?.edge;
+    if (edge === undefined) {
+      toast(t('fxg.modFull', { slots: FX_MOD_SLOTS }));
+      return;
+    }
+    const depth = existing && existing.depth !== 0 ? existing.depth : 0.5;
+    setModEdge(edge, src, dst, depth);
+    setArmedMod(null);
+    setPending(null);
+  };
+
+  const disconnectMod = (edge: number) => {
+    store.setParams(
+      [
+        [graphModSrcId(edge), 0],
+        [graphModDstId(edge), 0],
+        [graphModDepthId(edge), 0],
+      ],
+      { immediate: true },
+    );
+  };
+
   const connect = useCallback(
     (slot: number, which: 0 | 1, src: number) => {
       haptic(HAPTIC.light);
@@ -308,6 +402,8 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
     }
     setPending(src);
     setArmed(null);
+    // One gesture at a time: arming an audio source drops a modulation source.
+    setArmedMod(null);
   };
 
   const startFrom = (src: number) => (event: React.PointerEvent) => {
@@ -320,6 +416,7 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
     const point = pointIn(canvasOf(event), event);
     setPending(src);
     setArmed({ src, x: point.x, y: point.y, fromX: point.x, fromY: point.y, moved: false });
+    setArmedMod(null);
   };
 
   /** Which input the pointer is over, if any. */
@@ -332,7 +429,36 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
     return { slot, which: which as 0 | 1 };
   };
 
+  /** Which node gain port the pointer is over, if any (P7.2). */
+  const modPortUnder = (event: { clientX: number; clientY: number }) => {
+    const element = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+    const target = element?.closest('[data-mod]') as HTMLElement | null;
+    if (!target) return null;
+    const [slot, which] = target.dataset.mod!.split(':').map(Number);
+    if (!Number.isFinite(slot) || !Number.isFinite(which)) return null;
+    return { slot, which: which as 0 | 1 | 2 };
+  };
+
+  /** Arm a modulation source: tap its port, then tap a node gain port. */
+  const startFromMod = (src: FxModSrc) => (event: React.PointerEvent) => {
+    event.preventDefault();
+    if (armedMod === src) {
+      setArmedMod(null);
+      return;
+    }
+    setArmedMod(src);
+    setPending(null);
+    setArmed(null);
+  };
+
   const releasePointer = (event: React.PointerEvent) => {
+    if (armedMod !== null) {
+      const gesture = armedMod;
+      setArmedMod(null);
+      const target = modPortUnder(event);
+      if (target) connectMod(gesture, target.slot, target.which);
+      return;
+    }
     if (!armed) return;
     const gesture = armed;
     setArmed(null);
@@ -510,6 +636,31 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
     return `M ${fromX} ${fromY} C ${fromX + bend} ${fromY}, ${toX - bend} ${toY}, ${toX} ${toY}`;
   };
 
+  /** The drawn modulation wires (P7.2): one per live edge. */
+  const modWires = liveMods.flatMap((edge) => {
+    const card = MOD_CARDS.find((entry) => entry.src === edge.src);
+    const target = graphModTarget(edge.dst);
+    if (!card || !target) return [];
+    const [fromLeft, fromTop] = posOf(card.key);
+    const [toLeft, toTop] = posOf(`node${target.node + 1}`);
+    const fromX = fromLeft + cardWidth(card.key);
+    const fromY = fromTop + OUT_PORT_Y;
+    const toX = toLeft + 22 + target.which * 30 + 7;
+    const toY = toTop + CARD_H - 12 + 7;
+    return [
+      {
+        ...edge,
+        card: card.key,
+        fromX,
+        fromY,
+        toX,
+        toY,
+        labelX: (fromX + toX) / 2,
+        labelY: (fromY + toY) / 2 + 16,
+      },
+    ];
+  });
+
   return (
     <div className="fxg-mask show" data-act="fxg-mask" onClick={(event) => {
       if (event.target === event.currentTarget) onClose();
@@ -564,6 +715,86 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
           {convMode
             ? ` · ${t('fxg.convPool', { used: convNodes, capacity: FX_CONV_INSTANCES })}`
             : ''}
+        </div>
+
+        {/*
+          In-graph modulation (P7.2), as four rows. The canvas draws the same
+          edges as wires; this is the reachable-without-a-pointer path, and it
+          is what a phone gets by default.
+        */}
+        <div className="fxg-mod" data-view="mod">
+          <span className="fxg-mod-title" title={t('fxg.modHint')}>
+            {t('fxg.mod')}
+          </span>
+          {modEdges.map((edge) => (
+            <div className="fxg-mod-row" key={edge.edge} data-mod-row={edge.edge}>
+              <select
+                className="fxg-src"
+                data-act="mod-src"
+                data-mod-row={edge.edge}
+                aria-label={`${t('fxg.modSource')} ${edge.edge + 1}`}
+                value={edge.src}
+                onChange={(event) => {
+                  ensureGraph();
+                  store.setParams([[graphModSrcId(edge.edge), Number(event.target.value)]], {
+                    immediate: true,
+                  });
+                }}
+              >
+                {FX_MOD_SOURCES.map((src) => (
+                  <option key={src} value={src}>
+                    {FX_MOD_SRC_LABELS[src]}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="fxg-src"
+                data-act="mod-dst"
+                data-mod-row={edge.edge}
+                aria-label={`${t('fxg.modTarget')} ${edge.edge + 1}`}
+                value={edge.dst}
+                onChange={(event) => {
+                  ensureGraph();
+                  store.setParams([[graphModDstId(edge.edge), Number(event.target.value)]], {
+                    immediate: true,
+                  });
+                }}
+              >
+                <option value={0}>{t('fxg.none')}</option>
+                {nodes.flatMap((node) =>
+                  ([0, 1, 2] as const).map((which) => (
+                    <option key={`${node.slot}-${which}`} value={graphModDst(node.slot, which)}>
+                      {t('fxg.modTargetLabel', { node: node.slot + 1, port: modPortLabel(which) })}
+                    </option>
+                  )),
+                )}
+              </select>
+              <input
+                type="range"
+                className="fxg-gain"
+                data-act="mod-depth"
+                data-mod-row={edge.edge}
+                min={-100}
+                max={100}
+                value={Math.round(edge.depth * 100)}
+                aria-label={`${t('fxg.modDepth')} ${edge.edge + 1}`}
+                onChange={(event) =>
+                  store.setParam(graphModDepthId(edge.edge), Number(event.target.value) / 100)
+                }
+              />
+              <span className="fxg-gain-val">{Math.round(edge.depth * 100)}%</span>
+              <button
+                type="button"
+                className="fxg-wire-del"
+                data-act="mod-del"
+                data-mod-row={edge.edge}
+                aria-label={`${t('fxg.modDelete')} ${edge.edge + 1}`}
+                onClick={() => disconnectMod(edge.edge)}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
         </div>
 
         {view === 'list' ? (
@@ -662,6 +893,31 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
                     }}
                   />
                 ))}
+                {modWires.map((wire) => (
+                  <path
+                    key={`mod-${wire.edge}`}
+                    className={`fxg-wire mod${selectedMod === wire.edge ? ' selected' : ''}`}
+                    data-modwire={wire.edge}
+                    d={wirePath(wire.fromX, wire.fromY, wire.toX, wire.toY)}
+                    // Picking a modulation wire opens its depth chip; a click
+                    // never deletes it, like the audio wires.
+                    onClick={() =>
+                      setSelectedMod((current) => (current === wire.edge ? null : wire.edge))
+                    }
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={selectedMod === wire.edge}
+                    aria-label={`${FX_MOD_SRC_LABELS[wire.src]} → ${t('fxg.modTargetLabel', {
+                      node: (graphModTarget(wire.dst)?.node ?? 0) + 1,
+                      port: modPortLabel((graphModTarget(wire.dst)?.which ?? 0) as 0 | 1 | 2),
+                    })}, ${t('fxg.modDepth')} ${Math.round(wire.depth * 100)}%`}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      setSelectedMod((current) => (current === wire.edge ? null : wire.edge));
+                    }}
+                  />
+                ))}
 {armed?.moved ? (
                   <path
                     className="fxg-wire ghost"
@@ -726,6 +982,43 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
                     </button>
                   ) : null,
                 )}
+                {/* The depth chip of a picked modulation wire (P7.2). */}
+                {modWires.map((wire) =>
+                  selectedMod === wire.edge ? (
+                    <div
+                      className="fxg-wire-edit"
+                      key={`mod-edit-${wire.edge}`}
+                      style={{ left: wire.labelX - 78, top: wire.labelY - 12 }}
+                      data-mod-edit={wire.edge}
+                    >
+                      <input
+                        type="range"
+                        className="fxg-gain"
+                        data-act="mod-wire-depth"
+                        min={-100}
+                        max={100}
+                        value={Math.round(wire.depth * 100)}
+                        aria-label={t('fxg.modDepth')}
+                        onChange={(event) =>
+                          store.setParam(graphModDepthId(wire.edge), Number(event.target.value) / 100)
+                        }
+                      />
+                      <span className="fxg-wire-val">{Math.round(wire.depth * 100)}%</span>
+                      <button
+                        type="button"
+                        className="fxg-wire-del"
+                        data-act="mod-wire-del"
+                        aria-label={t('fxg.modDelete')}
+                        onClick={() => {
+                          disconnectMod(wire.edge);
+                          setSelectedMod(null);
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : null,
+                )}
                 
 
               {/* DRY source */}
@@ -754,6 +1047,47 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
                   }}
                 />
               </div>
+
+              {/* Modulation sources (P7.2). Their output only carries a
+                  modulation wire; the depth lives on the edge. */}
+              {MOD_CARDS.map((card) => (
+                <div
+                  className={`fxg-card fxg-mod-src${
+                    moving?.key === card.key ? ' moving' : ''
+                  }`}
+                  key={card.key}
+                  style={{
+                    left: posOf(card.key)[0],
+                    top: posOf(card.key)[1],
+                    width: DRY_W,
+                    height: CARD_H,
+                  }}
+                >
+                  <div
+                    className="fxg-card-title fxg-drag"
+                    data-act={`drag-${card.key}`}
+                    onPointerDown={dragCard(card.key)}
+                  >
+                    {card.label}
+                  </div>
+                  <div className="fxg-card-sub">{t('fxg.mod')}</div>
+                  <button
+                    type="button"
+                    className={`fxg-port out mod${armedMod === card.src ? ' pending' : ''}`}
+                    style={{ right: -9, top: OUT_PORT_Y - 9 }}
+                    data-act="port-mod-src"
+                    data-mod-src={card.src}
+                    aria-label={`${card.label} ${t('fxg.modSource')}`}
+                    onPointerDown={startFromMod(card.src)}
+                    onClick={(event) => {
+                      // `detail === 0` is the keyboard path, which arms and
+                      // disarms exactly like a tap.
+                      if (event.detail !== 0) return;
+                      setArmedMod((current) => (current === card.src ? null : card.src));
+                    }}
+                  />
+                </div>
+              ))}
 
               {nodes.map((node) => (
                 <div
@@ -809,6 +1143,39 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
                       }}
                     />
                   ))}
+                  {/* Modulation targets (P7.2): the three gains an in-graph
+                      edge may push, along the bottom edge of the card. */}
+                  {([0, 1, 2] as const).map((which) => {
+                    const target = graphModDst(node.slot, which);
+                    const wired = liveMods.some((edge) => edge.dst === target);
+                    const port =
+                      which === 0 ? t('fxg.modPortIn1') : which === 1 ? t('fxg.modPortIn2') : t('fxg.modPortOut');
+                    return (
+                      <button
+                        key={`mod${which}`}
+                        type="button"
+                        className={`fxg-port mod${wired ? ' wired' : ''}${
+                          armedMod !== null ? ' ready' : ''
+                        }`}
+                        style={{ left: 22 + which * 30, top: CARD_H - 12 }}
+                        data-mod={`${node.slot}:${which}`}
+                        data-act={`port-mod${which}`}
+                        data-node={node.slot}
+                        aria-label={`${t('fxg.node')} ${node.slot + 1} ${port}`}
+                        onPointerDown={(event) => {
+                          if (armedMod === null) return;
+                          event.preventDefault();
+                          connectMod(armedMod, node.slot, which);
+                        }}
+                        onClick={(event) => {
+                          if (event.detail !== 0 || armedMod === null) return;
+                          connectMod(armedMod, node.slot, which);
+                        }}
+                      >
+                        {which === 2 ? 'O' : `I${which + 1}`}
+                      </button>
+                    );
+                  })}
                   <button
                     type="button"
                     className={`fxg-port out${pending === graphNodeSrc(node.slot) ? ' pending' : ''}`}

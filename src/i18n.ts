@@ -566,6 +566,22 @@ const DICT: Record<string, [string, string]> = {
   ],
   'fxg.convPool': ['卷积池 {used}/{capacity}', 'convolution pool {used}/{capacity}'],
   'fxg.wireHint': ['点连线可以改这条连线的增益或断开它', 'Click a wire to set its gain or cut it'],
+  // In-graph modulation (P7.2). The depth lives on the edge, so the source
+  // cards carry no amount of their own.
+  'fxg.mod': ['图内调制', 'In-graph modulation'],
+  'fxg.modHint': [
+    'LFO / ENV 是图中的调制源：从它们的输出拖到节点底部的 I1 / I2 / O 端口即可拉一条调制线，深度在线上。它和 8 槽调制矩阵并存：矩阵按声部控制率跑，图内调制按块率加到节点增益上，写入前先过平滑器。',
+    'LFO and ENV are modulation sources in the graph: drag from their output to a node’s I1 / I2 / O port to pull a modulation wire, whose depth sits on the wire. It lives alongside the 8-slot matrix: the matrix runs per voice at control rate while an in-graph edge adds to a node gain at block rate, through the smoother.',
+  ],
+  'fxg.modSource': ['调制源', 'modulation source'],
+  'fxg.modTarget': ['调制目标', 'modulation target'],
+  'fxg.modDepth': ['调制深度', 'modulation depth'],
+  'fxg.modPortIn1': ['输入 1 增益', 'input 1 gain'],
+  'fxg.modPortIn2': ['输入 2 增益', 'input 2 gain'],
+  'fxg.modPortOut': ['输出增益', 'output gain'],
+  'fxg.modTargetLabel': ['节点 {node} {port}', 'Node {node} {port}'],
+  'fxg.modFull': ['调制边已满（{slots} 条）', 'all {slots} modulation edges are in use'],
+  'fxg.modDelete': ['删除调制边', 'Delete modulation edge'],
   'fx.moveLeft': ['前移一位', 'Move earlier'],
   'fx.moveRight': ['后移一位', 'Move later'],
   'fx.parallel': ['并联送出', 'Parallel send'],

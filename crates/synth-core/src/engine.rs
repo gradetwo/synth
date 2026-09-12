@@ -23,8 +23,8 @@ use crate::fft::Spectrum;
 use crate::fx_shaping::{BitCrusher, CrushParams, EqParams, ShapingEq};
 use crate::params::{
     graph_node_src, id, is_continuous, FilterRouting, FxKind, FxParams, GraphInput, LfoTarget, ModDst,
-    ModSrc, OscParams, Params, FX_SLOTS, GRAPH_DRY, MAX_BLOCK_SIZE, MAX_UNISON, MAX_VOICES,
-    PARAM_COUNT,
+    ModSrc, OscParams, Params, FX_SLOTS, GRAPH_DRY, GRAPH_GAINS, MAX_BLOCK_SIZE, MAX_UNISON,
+    MAX_VOICES, MOD_SLOTS, PARAM_COUNT,
 };
 use crate::voice::{NoteOnResult, VoiceManager};
 
@@ -460,6 +460,17 @@ pub struct Engine {
     smooth_value_b: [f32; PARAM_COUNT],
     smooth_set_b: [bool; PARAM_COUNT],
     smooth_ready_b: [bool; PARAM_COUNT],
+    /// Block-rate source values the in-graph modulation edges read (P7.2):
+    /// the two global LFOs and the highest envelope level among the voices.
+    graph_lfo: f32,
+    graph_lfo2: f32,
+    graph_env: f32,
+    /// One-pole smoother for the eighteen node gains, engaged only while at
+    /// least one edge has a non-zero depth. With no live edge the gains are
+    /// used exactly as the host wrote them, which keeps an unmodulated graph
+    /// bit for bit what it was before this existed.
+    graph_gain: [f32; GRAPH_GAINS],
+    graph_gain_ready: bool,
     initialised: bool,
 }
 
@@ -573,6 +584,11 @@ impl Engine {
             smooth_value_b: [0.0; PARAM_COUNT],
             smooth_set_b: [false; PARAM_COUNT],
             smooth_ready_b: [false; PARAM_COUNT],
+            graph_lfo: 0.0,
+            graph_lfo2: 0.0,
+            graph_env: 0.0,
+            graph_gain: [0.0; GRAPH_GAINS],
+            graph_gain_ready: false,
             initialised: false,
         }
     }
@@ -1439,6 +1455,7 @@ impl Engine {
             self.lfo.value = 0.0;
         }
         let lfo_value = self.lfo.value;
+        self.graph_lfo = lfo_value;
 
         // --- second LFO -----------------------------------------------------
         let lfo2_on = self.params.lfo2.on;
@@ -1456,6 +1473,7 @@ impl Engine {
             self.lfo2.value = 0.0;
         }
         let lfo2_value = self.lfo2.value;
+        self.graph_lfo2 = lfo2_value;
 
         // --- clear mix bus --------------------------------------------------
         self.mix_l[..frames].fill(0.0);
@@ -1497,6 +1515,19 @@ impl Engine {
             self.fx_l[i] = self.mix_l[i] + dither;
             self.fx_r[i] = self.mix_r[i] - dither;
         }
+
+        // The envelope an in-graph edge can read (P7.2). There is one envelope
+        // per voice and the graph is a bus effect, so the edge sees the highest
+        // level sounding — a note that has been released still holds the edge
+        // open while its tail rings, which is what makes an envelope-drawn edge
+        // act like a bus-level follower instead of a per-voice route.
+        let mut graph_env = 0.0f32;
+        for slot in 0..MAX_VOICES {
+            if self.vm.voices[slot].active {
+                graph_env = graph_env.max(self.vm.voices[slot].env_value);
+            }
+        }
+        self.graph_env = graph_env;
 
         // --- global FX (Soundpipe reverb + delay) ---------------------------
         self.apply_fx(frames);
@@ -2801,9 +2832,83 @@ impl Engine {
     /// construction. A node whose input is not connected processes silence; if
     /// nothing is routed to the mix bus the effect section is silent, which is
     /// what an empty patch should be.
-    fn apply_fx_graph(&mut self, frames: usize) {
+    /// Whether any in-graph edge is live: it needs a source, a target and a
+    /// depth. Zero on any of the three is the same as no edge at all, which is
+    /// what makes a freshly written patch behave exactly as it always did.
+    #[inline]
+    fn graph_mod_active(&self) -> bool {
+        let fx = &self.params.fx;
+        (0..MOD_SLOTS).any(|edge| {
+            fx.mod_src[edge] != 0 && fx.mod_dst[edge] != 0 && fx.mod_depth[edge] != 0.0
+        })
+    }
+
+    /// The three gains of every node for this block: the value the host wrote
+    /// plus every in-graph edge's `depth * source`, clamped to the same 0..4
+    /// the parameter model allows.
+    ///
+    /// With at least one live edge the sum runs through the same block-rate
+    /// one-pole the host parameters use, so drawing an edge onto a playing
+    /// graph ramps instead of stepping. With no live edge the host values come
+    /// back untouched — no smoother, no arithmetic — which is what keeps a
+    /// pre-P7.2 graph bit for bit identical.
+    fn graph_gains(&mut self, frames: usize) -> ([f32; FX_SLOTS], [f32; FX_SLOTS], [f32; FX_SLOTS]) {
+        let fx = self.params.fx;
+        let mut gains = [0.0f32; GRAPH_GAINS];
         for slot in 0..FX_SLOTS {
-            self.mix_node_input(slot, frames);
+            gains[slot * 3] = fx.node_in[slot][0].gain;
+            gains[slot * 3 + 1] = fx.node_in[slot][1].gain;
+            gains[slot * 3 + 2] = fx.node_out_gain[slot];
+        }
+        if self.graph_mod_active() {
+            for edge in 0..MOD_SLOTS {
+                let target = fx.mod_dst[edge] as usize;
+                if target == 0 || target > GRAPH_GAINS || fx.mod_depth[edge] == 0.0 {
+                    continue;
+                }
+                let source = match fx.mod_src[edge] {
+                    1 => self.graph_lfo,
+                    2 => self.graph_lfo2,
+                    3 => self.graph_env,
+                    _ => 0.0,
+                };
+                gains[target - 1] += fx.mod_depth[edge] * source;
+            }
+            let sr = self.sample_rate.max(1000.0);
+            let coeff = 1.0 - (-(frames as f32) / (SMOOTH_TAU_S * sr)).exp();
+            for index in 0..GRAPH_GAINS {
+                let target = gains[index].clamp(0.0, 4.0);
+                gains[index] = if self.graph_gain_ready {
+                    self.graph_gain[index] + (target - self.graph_gain[index]) * coeff
+                } else {
+                    target
+                };
+                self.graph_gain[index] = gains[index];
+            }
+            self.graph_gain_ready = true;
+        } else {
+            // A depth that returns to zero has to snap next time rather than
+            // resume from a stale ramp.
+            self.graph_gain_ready = false;
+        }
+        let mut in1 = [1.0f32; FX_SLOTS];
+        let mut in2 = [1.0f32; FX_SLOTS];
+        let mut out = [1.0f32; FX_SLOTS];
+        for slot in 0..FX_SLOTS {
+            in1[slot] = gains[slot * 3];
+            in2[slot] = gains[slot * 3 + 1];
+            out[slot] = gains[slot * 3 + 2];
+        }
+        (in1, in2, out)
+    }
+
+    fn apply_fx_graph(&mut self, frames: usize) {
+        // The gains are resolved once per block: the in-graph edges (P7.2) add
+        // to what the host set, and the node mix then runs at block rate like
+        // every other FX parameter.
+        let (in1, in2, out) = self.graph_gains(frames);
+        for slot in 0..FX_SLOTS {
+            self.mix_node_input(slot, frames, in1[slot], in2[slot]);
             self.render_fx_node(slot, frames);
         }
         let fx = self.params.fx;
@@ -2813,7 +2918,7 @@ impl Engine {
             if !fx.node_to_out[slot] {
                 continue;
             }
-            let gain = fx.node_out_gain[slot];
+            let gain = out[slot];
             let base = slot * MAX_BLOCK_SIZE;
             for i in 0..frames {
                 self.fx_l[i] += self.graph_node_l[base + i] * gain;
@@ -2823,19 +2928,23 @@ impl Engine {
     }
 
     /// Sum a node's inputs into its buffer: up to two connections, each from the
-    /// dry bus or an earlier node, each with its own gain.
-    fn mix_node_input(&mut self, slot: usize, frames: usize) {
+    /// dry bus or an earlier node, each with its own gain. `gain1`/`gain2` are
+    /// the resolved gains for this block, which are the host values unless an
+    /// in-graph edge is adding to them (P7.2).
+    fn mix_node_input(&mut self, slot: usize, frames: usize, gain1: f32, gain2: f32) {
         let inputs = self.params.fx.node_in[slot];
+        let gains = [gain1, gain2];
         self.graph_in_l[..frames].fill(0.0);
         self.graph_in_r[..frames].fill(0.0);
-        for input in inputs {
-            if input.src == 0 || input.gain == 0.0 {
+        for (index, input) in inputs.iter().enumerate() {
+            let gain = gains[index];
+            if input.src == 0 || gain == 0.0 {
                 continue;
             }
             if input.src == GRAPH_DRY {
                 for i in 0..frames {
-                    self.graph_in_l[i] += self.fx_l[i] * input.gain;
-                    self.graph_in_r[i] += self.fx_r[i] * input.gain;
+                    self.graph_in_l[i] += self.fx_l[i] * gain;
+                    self.graph_in_r[i] += self.fx_r[i] * gain;
                 }
                 continue;
             }
@@ -2847,8 +2956,8 @@ impl Engine {
             }
             let base = from * MAX_BLOCK_SIZE;
             for i in 0..frames {
-                self.graph_in_l[i] += self.graph_node_l[base + i] * input.gain;
-                self.graph_in_r[i] += self.graph_node_r[base + i] * input.gain;
+                self.graph_in_l[i] += self.graph_node_l[base + i] * gain;
+                self.graph_in_r[i] += self.graph_node_r[base + i] * gain;
             }
         }
         let base = slot * MAX_BLOCK_SIZE;

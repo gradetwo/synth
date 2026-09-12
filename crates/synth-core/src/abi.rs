@@ -280,6 +280,14 @@ pub extern "C" fn gs_fx_graph_sync() {
     engine().fx_graph_from_chain();
 }
 
+/// In-graph modulation edges the core holds (P7.2). The editor mirrors this
+/// constant, and the graph unit test reads it back so a drift is a failure
+/// rather than a silently disabled row.
+#[no_mangle]
+pub extern "C" fn gs_fx_mod_slots() -> u32 {
+    crate::params::MOD_SLOTS as u32
+}
+
 #[no_mangle]
 pub extern "C" fn gs_note_on(note: u32, velocity: f32) {
     engine().note_on(note.min(127) as u8, velocity);

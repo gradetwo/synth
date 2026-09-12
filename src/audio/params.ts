@@ -213,6 +213,26 @@ export const Param = {
   FX_EQ_MIX: 165,
   /** P6.5: run the saturating filter path at 2× and band-limit back to 1×. */
   OVERSAMPLE: 166,
+  /**
+   * In-graph modulation (P7.2), three ids per edge and `FX_MOD_SLOTS` edges:
+   * `SRC` = 0 off / 1 LFO 1 / 2 LFO 2 / 3 the envelope, `DST` = 0 off or
+   * `1 + node * 3 + which` (input 1 gain, input 2 gain, output gain) and
+   * `DEPTH` the signed amount the edge adds to that gain. Appended after
+   * `OVERSAMPLE` so every existing share code still lines up; every depth
+   * starts at 0, which is what keeps a pre-P7.2 graph bit for bit its old self.
+   */
+  FX_MOD1_SRC: 167,
+  FX_MOD1_DST: 168,
+  FX_MOD1_DEPTH: 169,
+  FX_MOD2_SRC: 170,
+  FX_MOD2_DST: 171,
+  FX_MOD2_DEPTH: 172,
+  FX_MOD3_SRC: 173,
+  FX_MOD3_DST: 174,
+  FX_MOD3_DEPTH: 175,
+  FX_MOD4_SRC: 176,
+  FX_MOD4_DST: 177,
+  FX_MOD4_DEPTH: 178,
 } as const;
 
 /** The dry (pre-effect) bus, as a graph source code. */
@@ -239,6 +259,61 @@ export function graphToOutId(slot: number): ParamId {
 export function graphOutGainId(slot: number): ParamId {
   return (Param.FX_NODE1_OUT_GAIN + slot) as ParamId;
 }
+
+/**
+ * In-graph modulation edges (P7.2). Keep in step with `MOD_SLOTS` in
+ * `params.rs`: the `fxgraph` unit test reads the number back out of the wasm.
+ *
+ * An edge's depth is carried on the edge itself, not on the source node, so one
+ * LFO can push several node gains by different amounts.
+ */
+export const FX_MOD_SLOTS = 4;
+
+/** Gain targets an edge can address: three per node (`FX_SLOTS * 3`). */
+export const FX_MOD_GAIN_TARGETS = 18;
+
+/** Source code of an edge: 0 off, 1 LFO 1, 2 LFO 2, 3 the envelope. */
+export type FxModSrc = 0 | 1 | 2 | 3;
+
+export const FX_MOD_SOURCES: FxModSrc[] = [0, 1, 2, 3];
+
+export const FX_MOD_SRC_LABELS: Record<FxModSrc, string> = {
+  0: '—',
+  1: 'LFO 1',
+  2: 'LFO 2',
+  3: 'ENV',
+};
+
+export function graphModSrcId(slot: number): ParamId {
+  return (Param.FX_MOD1_SRC + slot * 3) as ParamId;
+}
+
+export function graphModDstId(slot: number): ParamId {
+  return (Param.FX_MOD1_DST + slot * 3) as ParamId;
+}
+
+export function graphModDepthId(slot: number): ParamId {
+  return (Param.FX_MOD1_DEPTH + slot * 3) as ParamId;
+}
+
+/** Destination code of `node`'s input 1 gain, input 2 gain or output gain. */
+export function graphModDst(node: number, which: 0 | 1 | 2): number {
+  return 1 + node * 3 + which;
+}
+
+/** Which gain a destination code names, or `null` when it names nothing. */
+export function graphModTarget(code: number): { node: number; which: 0 | 1 | 2 } | null {
+  if (!Number.isFinite(code) || code < 1 || code > FX_MOD_GAIN_TARGETS) return null;
+  const index = Math.round(code) - 1;
+  return { node: Math.floor(index / 3), which: (index % 3) as 0 | 1 | 2 };
+}
+
+/** Everything an edge writes, in the order the UI groups it. */
+export const GRAPH_MOD_PARAM_IDS: ParamId[] = Array.from({ length: FX_MOD_SLOTS }, (_, slot) => [
+  graphModSrcId(slot),
+  graphModDstId(slot),
+  graphModDepthId(slot),
+]).flat();
 
 /** Positions in the effect chain (A5). One per effect: the chain is a permutation. */
 export const FX_SLOTS = 6;
@@ -479,6 +554,21 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.FX_EQ_HIGH_FREQ]: 'fxEqHighFreq',
   [Param.FX_EQ_MIX]: 'fxEqMix',
   [Param.OVERSAMPLE]: 'oversample',
+  // In-graph modulation edges (P7.2). The worklet pushes every one of these
+  // once per render quantum, which is exactly the block rate the engine
+  // resolves them at.
+  [Param.FX_MOD1_SRC]: 'fxMod1Src',
+  [Param.FX_MOD1_DST]: 'fxMod1Dst',
+  [Param.FX_MOD1_DEPTH]: 'fxMod1Depth',
+  [Param.FX_MOD2_SRC]: 'fxMod2Src',
+  [Param.FX_MOD2_DST]: 'fxMod2Dst',
+  [Param.FX_MOD2_DEPTH]: 'fxMod2Depth',
+  [Param.FX_MOD3_SRC]: 'fxMod3Src',
+  [Param.FX_MOD3_DST]: 'fxMod3Dst',
+  [Param.FX_MOD3_DEPTH]: 'fxMod3Depth',
+  [Param.FX_MOD4_SRC]: 'fxMod4Src',
+  [Param.FX_MOD4_DST]: 'fxMod4Dst',
+  [Param.FX_MOD4_DEPTH]: 'fxMod4Depth',
   [Param.OSC1_ON]: 'osc1On',
   [Param.OSC1_WAVE]: 'osc1Wave',
   [Param.OSC1_PITCH]: 'osc1Pitch',
@@ -914,6 +1004,20 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.FX_DELAY_SYNC]: 2,
   [Param.FX_DELAY_FB]: 0.35,
   [Param.FX_DELAY_MIX]: 0.22,
+  // No in-graph modulation edge exists until one is drawn (P7.2), and depth 0
+  // is the same as none at all.
+  [Param.FX_MOD1_SRC]: 0,
+  [Param.FX_MOD1_DST]: 0,
+  [Param.FX_MOD1_DEPTH]: 0,
+  [Param.FX_MOD2_SRC]: 0,
+  [Param.FX_MOD2_DST]: 0,
+  [Param.FX_MOD2_DEPTH]: 0,
+  [Param.FX_MOD3_SRC]: 0,
+  [Param.FX_MOD3_DST]: 0,
+  [Param.FX_MOD3_DEPTH]: 0,
+  [Param.FX_MOD4_SRC]: 0,
+  [Param.FX_MOD4_DST]: 0,
+  [Param.FX_MOD4_DEPTH]: 0,
 };
 
 /**

@@ -170,11 +170,12 @@ export function normalizeLayout(raw: unknown): LayoutState {
   }
   // The graph cards share the flow canvas's rules: finite numbers, clamped to a
   // range a canvas can actually show, and unknown keys dropped rather than
-  // trusted.
+  // trusted. The modulation source cards (`lfo1`, `lfo2`, `env`) are cards too,
+  // so a dragged one keeps its place (P7.2).
   const fxGraphPos: Record<string, [number, number]> = {};
   if (input.fxGraphPos && typeof input.fxGraphPos === 'object') {
     for (const [id, pos] of Object.entries(input.fxGraphPos as Record<string, unknown>)) {
-      if (!/^(dry|out|node[1-6])$/.test(id)) continue;
+      if (!/^(dry|out|lfo1|lfo2|env|node[1-6])$/.test(id)) continue;
       if (Array.isArray(pos) && pos.length === 2 && pos.every((v) => typeof v === 'number' && Number.isFinite(v))) {
         fxGraphPos[id] = [clampCanvas(pos[0]), clampCanvas(pos[1])];
       }

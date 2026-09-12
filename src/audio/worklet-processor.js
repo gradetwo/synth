@@ -182,6 +182,20 @@ const PARAMS = [
   ['fxEqMix', 165, 1, 0, 1],
   // 2x oversampling of the drive-bearing filter path (P6.5), off by default.
   ['oversample', 166, 0, 0, 1],
+  // In-graph modulation edges (P7.2): source code, gain target and the depth
+  // carried on the edge. All four start disconnected.
+  ['fxMod1Src', 167, 0, 0, 3],
+  ['fxMod1Dst', 168, 0, 0, 18],
+  ['fxMod1Depth', 169, 0, -1, 1],
+  ['fxMod2Src', 170, 0, 0, 3],
+  ['fxMod2Dst', 171, 0, 0, 18],
+  ['fxMod2Depth', 172, 0, -1, 1],
+  ['fxMod3Src', 173, 0, 0, 3],
+  ['fxMod3Dst', 174, 0, 0, 18],
+  ['fxMod3Depth', 175, 0, -1, 1],
+  ['fxMod4Src', 176, 0, 0, 3],
+  ['fxMod4Dst', 177, 0, 0, 18],
+  ['fxMod4Depth', 178, 0, -1, 1],
 ];
 
 const SPECTRUM_BINS = 36;

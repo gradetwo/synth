@@ -209,14 +209,72 @@ pub mod id {
     /// P6.5: run the saturating filter path at 2x and band-limit back to 1x.
     /// Off by default, so a patch that predates it renders unchanged.
     pub const OVERSAMPLE: u32 = 166;
+    /// First in-graph modulation edge (P7.2): three ids per edge and
+    /// [`MOD_SLOTS`] edges. `SRC` = 0 off / 1 LFO 1 / 2 LFO 2 / 3 the
+    /// envelope, `DST` = 0 off or `1 + node * 3 + which` (input 1 gain, input 2
+    /// gain, output gain) and `DEPTH` the signed amount the edge adds to that
+    /// gain. Appended after `OVERSAMPLE` so every existing share code still
+    /// lines up; every depth starts at 0, which is what keeps a pre-P7.2 graph
+    /// bit for bit its old self.
+    pub const FX_MOD1_SRC: u32 = 167;
+    pub const FX_MOD1_DST: u32 = 168;
+    pub const FX_MOD1_DEPTH: u32 = 169;
+    pub const FX_MOD2_SRC: u32 = 170;
+    pub const FX_MOD2_DST: u32 = 171;
+    pub const FX_MOD2_DEPTH: u32 = 172;
+    pub const FX_MOD3_SRC: u32 = 173;
+    pub const FX_MOD3_DST: u32 = 174;
+    pub const FX_MOD3_DEPTH: u32 = 175;
+    pub const FX_MOD4_SRC: u32 = 176;
+    pub const FX_MOD4_DST: u32 = 177;
+    pub const FX_MOD4_DEPTH: u32 = 178;
 }
 
 /// Highest parameter id + 1.
-pub const PARAM_COUNT: usize = 167;
+pub const PARAM_COUNT: usize = 179;
 
 /// Positions in the effect chain (A5). Six is one per effect: the chain is a
 /// permutation, so reordering can never lose an effect or double one up.
 pub const FX_SLOTS: usize = 6;
+
+/// In-graph modulation edges (P7.2). Four covers what the built-in templates
+/// need and keeps the parameter block small; the matrix's own eight routes are
+/// a different mechanism and keep running per voice.
+pub const MOD_SLOTS: usize = 4;
+
+/// Gain targets an in-graph edge can address: three per node.
+pub const GRAPH_GAINS: usize = FX_SLOTS * 3;
+
+/// Which field of an in-graph modulation edge a parameter id addresses.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ModField {
+    Src,
+    Dst,
+    Depth,
+}
+
+/// Decode an in-graph modulation parameter id into (edge, field).
+pub fn mod_param_field(param_id: u32) -> Option<(usize, ModField)> {
+    let offset = param_id.checked_sub(id::FX_MOD1_SRC)?;
+    let slot = (offset / 3) as usize;
+    (slot < MOD_SLOTS).then(|| {
+        let field = match offset % 3 {
+            0 => ModField::Src,
+            1 => ModField::Dst,
+            _ => ModField::Depth,
+        };
+        (slot, field)
+    })
+}
+
+/// Clamp a written destination into a valid gain target. Anything outside the
+/// three gains per node reads as "not connected".
+pub fn mod_dst_code(value: f32) -> u8 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+    (value as u32).min(GRAPH_GAINS as u32) as u8
+}
 
 /// Which effect runs at a chain position.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -352,6 +410,13 @@ pub fn is_continuous(param_id: u32) -> bool {
             | p::FX_EQ_HIGH_GAIN
             | p::FX_EQ_HIGH_FREQ
             | p::FX_EQ_MIX
+            // In-graph modulation depths (P7.2): smoothed like every other
+            // gain, so an edge drawn onto a live graph ramps instead of
+            // stepping. The source and destination codes are stepped.
+            | p::FX_MOD1_DEPTH
+            | p::FX_MOD2_DEPTH
+            | p::FX_MOD3_DEPTH
+            | p::FX_MOD4_DEPTH
     )
 }
 
@@ -816,6 +881,13 @@ pub struct FxParams {
     /// Nodes whose output reaches the mix bus, and at what gain.
     pub node_to_out: [bool; FX_SLOTS],
     pub node_out_gain: [f32; FX_SLOTS],
+    /// In-graph modulation (P7.2): four `source → gain target` edges whose
+    /// depth is carried on the edge itself. They run at block rate and add to
+    /// the node gain a host parameter sets; the eight-slot modulation matrix
+    /// elsewhere in this struct is untouched and still runs per voice.
+    pub mod_src: [u8; MOD_SLOTS],
+    pub mod_dst: [u8; MOD_SLOTS],
+    pub mod_depth: [f32; MOD_SLOTS],
     pub chorus_on: bool,
     pub chorus_depth: f32,
     pub chorus_rate: f32,
@@ -1013,6 +1085,11 @@ impl Params {
                 ],
                 node_to_out: [false, false, false, false, false, true],
                 node_out_gain: [1.0; FX_SLOTS],
+                // No in-graph edge exists until one is drawn, and a depth of 0
+                // is the same as none at all.
+                mod_src: [0; MOD_SLOTS],
+                mod_dst: [0; MOD_SLOTS],
+                mod_depth: [0.0; MOD_SLOTS],
                 chorus_on: false,
                 chorus_depth: 0.5,
                 chorus_rate: 0.6,
@@ -1097,6 +1174,14 @@ impl Params {
                     GraphParam::ToOut => self.fx.node_to_out[slot] = value >= 0.5,
                     GraphParam::OutGain => self.fx.node_out_gain[slot] = value.clamp(0.0, 4.0),
                 }
+            }
+            return;
+        }
+        if let Some((slot, field)) = mod_param_field(param_id) {
+            match field {
+                ModField::Src => self.fx.mod_src[slot] = (value as u32).min(3) as u8,
+                ModField::Dst => self.fx.mod_dst[slot] = mod_dst_code(value),
+                ModField::Depth => self.fx.mod_depth[slot] = value.clamp(-1.0, 1.0),
             }
             return;
         }
@@ -1298,6 +1383,55 @@ mod tests {
         assert_eq!(p.env.sustain, 0.0);
         p.set(id::ENV_ATTACK, 0.0);
         assert!(p.env.attack >= 0.0005);
+    }
+
+    /// P7.2: every in-graph edge decodes to its own (slot, field), the block is
+    /// contiguous from `FX_MOD1_SRC`, and nothing outside it is mistaken for an
+    /// edge. A drift here would show up as edges writing to each other's slots.
+    #[test]
+    fn in_graph_modulation_ids_decode() {
+        assert_eq!(
+            id::FX_MOD1_SRC + (MOD_SLOTS as u32 * 3) - 1,
+            id::FX_MOD4_DEPTH,
+            "the edge block is three contiguous ids per slot"
+        );
+        assert_eq!(PARAM_COUNT, id::FX_MOD4_DEPTH as usize + 1);
+        for slot in 0..MOD_SLOTS {
+            let base = id::FX_MOD1_SRC + slot as u32 * 3;
+            assert_eq!(mod_param_field(base), Some((slot, ModField::Src)));
+            assert_eq!(mod_param_field(base + 1), Some((slot, ModField::Dst)));
+            assert_eq!(mod_param_field(base + 2), Some((slot, ModField::Depth)));
+        }
+        assert_eq!(mod_param_field(id::FX_MOD1_SRC - 1), None);
+        assert_eq!(mod_param_field(id::FX_MOD4_DEPTH + 1), None);
+    }
+
+    /// The destination and depth clamps: a malformed value reads as "no edge"
+    /// or stays inside the three gains per node, and the source cannot name a
+    /// signal the engine does not have.
+    #[test]
+    fn in_graph_modulation_values_clamp() {
+        assert_eq!(mod_dst_code(f32::NAN), 0);
+        assert_eq!(mod_dst_code(-1.0), 0);
+        assert_eq!(mod_dst_code(0.0), 0);
+        assert_eq!(mod_dst_code(1.0), 1);
+        assert_eq!(mod_dst_code(GRAPH_GAINS as f32), GRAPH_GAINS as u8);
+        assert_eq!(mod_dst_code(1.0e9), GRAPH_GAINS as u8);
+
+        let mut p = Params::new();
+        p.set(id::FX_MOD1_SRC, 99.0);
+        p.set(id::FX_MOD1_DST, 99.0);
+        p.set(id::FX_MOD1_DEPTH, 5.0);
+        assert_eq!(p.fx.mod_src[0], 3);
+        assert_eq!(p.fx.mod_dst[0], GRAPH_GAINS as u8);
+        assert_eq!(p.fx.mod_depth[0], 1.0);
+        p.set(id::FX_MOD1_DEPTH, -5.0);
+        assert_eq!(p.fx.mod_depth[0], -1.0);
+        // A fresh patch has no live edge in any slot; the three writes above
+        // only touched edge 1.
+        assert!(p.fx.mod_src[1..].iter().all(|src| *src == 0));
+        assert!(p.fx.mod_dst[1..].iter().all(|dst| *dst == 0));
+        assert!(p.fx.mod_depth[1..].iter().all(|depth| *depth == 0.0));
     }
 
     #[test]
