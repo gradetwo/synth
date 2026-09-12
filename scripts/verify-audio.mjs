@@ -46,8 +46,11 @@ const P = {
   OSC2_PITCH: 9, OSC_FM: 137, OSC_RING: 138,
   OSC1_PITCH: 3, OSC1_SYNC: 139, OSC1_SUB: 140, OSC1_SUB_LEVEL: 141,
   OSC2_SUB: 142, OSC2_SUB_LEVEL: 143, NOISE_MIX: 144, FILTER_MORPH: 145,
+  FILTER_ROUTING: 146, FILTER2_TYPE: 147, FILTER2_CUTOFF: 148, FILTER2_RES: 149,
+  FILTER2_DRIVE: 150, FILTER_BLEND: 151,
 };
 
+const WAVE_TYPES = { lp: 0, hp: 1, bp: 2, notch: 3, sem: 6 };
 const WAVE = { sine: 0, triangle: 1, saw: 2, square: 3, pulse: 4, noise: 5, wavetable: 8, sample: 9 };
 
 const failures = [];
@@ -940,6 +943,128 @@ function blockSteps(frames) {
   }
   check(
     'slamming the morph and the cutoff does not click',
+    finite && peak < 1 && worstStep < 0.5,
+    `peak ${peak.toFixed(3)}, worst sample step ${worstStep.toFixed(3)}`,
+  );
+}
+
+// -------------------------- second filter stage: series / parallel (P6.3b)
+//
+// The Rust tests pin the exact wiring — a parallel blend of 0 or 1 renders the
+// single-stage path sample for sample, series is the product of the stages, and
+// the blend law is the weighted sum. What this section adds is the same feature
+// measured on the real wasm build, in the domain a listener hears it in: the
+// slopes, the shape between the two cutoffs, that the blend has to move the
+// response monotonically, and that switching arrangement mid-note does not
+// click. Comparisons here are of *responses* (each divided by one wide-open
+// render), never of samples: two separately rendered engine instances are not a
+// sample-comparison rig.
+{
+  const first = 300;
+  const second = 3000;
+  const flat = [
+    [P.FILTER_TYPE, WAVE_TYPES.sem], [P.FILTER_CUTOFF, first], [P.FILTER_RES, 0.2],
+    [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0], [P.FILTER_KBD, 0], [P.FILTER_MORPH, 0],
+    [P.FILTER2_CUTOFF, second], [P.FILTER2_RES, 0.2], [P.FILTER2_DRIVE, 0],
+    [P.OSC1_WAVE, WAVE.sine], [P.OSC1_LEVEL, 0.8], [P.OSC1_SYNC, 0], [P.OSC1_SUB, 0],
+    [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0], [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0],
+    [P.ENV_ATTACK, 0.005], [P.ENV_SUSTAIN, 1], [P.LFO_ON, 0], [P.LFO2_ON, 0],
+    [P.MASTER_VOLUME, 1], [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0],
+    [P.FX_CHORUS_ON, 0], [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0],
+  ];
+  // The default patch's ENV/LFO -> CUTOFF routes are live; without clearing the
+  // matrix these numbers are measurements of the modulation (P6.3a paid for
+  // that lesson with a low-pass that appeared to rise with frequency).
+  const quietMatrix = () => {
+    for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
+  };
+  const tone = (freq, extra) => {
+    const pitch = 12 * Math.log2(freq / 261.6256);
+    if (Math.abs(pitch) > 48) throw new Error(`gate frequency ${freq} Hz is outside the oscillator's range`);
+    engine([...flat, [P.OSC1_PITCH, pitch], ...extra], [[60, 1]]);
+    quietMatrix();
+    const out = [];
+    for (const [l] of render(90, 40)) out.push(...l);
+    return binMag(out, freq);
+  };
+  // One wide-open linear section, so the tone's own level and the voice gain
+  // divide out of every number below.
+  const open = (freq) => tone(freq, [[P.FILTER_ROUTING, 0], [P.FILTER_CUTOFF, 20000], [P.FILTER_RES, 0]]);
+  const db = (v) => 20 * Math.log10(Math.max(v, 1e-12));
+  const response = (freq, extra) => db(tone(freq, extra)) - db(open(freq));
+
+  const stage1 = (freq) => response(freq, [[P.FILTER_ROUTING, 0]]);
+  const stage2 = (freq) => response(freq, [[P.FILTER_ROUTING, 2], [P.FILTER2_TYPE, 0], [P.FILTER_BLEND, 1]]);
+  const serial = (freq) =>
+    response(freq, [[P.FILTER_ROUTING, 1], [P.FILTER2_TYPE, 0], [P.FILTER2_CUTOFF, second]]);
+  const grid = [600, 1500, 4000];
+  const errors = grid.map((f) => serial(f) - (stage1(f) + stage2(f)));
+  const worstError = Math.max(...errors.map(Math.abs));
+  check(
+    'Series is the product of the two responses',
+    worstError < 2.0,
+    `worst |series - (A + B)| ${worstError.toFixed(2)} dB at ${grid.join('/')} Hz`,
+  );
+
+  // Two 12 dB low-passes at the same cutoff: the chain has to fall twice as
+  // fast. The first stage is `sem` at morph 0 — the discrete `lp` is the 24 dB
+  // ladder, which would already be falling at 24 on its own.
+  const lpPair = (freq) =>
+    response(freq, [
+      [P.FILTER_TYPE, WAVE_TYPES.sem], [P.FILTER_CUTOFF, 700],
+      [P.FILTER_ROUTING, 1], [P.FILTER2_TYPE, 0], [P.FILTER2_CUTOFF, 700],
+    ]);
+  const singleStage = (freq) =>
+    response(freq, [[P.FILTER_TYPE, WAVE_TYPES.sem], [P.FILTER_CUTOFF, 700], [P.FILTER_ROUTING, 0]]);
+  const one = singleStage(2800) - singleStage(700);
+  const two = lpPair(2800) - lpPair(700);
+  check(
+    'Two low-pass stages in series fall twice as fast',
+    two < -18 && two < one * 1.6,
+    `one stage ${one.toFixed(1)} dB vs two ${two.toFixed(1)} dB over two octaves`,
+  );
+
+  // The blend has to move the parallel mix between the branches, so the
+  // branches have to differ at the probe frequency: a wide-open first stage
+  // passes 1500 Hz, a dark second stage does not.
+  const at = (blend) =>
+    response(1500, [
+      [P.FILTER_TYPE, WAVE_TYPES.sem], [P.FILTER_CUTOFF, 6000],
+      [P.FILTER_ROUTING, 2], [P.FILTER2_TYPE, 0], [P.FILTER2_CUTOFF, 300],
+      [P.FILTER_BLEND, blend],
+    ]);
+  const ladder = [0, 0.25, 0.5, 0.75, 1].map(at);
+  check(
+    'The blend moves the parallel mix monotonically',
+    ladder.every((v, i) => i === 0 || v < ladder[i - 1] + 0.01) && ladder[0] > ladder[4] + 6,
+    `${ladder.map((v) => v.toFixed(1)).join(' → ')} dB at 1500 Hz`,
+  );
+
+  // Time domain: switching arrangement and moving the second cutoff must not
+  // click. The rendered step is what a listener would hear.
+  engine([...flat, [P.FILTER_ROUTING, 0], [P.FILTER2_TYPE, 0]], [[45, 1]]);
+  quietMatrix();
+  let worstStep = 0;
+  let peak = 0;
+  let finite = true;
+  let prev = null;
+  for (let b = 0; b < 240; b++) {
+    ex.gs_set_param(P.FILTER_ROUTING, b % 40 < 20 ? 1 : 2);
+    ex.gs_set_param(P.FILTER2_CUTOFF, Math.floor(b / 10) % 2 === 0 ? 300 : 6000);
+    ex.gs_set_param(P.FILTER2_TYPE, Math.floor(b / 30) % 2 === 0 ? 0 : 1);
+    ex.gs_process(BLOCK);
+    const heap = new Float32Array(ex.memory.buffer);
+    const ptr = ex.gs_left_ptr() / 4;
+    for (let i = 0; i < BLOCK; i++) {
+      const v = heap[ptr + i];
+      if (!Number.isFinite(v)) finite = false;
+      peak = Math.max(peak, Math.abs(v));
+      if (prev !== null) worstStep = Math.max(worstStep, Math.abs(v - prev));
+      prev = v;
+    }
+  }
+  check(
+    'Switching series/parallel mid-note does not click',
     finite && peak < 1 && worstStep < 0.5,
     `peak ${peak.toFixed(3)}, worst sample step ${worstStep.toFixed(3)}`,
   );

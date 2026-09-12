@@ -92,6 +92,12 @@ struct VoiceDsp {
     /// oscillator instead of sharing one mono filter.
     daisysp::LadderFilter ladder[2];
     daisysp::Svf svf[2];
+    /// The second, optional filter stage (P6.3b): one state-variable filter per
+    /// side. It is always 12 dB/oct, deliberately — stage 1's `lp` is our own
+    /// 24 dB/oct ladder, and a second ladder per side would double the filter's
+    /// memory and its cost for a shape the 12 dB SVF already reaches when two
+    /// stages are chained (12 + 12 = the 24 dB/oct the ladder gives on its own).
+    daisysp::Svf svf2[2];
     /// Three band-passes per side for the vowel formant filter.
     daisysp::Svf formant[2][3];
     float formant_gain[2][3];
@@ -169,6 +175,7 @@ void init_slot(int i, float sample_rate) {
     for (int side = 0; side < 2; ++side) {
         d.ladder[side].Init(sample_rate);
         d.svf[side].Init(sample_rate);
+        d.svf2[side].Init(sample_rate);
         d.dc[side].Init(sample_rate);
         for (int band = 0; band < 3; ++band) {
             d.formant[side][band].Init(sample_rate);
@@ -208,6 +215,7 @@ void gs_voice_reset(int v) {
     for (int side = 0; side < 2; ++side) {
         d.ladder[side].Init(g_sample_rate);
         d.svf[side].Init(g_sample_rate);
+        d.svf2[side].Init(g_sample_rate);
         d.dc[side].Init(g_sample_rate);
         for (int band = 0; band < 3; ++band) {
             d.formant[side][band].Init(g_sample_rate);
@@ -381,6 +389,62 @@ void gs_voice_filter_block(int v, int side, int type, float morph, const float *
             case GS_FILTER_NOTCH: out[i] = d.svf[s].Notch(); break;
             default:              out[i] = d.svf[s].Low();   break;
         }
+    }
+}
+
+namespace {
+/// Stage 1's shape: the 24 dB/oct ladder for `lp`, the SVF taps for everything
+/// else (morph included, for the continuous multimode type).
+inline float stage1_shape(daisysp::LadderFilter &ladder, daisysp::Svf &svf, int type, float morph,
+                          float x) {
+    if (type == GS_FILTER_LP) return ladder.Process(x);
+    svf.Process(x);
+    switch (type) {
+        case GS_FILTER_HP:    return svf.High();
+        case GS_FILTER_BP:    return svf.Band();
+        case GS_FILTER_NOTCH: return svf.Notch();
+        case GS_FILTER_SEM:   return sem_mix(svf.Low(), svf.Band(), svf.High(), morph);
+        default:              return svf.Low();
+    }
+}
+
+/// Stage 2's shape: always the SVF, so it is 12 dB/oct even for `lp`. Stage 1's
+/// `lp` is the 24 dB/oct ladder, and a second ladder per side would cost twice
+/// the state for a shape two chained 12 dB stages already reach; `lp` therefore
+/// falls through to the SVF low-pass here, as do the comb and formant, which
+/// have no second instance to run at all.
+inline float stage2_shape(daisysp::Svf &svf, int type, float morph, float x) {
+    svf.Process(x);
+    switch (type) {
+        case GS_FILTER_HP:    return svf.High();
+        case GS_FILTER_BP:    return svf.Band();
+        case GS_FILTER_NOTCH: return svf.Notch();
+        case GS_FILTER_SEM:   return sem_mix(svf.Low(), svf.Band(), svf.High(), morph);
+        default:              return svf.Low();
+    }
+}
+} // namespace
+
+void gs_voice_filter2_set(int v, int side, int type, float freq, float res, float drive) {
+    VoiceDsp &d = voice(v);
+    const int s = side ? 1 : 0;
+    (void)type; // every second-stage shape comes from the same SVF state
+    d.svf2[s].SetFreq(freq);
+    d.svf2[s].SetRes(res * 0.97f);
+    d.svf2[s].SetDrive(drive);
+}
+
+void gs_voice_filter2_block(int v, int side, int type, float morph, const float *in, float *out,
+                            uint32_t frames) {
+    VoiceDsp &d = voice(v);
+    const int s = side ? 1 : 0;
+    type = clamp_type(type);
+    // The comb and the formant have no second instance to run (one delay line
+    // and one filter bank per voice, both already used by stage 1), so they read
+    // as a low-pass here rather than silently sharing stage 1's state.
+    if (type == GS_FILTER_COMB || type == GS_FILTER_FORMANT) type = GS_FILTER_LP;
+    for (uint32_t i = 0; i < frames; ++i) {
+        out[i] = stage2_shape(d.svf2[s], type, morph, in[i]);
     }
 }
 

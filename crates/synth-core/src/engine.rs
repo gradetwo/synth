@@ -20,8 +20,9 @@ use crate::dsp::wavetable::{CycleError, Table, BASE_LEN as WT_BASE_LEN};
 use crate::dsp::util::{exp2, note_to_hz, semitone_ratio, soft_limit, Rng};
 use crate::fft::Spectrum;
 use crate::params::{
-    graph_node_src, id, is_continuous, FxKind, GraphInput, LfoTarget, ModDst, ModSrc, OscParams,
-    Params, FX_SLOTS, GRAPH_DRY, MAX_BLOCK_SIZE, MAX_UNISON, MAX_VOICES, PARAM_COUNT,
+    graph_node_src, id, is_continuous, FilterRouting, FxKind, GraphInput, LfoTarget, ModDst,
+    ModSrc, OscParams, Params, FX_SLOTS, GRAPH_DRY, MAX_BLOCK_SIZE, MAX_UNISON, MAX_VOICES,
+    PARAM_COUNT,
 };
 use crate::voice::{NoteOnResult, VoiceManager};
 
@@ -53,6 +54,26 @@ extern "C" {
     );
     fn gs_voice_filter_set(v: i32, side: i32, kind: i32, freq: f32, res: f32, drive: f32);
     fn gs_voice_filter_block(
+        v: i32,
+        side: i32,
+        kind: i32,
+        morph: f32,
+        input: *const f32,
+        out: *mut f32,
+        frames: u32,
+    );
+    /// The optional second filter stage (P6.3b). `input` carries that stage's
+    /// own input and comes back holding its output; `first_out` receives the
+    /// first stage's output for the same block, so the caller can mix the two.
+    fn gs_voice_filter2_set(
+        v: i32,
+        side: i32,
+        r#type: i32,
+        freq: f32,
+        res: f32,
+        drive: f32,
+    );
+    fn gs_voice_filter2_block(
         v: i32,
         side: i32,
         kind: i32,
@@ -121,6 +142,12 @@ const LOOKAHEAD: usize = 128;
 const LIMIT_RELEASE_S: f32 = 0.15;
 /// Peak-detector hold: how long the limiter remembers a transient.
 const LIMIT_PEAK_HOLD_S: f32 = 0.05;
+
+/// Crossfade applied when the second filter stage's routing changes (P6.3b).
+/// 2 ms: short enough to read as an instant switch, long enough that the
+/// difference between the old and the new mix is a ramp rather than a step. It
+/// is counted in samples, not seconds, so a voice's fade never straddles two
+/// render blocks and the buffer arithmetic stays a plain loop.
 
 /// Frequency of a note number with an explicit master tune and tuning table.
 #[inline]
@@ -253,6 +280,11 @@ pub struct Engine {
     unison_buf: [f32; MAX_BLOCK_SIZE],
     /// Filtered OSC 2 signal when the oscillators are panned apart.
     voice_buf_r: [f32; MAX_BLOCK_SIZE],
+    /// The signal stage 1 was handed, saved for the parallel wiring (P6.3b):
+    /// the chain writes its own output over `voice_buf`, and only the parallel
+    /// case wants the input back. Both channels, one block.
+    filter2_in_buf: [f32; MAX_BLOCK_SIZE],
+    filter2_in_buf_r: [f32; MAX_BLOCK_SIZE],
     /// Per-voice LFO state, used when a patch retriggers the LFO per note.
     voice_lfos: [Lfo; MAX_VOICES],
     voice_lfo2s: [Lfo; MAX_VOICES],
@@ -300,8 +332,6 @@ pub struct Engine {
     wt_scratch: [f32; WT_BASE_LEN],
     /// One four-pole low-pass per voice per oscillator side.
     ladders: [[LadderFilter; 2]; MAX_VOICES],
-    /// Per-note tuning offsets in cents. Lives here rather than in `Params` so
-    /// it is an instrument setting that presets do not overwrite.
     tuning: [f32; crate::params::TUNING_NOTES],
     /// Per-note pitch bend in semitones (MPE): every note bends on its own, so
     /// this cannot be the single global `pitch_bend` wheel.
@@ -412,7 +442,10 @@ impl Engine {
             graph_in_r: Vec::new(),
             unison_buf: [0.0; MAX_BLOCK_SIZE],
             voice_buf_r: [0.0; MAX_BLOCK_SIZE],
-            voice_lfos: [Lfo::new(); MAX_VOICES],
+            filter2_in_buf: [0.0; MAX_BLOCK_SIZE],
+            filter2_in_buf_r: [0.0; MAX_BLOCK_SIZE],
+                            // Overwritten by `init`; 1.0 would make the fade instantaneous.
+                    voice_lfos: [Lfo::new(); MAX_VOICES],
             voice_lfo2s: [Lfo::new(); MAX_VOICES],
             lfo_scratch: [0.0; MAX_BLOCK_SIZE],
             lfo2_scratch: [0.0; MAX_BLOCK_SIZE],
@@ -438,7 +471,7 @@ impl Engine {
             user_table: None,
             wt_scratch: [0.0; WT_BASE_LEN],
             ladders: [[LadderFilter::new(); 2]; MAX_VOICES],
-            tuning: [0.0; crate::params::TUNING_NOTES],
+                            tuning: [0.0; crate::params::TUNING_NOTES],
             bends: [0.0; crate::params::TUNING_NOTES],
             reverbs: Vec::new(),
             fx_delay_used: false,
@@ -1085,6 +1118,9 @@ impl Engine {
 
     fn retrigger(&mut self, slot: usize) {
         unsafe { gs_voice_reset(slot as i32) };
+        // The second stage's state was just cleared with the rest of the voice,
+        // so there is nothing to crossfade from: start it settled on whatever
+        // routing the patch is set to.
         // Start each voice at a spread phase: identical start phases make a
         // stacked chord peak linearly instead of ~sqrt(N), which used to push
         // the master bus into the limiter on every attack. The sequence is
@@ -1886,6 +1922,17 @@ impl Engine {
         // its filter state is re-initialised when the slot is retriggered.
         let audible = env_last >= SILENT_VOICE;
 
+        // The parallel wiring needs the signal stage 1 is about to consume, and
+        // the chain below writes its own output over `voice_buf`. Saved raw
+        // (before the makeup gain) and scaled where it is used.
+        let save_input = audible && params.filter.routing == FilterRouting::Parallel;
+        if save_input {
+            self.filter2_in_buf[..frames].copy_from_slice(&self.voice_buf[..frames]);
+            if stereo {
+                self.filter2_in_buf_r[..frames].copy_from_slice(&self.voice_buf_r[..frames]);
+            }
+        }
+
         if !audible {
             // Nothing to do: the trimmed oscillator signal is already in
             // `voice_buf` (and `voice_buf_r`) and falls through to the makeup
@@ -2054,6 +2101,130 @@ impl Engine {
         if stereo {
             for sample in self.voice_buf_r[..frames].iter_mut() {
                 *sample *= makeup;
+            }
+        }
+
+        // --- second filter stage (P6.3b) ------------------------------------
+        //
+        // Stage 2 is always the C bridge's 12 dB SVF, one instance per voice per
+        // side, whatever stage 1 was: the ladder, the comb and the formant each
+        // own a single instance and are not duplicated for a second stage. It
+        // reads stage 1's output in series and the signal stage 1 was handed in
+        // parallel, mixes them with the blend, and is DC-blocked once afterwards
+        // the way every single-stage path is.
+        //
+        // `FILTER_ROUTING = Off` never enters here: that is the whole
+        // compatibility story for patches written before the stage existed, and
+        // it is why the default path stays sample-for-sample what it was.
+        let routing = params.filter.routing;
+        if audible && routing != FilterRouting::Off {
+            let serial = routing == FilterRouting::Serial;
+            let kind2 = params.filter.kind2.second_stage_id();
+            let makeup2 = 1.0 / FILTER_TRIM;
+            let blend = params.filter.blend;
+            unsafe {
+                gs_voice_filter2_set(
+                    slot as i32,
+                    0,
+                    kind2,
+                    params.filter.cutoff2,
+                    params.filter.res2,
+                    params.filter.drive2,
+                );
+                if stereo {
+                    gs_voice_filter2_set(
+                        slot as i32,
+                        1,
+                        kind2,
+                        params.filter.cutoff2,
+                        params.filter.res2,
+                        params.filter.drive2,
+                    );
+                }
+                if serial {
+                    gs_voice_filter2_block(
+                        slot as i32,
+                        0,
+                        kind2,
+                        params.filter.morph,
+                        self.voice_buf.as_ptr(),
+                        self.osc_a.as_mut_ptr(),
+                        frames as u32,
+                    );
+                    if stereo {
+                        gs_voice_filter2_block(
+                            slot as i32,
+                            1,
+                            kind2,
+                            params.filter.morph,
+                            self.voice_buf_r.as_ptr(),
+                            self.osc_b.as_mut_ptr(),
+                            frames as u32,
+                        );
+                    }
+                } else {
+                    // Parallel: stage 2 sees the input stage 1 saw, at the level
+                    // stage 1's output is at (the save is pre-makeup).
+                    for sample in self.filter2_in_buf[..frames].iter_mut() {
+                        *sample *= makeup2;
+                    }
+                    gs_voice_filter2_block(
+                        slot as i32,
+                        0,
+                        kind2,
+                        params.filter.morph,
+                        self.filter2_in_buf.as_ptr(),
+                        self.osc_a.as_mut_ptr(),
+                        frames as u32,
+                    );
+                    if stereo {
+                        for sample in self.filter2_in_buf_r[..frames].iter_mut() {
+                            *sample *= makeup2;
+                        }
+                        gs_voice_filter2_block(
+                            slot as i32,
+                            1,
+                            kind2,
+                            params.filter.morph,
+                            self.filter2_in_buf_r.as_ptr(),
+                            self.osc_b.as_mut_ptr(),
+                            frames as u32,
+                        );
+                    }
+                }
+                for i in 0..frames {
+                    let first = self.voice_buf[i];
+                    let second = self.osc_a[i];
+                    self.voice_buf[i] = if serial {
+                        second
+                    } else if blend >= 1.0 {
+                        second
+                    } else if blend <= 0.0 {
+                        first
+                    } else {
+                        first + (second - first) * blend
+                    };
+                }
+                if stereo {
+                    for i in 0..frames {
+                        let first = self.voice_buf_r[i];
+                        let second = self.osc_b[i];
+                        self.voice_buf_r[i] = if serial {
+                            second
+                        } else if blend >= 1.0 {
+                            second
+                        } else if blend <= 0.0 {
+                            first
+                        } else {
+                            first + (second - first) * blend
+                        };
+                    }
+                }
+                // No DC blocker of its own: every stage-one branch already
+                // blocked its output, and stage 2 (an SVF) passes the small
+                // remainder through with unity DC gain rather than growing it.
+                // Blocking twice here is what made a parallel blend of 0 differ
+                // from the single-stage path by a fraction of a decibel.
             }
         }
 
@@ -4161,6 +4332,11 @@ mod tests {
         for chunk in buf.chunks_mut(128) {
             e.process(128);
             chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+        }
+        {
+            let mx = buf.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            let rms = (buf.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / buf.len() as f64).sqrt();
+            eprintln!("DBGSEM freq={freq} cutoff={cutoff} morph={morph} peak={mx:.6} rms={rms:.6} bin={:.6}", bin_mag(&buf, freq, 48_000.0));
         }
         bin_mag(&buf, freq, 48_000.0)
     }

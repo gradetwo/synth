@@ -70,6 +70,52 @@ test.describe('SEM continuous multimode', () => {
   });
 });
 
+test.describe('the second filter stage', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('appears when it is switched on and travels with the patch', async ({ page, browser }) => {
+    await boot(page);
+    const filter = filterModule(page);
+
+    // Off by default: an older patch must not even see these controls.
+    await expect(filter.getByRole('slider', { name: 'CUTOFF 2', exact: true })).toHaveCount(0);
+
+    await filter.getByRole('button', { name: 'SER' }).click();
+    const cutoff2 = filter.getByRole('slider', { name: 'CUTOFF 2', exact: true });
+    await expect(cutoff2).toBeVisible();
+    await expect(filter.getByRole('slider', { name: 'RES 2', exact: true })).toBeVisible();
+    // The blend is the parallel mix, so it is not offered in series.
+    await expect(filter.getByRole('slider', { name: 'BLEND', exact: true })).toHaveCount(0);
+
+    await filter.getByRole('button', { name: 'PAR' }).click();
+    const blend = filter.getByRole('slider', { name: 'BLEND', exact: true });
+    await expect(blend).toBeVisible();
+    await expect(blend).toHaveAttribute('aria-valuenow', '0.5');
+
+    const value = await turn(page, 'CUTOFF 2', 40);
+    expect(value).toBeGreaterThan(9000);
+
+    // The arrangement and both stages are part of the patch.
+    await page.getByRole('button', { name: '预设库' }).click();
+    await page.locator('.preset-drawer button', { hasText: '分享' }).first().click();
+    await expect.poll(async () => page.evaluate(() => location.hash)).toContain('gs1.');
+    const url = await page.evaluate(() => location.href);
+
+    const other = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const receiver = await other.newPage();
+    await receiver.goto(url);
+    await expect
+      .poll(async () =>
+        Number(await receiver.locator('[data-module-id="filter"] [role="slider"][aria-label="CUTOFF 2"]').getAttribute('aria-valuenow')),
+      { timeout: 15_000 })
+      .toBeGreaterThan(9000);
+    await expect(
+      receiver.locator('[data-module-id="filter"] [role="slider"][aria-label="BLEND"]'),
+    ).toBeVisible();
+    await other.close();
+  });
+});
+
 test.describe('SEM on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
@@ -82,5 +128,13 @@ test.describe('SEM on a phone', () => {
     const box = (await morph.boundingBox())!;
     expect(box.width).toBeGreaterThanOrEqual(36);
     expect(box.height).toBeGreaterThanOrEqual(36);
+
+    // The module gets busy with a second stage; it still has to fit a thumb.
+    await filter.getByRole('button', { name: 'SER' }).tap();
+    const cutoff2 = filter.getByRole('slider', { name: 'CUTOFF 2', exact: true });
+    await expect(cutoff2).toBeVisible();
+    const second = (await cutoff2.boundingBox())!;
+    expect(second.width).toBeGreaterThanOrEqual(36);
+    expect(second.height).toBeGreaterThanOrEqual(36);
   });
 });

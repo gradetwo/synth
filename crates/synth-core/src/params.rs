@@ -167,10 +167,31 @@ pub mod id {
     /// four. Ignored by every other type, so the default 0 — the low-pass end,
     /// where every older patch already sits — leaves existing sounds untouched.
     pub const FILTER_MORPH: u32 = 145;
+    /// How the second filter stage is wired to the first (P6.3b): 0 = the stage
+    /// is switched off, 1 = the second stage filters the first stage's output
+    /// (serial), 2 = both stages process the same input and are mixed
+    /// (parallel). 0 is the default, and at 0 the render path is exactly the one
+    /// that existed before this parameter did — that is what keeps every older
+    /// patch bit-for-bit unchanged.
+    pub const FILTER_ROUTING: u32 = 146;
+    /// Second filter stage's type, in the same `FilterType` wire order as
+    /// `FILTER_TYPE`. The UI offers the five single-filter shapes (lp, hp, bp,
+    /// nt, sem); a patch that stores `comb` or `formant` here renders as a
+    /// 12 dB/oct SVF low-pass, because those two keep per-voice state that only
+    /// exists once (see `render_voice`).
+    pub const FILTER2_TYPE: u32 = 147;
+    pub const FILTER2_CUTOFF: u32 = 148;
+    pub const FILTER2_RES: u32 = 149;
+    pub const FILTER2_DRIVE: u32 = 150;
+    /// Parallel mix between the stages (P6.3b): `out = (1 - b) * A + b * B`,
+    /// linear rather than equal-power, so that b = 0 is *exactly* stage 1 and
+    /// b = 1 is *exactly* stage 2 and both endpoints can be asserted bit for
+    /// bit. Ignored while `FILTER_ROUTING` is 0 or 1.
+    pub const FILTER_BLEND: u32 = 151;
 }
 
 /// Highest parameter id + 1.
-pub const PARAM_COUNT: usize = 146;
+pub const PARAM_COUNT: usize = 152;
 
 /// Positions in the effect chain (A5). Six is one per effect: the chain is a
 /// permutation, so reordering can never lose an effect or double one up.
@@ -255,6 +276,10 @@ pub fn is_continuous(param_id: u32) -> bool {
             | p::OSC2_SUB_LEVEL
             | p::NOISE_MIX
             | p::FILTER_MORPH
+            | p::FILTER2_CUTOFF
+            | p::FILTER2_RES
+            | p::FILTER2_DRIVE
+            | p::FILTER_BLEND
             | p::FX_DELAY_FB
             | p::FX_DELAY_MIX
             | p::GLIDE
@@ -399,6 +424,50 @@ impl FilterType {
                 debug_assert!(false, "comb and formant have no bridge id");
                 0
             }
+        }
+    }
+
+    /// The bridge id for the *second* stage (P6.3b).
+    ///
+    /// Deliberately separate from `bridge_id`: the second stage is one SVF per
+    /// side, so a comb or a formant selected there renders as that SVF's
+    /// low-pass. Calling `bridge_id` would trip its debug assertion — which is
+    /// there to catch a *stage one* patch quietly becoming a low-pass, not to
+    /// forbid a stage two that has nowhere else to put a delay line.
+    pub fn second_stage_id(self) -> i32 {
+        match self {
+            FilterType::Comb | FilterType::Formant => 0,
+            other => other.bridge_id(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FilterRouting {
+    /// The second stage does not run at all. Every patch written before P6.3b
+    /// lives here, so this arm has to stay a pure bypass.
+    Off,
+    /// Stage 2 filters stage 1's output: one 12 dB/oct slope on top of another.
+    Serial,
+    /// Both stages see the same input and their outputs are mixed by
+    /// [`FilterParams::blend`].
+    Parallel,
+}
+
+impl FilterRouting {
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => FilterRouting::Serial,
+            2 => FilterRouting::Parallel,
+            _ => FilterRouting::Off,
+        }
+    }
+
+    pub fn to_u32(self) -> u32 {
+        match self {
+            FilterRouting::Off => 0,
+            FilterRouting::Serial => 1,
+            FilterRouting::Parallel => 2,
         }
     }
 }
@@ -569,6 +638,17 @@ pub struct FilterParams {
     pub morph: f32,
     pub env_amt: f32,
     pub kbd: bool,
+    /// The second, optional stage (P6.3b). It has its own cutoff, resonance and
+    /// drive, and it never reads the filter envelope, the keyboard tracking or
+    /// the modulation matrix: those follow stage 1, the stage the player already
+    /// has a knob for.
+    pub routing: FilterRouting,
+    pub kind2: FilterType,
+    pub cutoff2: f32,
+    pub res2: f32,
+    pub drive2: f32,
+    /// Parallel mix, 0 = stage 1 only, 1 = stage 2 only (linear law).
+    pub blend: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -774,6 +854,15 @@ impl Params {
                 morph: 0.0,
                 env_amt: 0.0,
                 kbd: false,
+                // The second stage starts switched off, so a patch that never
+                // touches it renders through exactly the code path it did
+                // before P6.3b existed.
+                routing: FilterRouting::Off,
+                kind2: FilterType::Lp,
+                cutoff2: 9000.0,
+                res2: 0.25,
+                drive2: 0.15,
+                blend: 0.5,
             },
             env: EnvParams {
                 attack: 0.002,
@@ -960,6 +1049,24 @@ impl Params {
             p::FILTER_MORPH => self.filter.morph = clamp01(value),
             p::FILTER_ENV_AMT => self.filter.env_amt = clamp01(value),
             p::FILTER_KBD => self.filter.kbd = value > 0.5,
+            p::FILTER_ROUTING => {
+                self.filter.routing = FilterRouting::from_u32(value as u32);
+            }
+            // Stage 2 ignores the comb and the formant: both keep a single
+            // per-voice state that stage 1 already owns, so a patch that asks
+            // for one here gets the 12 dB/oct low-pass the C bridge can run a
+            // second time instead of a silently shared delay line.
+            p::FILTER2_TYPE => {
+                let kind = FilterType::from_u32(value as u32);
+                self.filter.kind2 = match kind {
+                    FilterType::Comb | FilterType::Formant => FilterType::Lp,
+                    other => other,
+                };
+            }
+            p::FILTER2_CUTOFF => self.filter.cutoff2 = value.clamp(20.0, 20000.0),
+            p::FILTER2_RES => self.filter.res2 = clamp01(value),
+            p::FILTER2_DRIVE => self.filter.drive2 = clamp01(value),
+            p::FILTER_BLEND => self.filter.blend = clamp01(value),
             p::ENV_ATTACK => self.env.attack = value.clamp(0.0005, 8.0),
             p::ENV_DECAY => self.env.decay = value.clamp(0.001, 12.0),
             p::ENV_SUSTAIN => self.env.sustain = clamp01(value),

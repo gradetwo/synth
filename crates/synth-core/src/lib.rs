@@ -20,6 +20,10 @@ pub mod fft;
 pub mod params;
 pub mod voice;
 
+/// Tests for the second filter stage (P6.3b). Compiled away outside `cfg(test)`.
+#[cfg(test)]
+mod dual_filter;
+
 mod shim;
 
 #[cfg(target_arch = "wasm32")]

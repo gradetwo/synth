@@ -40,7 +40,19 @@ enum {
      * by `morph` (see gs_voice_filter_block). Appended so the four ids above
      * keep the numbering every existing patch stores. */
     GS_FILTER_SEM = 4,
+    /* The two types that keep per-voice state only stage 1 can own. They never
+     * reach the bridge (Rust branches on them first); the second-stage entry
+     * point maps them to a low-pass instead of running them twice. */
+    GS_FILTER_COMB = 5,
+    GS_FILTER_FORMANT = 6,
 };
+
+/* How the second filter stage is wired (P6.3b), matching `FilterRouting` in
+ * params.rs. The ids are positional in that enum, so this cast is safe — unlike
+ * the filter *types*, whose wire ids and bridge ids differ on purpose. */
+#define GS_FILTER_ROUTING_OFF 0
+#define GS_FILTER_ROUTING_SERIAL 1
+#define GS_FILTER_ROUTING_PARALLEL 2
 
 /* SVF outputs */
 enum {
@@ -92,6 +104,20 @@ void gs_voice_osc_sync_block(int v, int sub, const float *mod, float depth, floa
 void gs_voice_filter_set(int v, int side, int type, float freq, float res, float drive);
 void gs_voice_filter_block(int v, int side, int type, float morph, const float *in, float *out,
                            uint32_t frames);
+/* The optional second filter stage (P6.3b). This is just the *second* stage —
+ * stage 1 stays `gs_voice_filter_block`, so both wirings call each stage exactly
+ * once and a routing change cannot make stage 1 run (and advance its state)
+ * twice for the same samples. The caller wires them: serial points this at the
+ * first stage's output, parallel points it at the same signal the first stage
+ * read, and the mix law lives in Rust either way.
+ *
+ * The stage is always 12 dB/oct (the SVF), even for `lp`: stage 1's `lp` is the
+ * 24 dB/oct ladder, and a second one per side would cost twice the state for a
+ * shape two chained 12 dB stages already reach. A comb or formant here renders
+ * as that same SVF low-pass rather than sharing stage 1's single instance. */
+void gs_voice_filter2_set(int v, int side, int type, float freq, float res, float drive);
+void gs_voice_filter2_block(int v, int side, int type, float morph, const float *in, float *out,
+                            uint32_t frames);
 
 /* --- per-voice DC blocker -------------------------------------------------- */
 void gs_voice_dc_block(int v, int side, const float *in, float *out, uint32_t frames);

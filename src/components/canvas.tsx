@@ -323,6 +323,10 @@ export function FilterCurve() {
     const cutoff = store.getParam(14 as ParamId);
     const res = store.getParam(15 as ParamId);
     const morph = store.getParam(145 as ParamId);
+    const routing = store.getParam(146 as ParamId);
+    const type2 = intToFilter(store.getParam(147 as ParamId));
+    const cutoff2 = store.getParam(148 as ParamId);
+    const res2 = store.getParam(149 as ParamId);
     ctx.clearRect(0, 0, w, h);
     const fc = (Math.log(cutoff / 40) / Math.log(18000 / 40)) * w;
     const peak = res * (h * 0.38);
@@ -331,10 +335,15 @@ export function FilterCurve() {
     ctx.shadowColor = '#6ee7a0';
     ctx.shadowBlur = 5;
     ctx.beginPath();
-    for (let x = 0; x <= w; x += 2) {
-      const d = x - fc;
+    /** The schematic response of one stage, in pixels (y grows downward). */
+    const stageY = (
+      kind: ReturnType<typeof intToFilter>,
+      morphPos: number,
+      d: number,
+      peakAmt: number,
+    ): number => {
       let y: number;
-      if (type === 'sem') {
+      if (kind === 'sem') {
         // The same four points the filter walks, drawn as gains so the shape
         // follows the knob: low-pass → band-pass → notch → high-pass. The
         // notch has to *dip* below the flat line, which is why this is built
@@ -344,20 +353,41 @@ export function FilterCurve() {
         const gH = d < 0 ? Math.max(0, 1 + d / span) : 1;
         const gB = Math.max(0, 1 - Math.abs(d) / (w * 0.35));
         const gN = Math.max(0, Math.min(gL, gH) - Math.max(0, 1 - Math.abs(d) / 6));
-        const m = morph <= 0 ? 0 : morph >= 1 ? 1 : morph;
+        const m = morphPos <= 0 ? 0 : morphPos >= 1 ? 1 : morphPos;
         const wL = m <= 1 / 3 ? 1 - 3 * m : m <= 2 / 3 ? 3 * m - 1 : 1 - (3 * m - 2);
         const wB = m <= 1 / 3 ? 3 * m : m <= 2 / 3 ? 1 - (3 * m - 1) : 0;
         const wH = m <= 1 / 3 ? 0 : m <= 2 / 3 ? 3 * m - 1 : 1;
         const gain = wL * gL + wB * gB + wH * gH + Math.max(0, 1 - Math.abs(wL - wH)) * gN;
         y = h * 0.5 - gain * (h * 0.42) + (Math.abs(d) < 5 ? -peak * (1 - gN) : 0);
-      } else if (type === 'lp') {
-        y = h * 0.5 - (d > 0 ? Math.min(d * 1.1, h * 0.46) * Math.min(d * 0.12, 1) : 0) + (Math.abs(d) < 5 ? -peak : 0);
-      } else if (type === 'hp') {
-        y = h * 0.5 - (d < 0 ? Math.min(-d * 1.1, h * 0.46) * Math.min(-d * 0.12, 1) : 0) + (Math.abs(d) < 5 ? -peak * 0.6 : 0);
-      } else if (type === 'bp') {
-        y = h * 0.5 - Math.max(0, peak * (1 - Math.abs(d) / (w * 0.35))) - 2;
+      } else if (kind === 'lp') {
+        y = h * 0.5 - (d > 0 ? Math.min(d * 1.1, h * 0.46) * Math.min(d * 0.12, 1) : 0) + (Math.abs(d) < 5 ? -peakAmt : 0);
+      } else if (kind === 'hp') {
+        y = h * 0.5 - (d < 0 ? Math.min(-d * 1.1, h * 0.46) * Math.min(-d * 0.12, 1) : 0) + (Math.abs(d) < 5 ? -peakAmt * 0.6 : 0);
+      } else if (kind === 'bp') {
+        y = h * 0.5 - Math.max(0, peakAmt * (1 - Math.abs(d) / (w * 0.35))) - 2;
       } else {
         y = h * 0.5 - h * 0.3 + Math.max(0, h * 0.28 * (1 - Math.abs(d) / (w * 0.1)));
+      }
+      return y;
+    };
+
+    const peak2 = res2 * (h * 0.38);
+    const fc2 = (Math.log(cutoff2 / 40) / Math.log(18000 / 40)) * w;
+    const blend = store.getParam(151 as ParamId);
+    const second = routing > 0.5;
+    const parallel = routing > 1.5;
+    const mid = h * 0.5;
+    for (let x = 0; x <= w; x += 2) {
+      const first = stageY(type, morph, x - fc, peak);
+      let y = first;
+      if (second) {
+        const other = stageY(type2, morph, x - fc2, peak2);
+        // Series is a product of two responses, which on this pixel scale is
+        // the sum of the two deviations from the flat line; parallel is the
+        // blend of them, exactly like the DSP.
+        y = parallel
+          ? mid + (1 - blend) * (first - mid) + blend * (other - mid)
+          : mid + (first - mid) + (other - mid);
       }
       if (x === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
@@ -378,6 +408,11 @@ export function FilterCurve() {
         store.getParam(14 as ParamId),
         store.getParam(15 as ParamId),
         store.getParam(145 as ParamId),
+        store.getParam(146 as ParamId),
+        store.getParam(147 as ParamId),
+        store.getParam(148 as ParamId),
+        store.getParam(149 as ParamId),
+        store.getParam(151 as ParamId),
       ].join(':');
       if (signature.current === next) return false;
       signature.current = next;

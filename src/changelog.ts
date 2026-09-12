@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.90.0',
+    date: '2026-09-12',
+    kind: 'feature',
+    items: [
+      [
+        '**滤波可以接两级了**：滤波模块多了一排「接法」——**串联**时第二级接着第一级（斜率相加：两级低通就是 24 dB/oct，落点更陡），**并联**时两级各自处理同一路信号、由 BLEND 决定比例（0 是只有第一级、1 是只有第二级），第二级的类型、截止、共振、驱动全部独立。默认关闭，所有旧音色的声音**完全不变**。',
+        '**The filter can run two stages**: the filter module gained a routing row — in **series** the second stage follows the first (the slopes add up: two low-passes make 24 dB/oct, which is how you get a steeper knee), in **parallel** both stages filter the same signal and BLEND sets the mix (0 is the first stage alone, 1 the second alone), with the second stage’s type, cutoff, resonance and drive all independent. Off by default, and every existing patch sounds exactly as before.',
+      ],
+    ],
+  },
+  {
     version: '1.89.0',
     date: '2026-09-12',
     kind: 'feature',

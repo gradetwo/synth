@@ -127,6 +127,19 @@ export const Param = {
    * patches exactly as they were.
    */
   FILTER_MORPH: 145,
+  /**
+   * Where the second filter stage sits (P6.3b): 0 off, 1 in series after the
+   * first, 2 in parallel beside it. Off by default, so every patch written
+   * before it existed takes exactly the code path it always did.
+   */
+  FILTER_ROUTING: 146,
+  /** Type of the second stage; the same wire enum as `FILTER_TYPE`. */
+  FILTER2_TYPE: 147,
+  FILTER2_CUTOFF: 148,
+  FILTER2_RES: 149,
+  FILTER2_DRIVE: 150,
+  /** Parallel mix: `(1 - blend) * first + blend * second` (P6.3b). */
+  FILTER_BLEND: 151,
   SMP_ROOT: 96,
   /** Sampler: 0 = one-shot, 1 = loop, 2 = ping-pong. */
   SMP_MODE: 97,
@@ -328,6 +341,12 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.OSC2_SUB_LEVEL]: 'osc2SubLevel',
   [Param.NOISE_MIX]: 'noiseMix',
   [Param.FILTER_MORPH]: 'filterMorph',
+  [Param.FILTER_ROUTING]: 'filterRouting',
+  [Param.FILTER2_TYPE]: 'filter2Type',
+  [Param.FILTER2_CUTOFF]: 'filter2Cutoff',
+  [Param.FILTER2_RES]: 'filter2Res',
+  [Param.FILTER2_DRIVE]: 'filter2Drive',
+  [Param.FILTER_BLEND]: 'filterBlend',
   [Param.PATCH_GAIN]: 'patchGain',
   [Param.WT_USER]: 'wtUser',
   [Param.FX_DELAY_DAMP]: 'fxDelayDamp',
@@ -647,6 +666,12 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.OSC2_SUB_LEVEL]: 0.4,
   [Param.NOISE_MIX]: 0,
   [Param.FILTER_MORPH]: 0,
+  [Param.FILTER_ROUTING]: 0,
+  [Param.FILTER2_TYPE]: 0,
+  [Param.FILTER2_CUTOFF]: 9000,
+  [Param.FILTER2_RES]: 0.25,
+  [Param.FILTER2_DRIVE]: 0.15,
+  [Param.FILTER_BLEND]: 0.5,
   // Per-patch loudness trim (presets set it; see `PATCH_TRIM` in state/presets).
   [Param.PATCH_GAIN]: 1,
   // Factory banks by default; the player flips this after importing a cycle.
@@ -910,6 +935,11 @@ export const PARAM_SPECS: ParamSpec[] = [
   spec(Param.FILTER_ENV_AMT, 'ENV AMT', 0, 1, 0.5, fmt.pct),
   // Only the `sem` type reads this; on every other type the knob is hidden.
   spec(Param.FILTER_MORPH, 'MORPH', 0, 1, 0, fmt.pct),
+  // The second stage (P6.3b). Its type and routing are segments, not knobs.
+  spec(Param.FILTER2_CUTOFF, 'CUTOFF 2', 40, 18000, 9000, fmt.hz, { curve: 'log' }),
+  spec(Param.FILTER2_RES, 'RES 2', 0, 1, 0.25, fmt.pct),
+  spec(Param.FILTER2_DRIVE, 'DRIVE 2', 0, 1, 0.15, fmt.pct),
+  spec(Param.FILTER_BLEND, 'BLEND', 0, 1, 0.5, fmt.pct),
   spec(Param.ENV_ATTACK, 'ATTACK', 0.0005, 8, 0.003, fmt.ms, { curve: 'log' }),
   spec(Param.ENV_DECAY, 'DECAY', 0.001, 12, 0.16, fmt.ms, { curve: 'log' }),
   spec(Param.ENV_SUSTAIN, 'SUSTAIN', 0, 1, 0.55, fmt.pct),

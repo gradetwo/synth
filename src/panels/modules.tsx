@@ -163,6 +163,12 @@ function OscModule({ which }: { which: 1 | 2 }) {
 
 function FilterModule() {
   const type = intToFilter(useParam(Param.FILTER_TYPE));
+  // The second stage is off unless the player asks for it: a knob that changes
+  // nothing is worse than no knob, and an old patch must not see it at all.
+  const routing = useParam(Param.FILTER_ROUTING);
+  const type2 = intToFilter(useParam(Param.FILTER2_TYPE));
+  const second = routing > 0.5;
+  const parallel = routing > 1.5;
   return (
     <ModuleShell id="filter">
       <ParamSegment
@@ -177,6 +183,15 @@ function FilterModule() {
           { label: 'CMB', value: filterToInt('comb'), title: t('filter.comb') },
           { label: 'FRM', value: filterToInt('formant'), title: t('filter.formant') },
           { label: 'SEM', value: filterToInt('sem'), title: t('filter.sem') },
+        ]}
+      />
+      <ParamSegment
+        id={Param.FILTER_ROUTING}
+        label={t('module.filterRouting')}
+        options={[
+          { label: 'OFF', value: 0, title: t('filter.routingOff') },
+          { label: 'SER', value: 1, title: t('filter.routingSeries') },
+          { label: 'PAR', value: 2, title: t('filter.routingParallel') },
         ]}
       />
       <div className="filter-grid">
@@ -194,6 +209,32 @@ function FilterModule() {
           </div>
         </div>
       </div>
+      {second ? (
+        <>
+          <ParamSegment
+            id={Param.FILTER2_TYPE}
+            colorful
+            label={t('module.filterType')}
+            options={[
+              { label: 'LP', value: filterToInt('lp'), title: t('filter.lp') },
+              { label: 'HP', value: filterToInt('hp'), title: t('filter.hp') },
+              { label: 'BP', value: filterToInt('bp'), title: t('filter.bp') },
+              { label: 'NT', value: filterToInt('nt'), title: t('filter.nt') },
+              // Comb and formant live in Rust for the first stage; the second
+              // stage is one SVF, so it offers the five modes it can render.
+              { label: 'SEM', value: filterToInt('sem'), title: t('filter.sem') },
+            ]}
+          />
+          <div className="filter-grid">
+            <Knob spec={SPEC_BY_ID[Param.FILTER2_CUTOFF]} big />
+            <div className="filter-side">
+              <Knob spec={SPEC_BY_ID[Param.FILTER2_RES]} />
+              <Knob spec={SPEC_BY_ID[Param.FILTER2_DRIVE]} />
+              {parallel ? <Knob spec={SPEC_BY_ID[Param.FILTER_BLEND]} /> : null}
+            </div>
+          </div>
+        </>
+      ) : null}
       <FilterCurve />
       <div className="mini-label">
         {type === 'comb'
@@ -203,6 +244,7 @@ function FilterModule() {
             : type === 'sem'
               ? 'FREQ RESPONSE · 12dB/OCT · LP→BP→NT→HP'
               : `FREQ RESPONSE · ${type === 'lp' ? '-24dB/OCT' : '-12dB/OCT'}`}
+        {second ? ` · 2-STAGE ${parallel ? 'PAR' : 'SER'} · ${type2.toUpperCase()}` : ''}
       </div>
     </ModuleShell>
   );
