@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.98.0',
+    version: '1.99.0',
     date: '2026-09-13',
-    kind: 'feature',
+    kind: 'fix',
     items: [
       [
-        '**多了一个瞬态整形效果**：路由图里新增「TRANSIENT」——ATTACK 与 SUSTAIN 两个双向旋钮，用来提升或压低一个打点的起音与延音（满档约 ±7 dB，0 表示不变），另配 MIX 干湿比；默认关闭，持续音上不引入额外谐波（实测 THD 增量 0.00），关闭或中性设置时与之前逐位相同。',
-        '**A transient shaper**: the routing graph gained TRANSIENT — attack and sustain knobs that lift or push down a hit’s onset and its tail (about ±7 dB at full, 0 is unchanged), plus a dry/wet mix. It is off by default, adds no harmonic content to a held note (measured THD increase 0.00), and off or neutral renders bit-for-bit what it did before.',
+        '**音质门禁换了一把更可靠的尺子**：旧的「精确 bin 相减」在两数相减时会留下假底噪，纯正弦被读成 −84…−102 dB；改用 7 项 Blackman-Harris 窗（4 秒整窗、每谐波 ±2 Hz 带外功率求和）后读数稳定，正弦离谐波能量最差 **−119.1 dB**，断言收紧到 **−105 dB**。另新增「同场景连做 8 次」的稳定性断言（实测离散度 **0.00 dB**），并记录锯齿/方波/三角的真实混叠底，供下一批带限使用。引擎与音色**逐位未变**。',
+        '**The audio gate now measures with a ruler that does not lie.** Its old "exact-bin subtraction" left a false floor when two nearly equal numbers were subtracted, so a pure sine read -84...-102 dB; a 7-term Blackman-Harris window (four whole seconds, power summed outside +/-2 Hz of each harmonic) is stable, puts the sine at a worst case of **-119.1 dB**, and lets the assertion tighten to **-105 dB**. A new assertion renders one scene eight times and demands agreement (measured spread **0.00 dB**), and the saw/square/triangle alias floors are recorded for the next band-limiting batch. The engine and every sound are **bit-for-bit unchanged**.',
       ],
     ],
   };
