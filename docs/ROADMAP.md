@@ -346,7 +346,7 @@
 `assets/index-*.js` 哈希与本地 `dist/index.html` 一致）；`npm run verify` 全绿（Rust 171 · Vitest 347 ·
 Chromium E2E 112 · 时域+频域音质门禁 · 81 个预设指纹不变 · DSP 指纹 rms 0.030806 不动）。
 
-**下一批与之后的队列以 [`docs/NEXT-PLAN.md`](NEXT-PLAN.md) 为准**（那里有完整批次表、每批的验收与门禁、
+**下一阶段计划见 [`docs/NEXT-PLAN-2.md`](NEXT-PLAN-2.md)**（P9–P12、21 个批次）；已完成的 v1.79.0–v1.97.0 批次表见 [`docs/NEXT-PLAN.md`](NEXT-PLAN.md)（那里有完整批次表、每批的验收与门禁、
 以及执行顺序）。当前进度：P5 工作流（P5.1 ✅ v1.80.0 / P5.2 ✅ v1.83.0 / P5.3 ✅ v1.86.0；**P5.4 录音 take 待做**）、
 P6 声音（P6.1 ✅ v1.82.0 / P6.2 🔶 v1.84.0 硬同步与 sub·**P6.2b 带限同步振荡器待做** /
 **P6.3a SEM 连续多模 ✅ v1.89.0、P6.3b 双滤波待做** / P6.4 效果补强、P6.5 过采样待做）、
