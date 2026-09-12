@@ -70,6 +70,9 @@ jobs:
       - name: DSP regression baseline
         run: npm run test:dsp
 
+      - name: DSP regression baseline (2x oversampling)
+        run: npm run verify:dsp:2x
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 

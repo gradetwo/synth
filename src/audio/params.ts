@@ -211,6 +211,8 @@ export const Param = {
   FX_EQ_HIGH_GAIN: 163,
   FX_EQ_HIGH_FREQ: 164,
   FX_EQ_MIX: 165,
+  /** P6.5: run the saturating filter path at 2× and band-limit back to 1×. */
+  OVERSAMPLE: 166,
 } as const;
 
 /** The dry (pre-effect) bus, as a graph source code. */
@@ -464,6 +466,7 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.FX_EQ_HIGH_GAIN]: 'fxEqHighGain',
   [Param.FX_EQ_HIGH_FREQ]: 'fxEqHighFreq',
   [Param.FX_EQ_MIX]: 'fxEqMix',
+  [Param.OVERSAMPLE]: 'oversample',
   [Param.OSC1_ON]: 'osc1On',
   [Param.OSC1_WAVE]: 'osc1Wave',
   [Param.OSC1_PITCH]: 'osc1Pitch',
@@ -830,6 +833,9 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.FX_EQ_HIGH_GAIN]: 0,
   [Param.FX_EQ_HIGH_FREQ]: 4000,
   [Param.FX_EQ_MIX]: 1,
+  // P6.5 starts switched off, exactly like the two P6.4 effects: a patch that
+  // predates it renders through the same code path it always did.
+  [Param.OVERSAMPLE]: 0,
   [Param.FILTER_ENV_ATTACK]: 0.01,
   [Param.FILTER_ENV_DECAY]: 0.3,
   [Param.FILTER_ENV_SUSTAIN]: 0.5,
@@ -1068,6 +1074,10 @@ export const PARAM_SPECS: ParamSpec[] = [
   spec(Param.FX_EQ_HIGH_GAIN, 'HIGH', -18, 18, 0, fmt.db),
   spec(Param.FX_EQ_HIGH_FREQ, 'HIGH F', 1000, 16000, 4000, fmt.hz, { curve: 'log' }),
   spec(Param.FX_EQ_MIX, 'MIX', 0, 1, 1, fmt.pct),
+  // A stepped switch, so it is not offered as a MIDI CC target.
+  spec(Param.OVERSAMPLE, '2×', 0, 1, 0, (v) => (v >= 0.5 ? 'ON' : 'OFF'), {
+    discrete: true,
+  }),
   spec(Param.GLIDE, 'GLIDE', 0, 1, 0, fmt.pct),
   spec(Param.MASTER_VOLUME, 'VOLUME', 0, 1, 0.75, fmt.pct),
 ];

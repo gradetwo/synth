@@ -6,6 +6,7 @@ pub mod convolution;
 pub mod delay;
 pub mod ladder;
 pub mod noise;
+pub mod oversample;
 pub mod wavetable;
 pub mod fmath;
 pub mod lfo;

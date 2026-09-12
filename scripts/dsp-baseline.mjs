@@ -6,6 +6,12 @@
  * the result (RMS + 12 log-spaced band magnitudes). The committed baseline in
  * `tests/dsp-baseline.json` catches unintended sound changes: run with
  * `--update` after an intentional DSP change.
+ *
+ * P6.5 added a second mode, so there are two fingerprints: the default 1x path
+ * (`tests/dsp-baseline.json`) and the oversampled one
+ * (`tests/dsp-baseline-2x.json`, selected with `--oversampled`, wired up as
+ * `npm run verify:dsp:2x`). Both are hard gates — a change to either mode has
+ * to be acknowledged explicitly.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -13,8 +19,12 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const wasmPath = resolve(root, 'src/generated/synth_core.wasm');
-const baselinePath = resolve(root, 'tests/dsp-baseline.json');
 const update = process.argv.includes('--update');
+const oversampled = process.argv.includes('--oversampled');
+const baselinePath = resolve(
+  root,
+  oversampled ? 'tests/dsp-baseline-2x.json' : 'tests/dsp-baseline.json',
+);
 
 if (!existsSync(wasmPath)) {
   console.error('[dsp] src/generated/synth_core.wasm missing — run "npm run build:wasm"');
@@ -31,7 +41,7 @@ const P = {
   OSC2_ON: 7, OSC2_LEVEL: 11, FILTER_TYPE: 13, FILTER_CUTOFF: 14, FILTER_RES: 15,
   FILTER_DRIVE: 16, FILTER_ENV_AMT: 17, FILTER_KBD: 18, ENV_ATTACK: 19, ENV_DECAY: 20,
   ENV_SUSTAIN: 21, ENV_RELEASE: 22, LFO_ON: 23, FX_REVERB_ON: 29, FX_DELAY_ON: 32,
-  VOICE_MODE: 42, LFO2_ON: 62,
+  VOICE_MODE: 42, LFO2_ON: 62, OVERSAMPLE: 166,
 };
 
 ex.gs_init(SR, 16);
@@ -41,6 +51,7 @@ for (const [id, value] of [
   [P.FILTER_RES, 0.3], [P.FILTER_DRIVE, 0.2], [P.FILTER_ENV_AMT, 0], [P.FILTER_KBD, 0],
   [P.ENV_ATTACK, 0.001], [P.ENV_DECAY, 0.1], [P.ENV_SUSTAIN, 1], [P.ENV_RELEASE, 0.2],
   [P.LFO_ON, 0], [P.LFO2_ON, 0], [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.VOICE_MODE, 0],
+  [P.OVERSAMPLE, oversampled ? 1 : 0],
 ]) {
   ex.gs_set_param(id, value);
 }
@@ -82,7 +93,9 @@ const fingerprint = { rms: Number(rms.toFixed(6)), bands };
 if (update || !existsSync(baselinePath)) {
   mkdirSync(dirname(baselinePath), { recursive: true });
   writeFileSync(baselinePath, `${JSON.stringify(fingerprint, null, 2)}\n`);
-  console.log(`[dsp] baseline written (${update ? '--update' : 'first run'})`);
+  console.log(
+    `[dsp${oversampled ? ' 2x' : ''}] baseline written (${update ? '--update' : 'first run'})`,
+  );
   process.exit(0);
 }
 
@@ -99,9 +112,12 @@ baseline.bands.forEach((value, i) => {
 });
 
 if (diffs.length) {
-  console.error('[dsp] REGRESSION detected:');
+  console.error(`[dsp${oversampled ? ' 2x' : ''}] REGRESSION detected:`);
   for (const d of diffs) console.error(`  ${d}`);
-  console.error('[dsp] if the change is intentional, run: npm run test:dsp -- --update');
+  const script = oversampled ? 'npm run verify:dsp:2x' : 'npm run test:dsp';
+  console.error(`[dsp] if the change is intentional, run: ${script} -- --update`);
   process.exit(1);
 }
-console.log(`[dsp] baseline OK · rms ${fingerprint.rms} · ${bands.length} bands`);
+console.log(
+  `[dsp${oversampled ? ' 2x' : ''}] baseline OK · rms ${fingerprint.rms} · ${bands.length} bands`,
+);

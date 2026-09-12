@@ -68,6 +68,7 @@ const required = [
   ['preset fingerprints', 'npm run verify:presets'],
   ['sustained-load benchmark', 'npm run verify:bench'],
   ['DSP regression baseline', 'npm run test:dsp'],
+  ['2x oversampling DSP baseline', 'npm run verify:dsp:2x'],
   ['Chromium E2E', 'npm run test:e2e'],
 ];
 for (const [name, needle] of required) {

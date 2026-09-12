@@ -207,6 +207,11 @@ function FilterModule() {
             <span className="lbl">KBD</span>
             <ParamLed id={Param.FILTER_KBD} label={t('module.kbdTrack')} />
           </div>
+          {/* P6.5: 2x oversampling of the saturating filter path. */}
+          <div className="toggle-cell">
+            <span className="lbl">2×</span>
+            <ParamLed id={Param.OVERSAMPLE} label={t('filter.oversample')} />
+          </div>
         </div>
       </div>
       {second ? (

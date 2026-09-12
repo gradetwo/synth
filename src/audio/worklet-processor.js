@@ -180,6 +180,8 @@ const PARAMS = [
   ['fxEqHighGain', 163, 0, -18, 18],
   ['fxEqHighFreq', 164, 4000, 1000, 16000],
   ['fxEqMix', 165, 1, 0, 1],
+  // 2x oversampling of the drive-bearing filter path (P6.5), off by default.
+  ['oversample', 166, 0, 0, 1],
 ];
 
 const SPECTRUM_BINS = 36;

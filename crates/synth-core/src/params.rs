@@ -206,10 +206,13 @@ pub mod id {
     pub const FX_EQ_HIGH_GAIN: u32 = 163;
     pub const FX_EQ_HIGH_FREQ: u32 = 164;
     pub const FX_EQ_MIX: u32 = 165;
+    /// P6.5: run the saturating filter path at 2x and band-limit back to 1x.
+    /// Off by default, so a patch that predates it renders unchanged.
+    pub const OVERSAMPLE: u32 = 166;
 }
 
 /// Highest parameter id + 1.
-pub const PARAM_COUNT: usize = 166;
+pub const PARAM_COUNT: usize = 167;
 
 /// Positions in the effect chain (A5). Six is one per effect: the chain is a
 /// permutation, so reordering can never lose an effect or double one up.
@@ -695,6 +698,9 @@ pub struct FilterParams {
     pub drive2: f32,
     /// Parallel mix, 0 = stage 1 only, 1 = stage 2 only (linear law).
     pub blend: f32,
+    /// P6.5: run the drive-bearing filter stages at 2x and decimate back. The
+    /// linear filter types (comb, formant) have no saturator and are skipped.
+    pub oversample: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -931,6 +937,9 @@ impl Params {
                 res2: 0.25,
                 drive2: 0.15,
                 blend: 0.5,
+                // Off: the compatibility story for every patch written before
+                // P6.5, and the reason the default render stays sample-exact.
+                oversample: false,
             },
             env: EnvParams {
                 attack: 0.002,
@@ -1151,6 +1160,7 @@ impl Params {
             p::FILTER2_RES => self.filter.res2 = clamp01(value),
             p::FILTER2_DRIVE => self.filter.drive2 = clamp01(value),
             p::FILTER_BLEND => self.filter.blend = clamp01(value),
+            p::OVERSAMPLE => self.filter.oversample = value > 0.5,
             p::ENV_ATTACK => self.env.attack = value.clamp(0.0005, 8.0),
             p::ENV_DECAY => self.env.decay = value.clamp(0.001, 12.0),
             p::ENV_SUSTAIN => self.env.sustain = clamp01(value),

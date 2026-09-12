@@ -101,6 +101,7 @@ const DICT: Record<string, [string, string]> = {
   'filter.routingParallel': ['并联：两级各自处理同一输入，按混合量相加', 'Parallel: both stages filter the same input and BLEND mixes them'],
   'filter.sem': ['SEM 连续多模：12 dB/oct，MORPH 从低通连续扫到带通、陷波、高通', 'SEM continuous multimode: 12 dB/oct, MORPH sweeps low-pass → band-pass → notch → high-pass'],
   'filter.nt': ['陷波', 'Notch'],
+  'filter.oversample': ['2× 过采样：失真/滤波路径在双倍采样率下运算再带限降回，代价是约 0.33 ms 延迟与更高 CPU', '2× oversampling: the drive/filter path runs at twice the rate and is band-limited back down; costs ~0.33 ms of latency and extra CPU'],
   'module.lfoTarget': ['LFO 目标', 'LFO target'],
   'module.lfo2Target': ['LFO 2 目标', 'LFO 2 target'],
   'module.lfoSync': ['LFO 同步', 'LFO sync'],

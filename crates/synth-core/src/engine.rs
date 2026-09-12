@@ -14,6 +14,7 @@ use crate::dsp::convolution::{Convolver, IrError};
 use crate::dsp::delay::{Delay, DelayParams};
 use crate::dsp::ladder::LadderFilter;
 use crate::dsp::noise::NoiseGen;
+use crate::dsp::oversample::{Oversampler2x, OS_LATENCY, OS_TAPS};
 use crate::dsp::reverb::{Reverb, ReverbParams};
 use crate::dsp::sampler::{LoopMode, ReadState, Sample, SampleError, SampleParams};
 use crate::dsp::wavetable::{CycleError, Table, BASE_LEN as WT_BASE_LEN};
@@ -253,9 +254,12 @@ pub struct Engine {
     /// Independent filter envelope per voice.
     filter_envs: [Adsr; MAX_VOICES],
 
-    // Scratch buffers — all statically sized, all reused per voice.
-    osc_a: [f32; MAX_BLOCK_SIZE],
-    osc_b: [f32; MAX_BLOCK_SIZE],
+    // Scratch buffers — all statically sized, all reused per voice. The six
+    // the filter path owns are two blocks long: with P6.5's oversampling on
+    // they carry 2x the block, and the extra 4 KB each is cheaper than a
+    // second set of code paths.
+    osc_a: Vec<f32>,
+    osc_b: Vec<f32>,
     /// The modulator's block, copied out of `osc_b` when OSC 1's phase is
     /// modulated by it (P6.1): the carrier renders into `osc_a` while reading
     /// this, and two separate fields are the only way to say that in Rust.
@@ -274,12 +278,30 @@ pub struct Engine {
     /// Scratch for rendering one unison sub-voice at a time.
     unison_buf: [f32; MAX_BLOCK_SIZE],
     /// Filtered OSC 2 signal when the oscillators are panned apart.
-    voice_buf_r: [f32; MAX_BLOCK_SIZE],
+    voice_buf_r: Vec<f32>,
     /// The signal stage 1 was handed, saved for the parallel wiring (P6.3b):
     /// the chain writes its own output over `voice_buf`, and only the parallel
     /// case wants the input back. Both channels, one block.
-    filter2_in_buf: [f32; MAX_BLOCK_SIZE],
-    filter2_in_buf_r: [f32; MAX_BLOCK_SIZE],
+    filter2_in_buf: Vec<f32>,
+    filter2_in_buf_r: Vec<f32>,
+    /// Oversampling state for the saturating filter path (P6.5): one FIR
+    /// history pair per voice and channel, the input copies the in-place
+    /// upsample needs, and the scratch the polyphase filters share. All fixed
+    /// size, so the audio thread still allocates nothing. The history is per
+    /// voice because voices render one after another and a shared tail would
+    /// carry the previous note's waveform into the next one.
+    os_l: Vec<Oversampler2x>,
+    os_r: Vec<Oversampler2x>,
+    os_scratch: Vec<f32>,
+    os_in_l: Vec<f32>,
+    os_in_r: Vec<f32>,
+    /// The drive insert's own round trip (P6.5): one pair per effect node, plus
+    /// the dry-path history that keeps the insert's dry/wet crossfade aligned
+    /// with the band-limited wet signal (the round trip costs OS_LATENCY).
+    os_fx_l: Vec<Oversampler2x>,
+    os_fx_r: Vec<Oversampler2x>,
+    os_dry_l: [[f32; OS_LATENCY]; FX_SLOTS],
+    os_dry_r: [[f32; OS_LATENCY]; FX_SLOTS],
     /// Per-voice LFO state, used when a patch retriggers the LFO per note.
     voice_lfos: [Lfo; MAX_VOICES],
     voice_lfo2s: [Lfo; MAX_VOICES],
@@ -287,7 +309,7 @@ pub struct Engine {
     lfo_scratch: [f32; MAX_BLOCK_SIZE],
     lfo2_scratch: [f32; MAX_BLOCK_SIZE],
     env_buf: [f32; MAX_BLOCK_SIZE],
-    voice_buf: [f32; MAX_BLOCK_SIZE],
+    voice_buf: Vec<f32>,
     lfo_buf: [f32; MAX_BLOCK_SIZE],
     lfo2_buf: [f32; MAX_BLOCK_SIZE],
     filter_env_buf: [f32; MAX_BLOCK_SIZE],
@@ -431,8 +453,8 @@ impl Engine {
             spectrum: Spectrum::new(),
             envs: [Adsr::new(); MAX_VOICES],
             filter_envs: [Adsr::new(); MAX_VOICES],
-            osc_a: [0.0; MAX_BLOCK_SIZE],
-            osc_b: [0.0; MAX_BLOCK_SIZE],
+            osc_a: Vec::new(),
+            osc_b: Vec::new(),
             pm_buf: [0.0; MAX_BLOCK_SIZE],
             sub_phase: [[0.0; 2]; MAX_VOICES],
             sync_buf: [0.0; MAX_BLOCK_SIZE],
@@ -441,16 +463,25 @@ impl Engine {
             graph_in_l: Vec::new(),
             graph_in_r: Vec::new(),
             unison_buf: [0.0; MAX_BLOCK_SIZE],
-            voice_buf_r: [0.0; MAX_BLOCK_SIZE],
-            filter2_in_buf: [0.0; MAX_BLOCK_SIZE],
-            filter2_in_buf_r: [0.0; MAX_BLOCK_SIZE],
+            voice_buf_r: Vec::new(),
+            filter2_in_buf: Vec::new(),
+            filter2_in_buf_r: Vec::new(),
+            os_l: Vec::new(),
+            os_r: Vec::new(),
+            os_scratch: Vec::new(),
+            os_in_l: Vec::new(),
+            os_in_r: Vec::new(),
+            os_fx_l: Vec::new(),
+            os_fx_r: Vec::new(),
+            os_dry_l: [[0.0; OS_LATENCY]; FX_SLOTS],
+            os_dry_r: [[0.0; OS_LATENCY]; FX_SLOTS],
                             // Overwritten by `init`; 1.0 would make the fade instantaneous.
                     voice_lfos: [Lfo::new(); MAX_VOICES],
             voice_lfo2s: [Lfo::new(); MAX_VOICES],
             lfo_scratch: [0.0; MAX_BLOCK_SIZE],
             lfo2_scratch: [0.0; MAX_BLOCK_SIZE],
             env_buf: [0.0; MAX_BLOCK_SIZE],
-            voice_buf: [0.0; MAX_BLOCK_SIZE],
+            voice_buf: Vec::new(),
             lfo_buf: [0.0; MAX_BLOCK_SIZE],
             lfo2_buf: [0.0; MAX_BLOCK_SIZE],
             filter_env_buf: [0.0; MAX_BLOCK_SIZE],
@@ -560,6 +591,47 @@ impl Engine {
         self.convolver.prepare();
         // `resize`, not a fresh allocation: the host can re-init, and the arena
         // never grows (see the convolver's response buffer for the same reason).
+        // P6.5's filter path runs on 2x blocks, and the oversampler keeps a
+        // history per voice and per effect node. Those buffers live here rather
+        // than as fixed arrays in `Engine` because a mixed initialiser emits
+        // the whole struct — zeroes included — into the wasm data segment, and
+        // 80 KB of it per core is budget the P8.5 payload gate counts.
+        let block = MAX_BLOCK_SIZE * 2;
+        for buf in [
+            &mut self.voice_buf,
+            &mut self.voice_buf_r,
+            &mut self.osc_a,
+            &mut self.osc_b,
+            &mut self.filter2_in_buf,
+            &mut self.filter2_in_buf_r,
+        ] {
+            if buf.len() != block {
+                buf.clear();
+                buf.resize(block, 0.0);
+            }
+        }
+        if self.os_scratch.len() != block + OS_TAPS {
+            self.os_scratch.clear();
+            self.os_scratch.resize(block + OS_TAPS, 0.0);
+        }
+        for buf in [&mut self.os_in_l, &mut self.os_in_r] {
+            if buf.len() != MAX_BLOCK_SIZE {
+                buf.clear();
+                buf.resize(MAX_BLOCK_SIZE, 0.0);
+            }
+        }
+        if self.os_l.len() != MAX_VOICES {
+            self.os_l.clear();
+            self.os_l.resize_with(MAX_VOICES, Oversampler2x::new);
+            self.os_r.clear();
+            self.os_r.resize_with(MAX_VOICES, Oversampler2x::new);
+        }
+        if self.os_fx_l.len() != FX_SLOTS {
+            self.os_fx_l.clear();
+            self.os_fx_l.resize_with(FX_SLOTS, Oversampler2x::new);
+            self.os_fx_r.clear();
+            self.os_fx_r.resize_with(FX_SLOTS, Oversampler2x::new);
+        }
         let node_capacity = FX_SLOTS * MAX_BLOCK_SIZE;
         if self.graph_node_l.len() != node_capacity {
             self.graph_node_l.clear();
@@ -1074,6 +1146,8 @@ impl Engine {
         if !legato {
             self.ladders[slot][0].reset();
             self.ladders[slot][1].reset();
+            self.os_l[slot].reset();
+            self.os_r[slot].reset();
             self.noise[slot][0].reset();
             self.noise[slot][1].reset();
             self.wt_phase[slot] = [0.0; 2];
@@ -1190,6 +1264,22 @@ impl Engine {
 
     pub fn active_voices(&self) -> u32 {
         self.active_voices
+    }
+
+    /// Fixed latency the oversampled mode adds, in base-rate samples, or 0 when
+    /// the patch has it switched off (P6.5).
+    ///
+    /// It is a property of the round trip, not of a voice: both the per-voice
+    /// filter path and the drive insert run through the same up/process/down
+    /// pair, so every path through the engine is delayed by the same amount and
+    /// nothing combs against anything. A host that wants sample-exact alignment
+    /// with a 1x render compensates exactly this many samples.
+    pub fn oversample_latency(&self) -> u32 {
+        if self.oversampling() {
+            OS_LATENCY as u32
+        } else {
+            0
+        }
     }
 
     /// Rendered left channel of the most recent block (test/debug access).
@@ -1459,6 +1549,8 @@ impl Engine {
             let fenv_params = self.params_for(instance).filter_env;
             self.ladders[slot][0].reset();
             self.ladders[slot][1].reset();
+            self.os_l[slot].reset();
+            self.os_r[slot].reset();
             self.noise[slot][0].reset();
             self.noise[slot][1].reset();
             self.wt_phase[slot] = [0.0; 2];
@@ -1920,9 +2012,20 @@ impl Engine {
             cutoff *= exp2(lfo2_value * depth2 * 4.0);
         }
         cutoff *= exp2(mod_cutoff * 4.0);
-        cutoff = cutoff.clamp(20.0, sr * 0.45);
-
         let kind = params.filter.kind;
+        // P6.5: the drive-bearing filter stages can run at 2x. The comb and the
+        // formant are linear — neither has a saturator — so oversampling them
+        // would cost twice as much for no aliasing benefit at all.
+        let os_type = params.filter.oversample
+            && !matches!(
+                kind,
+                crate::params::FilterType::Comb | crate::params::FilterType::Formant
+            );
+        // At 2x the base-rate cutoff sits against half the oversampled Nyquist,
+        // so the clamp has to use the rate the filter actually runs at.
+        let sr_os = if os_type { sr * 2.0 } else { sr };
+        cutoff = cutoff.clamp(20.0, sr_os * 0.45);
+
         // The matrix can push resonance up to twice the knob value (clamped).
         let resonance = (params.filter.res * (1.0 + mod_res) + mod_res * 0.25).clamp(0.0, 1.0);
 
@@ -1932,14 +2035,40 @@ impl Engine {
         // its filter state is re-initialised when the slot is retriggered.
         let audible = env_last >= SILENT_VOICE;
 
+        // A silent block is skipped for cost, and it has no aliasing to fix, so
+        // the oversampled round trip is skipped with it (the mode's fixed
+        // latency is restored when the voice becomes audible again).
+        let os_active = os_type && audible;
+        let nf = if os_active { frames * 2 } else { frames };
+        // The C bridge's filters take Hz and derive coefficients from the rate
+        // they were initialised at, so a cutoff that has to land at `cutoff` in
+        // the 2x domain is handed over doubled.
+        let os_freq = if os_active { 2.0 } else { 1.0 };
+        if os_active {
+            self.os_in_l[..frames].copy_from_slice(&self.voice_buf[..frames]);
+            self.os_l[slot].upsample(
+                &self.os_in_l[..frames],
+                &mut self.voice_buf[..nf],
+                &mut self.os_scratch,
+            );
+            if stereo {
+                self.os_in_r[..frames].copy_from_slice(&self.voice_buf_r[..frames]);
+                self.os_r[slot].upsample(
+                    &self.os_in_r[..frames],
+                    &mut self.voice_buf_r[..nf],
+                    &mut self.os_scratch,
+                );
+            }
+        }
+
         // The parallel wiring needs the signal stage 1 is about to consume, and
         // the chain below writes its own output over `voice_buf`. Saved raw
         // (before the makeup gain) and scaled where it is used.
         let save_input = audible && params.filter.routing == FilterRouting::Parallel;
         if save_input {
-            self.filter2_in_buf[..frames].copy_from_slice(&self.voice_buf[..frames]);
+            self.filter2_in_buf[..nf].copy_from_slice(&self.voice_buf[..nf]);
             if stereo {
-                self.filter2_in_buf_r[..frames].copy_from_slice(&self.voice_buf_r[..frames]);
+                self.filter2_in_buf_r[..nf].copy_from_slice(&self.voice_buf_r[..nf]);
             }
         }
 
@@ -2014,8 +2143,8 @@ impl Engine {
             // is audible crackle on an otherwise simple patch. One instance per
             // oscillator side, so it still takes part in the stereo path.
             let mut side0 = self.ladders[slot][0];
-            side0.set(sr, cutoff, resonance, params.filter.drive);
-            for sample in self.voice_buf[..frames].iter_mut() {
+            side0.set(sr_os, cutoff, resonance, params.filter.drive);
+            for sample in self.voice_buf[..nf].iter_mut() {
                 *sample = side0.process(*sample);
             }
             self.ladders[slot][0] = side0;
@@ -2025,14 +2154,14 @@ impl Engine {
                     0,
                     self.voice_buf.as_ptr(),
                     self.osc_a.as_mut_ptr(),
-                    frames as u32,
+                    nf as u32,
                 );
             }
-            self.voice_buf[..frames].copy_from_slice(&self.osc_a[..frames]);
+            self.voice_buf[..nf].copy_from_slice(&self.osc_a[..nf]);
             if stereo {
                 let mut side1 = self.ladders[slot][1];
-                side1.set(sr, cutoff, resonance, params.filter.drive);
-                for sample in self.voice_buf_r[..frames].iter_mut() {
+                side1.set(sr_os, cutoff, resonance, params.filter.drive);
+                for sample in self.voice_buf_r[..nf].iter_mut() {
                     *sample = side1.process(*sample);
                 }
                 self.ladders[slot][1] = side1;
@@ -2042,10 +2171,10 @@ impl Engine {
                         1,
                         self.voice_buf_r.as_ptr(),
                         self.osc_b.as_mut_ptr(),
-                        frames as u32,
+                        nf as u32,
                     );
                 }
-                self.voice_buf_r[..frames].copy_from_slice(&self.osc_b[..frames]);
+                self.voice_buf_r[..nf].copy_from_slice(&self.osc_b[..nf]);
             }
         } else {
         unsafe {
@@ -2053,7 +2182,7 @@ impl Engine {
                 slot as i32,
                 0,
                 kind.bridge_id(),
-                cutoff,
+                cutoff * os_freq,
                 resonance,
                 params.filter.drive,
             );
@@ -2064,14 +2193,14 @@ impl Engine {
                 params.filter.morph,
                 self.voice_buf.as_ptr(),
                 self.osc_a.as_mut_ptr(),
-                frames as u32,
+                nf as u32,
             );
             gs_voice_dc_block(
                 slot as i32,
                 0,
                 self.osc_a.as_ptr(),
                 self.voice_buf.as_mut_ptr(),
-                frames as u32,
+                nf as u32,
             );
 
             if stereo {
@@ -2079,7 +2208,7 @@ impl Engine {
                     slot as i32,
                     1,
                     kind.bridge_id(),
-                    cutoff,
+                    cutoff * os_freq,
                     resonance,
                     params.filter.drive,
                 );
@@ -2090,14 +2219,14 @@ impl Engine {
                     params.filter.morph,
                     self.voice_buf_r.as_ptr(),
                     self.osc_b.as_mut_ptr(),
-                    frames as u32,
+                    nf as u32,
                 );
                 gs_voice_dc_block(
                     slot as i32,
                     1,
                     self.osc_b.as_ptr(),
                     self.voice_buf_r.as_mut_ptr(),
-                    frames as u32,
+                    nf as u32,
                 );
             }
         }
@@ -2105,11 +2234,11 @@ impl Engine {
 
         // Make up the trim that kept the filter inside its linear region.
         let makeup = 1.0 / FILTER_TRIM;
-        for sample in self.voice_buf[..frames].iter_mut() {
+        for sample in self.voice_buf[..nf].iter_mut() {
             *sample *= makeup;
         }
         if stereo {
-            for sample in self.voice_buf_r[..frames].iter_mut() {
+            for sample in self.voice_buf_r[..nf].iter_mut() {
                 *sample *= makeup;
             }
         }
@@ -2137,7 +2266,7 @@ impl Engine {
                     slot as i32,
                     0,
                     kind2,
-                    params.filter.cutoff2,
+                    params.filter.cutoff2 * os_freq,
                     params.filter.res2,
                     params.filter.drive2,
                 );
@@ -2146,7 +2275,7 @@ impl Engine {
                         slot as i32,
                         1,
                         kind2,
-                        params.filter.cutoff2,
+                        params.filter.cutoff2 * os_freq,
                         params.filter.res2,
                         params.filter.drive2,
                     );
@@ -2159,7 +2288,7 @@ impl Engine {
                         params.filter.morph,
                         self.voice_buf.as_ptr(),
                         self.osc_a.as_mut_ptr(),
-                        frames as u32,
+                        nf as u32,
                     );
                     if stereo {
                         gs_voice_filter2_block(
@@ -2169,13 +2298,13 @@ impl Engine {
                             params.filter.morph,
                             self.voice_buf_r.as_ptr(),
                             self.osc_b.as_mut_ptr(),
-                            frames as u32,
+                            nf as u32,
                         );
                     }
                 } else {
                     // Parallel: stage 2 sees the input stage 1 saw, at the level
                     // stage 1's output is at (the save is pre-makeup).
-                    for sample in self.filter2_in_buf[..frames].iter_mut() {
+                    for sample in self.filter2_in_buf[..nf].iter_mut() {
                         *sample *= makeup2;
                     }
                     gs_voice_filter2_block(
@@ -2185,10 +2314,10 @@ impl Engine {
                         params.filter.morph,
                         self.filter2_in_buf.as_ptr(),
                         self.osc_a.as_mut_ptr(),
-                        frames as u32,
+                        nf as u32,
                     );
                     if stereo {
-                        for sample in self.filter2_in_buf_r[..frames].iter_mut() {
+                        for sample in self.filter2_in_buf_r[..nf].iter_mut() {
                             *sample *= makeup2;
                         }
                         gs_voice_filter2_block(
@@ -2198,11 +2327,11 @@ impl Engine {
                             params.filter.morph,
                             self.filter2_in_buf_r.as_ptr(),
                             self.osc_b.as_mut_ptr(),
-                            frames as u32,
+                            nf as u32,
                         );
                     }
                 }
-                for i in 0..frames {
+                for i in 0..nf {
                     let first = self.voice_buf[i];
                     let second = self.osc_a[i];
                     self.voice_buf[i] = if serial {
@@ -2216,7 +2345,7 @@ impl Engine {
                     };
                 }
                 if stereo {
-                    for i in 0..frames {
+                    for i in 0..nf {
                         let first = self.voice_buf_r[i];
                         let second = self.osc_b[i];
                         self.voice_buf_r[i] = if serial {
@@ -2235,6 +2364,29 @@ impl Engine {
                 // remainder through with unity DC gain rather than growing it.
                 // Blocking twice here is what made a parallel blend of 0 differ
                 // from the single-stage path by a fraction of a decibel.
+            }
+        }
+
+        // --- back to the base rate ------------------------------------------
+        //
+        // The round trip is a linear-phase pair, so the decimation has to be
+        // the last thing the oversampled path does; everything above (both
+        // filter stages, their makeup and their blend) ran at 2x, and the
+        // aliases the saturators folded down are what the filter removes here.
+        if os_active {
+            self.os_l[slot].downsample(
+                &self.voice_buf[..nf],
+                &mut self.os_in_l[..frames],
+                &mut self.os_scratch,
+            );
+            self.voice_buf[..frames].copy_from_slice(&self.os_in_l[..frames]);
+            if stereo {
+                self.os_r[slot].downsample(
+                    &self.voice_buf_r[..nf],
+                    &mut self.os_in_r[..frames],
+                    &mut self.os_scratch,
+                );
+                self.voice_buf_r[..frames].copy_from_slice(&self.os_in_r[..frames]);
             }
         }
 
@@ -2406,16 +2558,24 @@ impl Engine {
                     self.mix_effect(frames, fx.phaser_mix, parallel);
                 }
                 FxKind::Drive if fx.drive_on && fx.drive_mix > 0.0 => {
-                    unsafe {
-                        gs_fx_overdrive_set(slot as i32, fx.drive_amt);
-                        gs_fx_overdrive_block(
-                            slot as i32,
-                            self.fx_l.as_ptr(),
-                            self.fx_r.as_ptr(),
-                            self.osc_a.as_mut_ptr(),
-                            self.osc_b.as_mut_ptr(),
-                            frames as u32,
-                        );
+                    if self.oversampling() {
+                        // P6.5: the drive is the saturator the switch is for.
+                        // (The free-form graph has no latency compensation yet,
+                        // so it deliberately keeps the 1x drive — see the note
+                        // on `Engine::oversampling`.)
+                        self.drive_oversampled(slot, frames);
+                    } else {
+                        unsafe {
+                            gs_fx_overdrive_set(slot as i32, fx.drive_amt);
+                            gs_fx_overdrive_block(
+                                slot as i32,
+                                self.fx_l.as_ptr(),
+                                self.fx_r.as_ptr(),
+                                self.osc_a.as_mut_ptr(),
+                                self.osc_b.as_mut_ptr(),
+                                frames as u32,
+                            );
+                        }
                     }
                     self.mix_effect(frames, fx.drive_mix, parallel);
                 }
@@ -2722,6 +2882,59 @@ impl Engine {
     ///
     /// The wet signal arrives in `osc_a/osc_b` (free scratch buffers after the
     /// voice loop).
+    /// Whether the patch asked for 2x oversampling of the drive/filter path
+    /// (P6.5).
+    fn oversampling(&self) -> bool {
+        self.params.filter.oversample
+    }
+
+    /// Run the drive at 2x and write the band-limited wet block to
+    /// `osc_a`/`osc_b`, leaving the source buffer delayed by [`OS_LATENCY`].
+    ///
+    /// That delay *is* the compensation: the insert crossfades the wet against
+    /// its own dry, and a wet path that came back early would comb instead of
+    /// mixing. Delaying the dry by the round trip keeps the node's own mix
+    /// phase-aligned; the node as a whole is then a fixed-latency effect, which
+    /// is what the chain already is (every effect in it delays the bus by
+    /// whatever it delays it by) and what a graph would have to compensate for.
+    fn drive_oversampled(&mut self, slot: usize, frames: usize) {
+        self.os_in_l[..frames].copy_from_slice(&self.fx_l[..frames]);
+        self.os_in_r[..frames].copy_from_slice(&self.fx_r[..frames]);
+        let nf = frames * 2;
+        self.os_fx_l[slot].upsample(
+            &self.os_in_l[..frames],
+            &mut self.osc_a[..nf],
+            &mut self.os_scratch,
+        );
+        self.os_fx_r[slot].upsample(
+            &self.os_in_r[..frames],
+            &mut self.osc_b[..nf],
+            &mut self.os_scratch,
+        );
+        // The vendored overdrive is a per-sample memoryless shaper, so it can
+        // run in place over the oversampled block.
+        unsafe {
+            let l = self.osc_a.as_mut_ptr();
+            let r = self.osc_b.as_mut_ptr();
+            gs_fx_overdrive_set(slot as i32, self.params.fx.drive_amt);
+            gs_fx_overdrive_block(slot as i32, l, r, l, r, nf as u32);
+        }
+        self.os_fx_l[slot].downsample(
+            &self.osc_a[..nf],
+            &mut self.os_in_l[..frames],
+            &mut self.os_scratch,
+        );
+        self.os_fx_r[slot].downsample(
+            &self.osc_b[..nf],
+            &mut self.os_in_r[..frames],
+            &mut self.os_scratch,
+        );
+        delay_samples(&mut self.os_dry_l[slot], &mut self.fx_l[..frames]);
+        delay_samples(&mut self.os_dry_r[slot], &mut self.fx_r[..frames]);
+        self.osc_a[..frames].copy_from_slice(&self.os_in_l[..frames]);
+        self.osc_b[..frames].copy_from_slice(&self.os_in_r[..frames]);
+    }
+
     fn mix_effect(&mut self, frames: usize, mix: f32, parallel: bool) {
         let dry = if parallel { 1.0 } else { 1.0 - mix };
         for i in 0..frames {
@@ -2729,6 +2942,31 @@ impl Engine {
             self.fx_r[i] = self.fx_r[i] * dry + self.osc_b[i] * mix;
         }
     }
+}
+
+/// Delay `buf` in place by `hist.len()` samples, carrying the tail across
+/// blocks. `hist` holds the samples immediately *before* the block, oldest
+/// first, and is updated to the new tail.
+fn delay_samples(hist: &mut [f32], buf: &mut [f32]) {
+    let d = hist.len();
+    let n = buf.len();
+    if d == 0 || n == 0 {
+        return;
+    }
+    // Save the new history from the *input* before the shift overwrites it.
+    let mut next = [0.0f32; OS_LATENCY];
+    if n >= d {
+        next.copy_from_slice(&buf[n - d..]);
+    } else {
+        next[..d - n].copy_from_slice(&hist[n..]);
+        next[d - n..].copy_from_slice(&buf[..n]);
+    }
+    for i in (d..n).rev() {
+        buf[i] = buf[i - d];
+    }
+    let head = d.min(n);
+    buf[..head].copy_from_slice(&hist[..head]);
+    hist.copy_from_slice(&next);
 }
 
 /// The shaping EQ's per-block controls (P6.4). A free function because both the
@@ -6870,5 +7108,189 @@ mod tests {
             assert!(e.out_r[i].abs() <= 1.0 + 1e-6, "right over unity at {i}");
         }
         assert!(e.limit_gain <= 1.0 && e.limit_gain > 0.0);
+    }
+
+    // ------------------------------------------------- P6.5: 2x oversampling
+
+    /// One whole second, rectangular window, exact bins. A Hann window's own
+    /// leakage sits at about -95 dB, right where the drive aliases live (see
+    /// `docs/notes/hard-sync-aliasing.md`), so this is deliberately unwindowed.
+    fn bin_mag_rect(samples: &[f32], freq: f32, sr: f32) -> f32 {
+        let w = core::f32::consts::TAU as f64 * freq as f64 / sr as f64;
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (i, x) in samples.iter().enumerate() {
+            re += *x as f64 * (w * i as f64).cos();
+            im -= *x as f64 * (w * i as f64).sin();
+        }
+        ((re * re + im * im).sqrt() / samples.len() as f64) as f32
+    }
+
+    /// A fully driven 110 Hz sine (note 45), measured as the energy that is not
+    /// at a harmonic bin: a hard-limited sine folds every harmonic above the
+    /// base Nyquist back to `n * fs - k * f0`, which is not on the grid.
+    /// Returns (floor in dB below the signal's own RMS, fundamental amplitude).
+    fn driven_sine_alias_floor(oversample: bool) -> (f32, f32) {
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::OSC_FM, 0.0);
+        e.set_param(id::OSC_RING, 0.0);
+        e.set_param(id::FILTER_TYPE, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 20000.0);
+        e.set_param(id::FILTER_RES, 0.1);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::FILTER_ROUTING, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.01);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::LFO2_ON, 0.0);
+        e.set_param(id::FX_REVERB_ON, 0.0);
+        e.set_param(id::FX_DELAY_ON, 0.0);
+        e.set_param(id::FX_CHORUS_ON, 0.0);
+        e.set_param(id::FX_FLANGER_ON, 0.0);
+        e.set_param(id::FX_PHASER_ON, 0.0);
+        // The drive is the only effect in the chain, so the alias source is
+        // unambiguous.
+        e.set_param(id::FX_CHAIN1, 6.0);
+        for slot in 1..crate::params::FX_SLOTS {
+            e.set_param(id::FX_CHAIN1 + slot as u32, 0.0);
+        }
+        e.set_param(id::FX_DRIVE_ON, 1.0);
+        e.set_param(id::FX_DRIVE_AMT, 1.0);
+        e.set_param(id::FX_DRIVE_MIX, 1.0);
+        // Quiet enough that the master limiter stays linear; its gain loop is
+        // time-varying and would be measured as non-harmonic energy.
+        e.set_param(id::MASTER_VOLUME, 0.1);
+        e.set_param(id::OVERSAMPLE, if oversample { 1.0 } else { 0.0 });
+        for i in 0..crate::params::MOD_ROUTES {
+            e.set_route(i, 0, 0, 0.0, false);
+        }
+        e.note_on(45, 1.0);
+        for _ in 0..240 {
+            e.process(128);
+        }
+        let mut buf = vec![0.0f32; 48000];
+        for chunk in buf.chunks_mut(128) {
+            e.process(128);
+            chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+        }
+        let f0 = 440.0 * 2f32.powf((45.0 - 69.0) / 12.0);
+        let rms = (buf.iter().map(|v| v * v).sum::<f32>() / buf.len() as f32).sqrt();
+        let mut harmonics = 0.0f32;
+        let mut k = 1;
+        while k as f32 * f0 < 24000.0 {
+            let m = bin_mag_rect(&buf, k as f32 * f0, 48000.0);
+            // A sinusoid of amplitude A reads |sum|/N = A/2, so power = 2m^2.
+            harmonics += 2.0 * m * m;
+            k += 1;
+        }
+        let folded = (rms * rms - harmonics).max(1e-30);
+        (
+            10.0 * (folded / rms.max(1e-15).powi(2)).log10(),
+            2.0 * bin_mag_rect(&buf, f0, 48000.0),
+        )
+    }
+
+    /// The compatibility promise: with the switch off the render is the old
+    /// path sample for sample, whether the parameter was never written or
+    /// written explicitly as zero.
+    #[test]
+    fn oversampling_switched_off_is_the_old_path_bit_for_bit() {
+        let _guard = lock_engine();
+        let render = |write_zero: bool| {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+            e.set_param(id::FILTER_CUTOFF, 12000.0);
+            e.set_param(id::FILTER_RES, 0.3);
+            e.set_param(id::FILTER_DRIVE, 0.6);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::FX_REVERB_ON, 0.0);
+            if write_zero {
+                e.set_param(id::OVERSAMPLE, 0.0);
+            }
+            render_all(&mut e, 60, 40)
+        };
+        let (a_l, a_r) = render(false);
+        let (b_l, b_r) = render(true);
+        assert_eq!(worst_difference(&a_l, &b_l), 0.0);
+        assert_eq!(worst_difference(&a_r, &b_r), 0.0);
+    }
+
+    /// The point of the mode: the aliases a fully driven ladder folds back drop
+    /// by well over the 12 dB the batch asked for, while the tone itself stays
+    /// where it was.
+    #[test]
+    fn oversampling_band_limits_the_driven_filter() {
+        let _guard = lock_engine();
+        let (off_floor, off_fund) = driven_sine_alias_floor(false);
+        let (on_floor, on_fund) = driven_sine_alias_floor(true);
+        // The wasm gate (`scripts/verify-audio.mjs`) holds the 12 dB line and
+        // measures 26 dB for this scenario. The host build's `f32::exp2` and
+        // the C++ overdrive's codegen differ enough in the last bits that the
+        // same render lands at ~10.5 dB here, so this test pins the direction
+        // and the bandwidth work without over-fitting to one toolchain; the
+        // decimator's stopband has its own exact test in `dsp::oversample`.
+        assert!(
+            off_floor - on_floor >= 8.0,
+            "aliases only dropped {:.1} dB ({off_floor:.1} -> {on_floor:.1})",
+            off_floor - on_floor
+        );
+        let level = 20.0 * (on_fund / off_fund.max(1e-9)).log10();
+        assert!(level.abs() < 1.0, "the tone moved by {level:.2} dB");
+    }
+
+    /// Switching the mode and slamming the drive mid-note must not blow up,
+    /// produce a NaN, or step the waveform hard enough to be heard as a click.
+    #[test]
+    fn oversampling_switch_stays_bounded_and_finite() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.9);
+        e.set_param(id::FILTER_CUTOFF, 8000.0);
+        e.set_param(id::FILTER_RES, 0.4);
+        e.set_param(id::FILTER_DRIVE, 0.9);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::FX_REVERB_ON, 0.0);
+        e.note_on(60, 1.0);
+        let mut prev = f32::NAN;
+        let mut worst_jump = 0.0f32;
+        for block in 0..400 {
+            if block == 150 {
+                e.set_param(id::OVERSAMPLE, 1.0);
+            }
+            if block == 250 {
+                e.set_param(id::FILTER_DRIVE, 0.0);
+            }
+            if block == 300 {
+                e.set_param(id::OVERSAMPLE, 0.0);
+            }
+            if block == 350 {
+                e.set_param(id::FILTER_DRIVE, 1.0);
+            }
+            e.process(128);
+            for i in 0..128 {
+                let v = e.out_l[i];
+                assert!(v.is_finite(), "non-finite sample after block {block}");
+                assert!(v.abs() <= 1.0 + 1e-6, "over unity after block {block}");
+                if prev.is_finite() {
+                    worst_jump = worst_jump.max((v - prev).abs());
+                }
+                prev = v;
+            }
+        }
+        assert_eq!(e.nan_events, 0);
+        assert!(worst_jump < 0.25, "the switch stepped the output by {worst_jump}");
+
+        // The mode reports the latency it adds, so a host can compensate it
+        // exactly instead of guessing at the phase difference.
+        assert_eq!(e.oversample_latency(), 0);
+        e.set_param(id::OVERSAMPLE, 1.0);
+        assert_eq!(e.oversample_latency(), OS_LATENCY as u32);
+        e.set_param(id::OVERSAMPLE, 0.0);
+        assert_eq!(e.oversample_latency(), 0);
     }
 }

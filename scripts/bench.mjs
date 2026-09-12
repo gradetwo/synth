@@ -34,6 +34,9 @@ const BLOCK = 128;
 // `--long` is the quarterly run: ten times the audio, plus the memory picture
 // that only shows up over minutes (arena growth, wasm memory pages).
 const LONG = process.argv.includes('--long');
+// P6.5: the same sustained load with 2x oversampling of the drive/filter path,
+// so the cost of the quality switch is a number rather than a guess.
+const OVERSAMPLED = process.argv.includes('--oversampled');
 const SECONDS = LONG ? 60 : 6;
 const BUDGET_US = (BLOCK / SR) * 1e6;
 /** Blocks per convolution hop: the phases a spread schedule rotates through. */
@@ -45,7 +48,7 @@ const P = {
   ENV_ATTACK: 19, ENV_DECAY: 20, ENV_SUSTAIN: 21, ENV_RELEASE: 22, LFO_ON: 23, LFO2_ON: 62,
   FX_REVERB_ON: 29, FX_DELAY_ON: 32, FX_CHORUS_ON: 43, FX_PHASER_ON: 51, FX_DRIVE_ON: 55,
   OSC1_UNISON: 70, OSC2_UNISON: 72, WT_USER: 79, FX_REVERB_MODE: 94, FX_CONV_TRIM: 95,
-  SMP_MODE: 97,
+  SMP_MODE: 97, OVERSAMPLE: 166,
 };
 
 /** Measure `seconds` of blocks and return the distribution, in µs. */
@@ -138,6 +141,7 @@ for (const [id, value] of [
   [P.LFO_ON, 1], [P.LFO2_ON, 1], [P.FX_REVERB_ON, 1], [P.FX_DELAY_ON, 1],
   [P.FX_CHORUS_ON, 1], [P.FX_PHASER_ON, 1], [P.FX_DRIVE_ON, 1],
   [P.OSC1_UNISON, 3], [P.OSC2_UNISON, 3],
+  [P.OVERSAMPLE, OVERSAMPLED ? 1 : 0],
 ]) {
   ex.gs_set_param(id, value);
 }
@@ -158,7 +162,7 @@ const violations = ex.gs_alloc_violations();
 
 const arenaFreeKb = ex.gs_arena_free_bytes() / 1024;
 const memoryMb = ex.memory.buffer.byteLength / (1024 * 1024);
-console.log(`[bench] sustained load${LONG ? ' (long run)' : ''}`);
+console.log(`[bench] sustained load${LONG ? ' (long run)' : ''}${OVERSAMPLED ? ' with 2x oversampling' : ''}`);
 check('no non-finite samples', nonFinite === 0, `${nonFinite} bad samples`);
 check('output stays in range', peak <= 1.0, `peak ${peak.toFixed(3)}`);
 check('no allocation on the audio thread', violations === 0, `${violations} violations`);
@@ -176,7 +180,7 @@ timed(
   `${overBudget}/${blocks} blocks over ${BUDGET_US.toFixed(0)} µs (worst ${worst.toFixed(0)} µs)`,
 );
 
-const row = `| ${new Date().toISOString().slice(0, 10)} | ${SECONDS}s${LONG ? ' (long)' : ''} · ${notes.length} notes | ${mean.toFixed(0)} | ${p50.toFixed(0)} | ${p99.toFixed(0)} | ${worst.toFixed(0)} | ${load.toFixed(1)}% | ${voices} |`;
+const row = `| ${new Date().toISOString().slice(0, 10)} | ${SECONDS}s${LONG ? ' (long)' : ''}${OVERSAMPLED ? ' · 2x OS' : ''} · ${notes.length} notes | ${mean.toFixed(0)} | ${p50.toFixed(0)} | ${p99.toFixed(0)} | ${worst.toFixed(0)} | ${load.toFixed(1)}% | ${voices} |`;
 
 // ---- the same load with the IR reverb, which is the engine's heaviest path ---
 // A 2 s response is 96 partitions, and the hop's partition work is what has to
@@ -231,7 +235,7 @@ timed('the convolution work is spread across the hop', spread < 1.35,
   `apart from the transform block, the busiest of ${HOP_BLOCKS - 1} blocks averages ` +
   `${busiest.toFixed(0)} µs against ${typical.toFixed(0)} µs (${spread.toFixed(2)}×): ` +
   `${phaseMedian.map((v) => v.toFixed(0)).join('/')}`);
-const irRow = `| ${new Date().toISOString().slice(0, 10)} | ${SECONDS}s · ${notes.length} notes · IR ${(irLen / SR).toFixed(1)}s | ${irRun.mean.toFixed(0)} | ${irRun.p50.toFixed(0)} | ${irRun.p99.toFixed(0)} | ${irRun.worst.toFixed(0)} | ${irLoad.toFixed(1)}% | ${voices} |`;
+const irRow = `| ${new Date().toISOString().slice(0, 10)} | ${SECONDS}s${OVERSAMPLED ? ' · 2x OS' : ''} · ${notes.length} notes · IR ${(irLen / SR).toFixed(1)}s | ${irRun.mean.toFixed(0)} | ${irRun.p50.toFixed(0)} | ${irRun.p99.toFixed(0)} | ${irRun.worst.toFixed(0)} | ${irLoad.toFixed(1)}% | ${voices} |`;
 if (update) {
   mkdirSync(notesDir, { recursive: true });
   if (!existsSync(notesPath)) {

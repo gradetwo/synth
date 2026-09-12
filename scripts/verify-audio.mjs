@@ -52,6 +52,11 @@ const P = {
   FX_EQ_ON: 157, FX_EQ_LOW_GAIN: 158, FX_EQ_LOW_FREQ: 159, FX_EQ_MID_GAIN: 160,
   FX_EQ_MID_FREQ: 161, FX_EQ_MID_Q: 162, FX_EQ_HIGH_GAIN: 163, FX_EQ_HIGH_FREQ: 164,
   FX_EQ_MIX: 165,
+  FILTER_ROUTING: 146, OSC_FM: 137, OSC_RING: 138, FX_GRAPH: 100,
+  OSC1_PITCH: 3, OSC2_PITCH: 9, OSC1_DETUNE: 4, OSC2_DETUNE: 10,
+  OSC1_UNISON: 70, OSC2_UNISON: 72, OSC1_SPREAD: 71, OSC2_SPREAD: 73, MASTER_TUNE: 41,
+  /** P6.5: 2x oversampling of the drive/filter path. */
+  OVERSAMPLE: 166,
 };
 
 const WAVE_TYPES = { lp: 0, hp: 1, bp: 2, notch: 3, sem: 6 };
@@ -1266,6 +1271,134 @@ function blockSteps(frames) {
       `peak ${peak.toFixed(3)}, worst sample step ${worstStep.toFixed(3)}`,
     );
   }
+}
+
+// ------------------------------- 4b. 2x oversampling of the drive path (P6.5)
+//
+// This section renders two extra notes, and the engine spreads voice start
+// phases by a counter that `gs_init` does *not* reset, so the scenarios after
+// it would start on a different phase than they do without it. It therefore
+// sits last and restores the parameter block on the way out: the gate's
+// existing checks keep the exact phase history they had before P6.5.
+//
+// A fully driven sine is a hard-limited square: its odd harmonics run all the
+// way up, and every one above the base Nyquist folds back onto a frequency
+// that is *not* on the fundamental's grid. That folded energy is exactly what
+// the 2x round trip removes, so the gate measures the energy that is not at a
+// harmonic bin and asks the switch to drop it by at least 12 dB.
+//
+// The measurement follows the hard-sync post-mortem: one whole second, a
+// rectangular window and exact bins (`binMagRect`, no window at all — Hann's
+// own sidelobes sit at about -95 dB, right where this energy lives). The test
+// tone is note 45 (110 Hz), where the first folded harmonic is still strong
+// enough to measure; at the top of the keyboard the aliases are already far
+// down. `gs_set_mod_route(i, 0, 0, 0, 0)` clears the default patch's ENV/LFO ->
+// CUTOFF routes first: with them live this would measure the modulation.
+{
+  const NOTE = 45;
+  const F0 = 440 * 2 ** ((NOTE - 69) / 12);
+  const BLOCKS = (1 * SR) / BLOCK; // one whole second
+  const SKIP_BLOCKS = 240; // let the attack and the limiter settle
+  /** Rectangular-window single-bin amplitude (no leakage on an exact bin). */
+  const binMagRect = (samples, freq) => {
+    const w = (2 * Math.PI * freq) / SR;
+    let re = 0;
+    let im = 0;
+    for (let i = 0; i < samples.length; i++) {
+      const v = samples[i];
+      re += v * Math.cos(w * i);
+      im -= v * Math.sin(w * i);
+    }
+    return Math.hypot(re, im) / samples.length;
+  };
+  /**
+   * Non-harmonic energy in dB below the signal's own RMS. Parseval rather than
+   * a list of probed frequencies: the folds land at `n * fs - k * f0`, which is
+   * not a fixed fraction of the grid, and probing the wrong bins would report
+   * the noise floor and call it a pass.
+   */
+  const aliasFloor = (oversample) => {
+    engine(
+      [
+        [P.OSC1_ON, 1], [P.OSC1_WAVE, WAVE.sine], [P.OSC1_LEVEL, 0.8],
+        // One voice, on pitch: unison, detune and microtuning are all state a
+        // previous scenario may have left behind, and all three would move the
+        // harmonics off the bins the measurement subtracts.
+        [P.OSC1_PITCH, 0], [P.OSC1_DETUNE, 0], [P.OSC1_UNISON, 1], [P.OSC1_SPREAD, 0],
+        [P.MASTER_TUNE, 0],
+        [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0],
+        [P.OSC2_PITCH, 0], [P.OSC2_DETUNE, 0], [P.OSC2_UNISON, 1], [P.OSC2_SPREAD, 0],
+        [P.OSC_FM, 0], [P.OSC_RING, 0],
+        [P.FILTER_TYPE, 0], [P.FILTER_CUTOFF, 20000], [P.FILTER_RES, 0.1],
+        [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0],
+        // No second stage and no graph: the whole scenario is spelled out, so
+        // the measurement does not depend on where in the file it sits.
+        [P.FILTER_ROUTING, 0], [P.FX_GRAPH, 0],
+        [P.ENV_ATTACK, 0.01], [P.ENV_SUSTAIN, 1],
+        [P.LFO_ON, 0], [P.LFO2_ON, 0],
+        [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
+        [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0],
+        // The drive is the only effect in the chain, so the alias source is
+        // unambiguous whatever the previous scenario left behind.
+        [P.FX_CHAIN1, 6], [P.FX_CHAIN2, 0], [P.FX_CHAIN3, 0],
+        [P.FX_CHAIN4, 0], [P.FX_CHAIN5, 0], [P.FX_CHAIN6, 0],
+        [P.FX_DRIVE_ON, 1], [P.FX_DRIVE_AMT, 1], [P.FX_DRIVE_MIX, 1],
+        // Master volume low enough that the master limiter stays linear: its
+        // gain loop is time-varying and would be counted as non-harmonic
+        // energy that no amount of oversampling can remove.
+        [P.MASTER_VOLUME, 0.1],
+        [P.OVERSAMPLE, oversample ? 1 : 0],
+      ],
+      [[NOTE, 1]],
+    );
+    for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
+    const rendered = render(20 + SKIP_BLOCKS + BLOCKS);
+    const buf = [];
+    for (let b = SKIP_BLOCKS; b < SKIP_BLOCKS + BLOCKS; b++) {
+      for (const v of rendered[b][0]) buf.push(v);
+    }
+    const rms = Math.sqrt(buf.reduce((sum, v) => sum + v * v, 0) / buf.length);
+    let harmonics = 0;
+    for (let k = 1; k * F0 < SR / 2; k++) {
+      const m = binMagRect(buf, k * F0);
+      // A sinusoid of amplitude A reads |sum|/N = A/2, so its power is 2m^2.
+      harmonics += 2 * m * m;
+    }
+    const folded = Math.max(rms * rms - harmonics, 1e-30);
+    return {
+      db: 10 * Math.log10(folded / Math.max(rms * rms, 1e-30)),
+      fund: binMagRect(buf, F0) * 2,
+      samples: buf.length,
+    };
+  };
+  const oneX = aliasFloor(false);
+  const twoX = aliasFloor(true);
+  // The switch is global and `gs_init` keeps the parameter block, so leaving
+  // it on would silently change every scenario after this one. The other
+  // values are restored to what the scenario above left, because the master
+  // limiter's own gain modulation depends on the master volume and would
+  // otherwise move a later scenario's zero-crossing count.
+  ex.gs_set_param(P.OVERSAMPLE, 0);
+  ex.gs_set_param(P.FX_DRIVE_ON, 0);
+  ex.gs_set_param(P.FILTER_CUTOFF, 12000);
+  ex.gs_set_param(P.FILTER_RES, 0.2);
+  ex.gs_set_param(P.FILTER_DRIVE, 1);
+  ex.gs_set_param(P.FILTER_ENV_AMT, 0);
+  ex.gs_set_param(P.MASTER_VOLUME, 0.75);
+  const drop = oneX.db - twoX.db;
+  check(
+    '2x oversampling drops the drive aliases by >= 12 dB',
+    drop >= 12,
+    `non-harmonic energy ${oneX.db.toFixed(1)} dB at 1x, ${twoX.db.toFixed(1)} dB at 2x ` +
+      `(${drop.toFixed(1)} dB lower; ${twoX.samples} samples, exact bins, note ${NOTE})`,
+  );
+  // The mode is a quality switch, not a level control: a dropped fundamental
+  // would mean the decimator, not the aliases, is what changed.
+  check(
+    '2x oversampling keeps the driven tone at the same level',
+    Math.abs(20 * Math.log10(twoX.fund / oneX.fund)) < 1.0,
+    `fundamental ${(20 * Math.log10(twoX.fund / oneX.fund)).toFixed(2)} dB vs 1x`,
+  );
 }
 
 console.log('[audio] quality gate');
