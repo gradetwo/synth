@@ -333,19 +333,25 @@
 
 ## 11. 交接说明（下一窗口从这里开始）
 
-**当前版本**：v1.40.0（提交 `27f2b7c`），已部署；`npm run verify` 与全部 e2e 均为绿。
+**当前版本**：v1.89.0（提交 `6e1ae17`），已部署到 <https://synth.wangda.today/> 并核对过（线上
+`assets/index-*.js` 哈希与本地 `dist/index.html` 一致）；`npm run verify` 全绿（Rust 171 · Vitest 347 ·
+Chromium E2E 112 · 时域+频域音质门禁 · 81 个预设指纹不变 · DSP 指纹 rms 0.030806 不动）。
 
-**下一批**：波表已接线完成（v1.41.0）；后续可做**单周期文件导入**。**已完成：表生成器 `crates/synth-core/src/dsp/wavetable.rs`**——5 个谐波配方、
-每八度一层的 **mipmap**（2048…8 采样，共 9 级）、按音高选层、线性插值；带 4 条单测（每级频谱在其自身 Nyquist 之上无能量、
-选层不会混叠且不浪费、长度与归一化、相位回绕与插值）。**待接线**：
+**下一批与之后的队列以 [`docs/NEXT-PLAN.md`](NEXT-PLAN.md) 为准**（那里有完整批次表、每批的验收与门禁、
+以及执行顺序）。当前进度：P5 工作流（P5.1 ✅ v1.80.0 / P5.2 ✅ v1.83.0 / P5.3 ✅ v1.86.0；**P5.4 录音 take 待做**）、
+P6 声音（P6.1 ✅ v1.82.0 / P6.2 🔶 v1.84.0 硬同步与 sub·**P6.2b 带限同步振荡器待做** /
+**P6.3a SEM 连续多模 ✅ v1.89.0、P6.3b 双滤波待做** / P6.4 效果补强、P6.5 过采样待做）、
+P7 节点图二期（P7.1 延迟/卷积多实例、P7.2 图内调制、P7.3 图模板）、
+P8 工程与质量（P8.1 ✅ v1.79.0 / P8.2 ✅ v1.87.0 / P8.3 ✅ v1.88.0 / P8.4 ✅ v1.81.0 / P8.6 ✅ v1.79.0；
+**P8.5 体积与启动预算待做**）。
 
-1. `crates/synth-core/src/dsp/wavetable.rs`（新建）：由**谐波配方**生成单周期表，并按八度生成 **mipmap 级**（2048/1024/…/32 采样），每一级只含该级 Nyquist 以下的谐波——**抗混叠由构造保证**，无需额外过采样；`sample(phase, level)` 线性插值。
-2. `crates/synth-core/src/params.rs`：新增 `Wave::Wavetable`（映射到 `daisy_id() => None`，即 **Rust 侧渲染**，与噪声同路径）与配方参数（建议**一个共享配方参数**，省去两个 id）；同步 `PARAM_COUNT`。
-3. `crates/synth-core/src/engine.rs`：在 `render_oscillator` 的 `None` 分支里按波表渲染，需要**每声部相位状态**（`wt_phase: [[f32; 2]; MAX_VOICES]`），并在 `gs_voice_reset` 路径复位；unison 可先不支持并注明。
-4. TS 侧：`src/audio/params.ts`（id 与名称）、`worklet-processor.js`（**PARAMS 描述符表必须同步**，否则值到不了 DSP——本轮踩过这个坑）、`WAVES`/`WAVE_ICONS`/`i18n`、OSC 模块的配方式选择。
-5. 测试：① `dsp::wavetable` 单测——每级频谱在谐波上限以上无能量（带宽受限）、基频正确、输出有界；② 引擎级**频域**测试——高音区谐波之间无混叠能量（沿用 `verify-audio.mjs` 的 FFT 手法）；③ 门禁新增一项"波表在高音区不产生混叠"。
-6. 完成后：更新记录（只说改了什么）、`docs/USER-GUIDE.md`，然后一条命令 `npm run release -- <version>`（校验版本与更新记录 → `verify` → E2E → 打包 → 部署 → 线上 hash 核对 → 打 tag，见 `docs/notes/release.md`）。
+**每批的纪律**（不要绕过）：实现 + 单元/E2E 测试 + `npm run verify` 全绿 + 小步提交 + `npm run package`
++ 部署并用**生产域名**核对线上资源 + 中文文档与更新记录同步；音频批次必须有**时域与频域**两边的断言。
+两条相容性红线由门禁自动兜底，改引擎前先看它们：`npm run test:dsp` 的 `rms 0.030806`（默认音色逐样本不变）
+与 `npm run verify:presets` 的 81 个预设指纹（改预设必须 `presets:update -- --reason` 显式确认）。
 
-**之后的队列**：A5 效果路由/并联 + 卷积混响（IR 导入）→ P2 10b 动态信号图与节点内联编辑 → 多轨/时间线、采样导入、Web MIDI 输出 → P0.5 多浏览器 E2E（需 `playwright install-deps`，配置已就绪）、P0.6 进一步 streaming。
-
-**已知事项**：Cloudflare 对首页 HTML 有边缘缓存，部署后若线上仍是旧资源，用带参数地址或应用内「检查更新」；`wrangler` 的 OAuth token 在 `~/.zshrc`（bash 需先 `eval` 那一行）。本机缺 WebKit/Firefox 系统库，多浏览器 e2e 需要 CI 或 `install-deps`。
+**已知事项**：Cloudflare 对首页 HTML 有边缘缓存，部署后若线上仍是旧资源，用带参数地址或应用内「检查更新」；
+`wrangler` 的 OAuth token 在 `~/.zshrc`（bash 需先 `eval` 那一行）。**生产域名是 `synth.wangda.today`**
+（Worker `shiny-sky-9ea0` 的自定义域名）——不要拿旧的 `*.pages.dev` 主机名核对，它现在返回 Cloudflare 的请求
+元数据 JSON（HTTP 200，但内容不是站点），见 `docs/notes/release.md`。本机缺 WebKit/Firefox 系统库，
+多浏览器 e2e 需要 CI 或 `install-deps`；本地 WebKit 一律走 `npm run test:e2e:webkit:wayland`。
