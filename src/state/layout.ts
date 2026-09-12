@@ -10,6 +10,7 @@ import type { Lang } from '@/i18n';
 import { Param } from '@/audio/params';
 import { normalizeBindings, type CcBinding } from '@/audio/ccmap';
 import { normalizeScale } from '@/audio/scala';
+import { normalizeFxTemplates, type FxTemplate } from './fxtemplates';
 
 export type ModuleId = 'osc1' | 'osc2' | 'filter' | 'env' | 'lfo' | 'matrix' | 'fx' | 'fx2';
 
@@ -63,6 +64,13 @@ export interface LayoutState {
   flowPos: Record<string, [number, number]>;
   /** Effect-graph card positions, when the user has arranged them (A1). */
   fxGraphPos: Record<string, [number, number]>;
+  /**
+   * Saved effect-graph templates (P7.3). Workspace data, next to the card
+   * positions: a template is a routing the player can reuse, not part of the
+   * patch and not carried by a share code. Built-ins come from
+   * `state/fxtemplates`, so this list holds only the saved ones.
+   */
+  fxTemplates: FxTemplate[];
   /** Nodes removed from the signal-flow canvas. */
   flowHidden: string[];
   /** `null` = automatic (collapsed on phones/tablets, expanded on desktop). */
@@ -111,6 +119,7 @@ export function defaultLayout(): LayoutState {
     view: 'modules',
     flowPos: {},
     fxGraphPos: {},
+    fxTemplates: [],
     flowHidden: [],
     displayExpanded: null,
     phoneDefaults: false,
@@ -205,6 +214,7 @@ export function normalizeLayout(raw: unknown): LayoutState {
     view: input.view === 'flow' ? 'flow' : 'modules',
     flowPos,
     fxGraphPos,
+    fxTemplates: normalizeFxTemplates(input.fxTemplates),
     flowHidden,
     displayExpanded:
       typeof input.displayExpanded === 'boolean' ? input.displayExpanded : null,

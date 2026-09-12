@@ -45,6 +45,7 @@ import {
   type ParamId,
 } from '@/audio/params';
 import { getUserIr } from '@/audio/ir';
+import { BUILTIN_FX_TEMPLATES, type FxTemplate } from '@/state/fxtemplates';
 import { store } from '@/state/store';
 import { useSynth } from '@/hooks/useSynth';
 import { useViewport } from '@/hooks/useViewport';
@@ -195,6 +196,23 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
 
   const graphOn = (params[Param.FX_GRAPH] ?? 0) >= 0.5;
   const savedPos = snapshot.layout.fxGraphPos;
+  /**
+   * Effect-graph templates (P7.3). The list lives in the workspace, the
+   * built-ins in code; picking one applies its routing to the patch, and the
+   * select keeps whatever was picked last so the save/delete buttons line up.
+   */
+  const [template, setTemplate] = useState('');
+  const userTemplates = snapshot.layout.fxTemplates;
+  const chosenTemplate = userTemplates.find((entry) => entry.id === template) ?? null;
+  const templateLabel = (entry: FxTemplate) => (entry.nameKey ? t(entry.nameKey) : entry.name);
+  const applyTemplate = (id: string) => {
+    setTemplate(id);
+    const entry = [...BUILTIN_FX_TEMPLATES, ...userTemplates].find((item) => item.id === id);
+    if (!entry) return;
+    haptic(HAPTIC.light);
+    store.applyFxTemplate(id);
+    toast(t('fxg.tplApplied', { name: templateLabel(entry) }));
+  };
   const posOf = useCallback(
     (key: string): [number, number] => savedPos[key] ?? defaultPos(key),
     [savedPos],
@@ -684,6 +702,67 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
               onClick={() => setViewChoice('list')}
             >
               {t('fxg.list')}
+            </button>
+          </div>
+          {/* Templates (P7.3): a routing saved in the workspace, applied to the
+              patch in one change. Built-ins first, the player's own after. */}
+          <div className="fxg-tpl">
+            <select
+              className="fxg-tpl-select"
+              data-act="template"
+              aria-label={t('fxg.tpl')}
+              value={template}
+              onChange={(event) => applyTemplate(event.target.value)}
+            >
+              <option value="">{t('fxg.tplPick')}</option>
+              <optgroup label={t('fxg.tplBuiltin')}>
+                {BUILTIN_FX_TEMPLATES.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {templateLabel(entry)}
+                  </option>
+                ))}
+              </optgroup>
+              {userTemplates.length ? (
+                <optgroup label={t('fxg.tplSaved')}>
+                  {userTemplates.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+            </select>
+            <button
+              type="button"
+              className="fxg-rebuild"
+              data-act="template-save"
+              title={t('fxg.tplSaveHint')}
+              onClick={() => {
+                haptic(HAPTIC.light);
+                const saved = store.saveFxTemplate(
+                  `${t('fxg.tplDefaultName')} ${userTemplates.length + 1}`,
+                );
+                setTemplate(saved.id);
+                toast(t('fxg.tplSavedToast', { name: saved.name }));
+              }}
+            >
+              {t('fxg.tplSave')}
+            </button>
+            <button
+              type="button"
+              className="fxg-rebuild"
+              data-act="template-delete"
+              aria-label={t('fxg.tplDelete')}
+              disabled={chosenTemplate === null}
+              onClick={() => {
+                if (!chosenTemplate) return;
+                haptic(HAPTIC.light);
+                store.deleteFxTemplate(chosenTemplate.id);
+                setTemplate('');
+                toast(t('fxg.tplDeleted'));
+              }}
+            >
+              ✕
             </button>
           </div>
           <button type="button" className="fxg-rebuild" data-act="rebuild" onClick={rebuildFromChain}>

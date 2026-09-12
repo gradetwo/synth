@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { Param } from '@/audio/params';
 import { MODULE_IDS, MODULE_META, defaultLayout, moveModule, normalizeLayout } from './layout';
 
 describe('layout model', () => {
@@ -92,6 +93,28 @@ describe('layout model', () => {
     expect(normalizeLayout(null).order).toEqual(MODULE_IDS);
     expect(normalizeLayout('nope').order).toEqual(MODULE_IDS);
     expect(normalizeLayout({ order: 42 }).order).toEqual(MODULE_IDS);
+  });
+
+  it('keeps the effect-graph templates it recognises, and repairs the rest', () => {
+    const layout = normalizeLayout({
+      fxTemplates: [
+        {
+          id: 'mine',
+          name: 'Mine',
+          params: { [Param.FX_CHAIN2]: 1, [Param.FX_REVERB_MODE]: 1, [Param.FX_NODE1_IN1_GAIN]: 50 },
+        },
+        { id: 'mine', name: 'duplicate', params: { [Param.FX_CHAIN1]: 1 } },
+        { id: 'junk', name: 'junk', params: {} },
+      ],
+    });
+    expect(layout.fxTemplates).toHaveLength(1);
+    expect(layout.fxTemplates[0].id).toBe('mine');
+    // The whitelist holds; the gain is clamped.
+    expect(layout.fxTemplates[0].params[Param.FX_CHAIN2]).toBe(1);
+    expect(layout.fxTemplates[0].params[Param.FX_NODE1_IN1_GAIN]).toBe(4);
+    expect(Param.FX_REVERB_MODE in layout.fxTemplates[0].params).toBe(false);
+    // A layout from before the templates existed simply has none.
+    expect(normalizeLayout({}).fxTemplates).toEqual([]);
   });
 
   it('moves a module to an index and clamps out-of-range targets', () => {

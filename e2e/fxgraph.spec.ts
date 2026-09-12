@@ -452,3 +452,87 @@ test('edits a modulation edge from the list view', async ({ page }) => {
   );
   expect(overflow).toBeLessThanOrEqual(1);
 });
+
+/**
+ * P7.3: templates. A template is a routing saved in the workspace, applied to
+ * the patch in one change; the built-ins are always in the list.
+ */
+test('applies a built-in template and keeps the routing across a fresh load', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(400);
+  await openEditor(page);
+
+  const kind = (slot: number) => page.locator('[data-act="kind"][data-node="' + slot + '"]');
+  const in1 = (slot: number) => page.locator('[data-act="in1"][data-node="' + slot + '"]');
+  const toOut = (slot: number) => page.locator('[data-act="toOut"][data-node="' + slot + '"]');
+
+  // The default chain is one delay (node 1) into one reverb (node 2).
+  await expect(kind(0)).toHaveValue('delay');
+  await expect(kind(1)).toHaveValue('reverb');
+  await expect(in1(1)).toHaveValue('2');
+
+  await page.locator('[data-act="template"]').selectOption('fxg:dual-delay');
+  // Two delay nodes side by side, both reading the dry bus and both to the bus.
+  await expect(kind(0)).toHaveValue('delay');
+  await expect(kind(1)).toHaveValue('delay');
+  await expect(in1(1)).toHaveValue('1');
+  await expect(toOut(0)).toBeChecked();
+  await expect(toOut(1)).toBeChecked();
+  // Nodes past the two in use are left unwired, not pointed at a hidden node.
+  await expect(page.locator('[data-act="in1"][data-node="2"]')).toHaveValue('0');
+  await expect(page.locator('.fxg-hint')).toContainText('从左往右');
+
+  // The graph is patch data, so the routing comes back in a fresh load.
+  const { next: view, closeOld } = await freshLoad(page);
+  await view.getByRole('button', { name: /启动音频引擎/ }).click();
+  await closeOld();
+  await view.waitForTimeout(400);
+  await openEditor(view);
+  await expect(view.locator('[data-act="kind"][data-node="1"]')).toHaveValue('delay');
+  await expect(view.locator('[data-act="in1"][data-node="1"]')).toHaveValue('1');
+  await expect(view.locator('[data-act="toOut"][data-node="1"]')).toBeChecked();
+});
+
+test('saves the graph as a template, lists it, and applies it again', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(400);
+  await openEditor(page);
+
+  const kind = (slot: number) => page.locator('[data-act="kind"][data-node="' + slot + '"]');
+  const select = page.locator('[data-act="template"]');
+
+  // A distinctive routing: node 2 becomes the bit-crusher.
+  await kind(1).selectOption('crush');
+  await expect(kind(1)).toHaveValue('crush');
+
+  await clickIn(page.locator('[data-act="template-save"]'));
+  // The saved template appears in the list under its own name.
+  const saved = select.locator('option', { hasText: '模板 1' });
+  await expect(saved).toHaveCount(1);
+  const savedId = await saved.getAttribute('value');
+  expect(savedId).toBeTruthy();
+
+  // Move the graph away from it, then apply the saved one.
+  await kind(1).selectOption('reverb');
+  await expect(kind(1)).toHaveValue('reverb');
+  await select.selectOption(savedId as string);
+  await expect(kind(1)).toHaveValue('crush');
+
+  // The list is workspace data: it survives a fresh load and still applies.
+  const { next: view, closeOld } = await freshLoad(page);
+  await view.getByRole('button', { name: /启动音频引擎/ }).click();
+  await closeOld();
+  await view.waitForTimeout(400);
+  await openEditor(view);
+  const reloaded = view.locator('[data-act="template"]');
+  const option = reloaded.locator('option', { hasText: '模板 1' });
+  await expect(option).toHaveCount(1);
+  const reloadedId = await option.getAttribute('value');
+  await view.locator('[data-act="kind"][data-node="1"]').selectOption('reverb');
+  await expect(view.locator('[data-act="kind"][data-node="1"]')).toHaveValue('reverb');
+  await reloaded.selectOption(reloadedId as string);
+  await expect(view.locator('[data-act="kind"][data-node="1"]')).toHaveValue('crush');
+});
+

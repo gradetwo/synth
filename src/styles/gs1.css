@@ -259,6 +259,12 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
   background:var(--bg-inset);color:var(--txt-2);font:600 9px/1 var(--mono);cursor:pointer;flex:none}
 .fxg-close{min-width:34px;padding:0 8px}
 .fxg-rebuild:hover,.fxg-close:hover{border-color:var(--accent-dim);color:var(--accent)}
+.fxg-rebuild:disabled{opacity:.4;cursor:default}
+/* Graph templates (P7.3): a select plus save/delete, on the header line. */
+.fxg-tpl{display:flex;align-items:center;gap:4px;min-width:0}
+.fxg-tpl-select{height:26px;max-width:170px;min-width:0;border-radius:7px;border:1px solid var(--border);
+  background:var(--bg-inset);color:var(--txt-2);font:600 9px/1 var(--mono);padding:0 3px}
+.fxg-tpl-select:hover{border-color:var(--accent-dim);color:var(--accent)}
 .fxg-hint{padding:8px 12px;font:500 9.5px/1.5 var(--grot);color:var(--txt-dim);
   border-bottom:1px solid var(--line-soft-2)}
 /* In-graph modulation (P7.2): four edge rows, then the canvas draws the same
@@ -336,6 +342,7 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 @media (pointer: coarse){
   .fx-graph-open{height:32px;max-width:160px;font-size:10px}
   .fxg-view button,.fxg-rebuild,.fxg-close{height:40px;min-width:64px;font-size:10px}
+  .fxg-tpl-select{height:40px;max-width:190px;font-size:10px}
   .fxg-kind,.fxg-src{height:40px;font-size:10px}
   .fxg-on,.fxg-par{width:40px;height:40px}
   .fxg-gain{width:110px;height:34px}

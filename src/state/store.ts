@@ -65,6 +65,12 @@ import {
 } from './share';
 import { setLang } from '@/i18n';
 import { parsePatchFile } from './patchfile';
+import {
+  captureFxTemplateParams,
+  findFxTemplate,
+  fxTemplateEntries,
+  type FxTemplate,
+} from './fxtemplates';
 import { SCHEMA_VERSION, mergeKnown, unwrap, wrap } from './persist';
 
 const STORAGE_KEY = 'gs1:state:v1';
@@ -106,6 +112,9 @@ function cloneLayout(layout: LayoutState): LayoutState {
     fxGraphPos: Object.fromEntries(
       Object.entries(layout.fxGraphPos).map(([k, v]) => [k, [...v] as [number, number]]),
     ),
+    // Templates are part of the document history: a saved or deleted one has to
+    // survive an undo like any other workspace change.
+    fxTemplates: layout.fxTemplates.map((template) => ({ ...template, params: { ...template.params } })),
     flowHidden: [...layout.flowHidden],
   };
 }
@@ -178,6 +187,7 @@ export class SynthStore {
   private slots: { a: SynthState | null; b: SynthState | null } = { a: null, b: null };
   private slotFilled = { a: false, b: false };
   private activeSlot: 'a' | 'b' = 'a';
+  private templateSeq = 0;
   private listeners = new Set<() => void>();
   private version = 0;
   private snapshot: Snapshot;
@@ -877,6 +887,59 @@ export class SynthStore {
     this.layout = { ...this.layout, fxGraphPos: {} };
     this.mark();
     this.commit();
+  }
+
+  // ------------------------------------------------------- effect templates
+
+  /** A saved template id that cannot collide with one already in the list. */
+  private nextTemplateId(): string {
+    let id = '';
+    do {
+      id = `fxt-${Date.now().toString(36)}-${this.templateSeq++}`;
+    } while (this.layout.fxTemplates.some((template) => template.id === id));
+    return id;
+  }
+
+  /**
+   * Save the routing that is playing now as a workspace template (P7.3).
+   *
+   * Only the whitelisted graph parameters are captured (`fxtemplates.ts`), so a
+   * template can never carry the timbre along with the wiring.
+   */
+  saveFxTemplate(name: string): FxTemplate {
+    const template: FxTemplate = {
+      id: this.nextTemplateId(),
+      name: name.trim().slice(0, 60) || 'FX',
+      params: captureFxTemplateParams((id) => this.getParam(id)),
+    };
+    this.layout = { ...this.layout, fxTemplates: [...this.layout.fxTemplates, template] };
+    this.mark();
+    this.commit();
+    return template;
+  }
+
+  /**
+   * Apply a built-in or saved template to the active patch.
+   *
+   * One `setParams` call, so the 49 parameters land as a single change: one
+   * notification, one history step, two storage writes — the same shape as a
+   * chain→graph rebuild. Every id outside the whitelist keeps its exact value.
+   */
+  applyFxTemplate(id: string): boolean {
+    const template = findFxTemplate(this.layout.fxTemplates, id);
+    if (!template) return false;
+    this.setParams(fxTemplateEntries(template), { immediate: true });
+    return true;
+  }
+
+  /** Remove a saved template. Built-ins are not in the list, so they survive. */
+  deleteFxTemplate(id: string): boolean {
+    const next = this.layout.fxTemplates.filter((template) => template.id !== id);
+    if (next.length === this.layout.fxTemplates.length) return false;
+    this.layout = { ...this.layout, fxTemplates: next };
+    this.mark();
+    this.commit();
+    return true;
   }
 
   toggleFlowHidden(id: string) {

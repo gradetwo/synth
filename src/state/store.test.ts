@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_PARAMS, Param } from '@/audio/params';
+import { DEFAULT_PARAMS, FX_KINDS, Param, fxKindToInt } from '@/audio/params';
 import { midiLibrary } from '@/midi/library';
 import { FACTORY_PRESETS } from './presets';
 import { SynthStore, store } from './store';
-import { unwrap } from './persist';
+import { findFxTemplate, fxTemplateEntries, isFxTemplateParam } from './fxtemplates';
+import { decodePatch } from './share';
+import { unwrap, wrap } from './persist';
 
 describe('synth store', () => {
   beforeEach(() => {
@@ -195,6 +197,139 @@ describe('synth store', () => {
     expect(store.getSnapshot().state.routes.length).toBe(before + 1);
     store.removeRoute(0);
     expect(store.getSnapshot().state.routes.length).toBe(before);
+  });
+});
+
+describe('effect-graph templates', () => {
+  it('applies a template and leaves every other parameter alone', () => {
+    const s = new SynthStore();
+    s.resetLayout();
+    s.applyPresetById('init');
+    // Values on both sides of the whitelist boundary.
+    s.setParams([
+      [Param.FILTER_CUTOFF, 1234],
+      [Param.FX_DELAY_MIX, 0.42],
+      [Param.FX_DELAY_ON, 0],
+      [Param.OSC1_LEVEL, 0.31],
+    ]);
+    const before = { ...s.getSnapshot().state.params };
+
+    let notified = 0;
+    const stop = s.subscribe(() => {
+      notified += 1;
+    });
+    expect(s.applyFxTemplate('fxg:dual-delay')).toBe(true);
+    stop();
+    // One commit for the whole routing, like a chain→graph rebuild.
+    expect(notified).toBe(1);
+
+    const after = s.getSnapshot().state.params;
+    const template = findFxTemplate([], 'fxg:dual-delay')!;
+    // The graph is exactly the template's, id for id.
+    for (const [id, value] of fxTemplateEntries(template)) {
+      expect(after[id], `id ${id}`).toBe(value);
+    }
+    // Everything outside the whitelist is bit for bit what it was.
+    for (const id of Object.keys(before).map(Number)) {
+      if (isFxTemplateParam(id)) continue;
+      expect(after[id], `id ${id} must not move`).toBe(before[id]);
+    }
+    expect(after[Param.FX_CHAIN1]).toBe(fxKindToInt('delay'));
+    expect(after[Param.FX_CHAIN2]).toBe(fxKindToInt('delay'));
+    expect(after[Param.FX_DELAY_MIX]).toBe(0.42);
+    expect(after[Param.FILTER_CUTOFF]).toBe(1234);
+  });
+
+  it('saves the current routing as a workspace template and recalls it', () => {
+    const s = new SynthStore();
+    s.resetLayout();
+    s.applyPresetById('init');
+    s.setParams(
+      [
+        [Param.FX_GRAPH, 1],
+        [Param.FX_CHAIN2, fxKindToInt('crush')],
+        [Param.FX_NODE3_IN1_GAIN, 0.5],
+      ],
+      { immediate: true },
+    );
+    const saved = s.saveFxTemplate('我的模板');
+    expect(s.getSnapshot().layout.fxTemplates).toHaveLength(1);
+    expect(saved.params[Param.FX_CHAIN2]).toBe(fxKindToInt('crush'));
+
+    // The list is workspace data, so a fresh store reads it back.
+    const reloaded = new SynthStore();
+    const list = reloaded.getSnapshot().layout.fxTemplates;
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe(saved.id);
+    expect(list[0].name).toBe('我的模板');
+    expect(list[0].params[Param.FX_NODE3_IN1_GAIN]).toBeCloseTo(0.5, 6);
+
+    // Change the graph, then recall the template.
+    reloaded.setParam(Param.FX_CHAIN2, fxKindToInt('reverb'));
+    expect(reloaded.applyFxTemplate(saved.id)).toBe(true);
+    expect(reloaded.getParam(Param.FX_CHAIN2)).toBe(fxKindToInt('crush'));
+
+    expect(reloaded.deleteFxTemplate(saved.id)).toBe(true);
+    expect(reloaded.getSnapshot().layout.fxTemplates).toHaveLength(0);
+    // Deleting what is not there, or applying an unknown id, is a no-op.
+    expect(reloaded.deleteFxTemplate(saved.id)).toBe(false);
+    expect(reloaded.applyFxTemplate('nope')).toBe(false);
+  });
+
+  it('repairs a corrupt stored template instead of loading it', () => {
+    localStorage.setItem(
+      'gs1:layout:v1',
+      JSON.stringify(
+        wrap({
+          fxTemplates: [
+            {
+              id: 'bad',
+              name: 'Bad',
+              params: {
+                [Param.FX_REVERB_MODE]: 1, // never in the whitelist
+                [Param.FX_CHAIN1]: 99, // a kind past the end reads as none
+                [Param.FX_NODE1_IN1]: 200, // clamped, then read as an illegal forward edge
+                [Param.FX_NODE1_IN1_GAIN]: 50, // clamped to 4
+              },
+            },
+            { id: 'empty', name: 'Empty', params: { [Param.FILTER_CUTOFF]: 1 } },
+            'nope',
+          ],
+        }),
+      ),
+    );
+    const s = new SynthStore();
+    const list = s.getSnapshot().layout.fxTemplates;
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe('bad');
+    expect(list[0].params[Param.FX_CHAIN1]).toBe(FX_KINDS.length - 1);
+    expect(list[0].params[Param.FX_NODE1_IN1]).toBe(0);
+    expect(list[0].params[Param.FX_NODE1_IN1_GAIN]).toBe(4);
+    expect(Param.FX_REVERB_MODE in list[0].params).toBe(false);
+  });
+
+  it('keeps templates out of a share code while the graph travels as before', () => {
+    const s = new SynthStore();
+    s.resetLayout();
+    s.applyPresetById('init');
+    expect(s.applyFxTemplate('fxg:dual-delay')).toBe(true);
+    const saved = s.saveFxTemplate('share test');
+    const code = s.shareCode();
+    const payload = decodePatch(code);
+    expect(payload).toBeTruthy();
+    // The graph is patch data, so it rides in the code exactly as it always has.
+    expect(payload!.params[Param.FX_GRAPH]).toBe(1);
+    expect(payload!.params[Param.FX_CHAIN1]).toBe(fxKindToInt('delay'));
+    // The template list is workspace data: it is nowhere in the payload.
+    expect(JSON.stringify(payload)).not.toContain(saved.id);
+
+    const other = new SynthStore();
+    other.resetLayout();
+    expect(other.getSnapshot().layout.fxTemplates).toHaveLength(0);
+    expect(other.importPatchCode(code)).toBe(true);
+    expect(other.getParam(Param.FX_CHAIN1)).toBe(fxKindToInt('delay'));
+    // Receiving a patch never imports the sender's template list.
+    expect(other.getSnapshot().layout.fxTemplates).toHaveLength(0);
   });
 });
 
