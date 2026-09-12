@@ -9,15 +9,15 @@
 
 | 维度 | 状态 |
 | :--- | :--- |
-| 引擎 | Rust → wasm32（SIMD + 标量双版本运行时探测）、8 MiB arena 零分配、块 ABI 128–1024、**ABI v8**、参数 137 个 |
-| 合成 | 双振荡器（5 张波表 + 单周期导入 + 采样导入 mipmap 抗混叠）、噪声三色、Unison/SPREAD、双实例 Layer/Split、MPE、微调律（4 律 + .scl）、力度曲线 |
+| 引擎 | Rust → wasm32（SIMD + 标量双版本运行时探测）、8 MiB arena 零分配、块 ABI 128–1024、**ABI v8**、参数 **139** 个 |
+| 合成 | 双振荡器（5 张波表 + 单周期导入 + 采样导入 mipmap 抗混叠）、噪声三色、Unison/SPREAD、**OSC 2 → OSC 1 的 FM 相位调制与 RING 环形调制**、双实例 Layer/Split、MPE、微调律（4 律 + .scl）、力度曲线 |
 | 滤波 | LP/HP/BP/NT（Moog 阶梯）+ CMB 梳状 + FRM 共振峰；每振荡器独立滤波与等功率声像 |
-| 调制 | 每声部 LFO ×2（RETRIG / ONE SHOT）、8 槽调制矩阵、AFTER/RANDOM/KEY/VELO/WHEEL 源 |
+| 调制 | 每声部 LFO ×2（RETRIG / ONE SHOT）、8 槽调制矩阵（目标含 **FM / RING**）、AFTER/RANDOM/KEY/VELO/WHEEL 源 |
 | 效果 | 6 个效果节点 + **前馈路由图**（每节点 2 路输入带增益、扇出、无环）、可重排/并联、乒乓延迟+阻尼、卷积混响（IR 导入，单位能量）、合唱/镶边/移相/过载；**算法混响与四个插入效果每节点一套状态**，延迟与卷积单实例（内存上限） |
 | 工作流 | 多轨分层播放 + 静音/独奏/音量/声像/时间偏移、缩略时间线（点按定位 + 拖拽整形）、钢琴卷帘、录制 + 量化、A/B 循环 + 节拍器 + 预备拍、MIDI 导入/导出（format 1）、WAV/MP3 导出（跟随层混音）、预设 81 个、分享码（**deflate 压缩**，五分钟曲目 ≈1.5 KB）、布局场景、曲库持久化 |
 | 平台 | PWA 离线（内容哈希缓存 + 用户确认更新）、深浅色/高对比、中英文、iPhone/iPad 六视口适配、触屏 ≥44 px |
-| 门禁 | `npm run verify`：clippy（correctness/suspicious/perf）+ Rust **152** + Vitest **311** + lint + build + wasm（ABI/无全局构造/零分配）+ dist + 体积（总 1684.3/1700 KB、初始 JS 153.2/165 KB、CSS 19.0/22 KB、WASM 56.8/230 KB）+ 时域&频域音质 + 负载基准 + DSP 指纹 |
-| E2E | Chromium **104** 项（本地判据）；WebKit/Firefox 由本地 `npm run nightly` 与 CI 的 `nightly` 作业（`on.schedule`）跑 |
+| 门禁 | `npm run verify`：clippy（correctness/suspicious/perf）+ Rust **158** + Vitest **311** + lint + build + wasm（ABI/无全局构造/零分配）+ dist + 体积（总 1684.3/1700 KB、初始 JS 153.2/165 KB、CSS 19.0/22 KB、WASM 56.8/230 KB）+ 时域&频域音质 + 负载基准 + DSP 指纹 |
+| E2E | Chromium **106** 项（本地判据）；WebKit/Firefox 由本地 `npm run nightly` 与 CI 的 `nightly` 作业（`on.schedule`）跑 |
 | 性能 | 密集负载均值 ≈250 µs/块（预算 2667 µs），挂 2 秒 IR 后均值 ≈330 µs、最差块 ≈1.2 ms；六个混响后 arena 仍余 **3603 KB** |
 | 已知取舍 | 延迟/卷积单实例（内存）；`songs.ts` 未按需化；本机 WebKit 只有软件渲染（Weston 1.8 fps、Xvfb 0.7 fps、Docker 不可用），**本地 WebKit 统一走 Weston**（`npm run test:e2e:webkit:wayland`），真机与 CI 是最终判据 |
 
@@ -52,9 +52,10 @@ C 多轨与时间线、B 分层与分享、A 效果路由图（引擎 + 编辑�
 
 ### P6 声音能力（高 / 中高 / 5 批）
 
-**P6.1 FM / PM 与环形调制**（1 批）
-- 要点：OSC2 对 OSC1 的相位调制与环形调制，深度可由 ENV/LFO/矩阵调制；PM 的指数曲线与过深调制时的带限策略。
-- 验收：时域（深度 → 边带数量）+ 频域（载波/边带能量）双域断言；DSP 指纹显式更新。
+**P6.1 FM / PM 与环形调制** — ✅ v1.82.0 完成
+- 已做：`OSC_FM`（OSC 2 → OSC 1 相位调制，平方曲线、满量程 2 个周期）与 `OSC_RING`（环形调制干湿量，`sqrt(l1·l2)` 电平补偿）两个新参数，默认 0；C 桥接层新增 `gs_voice_osc_pm_block`，按样本**放置**载波相位（用 DaisySP 的 `Phase()`/`PhaseInc()`），**不是累加偏移**——累加会把调制信号积分成另一种亮得多的调制，本轮由「与解析解逐谐波比对」的单测当场抓出；调制矩阵新增 `ModDst::Fm` / `ModDst::Ring`，所以包络/LFO/矩阵都能扫它们；OSC 1 模块多了两个旋钮。
+- 验收：Rust 时域 + 频域 6 项（`sin(x + β sin x)` 的贝塞尔边带与解析频谱逐谐波一致、深度→边带数严格单调、环形调制的和/差频与载波/调制器抑制、零点数与电平不变、unison 下有限且有边带、矩阵驱动两项）；`verify-audio` 8 项新门禁经**真 wasm**（含「FM 关闭时二次谐波 −138.8 dB」「环形调制后载波与调制器 0.0%」「FM 下零点数 120 vs 40」）；E2E 2 项（控件可达、分享码往返到空存储的接收方、矩阵目标列表末尾两项）。
+- 指纹：默认参数不变，`npm run test:dsp` 指纹（rms 0.030806 · 12 bands）与 v1.81.0 完全一致，即**旧音色逐样本不变**；新能力由上述门禁单独盯住。
 
 **P6.2 硬同步与子振荡器**（1 批）
 - 要点：OSC2→OSC1 hard sync（同步点抗混叠）、每振荡器一个 sub（−1/−2 八度）、噪声混合量。
@@ -123,7 +124,7 @@ C 多轨与时间线、B 分层与分享、A 效果路由图（引擎 + 编辑�
 | 1 | P8.1 收尾 ✅ v1.79.0 + P8.6 一键发布 | — | 小 |
 | 2 | P5.1 时间线编辑二期 ✅ v1.80.0 | — | 中 |
 | 3 | P8.4 解析器模糊测试 ✅ v1.81.0 | — | 小 |
-| 4 | P6.1 FM/PM + 环形调制 | — | 中 |
+| 4 | P6.1 FM/PM + 环形调制 ✅ v1.82.0 | — | 中 |
 | 5 | P5.2 片段编排 | P5.1 | 中 |
 | 6 | P6.2 硬同步 + sub | — | 中 |
 | 7 | P5.3 tempo map | P5.2 | 中 |

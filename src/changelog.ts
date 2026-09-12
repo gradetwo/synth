@@ -23,6 +23,21 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.82.0',
+    date: '2026-09-12',
+    kind: 'sound',
+    items: [
+      [
+        '**OSC 2 现在可以塑形 OSC 1：FM 相位调制与 RING 环形调制**：OSC 1 模块多了 **FM** 与 **RING** 两个旋钮——FM 是 OSC 2 推动 OSC 1 相位的深度（经典 FM 的明亮、金属味，用 OSC 2 的 PITCH/DETUNE 设“比例”；把 OSC 2 的 LEVEL 关掉就是纯 FM，听不到调制器本身），RING 是把两个振荡器相乘（铃声、边带、非谐音色；两个 LEVEL 决定强度）。两者默认都是 0，所以老音色听起来一模一样。',
+        '**OSC 2 can now shape OSC 1: FM phase modulation and RING ring modulation**: the OSC 1 module gained **FM** and **RING** knobs — FM is how far OSC 2 pushes OSC 1’s phase (the bright, metallic sound of classic FM; set the ratio with OSC 2’s PITCH/DETUNE, and turn OSC 2’s LEVEL down for pure FM where the modulator is inaudible), while RING multiplies the two oscillators (bell tones, sidebands, inharmonic colour; the two LEVELs set how strong it is). Both default to 0, so every existing patch sounds exactly as it did.',
+      ],
+      [
+        '**两者都能被包络、LFO 和调制矩阵驱动**：调制矩阵的目标列表新增 **FM** 与 **RING**，所以“包络扫 FM 深度”就是最经典的 FM 亮度包络；分享码与预设会一起带走这两个参数。',
+        '**Both can be driven by an envelope, an LFO or the modulation matrix**: the matrix’s destination list gained **FM** and **RING**, so “envelope to FM depth” is the classic FM brightness sweep; share codes and presets carry the two parameters with the patch.',
+      ],
+    ],
+  },
+  {
     version: '1.81.0',
     date: '2026-09-12',
     kind: 'fix',
