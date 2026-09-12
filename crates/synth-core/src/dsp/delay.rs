@@ -344,4 +344,52 @@ mod tests {
         assert_eq!(left, [0.5, -0.25]);
         assert_eq!(right, [0.1, 0.2]);
     }
+
+    /// Two instances are two lines (P7.1): their times, taps and feedback are
+    /// each their own, so running one cannot move or colour the other.
+    #[test]
+    fn two_instances_do_not_share_time_or_feedback() {
+        let frames = 24_000;
+        let short = DelayParams { time_s: 0.05, feedback: 0.0, mix: 1.0, damp: 0.0, ping_pong: false };
+        let long = DelayParams { time_s: 0.2, feedback: 0.7, mix: 1.0, damp: 0.0, ping_pong: false };
+
+        let render = |params: DelayParams| {
+            let mut d = delay(params.time_s, params.feedback, params.mix, params.damp, params.ping_pong);
+            let mut left = vec![0.0f32; frames];
+            let mut right = vec![0.0f32; frames];
+            left[0] = 1.0;
+            right[0] = 1.0;
+            d.process(params, &mut left, &mut right, frames);
+            (left, right)
+        };
+
+        // Each instance on its own, then the two in one pass.
+        let (short_alone, _) = render(short);
+        let (long_alone, _) = render(long);
+        let mut a = delay(short.time_s, short.feedback, short.mix, short.damp, short.ping_pong);
+        let mut b = delay(long.time_s, long.feedback, long.mix, long.damp, long.ping_pong);
+        let mut together_short = vec![0.0f32; frames];
+        let mut together_long = vec![0.0f32; frames];
+        let mut r = vec![0.0f32; frames];
+        together_short[0] = 1.0;
+        together_long[0] = 1.0;
+        a.process(short, &mut together_short, &mut r, frames);
+        b.process(long, &mut together_long, &mut r, frames);
+
+        assert_eq!(
+            together_short, short_alone,
+            "the second instance changed the first one's output"
+        );
+        assert_eq!(
+            together_long, long_alone,
+            "the first instance changed the second one's output"
+        );
+        // …and each echo lands at its own time, with its own repeat count.
+        let short_tap = (short.time_s * SR) as usize;
+        let long_tap = (long.time_s * SR) as usize;
+        assert!(short_alone[short_tap].abs() > 0.9, "the 50 ms echo should be there");
+        assert!(short_alone[short_tap * 2].abs() < 1e-4, "feedback 0 makes exactly one echo");
+        assert!(long_alone[long_tap].abs() > 0.05, "the 200 ms echo should be there");
+        assert!(long_alone[long_tap * 2].abs() > 0.05, "feedback 0.7 keeps repeating");
+    }
 }

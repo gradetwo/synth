@@ -207,7 +207,7 @@ test('picks a wire from the keyboard and edits its gain', async ({ page }) => {
   await expect(page.locator('[data-act="gain1"][data-node="1"]')).not.toHaveValue('100');
 });
 
-test('allows a second instance of an effect, and blocks the ones that cannot', async ({ page }) => {
+test('runs two delay nodes side by side and refuses a third', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /启动音频引擎/ }).click();
   await page.waitForTimeout(400);
@@ -216,20 +216,59 @@ test('allows a second instance of an effect, and blocks the ones that cannot', a
   const kind = (slot: number) => page.locator('[data-act="kind"][data-node="' + slot + '"]');
   const option = (slot: number, value: string) => kind(slot).locator(`option[value="${value}"]`);
 
-  // The default chain has one of each. Make node 2 a second chorus: allowed,
-  // because every effect node has its own state for it.
+  // The default chain has one delay in node 1 and one reverb in node 2. Node 2
+  // may now be a second delay: every delay node owns its own line (P7.1).
+  await expect(kind(0)).toHaveValue('delay');
+  await kind(1).selectOption('delay');
+  await expect(kind(1)).toHaveValue('delay');
+  await expect(option(1, 'delay')).toBeEnabled();
+  // The pool holds two lines, so a third is refused — and the option says why.
+  await expect(option(2, 'delay')).toBeDisabled();
+  await expect(option(2, 'delay')).toHaveText(/池已满/);
+  // The hint reports the pool and the time left, which is now zero.
+  await expect(page.locator('.fxg-hint')).toContainText('延迟池 2/2');
+  await expect(page.locator('.fxg-hint')).toContainText('剩余可分配 0 s');
+
+  // Both cards are editable and carry their own on/off and mix controls.
+  const on = (slot: number) => page.locator('[data-act="on"][data-node="' + slot + '"]');
+  const mix = (slot: number) => page.locator('[data-act="mix"][data-node="' + slot + '"]');
+  await expect(on(0)).toBeVisible();
+  await expect(on(1)).toBeVisible();
+  await clickIn(on(1));
+  await expect(on(1)).toHaveAttribute('aria-pressed', 'true');
+  await mix(1).fill('70');
+  await expect(mix(1)).toHaveValue('70');
+
+  // Patch data, so both nodes come back in a fresh load with the pool still full.
+  const { next: view, closeOld } = await freshLoad(page);
+  await view.getByRole('button', { name: /启动音频引擎/ }).click();
+  await closeOld();
+  await view.waitForTimeout(400);
+  await openEditor(view);
+  await expect(view.locator('[data-act="kind"][data-node="0"]')).toHaveValue('delay');
+  await expect(view.locator('[data-act="kind"][data-node="1"]')).toHaveValue('delay');
+  await expect(view.locator('[data-act="mix"][data-node="1"]')).toHaveValue('70');
+  await expect(
+    view.locator('[data-act="kind"][data-node="2"] option[value="delay"]'),
+  ).toBeDisabled();
+});
+
+test('allows a second instance of an effect that has its own state', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(400);
+  await openEditor(page);
+
+  const kind = (slot: number) => page.locator('[data-act="kind"][data-node="' + slot + '"]');
+  const option = (slot: number, value: string) => kind(slot).locator(`option[value="${value}"]`);
+
+  // A second chorus, straight away: every node has its own chorus state.
   await kind(1).selectOption('chorus');
   await expect(kind(1)).toHaveValue('chorus');
   await expect(option(1, 'chorus')).toBeEnabled();
-
-  // A second delay is not on offer: the delay line is one instance, so the
-  // engine would pass it through (and the option says so). Node 1 is the delay
-  // in the default chain, so node 2's copy of the option is the one to check.
-  await expect(kind(0)).toHaveValue('delay');
-  await expect(option(1, 'delay')).toBeDisabled();
-  await expect(option(1, 'delay')).toHaveText(/已占用/);
-  // The kind a node already is stays selectable, so it can be left alone.
-  await expect(option(0, 'delay')).toBeEnabled();
+  // The algorithmic reverb is pooled with the impulse-response one, so two
+  // reverb nodes are fine while no response is loaded.
+  await expect(option(1, 'reverb')).toBeEnabled();
 });
 
 test('edits the graph from the list view, which is what phones get', async ({ page }) => {

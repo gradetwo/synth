@@ -10,8 +10,8 @@ use crate::dsp::adsr::Adsr;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::simd;
 use crate::dsp::comb::CombFilter;
-use crate::dsp::convolution::{Convolver, IrError};
-use crate::dsp::delay::{Delay, DelayParams};
+use crate::dsp::convolution::{Convolver, IrError, IrSpectra};
+use crate::dsp::delay::{Delay, DelayParams, MAX_DELAY_SECONDS};
 use crate::dsp::ladder::LadderFilter;
 use crate::dsp::noise::NoiseGen;
 use crate::dsp::oversample::{Oversampler2x, OS_LATENCY, OS_TAPS};
@@ -144,6 +144,20 @@ const LOOKAHEAD: usize = 128;
 const LIMIT_RELEASE_S: f32 = 0.15;
 /// Peak-detector hold: how long the limiter remembers a transient.
 const LIMIT_PEAK_HOLD_S: f32 = 0.05;
+
+/// How many delay lines and convolvers the arena holds at once (P7.1).
+///
+/// The delay pool is sized `instances × MAX_DELAY_SECONDS` (768 KB each) and the
+/// convolution pool one FDL per instance (445 KB each) over a single shared set
+/// of IR partition spectra. Two of each is what the routing graph's templates
+/// need (a double delay, a parallel reverb) while leaving ~2.3 MiB of arena free
+/// for the wavetable, sample and response imports — the pre-research numbers are
+/// in `docs/notes/fx-multi-instance.md`. Both pools are allocated once in
+/// [`Engine::init`] so a chain edit never allocates on the audio thread.
+pub const DELAY_INSTANCES: usize = 2;
+pub const CONV_INSTANCES: usize = 2;
+/// No instance assigned to a node (the pool was full).
+const NO_INSTANCE: u8 = u8::MAX;
 
 /// Frequency of a note number with an explicit master tune and tuning table.
 #[inline]
@@ -355,20 +369,31 @@ pub struct Engine {
     bends: [f32; crate::params::TUNING_NOTES],
     /// One algorithmic reverb per effect node: the graph can put a reverb in
     /// two places, and sharing one state would make them cross-talk. The
-    /// impulse-response engine is a single instance (see `convolver`).
+    /// impulse-response engine has its own pool (`convolvers`) over the shared
+    /// IR spectra (`ir`).
     reverbs: Vec<Reverb>,
     /// Bit-crusher and shaping EQ state (P6.4), one set per effect node. Both
     /// are fixed-size plain-Rust structs, so the pool costs nothing on the
     /// audio thread and two nodes never share a filter.
     crushers: [BitCrusher; FX_SLOTS],
     eqs: [ShapingEq; FX_SLOTS],
-    /// Whether this block has already used the single-instance effects. The
-    /// delay line (768 KB) and the convolver (787 KB) do not fit in the arena
-    /// six times over, so a second node of those kinds passes its input through
-    /// instead of quietly sharing — and sometimes corrupting — the first one's
-    /// state. The editor does not offer a duplicate either (see `fxchain`).
-    fx_delay_used: bool,
-    fx_conv_used: bool,
+    /// Delay lines, one per node that can have one (P7.1). `instances ×
+    /// MAX_DELAY_SECONDS`, allocated once in `init`; a node with no line left
+    /// passes its input through (the editor disables that choice instead).
+    delays: Vec<Delay>,
+    /// Which delay instance each node drives, or [`NO_INSTANCE`]. Set on the
+    /// message path by [`Engine::sync_fx_pools`], read by the render loop.
+    delay_of: [u8; FX_SLOTS],
+    /// Convolution nodes, each with its own frequency-domain delay line.
+    convolvers: Vec<Convolver>,
+    conv_of: [u8; FX_SLOTS],
+    /// How many instances of each pool the current patch uses (for the editor's
+    /// "remaining delay time" readout).
+    delay_used: usize,
+    conv_used: usize,
+    /// The imported impulse response: partition spectra, shared read-only by
+    /// every convolution node, so all of them ring in the same room.
+    ir: IrSpectra,
     /// One comb resonator per voice, used by the COMB filter type.
     combs: [CombFilter; MAX_VOICES],
     pitch_bend: f32,
@@ -409,10 +434,6 @@ pub struct Engine {
     pub nan_events: u32,
     spectrum_counter: u32,
     env_dirty: bool,
-    /// Stereo delay with ping-pong and damping (replaces the vendored one).
-    delay: Delay,
-    /// Impulse-response reverb: the second engine behind the reverb section.
-    convolver: Convolver,
     /// Where an imported impulse response is staged before analysis.
     ir_scratch: Vec<f32>,
     /// The imported sample, if any (A). Like the wavetable it is instrument
@@ -507,8 +528,13 @@ impl Engine {
             reverbs: Vec::new(),
             crushers: [BitCrusher::new(); FX_SLOTS],
             eqs: [ShapingEq::new(); FX_SLOTS],
-            fx_delay_used: false,
-            fx_conv_used: false,
+            delays: Vec::new(),
+            delay_of: [NO_INSTANCE; FX_SLOTS],
+            convolvers: Vec::new(),
+            conv_of: [NO_INSTANCE; FX_SLOTS],
+            delay_used: 0,
+            conv_used: 0,
+            ir: IrSpectra::new(),
             combs: [const { CombFilter::new() }; MAX_VOICES],
             pitch_bend: 0.0,
             mod_wheel: 0.0,
@@ -535,8 +561,6 @@ impl Engine {
             nan_events: 0,
             spectrum_counter: 0,
             env_dirty: true,
-            delay: Delay::new(),
-            convolver: Convolver::new(),
             ir_scratch: Vec::new(),
             user_sample: Sample::new(),
             sample_scratch: Vec::new(),
@@ -587,8 +611,25 @@ impl Engine {
         for eq in self.eqs.iter_mut() {
             eq.reset();
         }
-        self.delay.setup(self.sample_rate);
-        self.convolver.prepare();
+        // The delay pool (P7.1) is allocated once here, on the message path, so
+        // changing a node's kind in the routing graph never allocates on the
+        // audio thread. `resize_with`/`setup` reuse the memory across re-inits,
+        // so a restart neither grows nor fragments the arena.
+        if self.delays.len() != DELAY_INSTANCES {
+            self.delays.clear();
+            self.delays.resize_with(DELAY_INSTANCES, Delay::new);
+        }
+        for delay in self.delays.iter_mut() {
+            delay.setup(self.sample_rate);
+        }
+        if self.convolvers.len() != CONV_INSTANCES {
+            self.convolvers.clear();
+            self.convolvers.resize_with(CONV_INSTANCES, Convolver::new);
+        }
+        // The convolution buffers (the shared IR spectra and one delay line per
+        // node, ~2 MiB together) are allocated on the first response import
+        // instead — a true message path — so a patch that never loads a response
+        // pays none of it. A node with no buffers simply never runs.
         // `resize`, not a fresh allocation: the host can re-init, and the arena
         // never grows (see the convolver's response buffer for the same reason).
         // P6.5's filter path runs on 2x blocks, and the oversampler keeps a
@@ -685,7 +726,15 @@ impl Engine {
         self.peak_r = 0.0;
         self.nan_events = 0;
         self.env_dirty = true;
-        self.delay.reset();
+        for delay in self.delays.iter_mut() {
+            delay.reset();
+        }
+        for convolver in self.convolvers.iter_mut() {
+            convolver.reset();
+        }
+        // The chain (or a patch) may already name delay/convolution nodes: point
+        // them at their instances before the first block runs.
+        self.sync_fx_pools();
         self.initialised = true;
     }
 
@@ -790,6 +839,12 @@ impl Engine {
         {
             self.apply_polyphony_cap();
         }
+        if matches!(param_id, id::FX_CHAIN1..=id::FX_CHAIN6 | id::FX_REVERB_MODE) {
+            // A node's kind decides which delay line or convolver it drives
+            // (P7.1). The pools are already allocated (`init`), so this is a
+            // six-slot lookup and never touches the arena.
+            self.sync_fx_pools();
+        }
         if mode_changed {
             // Switching polyphony model: release everything cleanly.
             self.mono_len = 0;
@@ -885,23 +940,45 @@ impl Engine {
     }
 
     /// Analyse a staged impulse response. Returns 0 on success, or the numeric
-    /// [`IrError`] code (1 = too short, 2 = silent, 3 = not finite).
+    /// [`IrError`] code (1 = too short, 2 = silent, 3 = not finite, 4 = the arena
+    /// cannot hold the partition spectra).
     pub fn import_ir(&mut self, len: usize) -> i32 {
         let len = len.min(self.ir_scratch.len());
-        match self.convolver.set_ir(&self.ir_scratch[..len]) {
-            Ok(()) => 0,
+        // The convolution nodes' own delay lines are allocated here, with the
+        // response: a patch that never loads one never pays for them, and this
+        // is the message path rather than the render loop.
+        for convolver in self.convolvers.iter_mut() {
+            if !convolver.prepare() {
+                return 4;
+            }
+        }
+        match self.ir.set_ir(&self.ir_scratch[..len]) {
+            Ok(()) => {
+                // Every node's delay line now refers to a different response:
+                // drop the old tail rather than mixing two rooms.
+                for convolver in self.convolvers.iter_mut() {
+                    convolver.reset();
+                }
+                self.sync_fx_pools();
+                0
+            }
             Err(IrError::TooShort) => 1,
             Err(IrError::Silent) => 2,
             Err(IrError::NotFinite) => 3,
+            Err(IrError::NoMemory) => 4,
         }
     }
 
     pub fn clear_ir(&mut self) {
-        self.convolver.clear();
+        self.ir.clear();
+        for convolver in self.convolvers.iter_mut() {
+            convolver.reset();
+        }
+        self.sync_fx_pools();
     }
 
     pub fn has_ir(&self) -> bool {
-        self.convolver.has_ir()
+        self.ir.has_ir()
     }
 
     pub fn has_wavetable(&self) -> bool {
@@ -2476,8 +2553,10 @@ impl Engine {
                     // tempo, time or damping is picked up without a setter round
                     // trip. When it is off the wet mix is zero, which is exactly
                     // a bypass (the line keeps running so its tail does not pop
-                    // back when it is switched on again).
-                    self.delay.process(
+                    // back when it is switched on again). Each position drives
+                    // its own line (P7.1); one with no line left passes through.
+                    let Some(instance) = self.delay_for(slot) else { continue };
+                    self.delays[instance].process(
                         DelayParams {
                             time_s: self.params.delay_time_seconds(),
                             feedback: fx.delay_fb,
@@ -2492,15 +2571,20 @@ impl Engine {
                 }
                 FxKind::Reverb => {
                     let mix = if fx.reverb_on { fx.reverb_mix } else { 0.0 };
-                    if fx.reverb_mode == 1 && self.convolver.has_ir() {
+                    if fx.reverb_mode == 1 && self.ir.has_ir() {
                         // The imported response, trimmed so its level sits where
-                        // the patch expects the reverb to sit.
-                        self.convolver.process(
-                            &mut self.fx_l[..frames],
-                            &mut self.fx_r[..frames],
-                            frames,
-                            mix * fx.conv_trim,
-                        );
+                        // the patch expects the reverb to sit. Every convolution
+                        // node reads the shared spectra and keeps its own tail.
+                        if let Some(instance) = self.conv_for(slot) {
+                            let ir = &self.ir;
+                            self.convolvers[instance].process(
+                                ir,
+                                &mut self.fx_l[..frames],
+                                &mut self.fx_r[..frames],
+                                frames,
+                                mix * fx.conv_trim,
+                            );
+                        }
                     } else {
                         // Damped, modulated and with a pre-delay, which the old
                         // Soundpipe `revsc` could not do.
@@ -2617,6 +2701,69 @@ impl Engine {
         FX_SLOTS
     }
 
+    /// How many delay lines the pool holds, and how many the patch uses (P7.1).
+    /// The editor turns the pair into "how much delay time is still shareable".
+    pub fn delay_pool(&self) -> (usize, usize) {
+        (self.delays.len(), self.delay_used)
+    }
+
+    /// How many convolution nodes the pool holds, and how many the patch uses.
+    pub fn conv_pool(&self) -> (usize, usize) {
+        (self.convolvers.len(), self.conv_used)
+    }
+
+    /// Longest delay one instance can produce, in seconds.
+    pub fn delay_max_seconds(&self) -> f32 {
+        self.delays.first().map(Delay::max_seconds).unwrap_or(MAX_DELAY_SECONDS)
+    }
+
+    /// Point every node that needs one at its own delay line / convolver
+    /// (P7.1). Nodes take instances in slot order, so a patch with a single
+    /// delay (or a single convolution reverb) always gets instance 0 and renders
+    /// exactly as it did before the pool existed.
+    ///
+    /// Message path only, and allocation free: the pools are sized by `init`.
+    /// The node kinds arrive as AudioParams, which the worklet pushes on every
+    /// block, so this is called on every block; the scan is six slots long.
+    fn sync_fx_pools(&mut self) {
+        self.delay_of = [NO_INSTANCE; FX_SLOTS];
+        self.conv_of = [NO_INSTANCE; FX_SLOTS];
+        // A reverb node convolves only when the whole reverb section is in
+        // impulse-response mode and a response is actually loaded.
+        let convolve = self.params.fx.reverb_mode == 1 && self.ir.has_ir();
+        let mut delays = 0usize;
+        let mut convs = 0usize;
+        for slot in 0..FX_SLOTS {
+            match self.params.fx.chain[slot] {
+                FxKind::Delay if delays < self.delays.len() => {
+                    self.delay_of[slot] = delays as u8;
+                    delays += 1;
+                }
+                FxKind::Reverb if convolve && convs < self.convolvers.len() => {
+                    self.conv_of[slot] = convs as u8;
+                    convs += 1;
+                }
+                _ => {}
+            }
+        }
+        self.delay_used = delays;
+        self.conv_used = convs;
+    }
+
+    /// The delay instance a node drives, if it has one (the pool may be full).
+    #[inline]
+    fn delay_for(&self, slot: usize) -> Option<usize> {
+        let index = self.delay_of[slot] as usize;
+        (index < self.delays.len()).then_some(index)
+    }
+
+    /// The convolver a node drives, if it has one.
+    #[inline]
+    fn conv_for(&self, slot: usize) -> Option<usize> {
+        let index = self.conv_of[slot] as usize;
+        (index < self.convolvers.len()).then_some(index)
+    }
+
     /// Seed the routing graph from the chain that is set now: node 1 reads the
     /// dry bus, every later node reads the one before it, and the last node that
     /// actually runs feeds the mix bus. Turning the graph on after this sounds
@@ -2655,8 +2802,6 @@ impl Engine {
     /// nothing is routed to the mix bus the effect section is silent, which is
     /// what an empty patch should be.
     fn apply_fx_graph(&mut self, frames: usize) {
-        self.fx_delay_used = false;
-        self.fx_conv_used = false;
         for slot in 0..FX_SLOTS {
             self.mix_node_input(slot, frames);
             self.render_fx_node(slot, frames);
@@ -2723,12 +2868,11 @@ impl Engine {
         match kind {
             FxKind::None => {}
             FxKind::Delay => {
-                // One delay line exists, so only the first delay node in the
-                // block drives it; a second passes its input through.
-                if self.fx_delay_used {
-                    return;
-                }
-                self.fx_delay_used = true;
+                // Each delay node drives its own line (P7.1). A node beyond the
+                // pool's capacity has none and passes its input through, which
+                // the editor does not offer: the choice is disabled with the
+                // reason instead.
+                let Some(instance) = self.delay_for(slot) else { return };
                 // Runs even when it is off (mix 0), so the line keeps moving and
                 // switching it back on does not replay a stale tail.
                 let params = DelayParams {
@@ -2738,7 +2882,7 @@ impl Engine {
                     damp: fx.delay_damp,
                     ping_pong: fx.delay_ping_pong,
                 };
-                self.delay.process(
+                self.delays[instance].process(
                     params,
                     &mut self.graph_node_l[base..base + frames],
                     &mut self.graph_node_r[base..base + frames],
@@ -2747,19 +2891,19 @@ impl Engine {
             }
             FxKind::Reverb => {
                 let mix = if fx.reverb_on { fx.reverb_mix } else { 0.0 };
-                if fx.reverb_mode == 1 && self.convolver.has_ir() {
-                    // Same rule as the delay: the imported response is one
-                    // instance, so the first such node wins.
-                    if self.fx_conv_used {
-                        return;
+                if fx.reverb_mode == 1 && self.ir.has_ir() {
+                    // Two convolution nodes share the response's partition
+                    // spectra but never a delay line, so their tails stay apart.
+                    if let Some(instance) = self.conv_for(slot) {
+                        let ir = &self.ir;
+                        self.convolvers[instance].process(
+                            ir,
+                            &mut self.graph_node_l[base..base + frames],
+                            &mut self.graph_node_r[base..base + frames],
+                            frames,
+                            mix * fx.conv_trim,
+                        );
                     }
-                    self.fx_conv_used = true;
-                    self.convolver.process(
-                        &mut self.graph_node_l[base..base + frames],
-                        &mut self.graph_node_r[base..base + frames],
-                        frames,
-                        mix * fx.conv_trim,
-                    );
                 } else {
                     self.reverbs[slot].set_params(ReverbParams {
                         size: if fx.reverb_on { fx.reverb_size } else { 0.0 },
@@ -3372,51 +3516,230 @@ mod tests {
         assert!(worst < 1e-4, "the two reverb nodes did not sum: worst {worst}");
     }
 
-    /// The delay line and the convolver are single instances (their memory does
-    /// not fit six times over), so a second node of those kinds passes its input
-    /// through rather than sharing a line with the first: the sound must not
-    /// change, and nothing may blow up.
+    /// Build a two-node effect graph: each node reads the dry bus (when `fed`)
+    /// and reaches the mix bus. A node whose input is left unwired processes
+    /// silence, which is how the cross-talk tests isolate one node.
+    fn two_node_graph(
+        nodes: [FxKind; 2],
+        fed: [bool; 2],
+        configure: &mut dyn FnMut(&mut Engine),
+    ) -> Box<Engine> {
+        let mut e = new_engine(8);
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.002);
+        e.set_param(id::ENV_DECAY, 0.3);
+        e.set_param(id::ENV_SUSTAIN, 0.7);
+        e.set_param(id::LFO_ON, 0.0);
+        // Far below the lookahead limiter: these tests are about state, and a
+        // limiter is a nonlinearity that would hide a sum.
+        e.set_param(id::MASTER_VOLUME, 0.2);
+        e.set_param(id::TEMPO, 120.0);
+        e.set_param(id::FX_REVERB_ON, 0.0);
+        e.set_param(id::FX_DELAY_ON, 0.0);
+        e.set_param(id::FX_GRAPH, 1.0);
+        clear_node_routes(&mut e);
+        // The defaults wire every position to the previous one; these tests
+        // state their own graph, so disconnect every input first.
+        for slot in 0..FX_SLOTS {
+            set_graph_input(&mut e, slot, 0, 0, 0.0);
+            set_graph_input(&mut e, slot, 1, 0, 0.0);
+        }
+        configure(&mut e);
+        for (slot, kind) in nodes.iter().enumerate() {
+            let code = match kind {
+                FxKind::None => 0.0,
+                FxKind::Delay => 1.0,
+                FxKind::Reverb => 2.0,
+                _ => unreachable!("this helper builds delay/reverb tests"),
+            };
+            e.set_param(id::FX_CHAIN1 + slot as u32, code);
+            if fed[slot] {
+                set_graph_input(&mut e, slot, 0, GRAPH_DRY, 1.0);
+            }
+            route_node(&mut e, slot, 1.0);
+        }
+        e
+    }
+
+    /// P7.1: two delay nodes in the graph are two delay lines. The second is no
+    /// longer a pass-through, and neither node can see the other's line.
     #[test]
-    fn duplicate_delay_and_ir_nodes_pass_through() {
+    fn two_delay_nodes_drive_their_own_lines() {
         let _guard = lock_engine();
-        // Node 1 is a delay either way; node 2 is an empty position (which is a
-        // pass-through) or a second delay node. Both reach the output, so with
-        // the rule the two runs are identical: the duplicate passes its input
-        // through instead of driving the same delay line a second time.
-        let build = |duplicate: bool| {
-            let mut e = fx_test_engine([FxKind::None; FX_SLOTS], &[]);
-            e.set_param(id::MASTER_VOLUME, 0.1);
-            e.set_param(id::FX_GRAPH, 1.0);
-            clear_node_routes(&mut e);
+        let mut configure = |e: &mut Engine| {
             e.set_param(id::FX_DELAY_ON, 1.0);
             e.set_param(id::FX_DELAY_MIX, 0.5);
             e.set_param(id::FX_DELAY_FB, 0.3);
-            e.set_param(id::FX_CHAIN1, 1.0);
-            set_graph_input(&mut e, 0, 0, GRAPH_DRY, 1.0);
-            route_node(&mut e, 0, 1.0);
-            e.set_param(id::FX_CHAIN2, if duplicate { 1.0 } else { 0.0 });
-            set_graph_input(&mut e, 1, 0, GRAPH_DRY, 1.0);
-            route_node(&mut e, 1, 1.0);
-            render_all(&mut e, 60, 25)
+            // 1/16 at 120 BPM = 125 ms, so several repeats land in the window.
+            e.set_param(id::FX_DELAY_SYNC, 3.0);
         };
-        let pass_through = build(false);
-        let with_duplicate = build(true);
+        let mut render = |nodes: [FxKind; 2], fed: [bool; 2]| {
+            let mut e = two_node_graph(nodes, fed, &mut configure);
+            let output = render_all(&mut e, 69, 400);
+            (e, output)
+        };
+
+        // Reference: one delay node, fed.
+        let (_, (single, _)) = render([FxKind::Delay, FxKind::None], [true, false]);
         assert!(
-            pass_through.0.iter().any(|v| v.abs() > 0.01),
+            single.iter().any(|v| v.abs() > 0.01),
             "nothing rendered: peak {}",
-            pass_through.0.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+            single.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+        );
+
+        // Two fed delay nodes: both own a line, so the result is the sum of two
+        // independent nodes — not the single node plus its dry passthrough.
+        let (two_engine, (two, two_r)) = render([FxKind::Delay, FxKind::Delay], [true, true]);
+        assert_eq!(
+            two_engine.delay_pool(),
+            (DELAY_INSTANCES, 2),
+            "both delay nodes should own an instance"
         );
         assert!(
-            with_duplicate.0.iter().chain(with_duplicate.1.iter()).all(|v| v.is_finite()),
-            "a duplicate delay node produced a non-finite sample"
+            two.iter().chain(two_r.iter()).all(|v| v.is_finite()),
+            "a two-delay graph produced a non-finite sample"
         );
-        let worst = pass_through
-            .0
-            .iter()
-            .zip(with_duplicate.0.iter())
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0f32, f32::max);
-        assert!(worst < 1e-4, "the duplicate changed the sound by {worst}");
+        let doubled: Vec<f32> = single.iter().map(|v| v * 2.0).collect();
+        let sum_error = worst_difference(&two, &doubled);
+        assert!(
+            sum_error < 1e-4,
+            "the two delay nodes did not sum as two independent lines: worst {sum_error}"
+        );
+        let passthrough_difference = worst_difference(&two, &single);
+        assert!(
+            passthrough_difference > 1e-3,
+            "the second delay node behaved like a pass-through: worst {passthrough_difference}"
+        );
+
+        // Only the *second* node is fed. If the two shared one line, the first
+        // would read the tail the second wrote and emit it.
+        let (_, (cross, _)) = render([FxKind::Delay, FxKind::Delay], [false, true]);
+        let cross_talk = worst_difference(&cross, &single);
+        assert!(
+            cross_talk < 1e-5,
+            "the silent delay node picked up the other node's tail: worst {cross_talk}"
+        );
+    }
+
+    /// P7.1: the pool is the limit. A node past it has no line and passes its
+    /// input through — the editor is what refuses the choice, with the reason.
+    #[test]
+    fn a_delay_node_beyond_the_pool_passes_through() {
+        let _guard = lock_engine();
+        let build = |third: FxKind| {
+            let mut e = new_engine(8);
+            e.set_param(id::OSC1_ON, 1.0);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::FILTER_CUTOFF, 18000.0);
+            e.set_param(id::FILTER_ENV_AMT, 0.0);
+            e.set_param(id::ENV_ATTACK, 0.002);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::LFO_ON, 0.0);
+            e.set_param(id::MASTER_VOLUME, 0.2);
+            e.set_param(id::TEMPO, 120.0);
+            e.set_param(id::FX_REVERB_ON, 0.0);
+            e.set_param(id::FX_DELAY_ON, 1.0);
+            e.set_param(id::FX_DELAY_MIX, 0.5);
+            e.set_param(id::FX_DELAY_FB, 0.3);
+            e.set_param(id::FX_DELAY_SYNC, 3.0);
+            e.set_param(id::FX_GRAPH, 1.0);
+            clear_node_routes(&mut e);
+            for slot in 0..FX_SLOTS {
+                set_graph_input(&mut e, slot, 0, 0, 0.0);
+                set_graph_input(&mut e, slot, 1, 0, 0.0);
+            }
+            // Two delay nodes fill the pool; the last slot is the experiment: a
+            // third delay node (which has no line left), or nothing.
+            for slot in [0usize, 1, FX_SLOTS - 1] {
+                e.set_param(id::FX_CHAIN1 + slot as u32, 1.0);
+                set_graph_input(&mut e, slot, 0, GRAPH_DRY, 1.0);
+                route_node(&mut e, slot, 1.0);
+            }
+            e.set_param(
+                id::FX_CHAIN1 + (FX_SLOTS - 1) as u32,
+                if third == FxKind::None { 0.0 } else { 1.0 },
+            );
+            e
+        };
+        // More delay nodes than the pool has lines: the pool reports itself
+        // full, and the extra node adds no tail of its own.
+        let mut over = build(FxKind::Delay);
+        assert_eq!(
+            over.delay_pool(),
+            (DELAY_INSTANCES, DELAY_INSTANCES),
+            "a patch past the pool must report the pool as full"
+        );
+        let (with_extra, _) = render_all(&mut over, 69, 200);
+
+        // The same patch with the last position empty: an empty position passes
+        // its input through, so the two runs have to be identical.
+        let mut empty = build(FxKind::None);
+        assert_eq!(empty.delay_pool(), (DELAY_INSTANCES, DELAY_INSTANCES));
+        let (without_extra, _) = render_all(&mut empty, 69, 200);
+
+        assert!(
+            without_extra.iter().any(|v| v.abs() > 0.01),
+            "nothing rendered: peak {}",
+            without_extra.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+        );
+        let worst = worst_difference(&with_extra, &without_extra);
+        assert!(worst < 1e-6, "a node past the pool did not pass through: worst {worst}");
+    }
+
+    /// Two convolution nodes over one imported response: the partition spectra
+    /// are shared, so both ring in the same room — and each keeps its own delay
+    /// line, so neither tail leaks into the other.
+    #[test]
+    fn two_convolution_nodes_share_the_response_and_keep_their_tails() {
+        let _guard = lock_engine();
+        let ir = resonant_ir(3000.0, 2.0, 24_000);
+        let mut configure = move |e: &mut Engine| {
+            e.set_param(id::FX_REVERB_ON, 1.0);
+            e.set_param(id::FX_REVERB_MIX, 1.0);
+            e.set_param(id::FX_REVERB_MODE, 1.0);
+            e.set_param(id::FX_CONV_TRIM, 1.0);
+            assert_eq!(import_ir(e, &ir), 0, "the response should be accepted");
+        };
+        let mut render = |nodes: [FxKind; 2], fed: [bool; 2]| {
+            let mut e = two_node_graph(nodes, fed, &mut configure);
+            let output = render_all(&mut e, 69, 400);
+            (e, output)
+        };
+
+        let (_, (single, _)) = render([FxKind::Reverb, FxKind::None], [true, false]);
+        assert!(
+            single.iter().any(|v| v.abs() > 1e-4),
+            "nothing rendered: peak {}",
+            single.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+        );
+
+        let (both_engine, (both, _)) = render([FxKind::Reverb, FxKind::Reverb], [true, true]);
+        assert_eq!(
+            both_engine.conv_pool(),
+            (CONV_INSTANCES, 2),
+            "both reverb nodes should convolve"
+        );
+        let doubled: Vec<f32> = single.iter().map(|v| v * 2.0).collect();
+        let sum_error = worst_difference(&both, &doubled);
+        assert!(sum_error < 1e-4, "the two convolution nodes did not sum: worst {sum_error}");
+
+        // Only the second node is fed; the first processes silence and must stay
+        // silent even though the response (and its ringing) is loaded.
+        let (_, (cross, _)) = render([FxKind::Reverb, FxKind::Reverb], [false, true]);
+        let cross_talk = worst_difference(&cross, &single);
+        assert!(
+            cross_talk < 1e-5,
+            "the silent convolution node picked up the other node's tail: worst {cross_talk}"
+        );
     }
 
     /// A patch with every effect switched on and a given chain, so the graph and

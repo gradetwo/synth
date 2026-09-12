@@ -30,6 +30,8 @@ function failureMessage(error: unknown): string {
       return t('wt.err.silent');
     case 'notFinite':
       return t('wt.err.notFinite');
+    case 'noRoom':
+      return t('wt.err.noRoom');
     default:
       return t('wt.err.decode');
   }

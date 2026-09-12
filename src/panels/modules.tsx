@@ -541,7 +541,9 @@ function FxModule() {
             ? t('ir.err.silent')
             : code === 'notFinite'
               ? t('ir.err.notFinite')
-              : t('ir.err.decode'),
+              : code === 'noRoom'
+                ? t('ir.err.noRoom')
+                : t('ir.err.decode'),
       );
     }
   };

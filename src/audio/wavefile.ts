@@ -28,7 +28,7 @@ const MIN_LAG = 16;
 const MAX_LAG = 2048;
 const ANALYSIS_WINDOW = 2048;
 
-export type WaveImportErrorCode = 'short' | 'silent' | 'notFinite' | 'decode';
+export type WaveImportErrorCode = 'short' | 'silent' | 'notFinite' | 'decode' | 'noRoom';
 
 export class WaveImportError extends Error {
   constructor(

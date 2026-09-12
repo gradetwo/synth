@@ -243,6 +243,18 @@ export function graphOutGainId(slot: number): ParamId {
 /** Positions in the effect chain (A5). One per effect: the chain is a permutation. */
 export const FX_SLOTS = 6;
 
+/**
+ * Delay lines and convolution nodes the core's pools hold (P7.1).
+ *
+ * Keep in step with `DELAY_INSTANCES` / `CONV_INSTANCES` in `engine.rs`: the
+ * `fxgraph` unit test reads the numbers back out of the wasm, so a drift is a
+ * test failure rather than a silently disabled option.
+ */
+export const FX_DELAY_INSTANCES = 2;
+export const FX_CONV_INSTANCES = 2;
+/** Longest delay one instance holds, seconds (`MAX_DELAY_SECONDS` in `dsp/delay.rs`). */
+export const FX_DELAY_MAX_SECONDS = 2;
+
 /** What can run at a chain position. Keep in step with `FxKind` in params.rs. */
 export type FxKind =
   | 'none'

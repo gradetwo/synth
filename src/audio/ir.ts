@@ -90,7 +90,14 @@ export async function importUserIr(file: File): Promise<UserIr> {
   if (peak < 1e-4) throw new WaveImportError('silent', 'the response is silent');
   const result = await engine.importIR(samples);
   if (result.code > 0) {
-    const code = result.code === 1 ? 'short' : result.code === 3 ? 'notFinite' : 'silent';
+    const code =
+      result.code === 1
+        ? 'short'
+        : result.code === 3
+          ? 'notFinite'
+          : result.code === 4
+            ? 'noRoom'
+            : 'silent';
     throw new WaveImportError(code, 'impulse response refused by the core');
   }
   current = { name: file.name, samples: new Float32Array(samples) };

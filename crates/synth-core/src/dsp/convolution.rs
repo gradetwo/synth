@@ -58,100 +58,76 @@ pub enum IrError {
     NotFinite,
     /// Nothing left after DC removal.
     Silent,
+    /// The arena cannot hold the partition spectra.
+    NoMemory,
 }
 
-pub struct Convolver {
-    /// Working set. Allocated once by [`Convolver::prepare`] (from the shared
-    /// arena on wasm) — the transform of a two-second IR is not something to
-    /// keep on the stack, and the render loop must never allocate.
+/// The analysed impulse response: partition spectra plus the buffers the
+/// analysis itself needs. Shared **read-only** by every convolution node, so a
+/// patch with three reverb nodes in impulse-response mode holds one response,
+/// not three.
+pub struct IrSpectra {
     /// IR partition spectra, laid out partition by partition.
     ir_re: Vec<f32>,
     ir_im: Vec<f32>,
-    /// Frequency-domain delay line: the last `partitions` input spectra.
-    fdl_re: Vec<f32>,
-    fdl_im: Vec<f32>,
-    /// Sliding input: the previous hop, then the hop being filled.
-    in_l: Vec<f32>,
-    in_r: Vec<f32>,
-    /// Wet signal for the hop that just finished, emitted over the next hop.
-    out_l: Vec<f32>,
-    out_r: Vec<f32>,
     /// DC-removed copy of the response being analysed.
     scratch: Vec<f32>,
-    /// Transform scratch.
+    /// Transform scratch for the analysis (message path only).
     re: Vec<f64>,
     im: Vec<f64>,
-    /// Partial sums under construction, one slice of [`BINS`] per channel.
-    acc_re: Vec<f64>,
-    acc_im: Vec<f64>,
-    /// Slices of the hop's partition work already accumulated.
-    spread_group: usize,
-    fdl_pos: usize,
     partitions: usize,
-    fill: usize,
-    emitted: usize,
     /// Unit-energy normalisation of the loaded IR.
     normalisation: f32,
     ready: bool,
-    /// Partition MACs done since the last [`Convolver::take_partitions`]; only
-    /// the tests need to see where the hop's work actually landed.
-    #[cfg(test)]
-    partitions_accumulated: u64,
 }
 
-impl Convolver {
+impl IrSpectra {
     pub const fn new() -> Self {
         Self {
             ir_re: Vec::new(),
             ir_im: Vec::new(),
-            fdl_re: Vec::new(),
-            fdl_im: Vec::new(),
-            in_l: Vec::new(),
-            in_r: Vec::new(),
-            out_l: Vec::new(),
-            out_r: Vec::new(),
             scratch: Vec::new(),
             re: Vec::new(),
             im: Vec::new(),
-            acc_re: Vec::new(),
-            acc_im: Vec::new(),
-            spread_group: 0,
-            fdl_pos: 0,
             partitions: 0,
-            fill: 0,
-            emitted: HOP,
             normalisation: 1.0,
             ready: false,
-            #[cfg(test)]
-            partitions_accumulated: 0,
         }
     }
 
-    /// Partition MACs performed since the previous call (test instrumentation).
-    #[cfg(test)]
-    pub fn take_partitions(&mut self) -> u64 {
-        core::mem::take(&mut self.partitions_accumulated)
-    }
-
-    /// Allocate the working set. Idempotent, and called from `Engine::init` so
-    /// the memory is reserved before any audio runs.
-    pub fn prepare(&mut self) {
+    /// Allocate the analysis working set. Idempotent, and called from
+    /// [`IrSpectra::set_ir`] on the message path: a patch that never loads a
+    /// response never pays for the partition spectra. Returns false when the
+    /// arena is full, so the host can refuse the file instead of aborting.
+    pub fn prepare(&mut self) -> bool {
         if self.ir_re.len() == MAX_PARTITIONS * BINS {
-            return;
+            return true;
         }
-        self.ir_re = vec![0.0; MAX_PARTITIONS * BINS];
-        self.ir_im = vec![0.0; MAX_PARTITIONS * BINS];
-        self.fdl_re = vec![0.0; MAX_PARTITIONS * BINS];
-        self.fdl_im = vec![0.0; MAX_PARTITIONS * BINS];
-        self.in_l = vec![0.0; FFT_SIZE];
-        self.in_r = vec![0.0; FFT_SIZE];
-        self.out_l = vec![0.0; HOP];
-        self.out_r = vec![0.0; HOP];
-        self.scratch = vec![0.0; MAX_IR_SAMPLES];
-        self.re = vec![0.0; FFT_SIZE];
-        self.im = vec![0.0; FFT_SIZE];
-        self.acc_re = vec![0.0; 2 * BINS];
-        self.acc_im = vec![0.0; 2 * BINS];
+        let mut ir_re: Vec<f32> = Vec::new();
+        let mut ir_im: Vec<f32> = Vec::new();
+        let mut scratch: Vec<f32> = Vec::new();
+        let mut re: Vec<f64> = Vec::new();
+        let mut im: Vec<f64> = Vec::new();
+        let spectra = MAX_PARTITIONS * BINS;
+        if ir_re.try_reserve_exact(spectra).is_err()
+            || ir_im.try_reserve_exact(spectra).is_err()
+            || scratch.try_reserve_exact(MAX_IR_SAMPLES).is_err()
+            || re.try_reserve_exact(FFT_SIZE).is_err()
+            || im.try_reserve_exact(FFT_SIZE).is_err()
+        {
+            return false;
+        }
+        ir_re.resize(spectra, 0.0);
+        ir_im.resize(spectra, 0.0);
+        scratch.resize(MAX_IR_SAMPLES, 0.0);
+        re.resize(FFT_SIZE, 0.0);
+        im.resize(FFT_SIZE, 0.0);
+        self.ir_re = ir_re;
+        self.ir_im = ir_im;
+        self.scratch = scratch;
+        self.re = re;
+        self.im = im;
+        true
     }
 
     /// Longest IR the loaded impulse response can be, in samples.
@@ -168,7 +144,10 @@ impl Convolver {
         if ir.iter().any(|v| !v.is_finite()) {
             return Err(IrError::NotFinite);
         }
-        self.prepare();
+        if !self.prepare() {
+            self.clear();
+            return Err(IrError::NoMemory);
+        }
         let len = ir.len().min(MAX_IR_SAMPLES);
         let mean = ir[..len].iter().map(|v| *v as f64).sum::<f64>() / len as f64;
         for (i, value) in ir[..len].iter().enumerate() {
@@ -198,19 +177,14 @@ impl Convolver {
                 self.ir_im[base + bin] = self.im[bin] as f32;
             }
         }
-        self.fdl_re[..self.partitions * BINS].fill(0.0);
-        self.fdl_im[..self.partitions * BINS].fill(0.0);
-        self.fdl_pos = 0;
         self.ready = true;
-        self.reset();
         Ok(())
     }
 
-    /// Forget the impulse response: the convolver becomes a silent tap.
+    /// Forget the impulse response: every convolver becomes a silent tap.
     pub fn clear(&mut self) {
         self.partitions = 0;
         self.ready = false;
-        self.reset();
     }
 
     pub fn has_ir(&self) -> bool {
@@ -225,6 +199,124 @@ impl Convolver {
     /// Unit-energy gain applied to the wet signal.
     pub fn normalisation(&self) -> f32 {
         self.normalisation
+    }
+}
+
+/// One convolution node's state: the frequency-domain delay line and the
+/// per-hop buffers. The response itself lives in [`IrSpectra`] and is passed in
+/// on every call, so two nodes never share a tail.
+pub struct Convolver {
+    /// Frequency-domain delay line: the last `partitions` input spectra.
+    fdl_re: Vec<f32>,
+    fdl_im: Vec<f32>,
+    /// Sliding input: the previous hop, then the hop being filled.
+    in_l: Vec<f32>,
+    in_r: Vec<f32>,
+    /// Wet signal for the hop that just finished, emitted over the next hop.
+    out_l: Vec<f32>,
+    out_r: Vec<f32>,
+    /// Transform scratch.
+    re: Vec<f64>,
+    im: Vec<f64>,
+    /// Partial sums under construction, one slice of [`BINS`] per channel.
+    acc_re: Vec<f64>,
+    acc_im: Vec<f64>,
+    /// Slices of the hop's partition work already accumulated.
+    spread_group: usize,
+    fdl_pos: usize,
+    fill: usize,
+    emitted: usize,
+    /// Partition MACs done since the last [`Convolver::take_partitions`]; only
+    /// the tests need to see where the hop's work actually landed.
+    #[cfg(test)]
+    partitions_accumulated: u64,
+}
+
+impl Convolver {
+    pub const fn new() -> Self {
+        Self {
+            fdl_re: Vec::new(),
+            fdl_im: Vec::new(),
+            in_l: Vec::new(),
+            in_r: Vec::new(),
+            out_l: Vec::new(),
+            out_r: Vec::new(),
+            re: Vec::new(),
+            im: Vec::new(),
+            acc_re: Vec::new(),
+            acc_im: Vec::new(),
+            spread_group: 0,
+            fdl_pos: 0,
+            fill: 0,
+            emitted: HOP,
+            #[cfg(test)]
+            partitions_accumulated: 0,
+        }
+    }
+
+    /// Partition MACs performed since the previous call (test instrumentation).
+    #[cfg(test)]
+    pub fn take_partitions(&mut self) -> u64 {
+        core::mem::take(&mut self.partitions_accumulated)
+    }
+
+    /// Allocate this node's working set. Idempotent; called from the engine when
+    /// a response is imported (the message path), so a patch with no convolution
+    /// node pays nothing. Returns false when the arena is full.
+    pub fn prepare(&mut self) -> bool {
+        if self.fdl_re.len() == MAX_PARTITIONS * BINS {
+            return true;
+        }
+        let mut fdl_re: Vec<f32> = Vec::new();
+        let mut fdl_im: Vec<f32> = Vec::new();
+        let mut in_l: Vec<f32> = Vec::new();
+        let mut in_r: Vec<f32> = Vec::new();
+        let mut out_l: Vec<f32> = Vec::new();
+        let mut out_r: Vec<f32> = Vec::new();
+        let mut re: Vec<f64> = Vec::new();
+        let mut im: Vec<f64> = Vec::new();
+        let mut acc_re: Vec<f64> = Vec::new();
+        let mut acc_im: Vec<f64> = Vec::new();
+        let spectra = MAX_PARTITIONS * BINS;
+        if fdl_re.try_reserve_exact(spectra).is_err()
+            || fdl_im.try_reserve_exact(spectra).is_err()
+            || in_l.try_reserve_exact(FFT_SIZE).is_err()
+            || in_r.try_reserve_exact(FFT_SIZE).is_err()
+            || out_l.try_reserve_exact(HOP).is_err()
+            || out_r.try_reserve_exact(HOP).is_err()
+            || re.try_reserve_exact(FFT_SIZE).is_err()
+            || im.try_reserve_exact(FFT_SIZE).is_err()
+            || acc_re.try_reserve_exact(2 * BINS).is_err()
+            || acc_im.try_reserve_exact(2 * BINS).is_err()
+        {
+            return false;
+        }
+        fdl_re.resize(spectra, 0.0);
+        fdl_im.resize(spectra, 0.0);
+        in_l.resize(FFT_SIZE, 0.0);
+        in_r.resize(FFT_SIZE, 0.0);
+        out_l.resize(HOP, 0.0);
+        out_r.resize(HOP, 0.0);
+        re.resize(FFT_SIZE, 0.0);
+        im.resize(FFT_SIZE, 0.0);
+        acc_re.resize(2 * BINS, 0.0);
+        acc_im.resize(2 * BINS, 0.0);
+        self.fdl_re = fdl_re;
+        self.fdl_im = fdl_im;
+        self.in_l = in_l;
+        self.in_r = in_r;
+        self.out_l = out_l;
+        self.out_r = out_r;
+        self.re = re;
+        self.im = im;
+        self.acc_re = acc_re;
+        self.acc_im = acc_im;
+        true
+    }
+
+    /// Longest IR a loaded impulse response can be, in samples.
+    pub fn max_ir_samples() -> usize {
+        MAX_IR_SAMPLES
     }
 
     pub fn reset(&mut self) {
@@ -245,17 +337,24 @@ impl Convolver {
         self.fdl_pos = 0;
     }
 
-    /// Add `mix` of the convolution to `left`/`right`, in place.
-    pub fn process(&mut self, left: &mut [f32], right: &mut [f32], frames: usize, mix: f32) {
-        if !self.ready || self.partitions == 0 || frames == 0 || mix <= 0.0 {
+    /// Add `mix` of the convolution with `ir` to `left`/`right`, in place.
+    ///
+    /// `ir` is shared: every node reads the same partition spectra and keeps its
+    /// own delay line, so their tails cannot mix.
+    pub fn process(&mut self, ir: &IrSpectra, left: &mut [f32], right: &mut [f32], frames: usize, mix: f32) {
+        if self.in_l.is_empty() {
+            // Never allocated (a bare `Convolver` in a test): nothing to run.
+            return;
+        }
+        if !ir.ready || ir.partitions == 0 || frames == 0 || mix <= 0.0 {
             // Still advance the line so switching the reverb on mid-note does not
             // replay the last hop of dry signal as a burst of tail.
-            if self.ready {
-                self.skip(left, right, frames);
+            if ir.ready {
+                self.skip(ir, left, right, frames);
             }
             return;
         }
-        let wet_gain = self.normalisation * mix;
+        let wet_gain = ir.normalisation * mix;
         for i in 0..frames {
             let dry_l = left[i];
             let dry_r = right[i];
@@ -269,13 +368,13 @@ impl Convolver {
             self.fill += 1;
 
             if self.fill == HOP {
-                self.run_hop();
+                self.run_hop(ir);
                 self.fill = 0;
                 self.emitted = 0;
                 self.in_l.copy_within(HOP..FFT_SIZE, 0);
                 self.in_r.copy_within(HOP..FFT_SIZE, 0);
             } else {
-                self.spread();
+                self.spread(ir);
             }
 
             left[i] = dry_l + wet_l * wet_gain;
@@ -284,19 +383,19 @@ impl Convolver {
     }
 
     /// Advance the input line while the effect is bypassed.
-    fn skip(&mut self, left: &[f32], right: &[f32], frames: usize) {
+    fn skip(&mut self, ir: &IrSpectra, left: &[f32], right: &[f32], frames: usize) {
         for i in 0..frames {
             self.in_l[HOP + self.fill] = left[i];
             self.in_r[HOP + self.fill] = right[i];
             self.fill += 1;
             if self.fill == HOP {
-                self.run_hop();
+                self.run_hop(ir);
                 self.fill = 0;
                 self.emitted = 0;
                 self.in_l.copy_within(HOP..FFT_SIZE, 0);
                 self.in_r.copy_within(HOP..FFT_SIZE, 0);
             } else {
-                self.spread();
+                self.spread(ir);
             }
         }
     }
@@ -304,23 +403,23 @@ impl Convolver {
     /// Release whichever slices of the next boundary's partition work have come
     /// round, given how far the hop has filled. Cheap enough to call per sample:
     /// it is one multiply and a compare until a slice is actually due.
-    fn spread(&mut self) {
+    fn spread(&mut self, ir: &IrSpectra) {
         let target = (self.fill * SPREAD).div_ceil(HOP).min(SPREAD);
-        self.spread_upto(target);
+        self.spread_upto(ir, target);
     }
 
     /// Accumulate the partition slices up to `target` (idempotent). The oldest
     /// partitions are the cheap ones to postpone — the delay line already holds
     /// every spectrum they need — so they are what gets spread.
-    fn spread_upto(&mut self, target: usize) {
+    fn spread_upto(&mut self, ir: &IrSpectra, target: usize) {
         while self.spread_group < target {
             let group = self.spread_group;
-            let total = self.partitions.saturating_sub(1);
+            let total = ir.partitions.saturating_sub(1);
             let lo = 1 + total * group / SPREAD;
             let hi = 1 + total * (group + 1) / SPREAD;
             for partition in lo..hi {
                 for channel in 0..2 {
-                    self.accumulate(channel, partition);
+                    self.accumulate(ir, channel, partition);
                 }
             }
             self.spread_group += 1;
@@ -330,18 +429,18 @@ impl Convolver {
     /// Add one partition's contribution to one channel's accumulator. The
     /// partition meets the input spectrum written `partition` hops before the
     /// one the boundary is about to close.
-    fn accumulate(&mut self, channel: usize, partition: usize) {
-        if self.partitions == 0 {
+    fn accumulate(&mut self, ir: &IrSpectra, channel: usize, partition: usize) {
+        if ir.partitions == 0 {
             return;
         }
-        let index = (self.fdl_pos + self.partitions - partition) % self.partitions;
+        let index = (self.fdl_pos + ir.partitions - partition) % ir.partitions;
         let ir_base = partition * BINS;
         let x_base = index * BINS;
         let acc_re = &mut self.acc_re[channel * BINS..(channel + 1) * BINS];
         let acc_im = &mut self.acc_im[channel * BINS..(channel + 1) * BINS];
         for bin in 0..BINS {
-            let hr = self.ir_re[ir_base + bin] as f64;
-            let hi = self.ir_im[ir_base + bin] as f64;
+            let hr = ir.ir_re[ir_base + bin] as f64;
+            let hi = ir.ir_im[ir_base + bin] as f64;
             let xr = self.fdl_re[x_base + bin] as f64;
             let xi = self.fdl_im[x_base + bin] as f64;
             acc_re[bin] += hr * xr - hi * xi;
@@ -355,11 +454,11 @@ impl Convolver {
 
     /// Transform the block that just filled, finish the accumulated partitions
     /// and produce the next hop of wet signal.
-    fn run_hop(&mut self) {
+    fn run_hop(&mut self, ir: &IrSpectra) {
         // Whatever the spread schedule has not released yet (a bypass gap, a
         // block that jumped over several slices) is finished here: the sum has
         // to be complete before it can be transformed back.
-        self.spread_upto(SPREAD);
+        self.spread_upto(ir, SPREAD);
 
         let last = self.fdl_pos;
         for channel in 0..2 {
@@ -378,7 +477,7 @@ impl Convolver {
             // Σ h_i · x_{n-i}, completed: the newest spectrum is the one term
             // that could not be prepared earlier, everything else is already in
             // the accumulator from the hop's own blocks.
-            self.accumulate(channel, 0);
+            self.accumulate(ir, channel, 0);
 
             // Back to the time domain: with a 2-hop transform and a 1-hop filter
             // the valid part of the circular convolution is the second half.
@@ -404,7 +503,7 @@ impl Convolver {
         self.acc_re.fill(0.0);
         self.acc_im.fill(0.0);
         self.spread_group = 0;
-        self.fdl_pos = (last + 1) % self.partitions.max(1);
+        self.fdl_pos = (last + 1) % ir.partitions.max(1);
     }
 }
 
@@ -430,37 +529,58 @@ mod tests {
         out
     }
 
-    /// Run `input` through the convolver and return the wet signal alone, with
-    /// the hop of latency taken out.
-    fn wet_of(convolver: &mut Convolver, input: &[f32]) -> Vec<f32> {
-        let mut left = input.to_vec();
-        let mut right = input.to_vec();
-        let frames = 512;
-        for chunk in 0..input.len().div_ceil(frames) {
-            let start = chunk * frames;
-            let end = (start + frames).min(input.len());
-            convolver.process(&mut left[start..end], &mut right[start..end], end - start, 1.0);
+    /// A loaded response plus one node convolving with it. The engine shares a
+    /// single `IrSpectra` between every node; the tests keep the pair together
+    /// for brevity.
+    struct Rig {
+        ir: IrSpectra,
+        node: Convolver,
+    }
+
+    impl Rig {
+        fn new(response: &[f32]) -> Self {
+            let mut ir = IrSpectra::new();
+            ir.set_ir(response).expect("usable IR");
+            let mut node = Convolver::new();
+            node.prepare();
+            Self { ir, node }
         }
-        left.iter()
-            .zip(input.iter())
-            .map(|(wet, dry)| wet - dry)
-            .collect()
+
+        fn process(&mut self, left: &mut [f32], right: &mut [f32], frames: usize, mix: f32) {
+            self.node.process(&self.ir, left, right, frames, mix);
+        }
+
+        /// Run `input` through the node and return the wet signal alone, with
+        /// the hop of latency taken out.
+        fn wet(&mut self, input: &[f32]) -> Vec<f32> {
+            let mut left = input.to_vec();
+            let mut right = input.to_vec();
+            let frames = 512;
+            for chunk in 0..input.len().div_ceil(frames) {
+                let start = chunk * frames;
+                let end = (start + frames).min(input.len());
+                self.process(&mut left[start..end], &mut right[start..end], end - start, 1.0);
+            }
+            left.iter()
+                .zip(input.iter())
+                .map(|(wet, dry)| wet - dry)
+                .collect()
+        }
     }
 
     #[test]
     fn an_impulse_ir_delays_the_wet_signal_by_one_hop() {
-        let mut convolver = Convolver::new();
         let mut ir = vec![0.0f32; HOP];
         ir[0] = 1.0;
-        convolver.set_ir(&ir).expect("impulse IR");
-        assert_eq!(convolver.partitions(), 1);
+        let mut rig = Rig::new(&ir);
+        assert_eq!(rig.ir.partitions(), 1);
         // Unit energy: a single 1.0 tap normalises to 1.0 (the DC removal that
         // stops a response with an offset from integrating moves it by a hair).
-        assert!((convolver.normalisation() - 1.0).abs() < 1e-2);
-        let gain = convolver.normalisation();
+        assert!((rig.ir.normalisation() - 1.0).abs() < 1e-2);
+        let gain = rig.ir.normalisation();
 
         let input = noise(4096, 7);
-        let wet = wet_of(&mut convolver, &input);
+        let wet = rig.wet(&input);
         // Correlate the tail against the input one hop earlier: a single-tap IR
         // makes the convolver a (scaled) delay line and nothing else.
         let (mut dot, mut wet_energy, mut input_energy) = (0.0f64, 0.0f64, 0.0f64);
@@ -479,15 +599,14 @@ mod tests {
     /// sum, sample for sample, for an IR spanning several partitions.
     #[test]
     fn a_multi_partition_ir_matches_a_direct_convolution() {
-        let mut convolver = Convolver::new();
         let ir = noise(HOP * 3 + 37, 11);
-        convolver.set_ir(&ir).expect("noise IR");
-        assert_eq!(convolver.partitions(), 4);
-        let gain = convolver.normalisation();
+        let mut rig = Rig::new(&ir);
+        assert_eq!(rig.ir.partitions(), 4);
+        let gain = rig.ir.normalisation();
         assert!(gain > 0.0);
 
         let input = noise(12_000, 23);
-        let wet = wet_of(&mut convolver, &input);
+        let wet = rig.wet(&input);
         let scaled_ir: Vec<f32> = ir.iter().map(|h| h * gain).collect();
         let reference = direct_fir(&input, &scaled_ir);
 
@@ -506,11 +625,10 @@ mod tests {
     /// averages over the window it is given.
     #[test]
     fn the_hop_work_is_spread_over_the_blocks_of_the_hop() {
-        let mut convolver = Convolver::new();
         // The worst case the engine allows: a full-length response.
         let ir = noise(MAX_IR_SAMPLES, 5);
-        convolver.set_ir(&ir).expect("noise IR");
-        assert_eq!(convolver.partitions(), MAX_PARTITIONS);
+        let mut rig = Rig::new(&ir);
+        assert_eq!(rig.ir.partitions(), MAX_PARTITIONS);
 
         let quantum = 128;
         let mut left = noise(quantum * 16, 9);
@@ -518,8 +636,8 @@ mod tests {
         let mut per_block = Vec::new();
         for start in (0..left.len()).step_by(quantum) {
             let end = (start + quantum).min(left.len());
-            convolver.process(&mut left[start..end], &mut right[start..end], end - start, 1.0);
-            per_block.push(convolver.take_partitions());
+            rig.process(&mut left[start..end], &mut right[start..end], end - start, 1.0);
+            per_block.push(rig.node.take_partitions());
         }
 
         // Steady state: the first hop is the one that fills the delay line.
@@ -546,13 +664,12 @@ mod tests {
         let input = noise(20_000, 13);
 
         let render = |frames: usize| {
-            let mut convolver = Convolver::new();
-            convolver.set_ir(&ir).expect("noise IR");
+            let mut rig = Rig::new(&ir);
             let mut left = input.clone();
             let mut right = input.clone();
             for start in (0..input.len()).step_by(frames) {
                 let end = (start + frames).min(input.len());
-                convolver.process(&mut left[start..end], &mut right[start..end], end - start, 1.0);
+                rig.process(&mut left[start..end], &mut right[start..end], end - start, 1.0);
             }
             left
         };
@@ -574,11 +691,10 @@ mod tests {
     /// spread schedule may move the work around but not the transfer function.
     #[test]
     fn a_full_length_ir_keeps_its_transfer_function() {
-        let mut convolver = Convolver::new();
         let ir = noise(MAX_IR_SAMPLES, 17);
-        convolver.set_ir(&ir).expect("noise IR");
-        assert_eq!(convolver.partitions(), MAX_PARTITIONS);
-        let gain = convolver.normalisation() as f64;
+        let mut rig = Rig::new(&ir);
+        assert_eq!(rig.ir.partitions(), MAX_PARTITIONS);
+        let gain = rig.ir.normalisation() as f64;
 
         // An impulse in, the response out: the wet path is a delay of one hop.
         let mut left = vec![0.0f32; MAX_IR_SAMPLES + 4 * HOP];
@@ -587,7 +703,7 @@ mod tests {
         right[0] = 1.0;
         for start in (0..left.len()).step_by(128) {
             let end = (start + 128).min(left.len());
-            convolver.process(&mut left[start..end], &mut right[start..end], end - start, 1.0);
+            rig.process(&mut left[start..end], &mut right[start..end], end - start, 1.0);
         }
 
         // Compare a handful of probe frequencies against the analytic response.
@@ -617,7 +733,6 @@ mod tests {
     /// there and nowhere else, which is the whole point of loading an IR.
     #[test]
     fn a_resonant_ir_shapes_the_wet_spectrum() {
-        let mut convolver = Convolver::new();
         let ring = 3000.0f32;
         let ir: Vec<f32> = (0..8000)
             .map(|i| {
@@ -627,10 +742,10 @@ mod tests {
             .collect();
         // A sine IR is a resonator: the wet output of a noise burst must be
         // dominated by that frequency.
-        convolver.set_ir(&ir).expect("resonant IR");
+        let mut rig = Rig::new(&ir);
 
         let input = noise(24_000, 5);
-        let wet = wet_of(&mut convolver, &input);
+        let wet = rig.wet(&input);
         let magnitude = |freq: f32, from: usize, to: usize| {
             let (mut re, mut im) = (0.0f64, 0.0f64);
             for (i, value) in wet[from..to].iter().enumerate() {
@@ -653,10 +768,9 @@ mod tests {
     #[test]
     fn unit_energy_normalisation_evens_out_ir_levels() {
         let tail_rms = |ir: &[f32]| {
-            let mut convolver = Convolver::new();
-            convolver.set_ir(ir).expect("IR");
+            let mut rig = Rig::new(ir);
             let input = noise(24_000, 3);
-            let wet = wet_of(&mut convolver, &input);
+            let wet = rig.wet(&input);
             let slice = &wet[4096..20_000];
             (slice.iter().map(|v| v * v).sum::<f32>() / slice.len() as f32).sqrt()
         };
@@ -670,31 +784,86 @@ mod tests {
 
     #[test]
     fn an_empty_convolver_passes_the_signal_through() {
+        let ir = IrSpectra::new();
         let mut convolver = Convolver::new();
         let input = noise(2048, 17);
         let mut left = input.clone();
         let mut right = input.clone();
-        convolver.process(&mut left, &mut right, 2048, 1.0);
+        convolver.process(&ir, &mut left, &mut right, 2048, 1.0);
         assert_eq!(left, input, "nothing loaded: no wet signal, no latency");
     }
 
     #[test]
     fn unusable_irs_are_refused_with_a_reason() {
-        let mut convolver = Convolver::new();
-        assert_eq!(convolver.set_ir(&[0.0; 8]).err(), Some(IrError::TooShort));
-        assert_eq!(convolver.set_ir(&[0.0; 2048]).err(), Some(IrError::Silent));
+        let mut ir = IrSpectra::new();
+        assert_eq!(ir.set_ir(&[0.0; 8]).err(), Some(IrError::TooShort));
+        assert_eq!(ir.set_ir(&[0.0; 2048]).err(), Some(IrError::Silent));
         let mut broken = vec![0.0f32; 2048];
         broken[5] = f32::NAN;
-        assert_eq!(convolver.set_ir(&broken).err(), Some(IrError::NotFinite));
-        assert!(!convolver.has_ir());
+        assert_eq!(ir.set_ir(&broken).err(), Some(IrError::NotFinite));
+        assert!(!ir.has_ir());
     }
 
     #[test]
     fn an_over_long_ir_is_clamped_to_the_available_partitions() {
-        let mut convolver = Convolver::new();
-        let ir = noise(MAX_IR_SAMPLES + 50_000, 4);
-        convolver.set_ir(&ir).expect("long IR");
-        assert_eq!(convolver.partitions(), MAX_PARTITIONS);
+        let mut ir = IrSpectra::new();
+        let long = noise(MAX_IR_SAMPLES + 50_000, 4);
+        ir.set_ir(&long).expect("long IR");
+        assert_eq!(ir.partitions(), MAX_PARTITIONS);
+        assert_eq!(IrSpectra::max_ir_samples(), MAX_IR_SAMPLES);
         assert_eq!(Convolver::max_ir_samples(), MAX_IR_SAMPLES);
+    }
+
+    /// Two nodes on one response: the partition spectra are shared, so the
+    /// second node costs only its own delay line — and because that line is its
+    /// own, one node's tail can never appear in the other's output.
+    #[test]
+    fn two_nodes_share_the_response_and_keep_their_own_tails() {
+        let ir = noise(HOP * 2 + 3, 41);
+        let mut spectra = IrSpectra::new();
+        spectra.set_ir(&ir).expect("noise IR");
+        let mut one = Convolver::new();
+        let mut two = Convolver::new();
+        one.prepare();
+        two.prepare();
+
+        let quantum = 128;
+        let input = noise(quantum * 40, 7);
+        let mut one_out = input.clone();
+        let mut one_silent = vec![0.0f32; input.len()];
+        let mut two_out = vec![0.0f32; input.len()];
+        let mut two_silent = vec![0.0f32; input.len()];
+        for start in (0..input.len()).step_by(quantum) {
+            let end = (start + quantum).min(input.len());
+            let frames = end - start;
+            one.process(&spectra, &mut one_out[start..end], &mut one_silent[start..end], frames, 1.0);
+            // The second node gets silence the whole time.
+            two.process(&spectra, &mut two_silent[start..end], &mut two_out[start..end], frames, 1.0);
+        }
+        // Node one rang; node two, fed silence, stayed silent: no shared tail.
+        assert!(one_out.iter().any(|v| v.abs() > 1e-3), "the driven node did not ring");
+        assert!(
+            two_out.iter().all(|v| v.abs() < 1e-6),
+            "the silent node picked up the other node's tail"
+        );
+
+        // And the response really is shared: two fresh nodes running the same
+        // input through one `IrSpectra` produce bit-identical tails (if they
+        // shared a delay line, the second pass would feed the first's history).
+        let mut a = Convolver::new();
+        let mut b = Convolver::new();
+        a.prepare();
+        b.prepare();
+        let mut a_left = input.clone();
+        let mut a_right = input.clone();
+        let mut b_left = input.clone();
+        let mut b_right = input.clone();
+        for start in (0..input.len()).step_by(quantum) {
+            let end = (start + quantum).min(input.len());
+            let frames = end - start;
+            a.process(&spectra, &mut a_left[start..end], &mut a_right[start..end], frames, 1.0);
+            b.process(&spectra, &mut b_left[start..end], &mut b_right[start..end], frames, 1.0);
+        }
+        assert_eq!(a_left, b_left, "one response, two nodes: the tails must match");
     }
 }

@@ -494,6 +494,7 @@ const DICT: Record<string, [string, string]> = {
   'smp.err.silent': ['采样里没有声音', 'That sample is silent'],
   'smp.err.notFinite': ['采样含有无效数据', 'That sample contains invalid data'],
   'smp.err.decode': ['无法解码这个文件（格式不支持或文件损坏）', 'That file could not be decoded (unsupported or damaged)'],
+  'smp.err.noRoom': ['内存不足，无法载入这段采样', 'Not enough room to load that sample'],
   // --- impulse response reverb (A5) ---------------------------------------
   'ir.algo': ['算法', 'Algo'],
   'ir.ir': ['IR', 'IR'],
@@ -510,6 +511,7 @@ const DICT: Record<string, [string, string]> = {
   'ir.err.silent': ['这段 IR 里没有声音', 'That response is silent'],
   'ir.err.notFinite': ['IR 含有无效采样', 'That response contains invalid samples'],
   'ir.err.decode': ['无法解码这个文件（格式不支持或文件损坏）', 'That file could not be decoded (unsupported or damaged)'],
+  'ir.err.noRoom': ['内存不足：请先清掉导入的采样/波表再试', 'Not enough room for the response: clear an imported sample or wavetable first'],
   // --- effect chain (A5) ---------------------------------------------------
   'fx.chain': ['信号链', 'CHAIN'],
   'fx.chainHint': [
@@ -549,11 +551,20 @@ const DICT: Record<string, [string, string]> = {
   'fxg.outGain': ['输出增益', 'output gain'],
   'fxg.none': ['无', 'none'],
   'fxg.disconnect': ['断开', 'Disconnect'],
-  'fxg.inUse': ['已占用', 'in use'],
-  'fxg.singleInstance': [
-    '延迟与卷积混响（IR）每个音色只能用一次（内存限制），所以这里不提供第二个；混响（算法）与四个插入效果可以多实例',
-    'Delay and the convolution reverb can only run once per patch (memory), so a second one is not offered here; the algorithmic reverb and the four insert effects can be used more than once',
+  'fxg.poolFull': ['池已满', 'pool full'],
+  'fxg.delayPoolFull': [
+    '延迟池已满：{capacity} 条延迟线 × {seconds} s 都已分配给节点',
+    'the delay pool is full: all {capacity} lines × {seconds} s are assigned to nodes',
   ],
+  'fxg.convPoolFull': [
+    '卷积池已满：{capacity} 个卷积节点都已分配（IR 共享，尾部各自独立）',
+    'the convolution pool is full: all {capacity} convolution nodes are in use (the response is shared, the tails are not)',
+  ],
+  'fxg.delayPool': [
+    '延迟池 {used}/{capacity} · 剩余可分配 {left} s',
+    'delay pool {used}/{capacity} · {left} s still available',
+  ],
+  'fxg.convPool': ['卷积池 {used}/{capacity}', 'convolution pool {used}/{capacity}'],
   'fxg.wireHint': ['点连线可以改这条连线的增益或断开它', 'Click a wire to set its gain or cut it'],
   'fx.moveLeft': ['前移一位', 'Move earlier'],
   'fx.moveRight': ['后移一位', 'Move later'],
@@ -583,6 +594,7 @@ const DICT: Record<string, [string, string]> = {
   'wt.err.silent': ['文件里没有声音', 'That file is silent'],
   'wt.err.notFinite': ['文件含有无效采样', 'That file contains invalid samples'],
   'wt.err.decode': ['无法解码这个文件（格式不支持或文件损坏）', 'That file could not be decoded (unsupported or damaged)'],
+  'wt.err.noRoom': ['内存不足，无法载入这个波形', 'Not enough room to load that wavetable'],
 
   // --- errors / diagnostics ------------------------------------------------
   'err.wasmFetch': ['WASM 下载失败 (HTTP {status})', 'WASM download failed (HTTP {status})'],

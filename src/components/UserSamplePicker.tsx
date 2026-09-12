@@ -36,6 +36,8 @@ function failureMessage(error: unknown): string {
       return t('smp.err.silent');
     case 'notFinite':
       return t('smp.err.notFinite');
+    case 'noRoom':
+      return t('smp.err.noRoom');
     default:
       return t('smp.err.decode');
   }

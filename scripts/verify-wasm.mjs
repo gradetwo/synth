@@ -117,6 +117,27 @@ check('spectrum exposes 36 bins', ex.gs_spectrum_bins() === 36);
 
 // ---------------------------------------------------------------- frequency
 ex.gs_init(48000, 16);
+
+// P7.1: the delay and convolution pools have to fit a second node of each kind,
+// and report how much of the (message-path allocated) pool is in use.
+check(
+  'the delay pool fits a second node',
+  typeof ex.gs_delay_pool_capacity === 'function' &&
+    typeof ex.gs_delay_pool_used === 'function' &&
+    typeof ex.gs_delay_max_seconds === 'function' &&
+    ex.gs_delay_pool_capacity() >= 2 &&
+    ex.gs_delay_max_seconds() > 0 &&
+    ex.gs_delay_pool_used() <= ex.gs_delay_pool_capacity(),
+  `${ex.gs_delay_pool_used()}/${ex.gs_delay_pool_capacity()} × ${ex.gs_delay_max_seconds()}s`,
+);
+check(
+  'the convolution pool fits a second node',
+  typeof ex.gs_conv_pool_capacity === 'function' &&
+    typeof ex.gs_conv_pool_used === 'function' &&
+    ex.gs_conv_pool_capacity() >= 2 &&
+    ex.gs_conv_pool_used() <= ex.gs_conv_pool_capacity(),
+  `${ex.gs_conv_pool_used()}/${ex.gs_conv_pool_capacity()}`,
+);
 ex.gs_set_param(Param.OSC1_ON, 1);
 ex.gs_set_param(Param.OSC1_WAVE, 0); // sine
 ex.gs_set_param(Param.OSC1_LEVEL, 1);

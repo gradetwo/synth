@@ -11,6 +11,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PARAMS,
+  FX_CONV_INSTANCES,
+  FX_DELAY_INSTANCES,
+  FX_DELAY_MAX_SECONDS,
   FX_SLOTS,
   GRAPH_FROM_CHAIN_IDS,
   Param,
@@ -31,6 +34,14 @@ interface Core {
   gs_left_ptr(): number;
   gs_right_ptr(): number;
   gs_fx_graph_sync(): void;
+  gs_ir_import_ptr(): number;
+  gs_ir_capacity(): number;
+  gs_ir_import(len: number): number;
+  gs_delay_pool_capacity(): number;
+  gs_delay_pool_used(): number;
+  gs_delay_max_seconds(): number;
+  gs_conv_pool_capacity(): number;
+  gs_conv_pool_used(): number;
 }
 
 /** A patch with every effect running, so the routing is audible. */
@@ -155,5 +166,42 @@ describe.skipIf(!existsSync(wasmPath))('effect routing graph', () => {
     }
     expect(worst, `mirror differs from the engine by ${worst}`).toBe(0);
     expect(FX_SLOTS).toBe(6);
+  });
+
+  /**
+   * P7.1: the pools have to fit a second node of each kind, and the editor's
+   * mirrored capacity constants have to be the core's — otherwise the editor
+   * would disable (or offer) a node the engine treats differently.
+   */
+  it('agrees with the editor about the delay and convolution pools', () => {
+    const ex = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(wasmPath)), {})
+      .exports as unknown as Core;
+    ex.gs_init(SR, 16);
+    // The default chain holds one delay and one algorithmic reverb.
+    expect(ex.gs_delay_pool_capacity()).toBe(FX_DELAY_INSTANCES);
+    expect(ex.gs_conv_pool_capacity()).toBe(FX_CONV_INSTANCES);
+    expect(ex.gs_delay_max_seconds()).toBeCloseTo(FX_DELAY_MAX_SECONDS, 5);
+    expect(ex.gs_delay_pool_used()).toBe(1);
+    expect(ex.gs_conv_pool_used()).toBe(0);
+
+    // A second delay node takes the second line; a third would have to wait.
+    ex.gs_set_param(chainId(2), 1);
+    expect(ex.gs_delay_pool_used()).toBe(2);
+    ex.gs_set_param(chainId(3), 1);
+    expect(ex.gs_delay_pool_used()).toBe(FX_DELAY_INSTANCES);
+
+    // Convolution only counts once a response is actually loaded.
+    expect(ex.gs_conv_pool_used()).toBe(0);
+    const len = 8192;
+    const capacity = Math.min(len, ex.gs_ir_capacity());
+    const ptr = ex.gs_ir_import_ptr() / 4;
+    const heap = new Float32Array(ex.memory.buffer);
+    for (let i = 0; i < capacity; i++) heap[ptr + i] = Math.sin(i * 0.01) * Math.exp(-i / 1000);
+    expect(ex.gs_ir_import(capacity)).toBe(0);
+    ex.gs_set_param(Param.FX_REVERB_MODE, 1);
+    expect(ex.gs_conv_pool_used()).toBe(1);
+    // Node 3's reverb joins the first one; the pool is what stops the third.
+    ex.gs_set_param(chainId(4), 2);
+    expect(ex.gs_conv_pool_used()).toBe(FX_CONV_INSTANCES);
   });
 });

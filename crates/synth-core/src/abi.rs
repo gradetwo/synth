@@ -185,7 +185,8 @@ pub extern "C" fn gs_ir_capacity() -> u32 {
 }
 
 /// Analyse the staged impulse response: 0 = ok, 1 = too short, 2 = silent,
-/// 3 = not finite. Runs on the message path, never inside `process`.
+/// 3 = not finite, 4 = the arena cannot hold the partition spectra. Runs on the
+/// message path, never inside `process`.
 #[no_mangle]
 pub extern "C" fn gs_ir_import(len: u32) -> i32 {
     engine().import_ir(len as usize)
@@ -242,6 +243,36 @@ pub extern "C" fn gs_force_release_excess() {
 #[no_mangle]
 pub extern "C" fn gs_fx_slot_count() -> u32 {
     engine().fx_slots() as u32
+}
+
+/// Delay lines the pool holds, and how many the current patch uses (P7.1). The
+/// editor shows `(capacity - used) × gs_delay_max_seconds()` as the delay time
+/// still available and disables the choice when the pool is full.
+#[no_mangle]
+pub extern "C" fn gs_delay_pool_capacity() -> u32 {
+    engine().delay_pool().0 as u32
+}
+
+#[no_mangle]
+pub extern "C" fn gs_delay_pool_used() -> u32 {
+    engine().delay_pool().1 as u32
+}
+
+/// Longest delay one instance can produce, in seconds.
+#[no_mangle]
+pub extern "C" fn gs_delay_max_seconds() -> f32 {
+    engine().delay_max_seconds()
+}
+
+/// Convolution nodes the pool holds, and how many the current patch uses.
+#[no_mangle]
+pub extern "C" fn gs_conv_pool_capacity() -> u32 {
+    engine().conv_pool().0 as u32
+}
+
+#[no_mangle]
+pub extern "C" fn gs_conv_pool_used() -> u32 {
+    engine().conv_pool().1 as u32
 }
 
 #[no_mangle]

@@ -14,6 +14,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  FX_CONV_INSTANCES,
+  FX_DELAY_INSTANCES,
+  FX_DELAY_MAX_SECONDS,
   FX_KIND_LABELS,
   FX_KINDS,
   FX_SLOTS,
@@ -155,18 +158,6 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
   const graphOn = (params[Param.FX_GRAPH] ?? 0) >= 0.5;
-  /**
-   * Kinds the engine can only run once per patch, and why: the delay line is
-   * 768 KB and the convolver 787 KB, so six of either does not fit in the
-   * arena. A second node of those kinds passes its input through, which the
-   * editor does not want to hand out silently — the option is disabled instead.
-   */
-  const singleInstance = new Set<FxKind>();
-  singleInstance.add('delay');
-  if ((params[Param.FX_REVERB_MODE] ?? 0) >= 0.5 && getUserIr()) singleInstance.add('reverb');
-  const usedBy = (kind: FxKind, except: number) =>
-    nodes.some((node) => node.slot !== except && node.kind === kind);
-  const isSingleInstance = (kind: FxKind) => singleInstance.has(kind);
   const savedPos = snapshot.layout.fxGraphPos;
   const posOf = useCallback(
     (key: string): [number, number] => savedPos[key] ?? defaultPos(key),
@@ -200,6 +191,34 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
     toOut: (params[graphToOutId(slot)] ?? 0) >= 0.5,
     outGain: params[graphOutGainId(slot)] ?? 1,
   }));
+
+  /**
+   * The delay and convolution pools (P7.1).
+   *
+   * The core holds `FX_DELAY_INSTANCES` delay lines (2 s each) and
+   * `FX_CONV_INSTANCES` convolution tails, so a second node of those kinds now
+   * has its own state instead of passing through. A node *past* the pool still
+   * has none, so the editor disables that choice and says what is left rather
+   * than handing out a node that would do nothing.
+   */
+  const convMode = (params[Param.FX_REVERB_MODE] ?? 0) >= 0.5 && getUserIr() !== null;
+  const delayNodes = nodes.filter((node) => node.kind === 'delay').length;
+  const convNodes = convMode ? nodes.filter((node) => node.kind === 'reverb').length : 0;
+  /** Nodes of a pooled kind other than `except` — what the choice would add to. */
+  const usedOther = (kind: FxKind, except: number) =>
+    nodes.filter((node) => node.slot !== except && node.kind === kind).length;
+  const poolFull = (kind: FxKind, except: number) => {
+    if (kind === 'delay') return usedOther('delay', except) >= FX_DELAY_INSTANCES;
+    if (kind === 'reverb' && convMode) return usedOther('reverb', except) >= FX_CONV_INSTANCES;
+    return false;
+  };
+  /** The reason a full pool shows on the disabled option. */
+  const poolReason = (kind: FxKind) =>
+    kind === 'delay'
+      ? t('fxg.delayPoolFull', { capacity: FX_DELAY_INSTANCES, seconds: FX_DELAY_MAX_SECONDS })
+      : t('fxg.convPoolFull', { capacity: FX_CONV_INSTANCES });
+  /** Delay time the pool can still hand to a new node, in seconds. */
+  const delaySecondsLeft = Math.max(0, FX_DELAY_INSTANCES - delayNodes) * FX_DELAY_MAX_SECONDS;
 
   // Escape closes it, like every other overlay. The component is mounted only
   // while it is open, so closing discards the gestures in progress.
@@ -384,16 +403,16 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
             }}
           >
             {FX_KINDS.map((kind) => {
-              const taken = kind !== node.kind && isSingleInstance(kind) && usedBy(kind, slot);
+              const taken = kind !== node.kind && poolFull(kind, slot);
               return (
                 <option
                   key={kind}
                   value={kind}
                   disabled={taken}
-                  title={taken ? t('fxg.singleInstance') : undefined}
+                  title={taken ? poolReason(kind) : undefined}
                 >
                   {FX_KIND_LABELS[kind]}
-                  {taken ? ` (${t('fxg.inUse')})` : ''}
+                  {taken ? ` (${t('fxg.poolFull')})` : ''}
                 </option>
               );
             })}
@@ -537,7 +556,14 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
         <div className="fxg-hint">
           {graphOn ? t('fxg.hintOn') : t('fxg.hintOff')}
           {view === 'canvas' ? ` · ${t('fxg.dragHint')}` : ''}
-          {singleInstance.size > 0 ? ` · ${t('fxg.singleInstance')}` : ''}
+          {` · ${t('fxg.delayPool', {
+            used: delayNodes,
+            capacity: FX_DELAY_INSTANCES,
+            left: delaySecondsLeft,
+          })}`}
+          {convMode
+            ? ` · ${t('fxg.convPool', { used: convNodes, capacity: FX_CONV_INSTANCES })}`
+            : ''}
         </div>
 
         {view === 'list' ? (
