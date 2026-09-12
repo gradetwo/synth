@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.94.1',
+    version: '1.95.0',
     date: '2026-09-12',
-    kind: 'fix',
+    kind: 'feature',
     items: [
       [
-        '**更新提示不再变形**：新版本提示改成一条紧凑的横条（版本号 + 这次更新了什么 + 立即更新 + 关闭），去掉了那个突兀的火箭图标；文案过长会优雅省略，而不是把两个按钮撑成一整块；手机上按钮落到下一行，不再把标题挤成一行三个字。',
-        '**The update prompt stopped stretching**: the new-version notice is one compact bar now (version, what changed, Update now, dismiss) without the jarring rocket; a long headline ellipsizes instead of dragging the two buttons into tall blocks, and on a phone the actions take their own row instead of squeezing the title into three words per line.',
+        '**路由图里可以拉调制线了**：图里新增 **LFO1 / LFO2 / ENV** 三个调制源卡片，从源拖到任意节点的输入或输出增益上就能给它加调制——虚线显示这条边，线上的深度小标签可以改深度或删掉；不想拖拽也可以用键盘可达的「MOD」一行按 源 / 目标 / 深度 逐条设置。增益每块解算一次并经过原有平滑，**深度为 0 时与没有调制逐位相同**；它与原来的 8 槽调制矩阵并存（矩阵管音高/滤波/音量等声部参数，图内边管节点增益），互不干扰。',
+        '**Modulation wires in the routing graph**: three source cards (**LFO1, LFO2, ENV**) can be dragged onto any node’s input or output gain to modulate it — a dashed wire shows the edge, with a depth chip on it you can edit or delete — and the keyboard-reachable **MOD** row sets source, target and depth without dragging. The gains are resolved once per block through the existing smoother, and **at depth 0 the render is bit-for-bit what it was without the feature**; it sits beside the eight-slot modulation matrix (which still drives pitch, filter, volume and the rest) rather than replacing it.',
       ],
     ],
   };
