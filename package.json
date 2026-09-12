@@ -1,7 +1,7 @@
 {
   "name": "groove-synth-gs1",
   "private": true,
-  "version": "1.86.0",
+  "version": "1.87.0",
   "type": "module",
   "description": "GROOVE SYNTH GS-1 — industrial-grade WebAssembly polyphonic synthesizer with a Rust DSP core, AudioWorklet rendering and a fully offline PWA shell.",
   "license": "MIT",
@@ -31,6 +31,8 @@
     "nightly": "node scripts/nightly-e2e.mjs",
     "lint": "eslint src --max-warnings=999",
     "test:e2e": "playwright test",
+    "test:visual": "GS1_VISUAL=1 playwright test --project=chromium e2e/visual.spec.ts --workers=1",
+    "test:visual:update": "GS1_VISUAL=1 GS1_VISUAL_UPDATE=1 playwright test --project=chromium e2e/visual.spec.ts --workers=1 --update-snapshots",
     "verify:ci": "node scripts/verify-ci.mjs",
     "verify:release": "node scripts/release.mjs --check",
     "release": "node scripts/release.mjs",
