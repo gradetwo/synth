@@ -20,6 +20,12 @@ npm run release -- --check           # 只做发布前校验（`npm run verify` 
 
 参数：`--skip-verify`、`--skip-e2e`、`--skip-deploy`（只打包打 tag）、`--quiet`、`GS1_SITE=<url>` 覆盖线上地址。
 
+**线上地址就是 `https://synth.wangda.today/`**（`scripts/release.mjs` 里 `site` 的默认值）。它挂在 Worker `shiny-sky-9ea0` 的
+自定义域名上（`GET /accounts/<id>/workers/domains` 可查），`wrangler.toml` 里的 `name` 就是这个 Worker。
+**不要拿 `*.pages.dev` 的主机名核对**：本项目早已不通过 Pages 发布，旧主机名（如 `gs1.pages.dev`）现在对任何客户端
+都返回 Cloudflare 的请求元数据 JSON——其中还有 `"pagesHostName"` 字样，很容易被误读成「站点正常」。核对时务必同时看
+**返回体的 `assets/index-*.js` 哈希**与本地 `dist/index.html` 是否一致（第 6 步就是这么做的），只看 HTTP 200 没有意义。
+
 设计取舍：
 
 - **版本与更新记录的校验放在最前面**：一个版本号写错不该花 10 分钟跑完所有门禁才发现；同一个校验也以 `npm run verify:release` 挂在本地 `verify` 与 CI 的 verify 作业里，所以「版本和更新记录脱节」永远进不了 main。
