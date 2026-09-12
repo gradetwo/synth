@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.93.0',
+    version: '1.94.0',
     date: '2026-09-12',
-    kind: 'sound',
+    kind: 'feature',
     items: [
       [
-        '**过采样开关：更干净的失真与滤波**：滤波模块多了一个「2×」开关（默认关）。开启后失真与滤波在双倍采样率下运算、再带限降到原采样率，满驱动下的混叠与镜像分量实测**降低约 26 dB**，硬削波听起来更干净、毛刺更少；代价是 CPU 约翻倍（16 音密集音色从 16.6% 升到 31.1% 的实时预算）。默认关，关闭时与旧版本的渲染**逐位一致**。',
-        '**An oversampling switch for cleaner drive and filtering**: the filter module gained a 2× switch (off by default). With it on, the drive and the filter run at double the sample rate and are band-limited back down, measuring about **26 dB less aliasing and imaging** at full drive — a cleaner hard clip with less grit. It costs roughly double the CPU (a dense 16-voice patch goes from 16.6% to 31.1% of the real-time budget). Off by default, and off renders sample-for-sample what the old build did.',
+        '**延迟与卷积可以同时用两个了**：以前一个音色里第二个延迟（或第二个卷积混响）节点会被直接跳过、等于没接；现在路由图里可以并排放**两个延迟和两个卷积**，各自有自己的回声时间线与混响尾部、互不串音。代价是内存——卷积的分区频谱是只读共享的，但每个节点要有自己的延迟线和变换缓冲，所以导入很长的 IR 时可用余量比以前紧张；同类节点的**第三个**会在编辑器里被禁用并写明原因。',
+        '**Two delays and two convolutions at once**: a patch used to skip the second delay (or the second convolution) node entirely, as if it were not wired; the routing graph can now hold **two of each**, with their own echo timelines and reverb tails that do not bleed into one another. The cost is memory — the convolution’s partition spectra are shared read-only, but every node needs its own delay line and transform buffers, so importing a long impulse response leaves less headroom than it used to; a **third** node of the same kind is disabled in the editor with the reason shown.',
       ],
     ],
   };
