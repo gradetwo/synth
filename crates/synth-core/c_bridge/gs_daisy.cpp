@@ -73,6 +73,146 @@ static inline float sync_decimate(float *history, const float *input, int count)
     return out;
 }
 
+// --- minBLEP / minBLAMP kernels for the dedicated hard-sync oscillator -------
+//
+// Hard sync restarts the slave's cycle at the master's wrap, and a restarted
+// saw/square steps at that instant while a triangle only kinks. Correcting a
+// step *after* the fact does not work (the two retired attempts in
+// `docs/notes/hard-sync-aliasing.md` both patched DaisySP's already
+// band-limited output and measured -1.6 dB): the discontinuity has to be
+// band-limited where it is generated. This oscillator therefore emits the
+// *naive* waveform and adds a kernel correction at every discontinuity — the
+// slave's own wrap, the master's wrap (which restarts the slave), and a
+// triangle's slope kinks.
+//
+// The kernel is the residual of a windowed-sinc low-pass step, tabulated at
+// start-up (a plain static array, no dynamic initialisation): the BLEP table is
+// the step residual, the BLAMP table its integral for slope discontinuities.
+// Its cutoff (0.22 of the oversampled rate, i.e. 21 kHz at 96 kHz) sits just
+// above the decimator's 19.2 kHz passband, so what survives decimation is
+// already alias-free. The support is +/-32 oversampled samples; together with
+// the ring accumulator's 32-sample delay that is what makes the correction
+// causal without truncating the kernel's leading half.
+#define GS_BLEP_N 32
+#define GS_BLEP_R 64
+#define GS_BLEP_M (2 * GS_BLEP_N * GS_BLEP_R + 1)
+#define GS_BLEP_OFF (GS_BLEP_N * GS_BLEP_R)
+#define GS_BLEP_FC 0.22
+#define GS_SYNC_RING (2 * GS_BLEP_N + 4)
+#define GS_SYNC_DELAY GS_BLEP_N
+static const double GS_PI = 3.14159265358979323846;
+
+static float g_blep[GS_BLEP_M];
+static float g_blamp[GS_BLEP_M];
+static bool g_blep_ready = false;
+
+static inline double sync_sinc(double x) {
+    return x == 0.0 ? 1.0 : sin(x * GS_PI) / (x * GS_PI);
+}
+
+/// Build the two kernels once. `g_blep` is the windowed-sinc step residual,
+/// `g_blamp` its running integral (the correction a slope discontinuity needs).
+#if defined(__clang__)
+__attribute__((noinline))
+#endif
+static void build_blep_kernels() {
+    if (g_blep_ready) return;
+    // The table is float but the maths is double: the window tail is what sets
+    // the kernel's stopband, and rounding it out in float costs ~3 dB of alias
+    // rejection (measured).
+    double sum = 0.0;
+    for (int k = 0; k < GS_BLEP_M; ++k) {
+        double d = (k - GS_BLEP_OFF) / (double)GS_BLEP_R;
+        double w = 0.42 + 0.5 * cos(GS_PI * d / GS_BLEP_N) +
+                   0.08 * cos(2.0 * GS_PI * d / GS_BLEP_N);
+        if (fabs(d) >= GS_BLEP_N) w = 0.0;
+        float v = (float)(2.0 * GS_BLEP_FC * sync_sinc(2.0 * GS_BLEP_FC * d) * w /
+                          (double)GS_BLEP_R);
+        g_blep[k] = v;
+        sum += v;
+    }
+    float inv = (float)(1.0 / sum);
+    float acc = 0.0f;
+    for (int k = 0; k < GS_BLEP_M; ++k) {
+        acc += g_blep[k] * inv;
+        g_blep[k] = acc - (k >= GS_BLEP_OFF ? 1.0f : 0.0f);
+    }
+    float a = 0.0f;
+    for (int k = 0; k < GS_BLEP_M; ++k) {
+        a += g_blep[k] / (float)GS_BLEP_R;
+        g_blamp[k] = a;
+    }
+    float tail = g_blamp[GS_BLEP_M - 1];
+    for (int k = 0; k < GS_BLEP_M; ++k) {
+        g_blamp[k] -= tail * ((float)k / (float)(GS_BLEP_M - 1));
+    }
+    g_blep_ready = true;
+}
+
+/// Kernel sample at offset `d` (in oversampled samples) from the discontinuity.
+static inline float sync_kernel(const float *tab, float d) {
+    float t = (d + GS_BLEP_N) * GS_BLEP_R;
+    if (t <= 0.0f || t >= (float)(GS_BLEP_M - 1)) return 0.0f;
+    int i = (int)t;
+    float f = t - (float)i;
+    return tab[i] + f * (tab[i + 1] - tab[i]);
+}
+
+/// Add one discontinuity's correction to a ring accumulator.
+///
+/// The accumulator holds the samples still to be emitted, `head` being the next
+/// one; the naive signal itself is written GS_SYNC_DELAY slots ahead, so by the
+/// time a sample reaches the head every discontinuity that can touch it has
+/// already been seen and both halves of the kernel can be applied.
+#if defined(__clang__)
+__attribute__((noinline))
+#endif
+static void sync_emit(float *acc, int head, double x, float amp, int slope) {
+    const float *tab = slope ? g_blamp : g_blep;
+    for (int m = -GS_BLEP_N + 1; m <= GS_BLEP_N; ++m) {
+        int idx = head + m + GS_BLEP_N;
+        if (idx >= GS_SYNC_RING) idx -= GS_SYNC_RING;
+        acc[idx] += amp * sync_kernel(tab, (float)m - (float)x);
+    }
+}
+
+/// The naive (un-band-limited) shape the sync oscillator corrects. The bridge
+/// waveform ids mirror `daisysp::Oscillator::WAVE_*` (see gs_daisy.h).
+#if defined(__clang__)
+__attribute__((noinline))
+#endif
+static float sync_naive(int wave, double p, float pw) {
+    switch (wave) {
+        case GS_WAVE_SIN:
+            return sinf((float)(p * 2.0 * GS_PI));
+        case GS_WAVE_TRI:
+        case GS_WAVE_POLYBLEP_TRI: {
+            double t = -1.0 + 2.0 * p;
+            return (float)(2.0 * (fabs(t) - 0.5));
+        }
+        case GS_WAVE_RAMP:
+            return (float)(2.0 * p - 1.0);
+        case GS_WAVE_SQUARE:
+            return p < pw ? 1.0f : -1.0f;
+        case GS_WAVE_POLYBLEP_SQUARE:
+            // DaisySP scales its band-limited square by 0.707; keep the level
+            // the sync path had before this oscillator existed.
+            return (p < pw ? 1.0f : -1.0f) * 0.70710678f;
+        case GS_WAVE_SAW:
+        case GS_WAVE_POLYBLEP_SAW:
+        default:
+            return (float)(1.0 - 2.0 * p);
+    }
+}
+
+/// Slope of the naive triangle in value per sample, for its BLAMP kinks.
+static inline double sync_slope(int wave, double p, double inc) {
+    if (wave == GS_WAVE_TRI || wave == GS_WAVE_POLYBLEP_TRI) {
+        return (p < 0.5 ? -4.0 : 4.0) * inc;
+    }
+    return 0.0;
+}
+
 struct VoiceDsp {
     /// [sub-voice][oscillator]; unison stacks up to GS_MAX_UNISON copies.
     daisysp::Oscillator osc[GS_MAX_UNISON][2];
@@ -81,9 +221,17 @@ struct VoiceDsp {
     /// offset would be inside it). `pm_ready` re-syncs after a voice reset.
     float pm_phase[GS_MAX_UNISON][2];
     bool pm_ready[GS_MAX_UNISON][2];
-    /// Hard-sync state: the slave's free-running phase and one decimation
-    /// history per oscillator (see `gs_voice_osc_sync_block`).
-    float sync_base[GS_MAX_UNISON];
+    /// Hard-sync state (see `gs_voice_osc_sync_block`): the slave's naive shape
+    /// and the two free-running phases in double precision (so the restart
+    /// lands on the master's exact sub-sample wrap), the ring accumulator of
+    /// samples still to be emitted, and one decimation history per oscillator.
+    uint8_t sync_wave[GS_MAX_UNISON];
+    float sync_pw[GS_MAX_UNISON];
+    float sync_amp[GS_MAX_UNISON];
+    double sync_mphase[GS_MAX_UNISON];
+    double sync_sphase[GS_MAX_UNISON];
+    float sync_sacc[GS_MAX_UNISON][GS_SYNC_RING];
+    int sync_head[GS_MAX_UNISON];
     bool sync_ready[GS_MAX_UNISON];
     float sync_hist_m[GS_MAX_UNISON][GS_SYNC_TAPS];
     float sync_hist_s[GS_MAX_UNISON][GS_SYNC_TAPS];
@@ -171,6 +319,7 @@ void init_slot(int i, float sample_rate) {
     for (int s = 0; s < GS_MAX_UNISON; ++s) {
         d.osc[s][0].Init(sample_rate);
         d.osc[s][1].Init(sample_rate);
+        d.sync_ready[s] = false;
     }
     for (int side = 0; side < 2; ++side) {
         d.ladder[side].Init(sample_rate);
@@ -194,6 +343,7 @@ void gs_daisy_init(float sample_rate) {
     g_init_calls++;
     if (sample_rate < 1000.0f) sample_rate = 48000.0f;
     g_sample_rate = sample_rate;
+    build_blep_kernels();
     for (int i = 0; i < GS_MAX_VOICES; ++i) init_slot(i, sample_rate);
 }
 
@@ -207,6 +357,10 @@ void gs_voice_reset(int v) {
         d.pm_ready[s][0] = false;
         d.pm_ready[s][1] = false;
         d.sync_ready[s] = false;
+        d.sync_head[s] = 0;
+        for (int t = 0; t < GS_SYNC_RING; ++t) {
+            d.sync_sacc[s][t] = 0.0f;
+        }
         for (int t = 0; t < GS_SYNC_TAPS; ++t) {
             d.sync_hist_m[s][t] = 0.0f;
             d.sync_hist_s[s][t] = 0.0f;
@@ -235,17 +389,30 @@ void gs_voice_phase(int v, float p0, float p1) {
         d.pm_ready[s][0] = false;
         d.pm_ready[s][1] = false;
         d.sync_ready[s] = false;
+        d.sync_head[s] = 0;
+        for (int t = 0; t < GS_SYNC_RING; ++t) {
+            d.sync_sacc[s][t] = 0.0f;
+        }
     }
 }
 
 void gs_voice_osc_set(int v, int which, int sub, uint32_t wave, float freq, float amp, float pw) {
     VoiceDsp &d = voice(v);
     if (sub < 0 || sub >= GS_MAX_UNISON) return;
-    daisysp::Oscillator &o = d.osc[sub][which ? 1 : 0];
+    const int side = which ? 1 : 0;
+    daisysp::Oscillator &o = d.osc[sub][side];
     o.SetWaveform(static_cast<uint8_t>(wave));
     o.SetFreq(freq);
     o.SetAmp(amp);
     o.SetPw(pw);
+    // The dedicated sync oscillator reads the *slave's* naive shape back by id;
+    // DaisySP does not expose what it was set to. The master keeps DaisySP's
+    // own band-limited output, so only side 0 needs the mirror.
+    if (side == 0) {
+        d.sync_wave[sub] = static_cast<uint8_t>(wave < GS_WAVE_POLYBLEP_SQUARE + 1 ? wave : GS_WAVE_SIN);
+        d.sync_pw[sub] = pw < 0.0f ? 0.0f : (pw > 1.0f ? 1.0f : pw);
+        d.sync_amp[sub] = amp;
+    }
 }
 
 void gs_voice_osc_reset(int v, int which, float phase) {
@@ -304,42 +471,123 @@ void gs_voice_osc_sync_block(int v, int sub, const float *mod, float depth, floa
     VoiceDsp &d = voice(v);
     daisysp::Oscillator &master = d.osc[sub][1];
     daisysp::Oscillator &slave = d.osc[sub][0];
-    // The oscillators are already set to their real frequency divided by
-    // GS_SYNC_OS, so calling Process() that many times per output sample *is*
-    // the oversampling. The slave's phase is tracked here rather than read back,
-    // because a reset would otherwise be inside it.
-    float base = d.sync_ready[sub] ? d.sync_base[sub] : slave.Phase();
-    d.sync_ready[sub] = true;
-    const float inc = slave.PhaseInc();
-    const float master_inc = master.PhaseInc();
+    if (!d.sync_ready[sub]) {
+        d.sync_mphase[sub] = master.Phase();
+        d.sync_sphase[sub] = slave.Phase();
+        d.sync_head[sub] = 0;
+        for (int t = 0; t < GS_SYNC_RING; ++t) d.sync_sacc[sub][t] = 0.0f;
+        d.sync_ready[sub] = true;
+    }
+    // The master keeps DaisySP's own band-limited output (it is never
+    // restarted, so its polyBLEP is what it always was) but its *phase* is
+    // tracked here in double: the slave's restart has to land on the master's
+    // exact sub-sample wrap, and `IsEOC()` cannot express that.
+    double mph = d.sync_mphase[sub];
+    double sph = d.sync_sphase[sub];
+    int head = d.sync_head[sub];
+    const double minc = master.PhaseInc();
+    const double sinc = slave.PhaseInc();
+    const int swave = d.sync_wave[sub];
+    const float spw = d.sync_pw[sub];
+    const float samp = d.sync_amp[sub];
+    float *sacc = d.sync_sacc[sub];
     float hi_m[GS_SYNC_OS];
     float hi_s[GS_SYNC_OS];
+    const bool stri = swave == GS_WAVE_TRI || swave == GS_WAVE_POLYBLEP_TRI;
+    const bool ssq = swave == GS_WAVE_SQUARE || swave == GS_WAVE_POLYBLEP_SQUARE;
+    // A whole-cycle step: the jump the naive shape makes where its cycle wraps.
+    const float s_wrap = sync_naive(swave, 0.0, spw) - sync_naive(swave, 1.0 - 1e-9, spw);
+    // The pulse edge's jump (square/pulse only).
+    const float s_edge = sync_naive(swave, spw + 1e-6, spw) - sync_naive(swave, spw - 1e-6, spw);
+
     for (uint32_t i = 0; i < frames; ++i) {
         for (int k = 0; k < GS_SYNC_OS; ++k) {
+            // ---- master: DaisySP waveform at the phase we track ----
+            const double m0 = mph;
+            const double m1 = m0 + minc;
+            const bool mwrap = m1 >= 1.0;
+            const double xm = mwrap ? (1.0 - m0) / minc : 0.0;
+            master.Reset((float)m0);
             hi_m[k] = master.Process();
-            // The master's own wrap *is* the sync point. It lands *between*
-            // oversampled steps, and resetting to phase 0 at the step boundary
-            // instead was the whole difference between a clean sync and a
-            // broadband hash: the restart moved by up to half a step every
-            // period, which is jitter, and jitter is exactly what shows up
-            // between the harmonics. `Phase()` is how far past the wrap the
-            // master already is, so the slave restarts that far into its own
-            // step.
-            if (master.IsEOC()) {
-                base = inc * (master.Phase() / master_inc);
+            mph = mwrap ? m1 - 1.0 : m1;
+
+            // ---- slave: free-running, restarted by the master's wrap ----
+            const double s0 = sph;
+            double sNext;
+            if (mwrap) {
+                const double pPre = s0 + sinc * xm;
+                const bool slwrap = pPre >= 1.0;
+                const double pAt = slwrap ? pPre - 1.0 : pPre;
+                if (slwrap) {
+                    const double xw = (1.0 - s0) / sinc;
+                    if (s_wrap != 0.0f) sync_emit(sacc, head, xw, samp * s_wrap, 0);
+                    if (stri) sync_emit(sacc, head, xw, samp * (float)(-8.0 * sinc), 1);
+                    if (ssq && spw < pAt) {
+                        sync_emit(sacc, head, xw + spw / sinc, samp * s_edge, 0);
+                    }
+                } else {
+                    if (ssq) {
+                        double e = spw - s0;
+                        if (e < 0.0) e += 1.0;
+                        if (e < sinc * xm) sync_emit(sacc, head, e / sinc, samp * s_edge, 0);
+                    }
+                    if (stri && s0 < 0.5 && pAt >= 0.5) {
+                        sync_emit(sacc, head, (0.5 - s0) / sinc, samp * (float)(8.0 * sinc), 1);
+                    }
+                }
+                // The restart itself: the naive shape jumps from where the
+                // slave already was to where phase 0 reads. The same instant
+                // also bends a triangle's slope, which is its BLAMP half.
+                const float reset = sync_naive(swave, 0.0, spw) - sync_naive(swave, pAt, spw);
+                if (reset != 0.0f) sync_emit(sacc, head, xm, samp * reset, 0);
+                if (stri) {
+                    const double dslope = sync_slope(swave, 0.0, sinc) - sync_slope(swave, pAt, sinc);
+                    if (dslope != 0.0) sync_emit(sacc, head, xm, samp * (float)dslope, 1);
+                }
+                sNext = sinc * (1.0 - xm);
+                if (ssq && spw < sNext) {
+                    sync_emit(sacc, head, xm + spw / sinc, samp * s_edge, 0);
+                }
+            } else {
+                const double s1 = s0 + sinc;
+                if (s1 >= 1.0) {
+                    const double xw = (1.0 - s0) / sinc;
+                    if (s_wrap != 0.0f) sync_emit(sacc, head, xw, samp * s_wrap, 0);
+                    if (stri) sync_emit(sacc, head, xw, samp * (float)(-8.0 * sinc), 1);
+                    sNext = s1 - 1.0;
+                } else {
+                    if (stri && s0 < 0.5 && s1 >= 0.5) {
+                        sync_emit(sacc, head, (0.5 - s0) / sinc, samp * (float)(8.0 * sinc), 1);
+                    }
+                    sNext = s1;
+                }
+                if (ssq) {
+                    double e = spw - s0;
+                    if (e < 0.0) e += 1.0;
+                    if (e < sinc) sync_emit(sacc, head, e / sinc, samp * s_edge, 0);
+                }
             }
-            float phase = base + (mod != nullptr ? mod[i] * depth : 0.0f);
-            phase = fmodf(phase, 1.0f);
-            if (phase < 0.0f) phase += 1.0f;
-            slave.Reset(phase);
-            hi_s[k] = slave.Process();
-            base += inc;
-            if (base >= 1.0f) base -= 1.0f;
+            // The slave's read phase carries the same phase modulation the
+            // other oscillators use; its discontinuities are the oscillator's
+            // own and use the unmodulated phase.
+            double read = s0;
+            if (mod != nullptr) {
+                read += (double)mod[i] * depth;
+                read -= floor(read);
+            }
+            sacc[(head + GS_SYNC_DELAY) % GS_SYNC_RING] += sync_naive(swave, read, spw) * samp;
+            sph = sNext;
+
+            hi_s[k] = sacc[head];
+            sacc[head] = 0.0f;
+            if (++head >= GS_SYNC_RING) head -= GS_SYNC_RING;
         }
         master_out[i] = sync_decimate(d.sync_hist_m[sub], hi_m, GS_SYNC_OS);
         slave_out[i] = sync_decimate(d.sync_hist_s[sub], hi_s, GS_SYNC_OS);
     }
-    d.sync_base[sub] = base;
+    d.sync_mphase[sub] = mph;
+    d.sync_sphase[sub] = sph;
+    d.sync_head[sub] = head;
 }
 
 void gs_voice_filter_set(int v, int side, int type, float freq, float res, float drive) {

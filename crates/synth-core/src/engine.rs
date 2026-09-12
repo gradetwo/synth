@@ -7217,13 +7217,11 @@ mod tests {
     /// period, and at a ratio that is not a whole multiple the slave's own lines
     /// give way to the master's grid.
     ///
-    /// The "aliasing <= -60 dB" this batch set out for is **not** asserted here:
-    /// the off-grid measurement cannot currently resolve it. Run against signals
-    /// whose periodicity is not in doubt it reads -41 dB for a plain 220 Hz saw
-    /// and -60 dB for a plain sine, so the number it gives for sync says more
-    /// about the measurement than about the DSP. That is tracked as P6.2b in
-    /// `docs/NEXT-PLAN.md`; what is asserted here is what the measurement *can*
-    /// separate.
+    /// The "-60 dB" acceptance figure is *not* asserted here: this metric (single
+    /// Hann bins) cannot resolve it, and the number it gives says more about the
+    /// window than about the DSP. The figure is asserted next door in
+    /// `hard_sync_keeps_the_slave_on_the_masters_grid`, which measures a settled
+    /// note over a whole second with a rectangular window and exact bins.
     #[test]
     fn hard_sync_puts_every_waveform_on_the_masters_grid() {
         let _guard = lock_engine();
@@ -7451,7 +7449,7 @@ mod tests {
     /// to be settled — 20 ms after the attack the limiter's peak detector is
     /// still recovering from it, and that recovery is a slow gain change, i.e.
     /// exactly the modulation an off-grid metric picks up.
-    fn settled_off_grid(e: &mut Engine, master: f32) -> f64 {
+    fn settled_off_grid(e: &mut Engine, master: f32) -> (Vec<f32>, f64) {
         for _ in 0..200 {
             e.process(128);
         }
@@ -7476,20 +7474,29 @@ mod tests {
             lines += amp * amp / 2.0;
             k += 1;
         }
-        10.0 * ((total - lines).max(1e-30) / total).log10()
+        let off = 10.0 * ((total - lines).max(1e-30) / total).log10();
+        (out, off)
     }
 
-    /// The sync's own figure, and the calibration that makes it readable: the
-    /// *unsynced* slave at the same non-integer ratio is entirely off the
+    /// The sync's aliasing figure, and the calibration that makes it readable:
+    /// the *unsynced* slave at the same non-integer ratio is entirely off the
     /// master's grid (its whole signal is elsewhere), while the synced one keeps
-    /// all but about -32 dB of its energy on it. That -32 dB is the honest
-    /// current figure for hard sync in this engine — the plan's target is -60 dB
-    /// and it is **not** met, which `docs/notes/hard-sync-aliasing.md` records
-    /// along with what the remaining work is (band-limiting the restart itself,
-    /// not just the decimation).
+    /// everything but about -70 dB of its energy on it.
+    ///
+    /// That is the P6.2 acceptance line ("aliasing <= -60 dB") and this asserts
+    /// it. It was unreachable for three batches because the restart was patched
+    /// onto DaisySP's already band-limited output; the dedicated oscillator in
+    /// `c_bridge/gs_daisy.cpp` band-limits the wrap and the restart together in
+    /// the naive domain instead. `docs/notes/hard-sync-aliasing.md` has the two
+    /// failed attempts and the numbers they measured.
+    ///
+    /// Time domain alongside it: the synced slave must be periodic at the
+    /// master's period, bounded, finite, and free of sample-to-sample steps
+    /// large enough to be heard as a click.
     #[test]
     fn hard_sync_keeps_the_slave_on_the_masters_grid() {
         let _guard = lock_engine();
+        let period = (48_000.0 / 220.0) as usize;
         for wave in [
             crate::params::Wave::Saw,
             crate::params::Wave::Square,
@@ -7497,18 +7504,34 @@ mod tests {
         ] {
             let mut sync = sync_patch(true, wave, 1.41);
             sync.note_on(57, 0.9);
-            let locked = settled_off_grid(&mut sync, 220.0);
+            let (locked, off) = settled_off_grid(&mut sync, 220.0);
             let mut loose = sync_patch(false, wave, 1.41);
             loose.note_on(57, 0.9);
-            let free = settled_off_grid(&mut loose, 220.0);
+            let (_, free) = settled_off_grid(&mut loose, 220.0);
             assert!(
                 free > -3.0,
                 "{wave:?}: an unsynced 1.41x slave is nowhere near the master's grid: {free:.1} dB"
             );
             assert!(
-                locked < -25.0,
-                "{wave:?}: the sync should put the slave on the master's grid: {locked:.1} dB"
+                off < -60.0,
+                "{wave:?}: hard sync must band-limit its restart to -60 dB: {off:.1} dB"
             );
+            let corr = period_correlation(&locked, period);
+            assert!(
+                corr > 0.95,
+                "{wave:?}: a sync'd slave must be periodic at the master's rate: {corr:.4}"
+            );
+            let mut peak = 0.0f32;
+            let mut jump = 0.0f32;
+            for (i, v) in locked.iter().enumerate() {
+                assert!(v.is_finite(), "{wave:?}: non-finite sample at {i}");
+                peak = peak.max(v.abs());
+                if i > 0 {
+                    jump = jump.max((v - locked[i - 1]).abs());
+                }
+            }
+            assert!(peak <= 1.0 + 1e-6, "{wave:?}: over unity at {peak}");
+            assert!(jump < 0.25, "{wave:?}: a click would step by {jump}");
         }
     }
 

@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.96.0',
+    version: '1.97.0',
     date: '2026-09-12',
-    kind: 'fix',
+    kind: 'sound',
     items: [
       [
-        '**装得更小、启动更快，而且启动时间也有了门禁**：图标从 24 位 PNG 换成 8 位（肉眼无差别，体积少约 49 KB）；从打开页面到「启动音频引擎」可点的实测最慢约 2.1 秒，现在由 E2E 门禁盯着（超过约 3.2 秒就红）。体积门禁同时**收紧**：总量 1712→1672 KB、首屏 JS 165→134 KB、CSS 22→21 KB、内核 230→70 KB，以后体积回涨会当场被发现。',
-        '**A smaller download, a faster start, and a guard on startup time**: the icons went from 24-bit PNG to 8-bit (visually indistinguishable, about 49 KB less); opening the page to the Start button being clickable measures at worst about 2.1 s and is now held by an end-to-end gate that fails past about 3.2 s. The size budgets were tightened at the same time — total 1712→1672 KB, first-screen JS 165→134 KB, CSS 22→21 KB, core 230→70 KB — so a future regression shows up immediately.',
+        '**硬同步不再有可闻的毛刺**：给同步振荡器换成专用的带限实现（朴素波形 + 相位回绕与主振重启的 BLEP/BLAMP 修正，共用同一套高精度相位），锯齿/方波/三角在同步时的混叠能量从约 −32/−34/−50 dB 降到 **−69/−69/−77 dB**（实测，整秒矩形窗精确 bin），也就是比原来低约 28–37 dB；时域上从振仍严格对齐主振周期（相关 0.9995+）。同步**关闭**时（默认）渲染与之前逐位相同。',
+        '**Hard sync no longer has audible grit**: the synced oscillator now has its own band-limited implementation (naive shapes with BLEP/BLAMP corrections for both the phase wrap and the master restart, sharing one high-precision phase). Aliasing under sync drops from about −32/−34/−50 dB to **−69/−69/−77 dB** for saw, square and triangle (measured over an integer second with a rectangular window and exact bins) — roughly 28–37 dB lower — while the slave stays locked to the master’s period in the time domain (correlation above 0.9995). With sync **off** (the default) the render is sample-for-sample what it was.',
       ],
     ],
   };

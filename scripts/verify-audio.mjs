@@ -742,11 +742,15 @@ function blockSteps(frames) {
   // 1.41x the master: not a multiple, so without sync the slave has its own
   // period and with sync it can only have the master's.
   const slaveRatio = 12 * Math.log2(1.41);
-  const renderSync = (sync) => {
+  const renderSync = (sync, wave = WAVE.saw, blocks = 300, skip = 120) => {
     engine(
       [
         ...quiet,
-        [P.OSC1_WAVE, WAVE.saw], [P.OSC1_LEVEL, 0.9], [P.OSC1_PITCH, slaveRatio],
+        [P.OSC1_WAVE, wave], [P.OSC1_LEVEL, 0.9], [P.OSC1_PITCH, slaveRatio],
+        // Pin the pulse width: the engine keeps its parameter block across
+        // `gs_init`, so a scenario above can leave a narrow pulse behind and
+        // the square's two edges would then sit almost on top of each other.
+        [P.OSC1_PW, 0.5],
         [P.OSC1_SYNC, sync], [P.OSC1_SUB, 0],
         [P.OSC2_WAVE, WAVE.sine], [P.OSC2_ON, 1], [P.OSC2_LEVEL, 0], [P.OSC2_PITCH, 0],
         [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0],
@@ -754,7 +758,7 @@ function blockSteps(frames) {
       [[57, 1]],
     );
     const out = [];
-    for (const [l] of render(300, 120)) out.push(...l);
+    for (const [l] of render(blocks, skip)) out.push(...l);
     return out;
   };
 
@@ -786,6 +790,65 @@ function blockSteps(frames) {
     corr > 0.95,
     `period correlation ${corr.toFixed(4)} (free: ${periodCorrelation(loose).toFixed(4)})`,
   );
+
+  // The P6.2 acceptance line itself: the energy that is *not* on the master's
+  // harmonic grid must be at least 60 dB below the signal. This needs the
+  // measurement the post-mortem settled on — one whole second, a rectangular
+  // window and exact bins, on a note that has been left to settle. Hann's own
+  // sidelobes sit near -95 dB and a limiter still recovering from the attack
+  // reads as a slow gain change, which is exactly the modulation an off-grid
+  // metric picks up (see docs/notes/hard-sync-aliasing.md).
+  const binMagRect = (samples, freq) => {
+    const w = (2 * Math.PI * freq) / SR;
+    let re = 0;
+    let im = 0;
+    for (let i = 0; i < samples.length; i++) {
+      re += samples[i] * Math.cos(w * i);
+      im -= samples[i] * Math.sin(w * i);
+    }
+    return Math.hypot(re, im) / samples.length;
+  };
+  const settledOffGrid = (samples) => {
+    const n = samples.length;
+    const total = samples.reduce((sum, v) => sum + v * v, 0) / n;
+    let lines = 0;
+    for (let k = 1; master * k < 23900; k++) {
+      const m = binMagRect(samples, master * k);
+      // A sinusoid of amplitude A reads |sum|/N = A/2, so its power is 2m^2.
+      lines += 2 * m * m;
+    }
+    return 10 * Math.log10(Math.max(total - lines, 1e-30) / Math.max(total, 1e-30));
+  };
+  for (const [name, wave] of [
+    ['saw', WAVE.saw],
+    ['square', WAVE.square],
+    ['triangle', WAVE.triangle],
+  ]) {
+    // 200 blocks to settle, then 375 blocks = 48000 samples = one second.
+    const synced = renderSync(1, wave, 575, 200);
+    const free = renderSync(0, wave, 575, 200);
+    const off = settledOffGrid(synced);
+    const offFree = settledOffGrid(free);
+    check(
+      `hard sync band-limits the restart (${name})`,
+      off < -60 && offFree > -3,
+      `${off.toFixed(1)} dB synced vs ${offFree.toFixed(1)} dB free (target -60)`,
+    );
+    let peak = 0;
+    let jump = 0;
+    let finite = true;
+    for (let i = 0; i < synced.length; i++) {
+      const v = synced[i];
+      finite = finite && Number.isFinite(v);
+      peak = Math.max(peak, Math.abs(v));
+      if (i > 0) jump = Math.max(jump, Math.abs(v - synced[i - 1]));
+    }
+    check(
+      `hard sync stays bounded and click-free (${name})`,
+      finite && peak <= 1.0 + 1e-6 && jump < 0.25 && periodCorrelation(synced) > 0.95,
+      `peak ${peak.toFixed(3)}, largest step ${jump.toFixed(3)}, correlation ${periodCorrelation(synced).toFixed(4)}`,
+    );
+  }
   // The sub oscillator: one sine an octave or two down.
   const subPatch = (octaves, level) => {
     engine(
