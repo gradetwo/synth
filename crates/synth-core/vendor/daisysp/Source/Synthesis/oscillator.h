@@ -113,11 +113,11 @@ class Oscillator
         not add to it, or a deep modulation index would drift out of 0..1 where
         the band-limited waveforms are only defined.
     */
-    float Phase() const { return phase_; }
+    double Phase() const { return phase_; }
     /** The phase advance per sample, in cycles. GS-1 addition: a phase-modulated
         oscillator has to keep its own free-running phase, which means advancing
         it by this itself while the carrier is being modulated. */
-    float PhaseInc() const { return phase_inc_; }
+    double PhaseInc() const { return phase_inc_; }
     /** Resets the phase to the input argument. If no argumeNt is present, it will reset phase to 0.0;
     */
     void Reset(float _phase = 0.0f) { phase_ = _phase; }
@@ -126,7 +126,14 @@ class Oscillator
     float   CalcPhaseInc(float f);
     uint8_t waveform_;
     float   amp_, freq_, pw_;
-    float   sr_, sr_recip_, phase_, phase_inc_;
+    float   sr_, sr_recip_;
+    /// GS-1: the phase accumulator is double precision. A `float` accumulator
+    /// drifts by a random walk of its own rounding error (~1e-7 cycles a step),
+    /// which shows up as a skirt around every partial and sets a floor under
+    /// every spectral measurement — including the one that has to decide
+    /// whether hard sync aliases. Double costs nothing measurable here and puts
+    /// that floor below -140 dB.
+    double  phase_, phase_inc_;
     float   last_out_, last_freq_;
     bool    eor_, eoc_;
 };

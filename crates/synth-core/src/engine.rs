@@ -6033,6 +6033,60 @@ mod tests {
     }
 
 
+
+    /// A steady sine is exactly periodic, so a spectral measurement over a whole
+    /// number of its periods should find *nothing* off its harmonic grid. What
+    /// it does find is the engine's phase noise, and that number is a real
+    /// quality figure: it was -66 dB with a `float` phase accumulator (a random
+    /// walk of the accumulator's own rounding, which shows up as a skirt around
+    /// every partial) and -87 dB once the accumulator became double precision.
+    ///
+    /// This is also the floor under the hard-sync aliasing measurement: until it
+    /// is well below the figure being measured, that measurement is meaningless
+    /// — which is exactly what P6.2b is about.
+    #[test]
+    fn a_steady_sine_has_no_phase_noise_skirt() {
+        let _guard = lock_engine();
+        let mut e = new_engine(8);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC1_LEVEL, 0.6);
+        e.set_param(id::FILTER_CUTOFF, 18_000.0);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.01);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::FX_REVERB_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 0.5);
+        // 375 blocks = 48000 samples = one second = 440 whole periods of A4.
+        let rendered = steady_note_note(&mut e, 69.0, 375);
+
+        // Total power from the samples, line power from the exact-bin DFT: with
+        // a rectangular window over whole periods every harmonic lands on a bin
+        // and contributes no leakage at all, so what is left over is genuinely
+        // off the grid.
+        let n = rendered.len();
+        let total: f64 = rendered.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / n as f64;
+        let mut lines = 0.0f64;
+        let mut k = 1;
+        while 440.0 * (k as f32) < 23_900.0 {
+            let w = core::f64::consts::TAU * (440.0 * k as f32) as f64 / 48_000.0;
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (i, v) in rendered.iter().enumerate() {
+                let ph = w * i as f64;
+                re += *v as f64 * ph.cos();
+                im -= *v as f64 * ph.sin();
+            }
+            let amp = 2.0 * (re * re + im * im).sqrt() / n as f64;
+            lines += amp * amp / 2.0;
+            k += 1;
+        }
+        let off_grid = 10.0 * ((total - lines).max(1e-30) / total).log10();
+        assert!(
+            off_grid < -80.0,
+            "a steady sine should have no non-periodic energy: {off_grid:.1} dB"
+        );
+    }
+
     #[test]
     fn limiter_keeps_the_master_bus_bounded() {
         let _guard = lock_engine();

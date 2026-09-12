@@ -23,6 +23,17 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.85.0',
+    date: '2026-09-12',
+    kind: 'fix',
+    items: [
+      [
+        '**长音更干净**：振荡器的相位累加改用双精度。单精度累加器每步的舍入误差会累积成每个分音周围的一圈「裙边」噪声（长按高音时能听成轻微沙沙声），实测从 −66 dB 降到 −87 dB；音色、音量与既有音色行为完全不变（DSP 指纹未动）。',
+        '**Long notes are cleaner**: the oscillators now accumulate phase in double precision. A single-precision accumulator turns its own rounding into a skirt of noise around every partial (a faint hiss under a held high note); measured, it drops from -66 dB to -87 dB. Timbre, level and every existing patch are unchanged — the DSP fingerprint does not move.',
+      ],
+    ],
+  },
+  {
     version: '1.84.0',
     date: '2026-09-12',
     kind: 'sound',
