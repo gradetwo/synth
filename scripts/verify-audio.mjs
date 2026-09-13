@@ -57,6 +57,12 @@ const P = {
   OSC1_UNISON: 70, OSC2_UNISON: 72, OSC1_SPREAD: 71, OSC2_SPREAD: 73, MASTER_TUNE: 41,
   /** P6.5: 2x oversampling of the drive/filter path. */
   OVERSAMPLE: 166,
+  /**
+   * P9.4: the routing graph's node fields, one id per node (node 1 is id 101,
+   * node 2 is 102, ...). Only the two this gate drives are named; the graph
+   * parameter decoder is `base <= id < base + 6`.
+   */
+  FX_NODE_IN1: 101, FX_NODE_IN1_GAIN: 107, FX_NODE_TO_OUT: 125, FX_NODE_OUT_GAIN: 131,
   /** P9.2 transient shaper: on/off, the two signed amounts and the mix. */
   FX_TRANSIENT_ON: 179, FX_TRANSIENT_ATTACK: 180, FX_TRANSIENT_SUSTAIN: 181,
   FX_TRANSIENT_MIX: 182, OSC1_DETUNE: 4, OSC1_UNISON: 70, OSC1_SPREAD: 71,
@@ -1583,88 +1589,114 @@ function blockSteps(frames) {
 // enough to measure; at the top of the keyboard the aliases are already far
 // down. `gs_set_mod_route(i, 0, 0, 0, 0)` clears the default patch's ENV/LFO ->
 // CUTOFF routes first: with them live this would measure the modulation.
+//
+// The ruler and the patch live outside the scenario blocks: P9.4's graph
+// section below measures the same quantity with the same code, so the two
+// sections can never drift apart.
+/** Rectangular-window single-bin amplitude (no leakage on an exact bin). */
+const binMagRect = (samples, freq) => {
+  const w = (2 * Math.PI * freq) / SR;
+  let re = 0;
+  let im = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const v = samples[i];
+    re += v * Math.cos(w * i);
+    im -= v * Math.sin(w * i);
+  }
+  return Math.hypot(re, im) / samples.length;
+};
+/**
+ * The fixture every alias measurement renders: one quiet, unmodulated sine with
+ * the whole rest of the engine spelled out, so a measurement does not depend on
+ * where in the file it sits. `aliasFloor` and 4c's delay probe both build on it.
+ */
+const aliasBase = [
+  [P.OSC1_ON, 1], [P.OSC1_WAVE, WAVE.sine], [P.OSC1_LEVEL, 0.8],
+  // One voice, on pitch: unison, detune and microtuning are all state a
+  // previous scenario may have left behind, and all three would move the
+  // harmonics off the bins the measurement subtracts.
+  [P.OSC1_PITCH, 0], [P.OSC1_DETUNE, 0], [P.OSC1_UNISON, 1], [P.OSC1_SPREAD, 0],
+  [P.OSC1_SYNC, 0], [P.OSC1_SUB, 0], [P.OSC1_SUB_LEVEL, 0], [P.MASTER_TUNE, 0],
+  [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0],
+  [P.OSC2_PITCH, 0], [P.OSC2_DETUNE, 0], [P.OSC2_UNISON, 1], [P.OSC2_SPREAD, 0],
+  [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0], [P.VOICE_MODE, 0],
+  [P.FILTER_TYPE, 0], [P.FILTER_CUTOFF, 20000], [P.FILTER_RES, 0.1],
+  [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0], [P.FILTER_KBD, 0],
+  // No second stage: the whole scenario is spelled out, so the measurement
+  // does not depend on where in the file it sits.
+  [P.FILTER_ROUTING, 0], [P.FILTER_MORPH, 0], [P.FILTER2_TYPE, 0],
+  [P.FILTER2_CUTOFF, 20000], [P.FILTER2_RES, 0], [P.FILTER2_DRIVE, 0],
+  [P.ENV_ATTACK, 0.01], [P.ENV_SUSTAIN, 1],
+  [P.LFO_ON, 0], [P.LFO2_ON, 0],
+  [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
+  [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0],
+  [P.FX_CRUSH_ON, 0], [P.FX_EQ_ON, 0], [P.FX_TRANSIENT_ON, 0],
+  // Master volume low enough that the master limiter stays linear: its
+  // gain loop is time-varying and would be counted as non-harmonic
+  // energy that no amount of oversampling can remove.
+  [P.MASTER_VOLUME, 0.1],
+];
+
+/**
+ * Non-harmonic energy in dB below the signal's own RMS. Parseval rather than
+ * a list of probed frequencies: the folds land at `n * fs - k * f0`, which is
+ * not a fixed fraction of the grid, and probing the wrong bins would report
+ * the noise floor and call it a pass.
+ */
+const aliasFloor = (extra) => {
+  engine(
+    [
+      ...aliasBase,
+      ...extra,
+    ],
+    [[ALIAS_NOTE, 1]],
+  );
+  for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
+  const rendered = render(20 + ALIAS_SKIP + ALIAS_BLOCKS);
+  const buf = [];
+  for (let b = ALIAS_SKIP; b < ALIAS_SKIP + ALIAS_BLOCKS; b++) {
+    for (const v of rendered[b][0]) buf.push(v);
+  }
+  const rms = Math.sqrt(buf.reduce((sum, v) => sum + v * v, 0) / buf.length);
+  let harmonics = 0;
+  for (let k = 1; k * ALIAS_F0 < SR / 2; k++) {
+    const m = binMagRect(buf, k * ALIAS_F0);
+    // A sinusoid of amplitude A reads |sum|/N = A/2, so its power is 2m^2.
+    harmonics += 2 * m * m;
+  }
+  const folded = Math.max(rms * rms - harmonics, 1e-30);
+  let peak = 0;
+  for (const v of buf) peak = Math.max(peak, Math.abs(v));
+  return {
+    db: 10 * Math.log10(folded / Math.max(rms * rms, 1e-30)),
+    fund: binMagRect(buf, ALIAS_F0) * 2,
+    samples: buf.length,
+    rms,
+    peak,
+  };
+};
+const ALIAS_NOTE = 45;
+const ALIAS_F0 = 440 * 2 ** ((ALIAS_NOTE - 69) / 12);
+const ALIAS_BLOCKS = (1 * SR) / BLOCK; // one whole second
+const ALIAS_SKIP = 400; // let the attack and the limiter settle (P9.1a: was 240)
+
 {
-  const NOTE = 45;
-  const F0 = 440 * 2 ** ((NOTE - 69) / 12);
-  const BLOCKS = (1 * SR) / BLOCK; // one whole second
-  const SKIP_BLOCKS = 400; // let the attack and the limiter settle (P9.1a: was 240)
-  /** Rectangular-window single-bin amplitude (no leakage on an exact bin). */
-  const binMagRect = (samples, freq) => {
-    const w = (2 * Math.PI * freq) / SR;
-    let re = 0;
-    let im = 0;
-    for (let i = 0; i < samples.length; i++) {
-      const v = samples[i];
-      re += v * Math.cos(w * i);
-      im -= v * Math.sin(w * i);
-    }
-    return Math.hypot(re, im) / samples.length;
-  };
-  /**
-   * Non-harmonic energy in dB below the signal's own RMS. Parseval rather than
-   * a list of probed frequencies: the folds land at `n * fs - k * f0`, which is
-   * not a fixed fraction of the grid, and probing the wrong bins would report
-   * the noise floor and call it a pass.
-   */
-  const aliasFloor = (oversample) => {
-    engine(
-      [
-        [P.OSC1_ON, 1], [P.OSC1_WAVE, WAVE.sine], [P.OSC1_LEVEL, 0.8],
-        // One voice, on pitch: unison, detune and microtuning are all state a
-        // previous scenario may have left behind, and all three would move the
-        // harmonics off the bins the measurement subtracts.
-        [P.OSC1_PITCH, 0], [P.OSC1_DETUNE, 0], [P.OSC1_UNISON, 1], [P.OSC1_SPREAD, 0],
-        [P.OSC1_SYNC, 0], [P.OSC1_SUB, 0], [P.OSC1_SUB_LEVEL, 0], [P.MASTER_TUNE, 0],
-        [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0],
-        [P.OSC2_PITCH, 0], [P.OSC2_DETUNE, 0], [P.OSC2_UNISON, 1], [P.OSC2_SPREAD, 0],
-        [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0], [P.VOICE_MODE, 0],
-        [P.FILTER_TYPE, 0], [P.FILTER_CUTOFF, 20000], [P.FILTER_RES, 0.1],
-        [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0], [P.FILTER_KBD, 0],
-        // No second stage and no graph: the whole scenario is spelled out, so
-        // the measurement does not depend on where in the file it sits.
-        [P.FILTER_ROUTING, 0], [P.FILTER_MORPH, 0], [P.FILTER2_TYPE, 0],
-        [P.FILTER2_CUTOFF, 20000], [P.FILTER2_RES, 0], [P.FILTER2_DRIVE, 0],
-        [P.FX_GRAPH, 0],
-        [P.ENV_ATTACK, 0.01], [P.ENV_SUSTAIN, 1],
-        [P.LFO_ON, 0], [P.LFO2_ON, 0],
-        [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
-        [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0],
-        [P.FX_CRUSH_ON, 0], [P.FX_EQ_ON, 0], [P.FX_TRANSIENT_ON, 0],
-        // The drive is the only effect in the chain, so the alias source is
-        // unambiguous whatever the previous scenario left behind.
-        [P.FX_CHAIN1, 6], [P.FX_CHAIN2, 0], [P.FX_CHAIN3, 0],
-        [P.FX_CHAIN4, 0], [P.FX_CHAIN5, 0], [P.FX_CHAIN6, 0],
-        [P.FX_DRIVE_ON, 1], [P.FX_DRIVE_AMT, 1], [P.FX_DRIVE_MIX, 1],
-        // Master volume low enough that the master limiter stays linear: its
-        // gain loop is time-varying and would be counted as non-harmonic
-        // energy that no amount of oversampling can remove.
-        [P.MASTER_VOLUME, 0.1],
-        [P.OVERSAMPLE, oversample ? 1 : 0],
-      ],
-      [[NOTE, 1]],
-    );
-    for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
-    const rendered = render(20 + SKIP_BLOCKS + BLOCKS);
-    const buf = [];
-    for (let b = SKIP_BLOCKS; b < SKIP_BLOCKS + BLOCKS; b++) {
-      for (const v of rendered[b][0]) buf.push(v);
-    }
-    const rms = Math.sqrt(buf.reduce((sum, v) => sum + v * v, 0) / buf.length);
-    let harmonics = 0;
-    for (let k = 1; k * F0 < SR / 2; k++) {
-      const m = binMagRect(buf, k * F0);
-      // A sinusoid of amplitude A reads |sum|/N = A/2, so its power is 2m^2.
-      harmonics += 2 * m * m;
-    }
-    const folded = Math.max(rms * rms - harmonics, 1e-30);
-    return {
-      db: 10 * Math.log10(folded / Math.max(rms * rms, 1e-30)),
-      fund: binMagRect(buf, F0) * 2,
-      samples: buf.length,
-    };
-  };
-  const oneX = aliasFloor(false);
-  const twoX = aliasFloor(true);
+  const oneX = aliasFloor([
+    // The drive is the only effect in the chain, so the alias source is
+    // unambiguous whatever the previous scenario left behind.
+    [P.FX_GRAPH, 0],
+    [P.FX_CHAIN1, 6], [P.FX_CHAIN2, 0], [P.FX_CHAIN3, 0],
+    [P.FX_CHAIN4, 0], [P.FX_CHAIN5, 0], [P.FX_CHAIN6, 0],
+    [P.FX_DRIVE_ON, 1], [P.FX_DRIVE_AMT, 1], [P.FX_DRIVE_MIX, 1],
+    [P.OVERSAMPLE, 0],
+  ]);
+  const twoX = aliasFloor([
+    [P.FX_GRAPH, 0],
+    [P.FX_CHAIN1, 6], [P.FX_CHAIN2, 0], [P.FX_CHAIN3, 0],
+    [P.FX_CHAIN4, 0], [P.FX_CHAIN5, 0], [P.FX_CHAIN6, 0],
+    [P.FX_DRIVE_ON, 1], [P.FX_DRIVE_AMT, 1], [P.FX_DRIVE_MIX, 1],
+    [P.OVERSAMPLE, 1],
+  ]);
   // The switch is global and `gs_init` keeps the parameter block, so leaving
   // it on would silently change every scenario after this one. The other
   // values are restored to what the scenario above left, because the master
@@ -1682,7 +1714,7 @@ function blockSteps(frames) {
     '2x oversampling drops the drive aliases by >= 12 dB',
     drop >= 12,
     `non-harmonic energy ${oneX.db.toFixed(1)} dB at 1x, ${twoX.db.toFixed(1)} dB at 2x ` +
-      `(${drop.toFixed(1)} dB lower; ${twoX.samples} samples, exact bins, note ${NOTE})`,
+      `(${drop.toFixed(1)} dB lower; ${twoX.samples} samples, exact bins, note ${ALIAS_NOTE})`,
   );
   // The mode is a quality switch, not a level control: a dropped fundamental
   // would mean the decimator, not the aliases, is what changed.
@@ -1690,6 +1722,246 @@ function blockSteps(frames) {
     '2x oversampling keeps the driven tone at the same level',
     Math.abs(20 * Math.log10(twoX.fund / oneX.fund)) < 1.0,
     `fundamental ${(20 * Math.log10(twoX.fund / oneX.fund)).toFixed(2)} dB vs 1x`,
+  );
+}
+
+// ------------------- 4c. 2x oversampling of a *graph* drive node (P9.4)
+//
+// P6.5's section above covers the chain's drive insert. P9.4 gave the routing
+// graph the same round trip plus per-edge delay compensation, and the failure
+// that cost that batch a round was *inside* the node: the compensation was
+// applied to the node's input as well as to the round trip after it, so the
+// node's dry/wet crossfade mixed two copies 31 samples apart and the graph's
+// output carried ~25 dB more non-harmonic energy at 2x than at 1x. The gate
+// therefore has to measure the graph path itself, in both domains:
+//
+//   * frequency — the same Parseval ruler as 4b, with the drive in graph node 1
+//     instead of chain slot 1. The drop is asked for the same >= 12 dB;
+//   * time — the graph node's 2x round trip has to land the same signal the
+//     chain's 2x insert lands, at the same time, and the engine has to report
+//     the number of samples it added. See `graphDelayProbe` below: it compares
+//     the two paths *inside one note*, which is the only way to do it on this
+//     engine (the oscillator's start phase advances per started voice and
+//     `gs_init` does not reset it, so two `engine()` calls are not
+//     sample-comparable — the discipline's cross-instance rule).
+//
+// This rides on 4b's voice-phase counter: `gs_init` does not reset it, so it
+// still sits last among the note-starting scenarios, and it restores the block
+// on the way out like 4b does.
+{
+  /**
+   * The 4b patch with the drive moved from chain slot 1 into graph node 1.
+   *
+   * `FX_CHAIN1 = 6` is the node's *kind* (the same code the chain's own test
+   * writes), not a chain position: node 1 reads the dry bus and reaches the
+   * output, so the graph is the only path and only that node runs. Writing 0
+   * here would leave the node kind `None` — the graph would still be on, but
+   * the drive would never run and the scenario would measure the engine's
+   * residual release tail (it did, at -102 dB, until this was spelled out).
+   */
+  const graphPatch = (oversample) => [
+    [P.FX_GRAPH, 1],
+    [P.FX_CHAIN1, 6],
+    [P.FX_CHAIN2, 0], [P.FX_CHAIN3, 0], [P.FX_CHAIN4, 0],
+    [P.FX_CHAIN5, 0], [P.FX_CHAIN6, 0],
+    [P.FX_NODE_IN1, 1], [P.FX_NODE_IN1_GAIN, 1],
+    [P.FX_NODE_TO_OUT, 1], [P.FX_NODE_OUT_GAIN, 1],
+    [P.FX_DRIVE_ON, 1], [P.FX_DRIVE_AMT, 1], [P.FX_DRIVE_MIX, 1],
+    [P.OVERSAMPLE, oversample ? 1 : 0],
+  ];
+  const graph1x = aliasFloor(graphPatch(false));
+  const graph2x = aliasFloor(graphPatch(true));
+  // Read *after* the 2x render: the engine resolves its latency while
+  // rendering, so the value a host would query after this block is the one the
+  // 2x pass used, and the 1x pass would report zero.
+  const latency = ex.gs_oversample_latency();
+
+  /**
+   * Time-domain probe for the graph node's round trip, phase free.
+   *
+   * A plain cross-correlation of the 1x and 2x *renders* cannot work on this
+   * engine: the voice start phase comes from a golden-ratio sequence
+   * (`Engine::next_phases`, one step per started voice) that `gs_init` does not
+   * reset, so two `engine()` calls render the same patch at different carrier
+   * phases. Measured: the same patch rendered twice at 1x peaks at lag 167 with
+   * |corr| 0.9988 and only -0.529 at lag 0, and the graph 1x-vs-2x curve peaks
+   * wherever that unknown phase lands, not at the round trip. (The Rust rig can
+   * use the direct measurement because each `graph_drive_engine` builds a fresh
+   * `Engine`, whose phase counter starts at the same value; it reads 0.998292
+   * at exactly the reported 62.)
+   *
+   * What *is* comparable is two windows of one note. The oscillator phase is
+   * continuous across a parameter change, so:
+   *
+   *   1. run the drive as a **chain insert at 2x** and capture window A;
+   *   2. wait a known gap (so the phase advance over it is known, if only by
+   *      the control run);
+   *   3. either keep the chain (control) or switch `FX_GRAPH` to the **node**
+   *      and capture window B.
+   *
+   * The control peak sits at `-(gap mod period)`, whatever the phase sequence
+   * did; the graph peak must sit at exactly the same lag, because node 1 and
+   * chain slot 1 are the same drive and must have the same latency. The apex is
+   * a corner (1.000 at the lag, 0.984 two samples away), so a missing or
+   * doubled 31-sample round trip moves it by 31 and is unmissable. The gap is
+   * also checked against its own predicted lag, which proves the probe measures
+   * time at all.
+   */
+  const graphDelayProbe = () => {
+    const WINDOW = 96; // 0.25 s per capture
+    const GAP = 16;
+    const SETTLE = 60;
+    const capture = (blocks) => {
+      const out = new Float64Array(blocks * BLOCK);
+      let w = 0;
+      for (let b = 0; b < blocks; b += 1) {
+        ex.gs_process(BLOCK);
+        const ptr = ex.gs_left_ptr() / 4;
+        const heap = new Float32Array(ex.memory.buffer);
+        for (let i = 0; i < BLOCK; i += 1) out[w + i] = heap[ptr + i];
+        w += BLOCK;
+      }
+      return out;
+    };
+    const run = (toGraph) => {
+      engine(
+        [
+          ...aliasBase,
+          [P.FX_GRAPH, 0],
+          [P.FX_CHAIN1, 6], [P.FX_CHAIN2, 0], [P.FX_CHAIN3, 0],
+          [P.FX_CHAIN4, 0], [P.FX_CHAIN5, 0], [P.FX_CHAIN6, 0],
+          [P.FX_NODE_IN1, 1], [P.FX_NODE_IN1_GAIN, 1],
+          [P.FX_NODE_TO_OUT, 1], [P.FX_NODE_OUT_GAIN, 1],
+          [P.FX_DRIVE_ON, 1], [P.FX_DRIVE_AMT, 1], [P.FX_DRIVE_MIX, 1],
+          // Both paths run at 2x, so the two windows have the same band limit:
+          // the comparison is shape against shape, not square against alias.
+          [P.OVERSAMPLE, 1],
+        ],
+        [[ALIAS_NOTE, 1]],
+      );
+      for (let i = 0; i < 8; i += 1) ex.gs_set_mod_route(i, 0, 0, 0, 0);
+      capture(SETTLE);
+      const a = capture(WINDOW);
+      if (toGraph) ex.gs_set_param(P.FX_GRAPH, 1);
+      capture(GAP);
+      const b = capture(WINDOW);
+      return [a, b];
+    };
+    const corr = (a, b, lag) => {
+      let dot = 0;
+      let ea = 0;
+      let eb = 0;
+      for (let i = 0; i < a.length; i += 1) {
+        const j = i + lag;
+        if (j < 0 || j >= b.length) continue;
+        dot += a[i] * b[j];
+        ea += a[i] * a[i];
+        eb += b[j] * b[j];
+      }
+      return dot / Math.sqrt(Math.max(ea * eb, 1e-30));
+    };
+    // The gap puts the two windows a known number of base-rate samples apart;
+    // the peak is where that gap lands modulo the tone's period.
+    const period = SR / ALIAS_F0;
+    const gapSamples = (WINDOW + GAP) * BLOCK;
+    let expected = ((-gapSamples % period) + period) % period;
+    if (expected > period / 2) expected -= period;
+    const apex = (a, b) => {
+      const centre = Math.round(expected);
+      let best = [0, centre];
+      for (let lag = centre - 6; lag <= centre + 6; lag += 1) {
+        const c = corr(a, b, lag);
+        if (Math.abs(c) > Math.abs(best[0])) best = [c, lag];
+      }
+      // The neighbours two samples out, so the checks can insist the peak is a
+      // corner and not a plateau (a flat top would make the lag meaningless).
+      return {
+        corr: best[0],
+        lag: best[1],
+        centre,
+        minus2: corr(a, b, best[1] - 2),
+        plus2: corr(a, b, best[1] + 2),
+      };
+    };
+    const [controlA, controlB] = run(false);
+    const [graphA, graphB] = run(true);
+    return { control: apex(controlA, controlB), graph: apex(graphA, graphB), expected };
+  };
+  const delay = graphDelayProbe();
+
+  // Restore before the checks, so a thrown assertion cannot leave the graph or
+  // the switch on for whatever runs after this.
+  ex.gs_set_param(P.OVERSAMPLE, 0);
+  ex.gs_set_param(P.FX_GRAPH, 0);
+  ex.gs_set_param(P.FX_DRIVE_ON, 0);
+  ex.gs_set_param(P.FX_NODE_TO_OUT, 0);
+  ex.gs_set_param(P.FILTER_CUTOFF, 12000);
+  ex.gs_set_param(P.FILTER_RES, 0.2);
+  ex.gs_set_param(P.FILTER_DRIVE, 1);
+  ex.gs_set_param(P.FILTER_ENV_AMT, 0);
+  ex.gs_set_param(P.MASTER_VOLUME, 0.75);
+
+  const drop = graph1x.db - graph2x.db;
+  check(
+    'the graph drive node at 2x drops its aliases by >= 12 dB',
+    drop >= 12,
+    `non-harmonic energy ${graph1x.db.toFixed(1)} dB at 1x, ${graph2x.db.toFixed(1)} dB at 2x ` +
+      `(${drop.toFixed(1)} dB lower; node 1, ${graph2x.samples} samples, exact bins)`,
+  );
+  // The graph carries the voice path's round trip *and* the node's own, so a
+  // node that forgot its compensation would report the wrong number here before
+  // any ruler noticed.
+  check(
+    'the graph drive node reports both round trips as latency',
+    latency === 62,
+    `gs_oversample_latency() ${latency} samples at 2x (voice 31 + node 31)`,
+  );
+  // The probe's own control: the same chain insert on both sides of the gap.
+  // Its peak has to land where the known gap puts it, or nothing below means
+  // anything.
+  check(
+    'the delay probe reads the gap it stepped',
+    delay.control.lag === delay.control.centre && Math.abs(delay.control.corr) >= 0.999,
+    `chain-to-chain peaks at lag ${delay.control.lag} (predicted ${delay.expected.toFixed(2)}), ` +
+      `|corr| ${Math.abs(delay.control.corr).toFixed(6)}`,
+  );
+  // The property this exists for: switching the same drive from the chain
+  // insert to the graph node, inside one note, must not move the signal in
+  // time. A node whose round trip is missing, doubled or merged into its input
+  // delay shifts this by 31 samples.
+  check(
+    'the graph drive node lands exactly where the chain insert lands',
+    delay.graph.lag === delay.control.lag && Math.abs(delay.graph.corr) >= 0.999,
+    `graph 2x vs chain 2x peaks at lag ${delay.graph.lag} against the control's ` +
+      `${delay.control.lag} (${delay.graph.lag - delay.control.lag} samples of relative ` +
+      `delay), |corr| ${Math.abs(delay.graph.corr).toFixed(6)}; same note, so the ` +
+      `oscillator phase is shared and the comparison is valid`,
+  );
+  // The apex has to be a corner, not a plateau: a plateau would make the exact
+  // lag comparison above vacuous, because every lag on it would score the same.
+  check(
+    'the delay probe peaks on a corner, not a plateau',
+    Math.abs(delay.control.corr) > Math.abs(delay.control.minus2) &&
+      Math.abs(delay.control.corr) > Math.abs(delay.control.plus2),
+    `|corr| ${Math.abs(delay.control.minus2).toFixed(6)} / ` +
+      `${Math.abs(delay.control.corr).toFixed(6)} / ${Math.abs(delay.control.plus2).toFixed(6)} ` +
+      `at lag ${delay.control.lag - 2}/${delay.control.lag}/${delay.control.lag + 2}`,
+  );
+  // The graph 2x render is the same square at the same level as its own 1x: a
+  // node that combed its dry/wet mix would move this.
+  const level = 20 * Math.log10(graph2x.rms / graph1x.rms);
+  check(
+    'the graph 2x render keeps the 1x waveform level',
+    Math.abs(level) < 0.5,
+    `rms ${graph1x.rms.toFixed(5)} at 1x, ${graph2x.rms.toFixed(5)} at 2x ` +
+      `(${level.toFixed(2)} dB); peak ${graph1x.peak.toFixed(5)} -> ${graph2x.peak.toFixed(5)}`,
+  );
+  // A phase error wide enough to comb the node reads as a level change as well
+  // as an alias one, so the fundamental is checked on the graph's own path too.
+  check(
+    'the graph 2x render keeps its fundamental level',
+    Math.abs(20 * Math.log10(graph2x.fund / graph1x.fund)) < 1.0,
+    `fundamental ${(20 * Math.log10(graph2x.fund / graph1x.fund)).toFixed(2)} dB vs 1x`,
   );
 }
 

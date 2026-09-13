@@ -373,6 +373,11 @@ pub extern "C" fn gs_nan_events() -> u32 {
 }
 
 #[no_mangle]
+pub extern "C" fn gs_oversample_latency() -> u32 {
+    engine().oversample_latency()
+}
+
+#[no_mangle]
 pub extern "C" fn gs_alloc_count() -> u32 {
     alloc_arena::alloc_count() as u32
 }

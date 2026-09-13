@@ -177,27 +177,33 @@ const lame = files.find((file) => /lamejs-.*\.js$/.test(file));
 // skips (the build never fails). The tightened dist ceiling below is what turns
 // a skipped pass into a red gate — 1718.6 KB unoptimised is far past 1530 KB.
 const BUDGETS = {
-  // Measured 1523.1 KB after P11.1 (1718.6 KB on the same tree before it, so
-  // `wasm-opt -Oz` bought back the whole P9.2/P9.1c/P9.1b/P9.3 commitment and
-  // 195.5 KB more). 1530 KB keeps the P8.5 "measured + small margin" rule
-  // (~0.45 %, matching its ~0.5 %): it covers the release changelog entry that
-  // lands in the first-screen chunk and nothing else. The next batch that grows
-  // the payload comes back here and names its trade, as usual.
-  total: 1530 * 1024,
+  // Measured 1535.7 KB after P9.4 shipped the graph's 2x (1530.7 KB with the
+  // PDC landed but the graph still at 1x, 1523.1 KB after P11.1). The +5.0 KB
+  // over that half-finished state is the graph node's own up/down round trip:
+  // the 2x branch in `render_fx_node`, its input/wet scratch and the tests that
+  // pin the node against the chain's. 1538 KB keeps the P8.5 "measured + small
+  // margin" rule (~0.15 %, matching its ~0.45 % in spirit while staying tight
+  // over a +5 KB step): it covers the release changelog entry that lands in the
+  // first-screen chunk and nothing else. The next batch that grows the payload
+  // comes back here and names its trade, as usual.
+  total: 1538 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   // Measured 131.2 KB gzip. +2.8 KB (+2.1 %); the P8.5 plan target was 140 KB,
   // so this is the tight version of an already-reached goal.
   initialJs: 134 * 1024,
   // Measured 19.7 KB gzip. +1.3 KB.
   initialCss: 21 * 1024,
-  // The larger of the two cores. Measured 73.1 KB gzip after P9.3 and 72.4 KB
-  // after P11.1: `wasm-opt -Oz` is a raw-byte win and only moved this gzip line
+  // The larger of the two cores. Measured 73.1 KB gzip after P9.3, 72.4 KB after
+  // P11.1, 73.6 KB with the P9.4 PDC landed and 74.2 KB once the graph's 2x was
+  // switched on: `wasm-opt -Oz` is a raw-byte win and only moved this gzip line
   // by ~0.9 % (see the P9.1b correction and the P11.1 block above), so this is a
-  // deliberate, reviewed tightening rather than a real saving — 73 KB is
-  // "measured + ~0.6 KB", keeping the "next gzip growth has to be declared"
-  // property. If `wasm-opt` is ever skipped, this line goes back to 73.1 KB and
-  // fails, which is the intended alarm.
-  wasm: 73 * 1024,
+  // deliberate, reviewed loosening rather than a real saving — 75 KB is
+  // "measured + ~0.8 KB", keeping the "next gzip growth has to be declared"
+  // property. The +0.6 KB over the PDC-only state is the graph node's round
+  // trip (the 2x branch, its scratch and its tests). If `wasm-opt` is ever
+  // skipped, the raw core is ~290 KB and this line fails, which is the intended
+  // alarm.
+  wasm: 75 * 1024,
 };
 
 let failures = 0;

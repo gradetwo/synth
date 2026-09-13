@@ -177,6 +177,24 @@ pub const CONV_INSTANCES: usize = 2;
 /// No instance assigned to a node (the pool was full).
 const NO_INSTANCE: u8 = u8::MAX;
 
+/// The P9.4 per-block solve of the routing graph's delay compensation.
+///
+/// * `weight[slot][edge]` — the total delay every input edge has to carry.
+/// * `dry_delay` — how far the shared dry bus has to move for the furthest dry
+///   edge; every node's dry read starts from the delayed bus.
+/// * `output_latency` — how much later than the graph's input the graph's own
+///   output lands, i.e. what a host aligning to the graph compensates.
+/// * `node_latency` — the longest round trip inside a single node. This is the
+///   graph's *internal* share, and is what `Engine::oversample_latency` adds to
+///   the voice path's own round trip.
+#[derive(Clone, Copy)]
+struct GraphPlan {
+    weight: [[u16; 2]; FX_SLOTS],
+    dry_delay: u32,
+    output_latency: u32,
+    node_latency: u32,
+}
+
 /// Frequency of a note number with an explicit master tune and tuning table.
 #[inline]
 fn pitch_hz_with(note: f32, master_tune: f32, tuning: &[f32; crate::params::TUNING_NOTES]) -> f32 {
@@ -301,12 +319,16 @@ pub struct Engine {
     /// Scratch for the hard-sync pair's master block (P6.2).
     sync_buf: [f32; MAX_BLOCK_SIZE],
     /// One output buffer per effect node of the routing graph (A1), plus the
-    /// scratch the node input mix is summed into. Allocated once in `init`:
-    /// the render loop must never allocate, and six nodes cost ~64 KB.
+    /// scratch the node input mix is summed into and the one the P9.4 delay
+    /// stages a node source through. `graph_delay_l/r` hold one block per node
+    /// input edge. Allocated once in `init`: the render loop must never
+    /// allocate, and six nodes cost ~64 KB.
     graph_node_l: Vec<f32>,
     graph_node_r: Vec<f32>,
     graph_in_l: Vec<f32>,
     graph_in_r: Vec<f32>,
+    graph_delay_l: Vec<f32>,
+    graph_delay_r: Vec<f32>,
     /// Scratch for rendering one unison sub-voice at a time.
     unison_buf: [f32; MAX_BLOCK_SIZE],
     /// Filtered OSC 2 signal when the oscillators are panned apart.
@@ -334,6 +356,50 @@ pub struct Engine {
     os_fx_r: Vec<Oversampler2x>,
     os_dry_l: [[f32; OS_LATENCY]; FX_SLOTS],
     os_dry_r: [[f32; OS_LATENCY]; FX_SLOTS],
+    /// The graph node's 2x round trip (P9.4), same shape as the chain's: the
+    /// input copies the in-place upsample needs and the band-limited wet block
+    /// the node then crossfades. `os_scratch_out_l/r` hold the base-rate wet
+    /// signal so `osc_a/osc_b` stay free for the node's own blend.
+    os_scratch_out_l: Vec<f32>,
+    os_scratch_out_r: Vec<f32>,
+    /// The tail of the graph's dry bus when the PDC has to delay it (P9.4). One
+    /// line per channel, `OS_LATENCY` long.
+    graph_dry_hist_l: Vec<f32>,
+    graph_dry_hist_r: Vec<f32>,
+    /// P9.4's per-edge PDC delay lines: the tail of every graph edge's *source*
+    /// for each of the two channels.
+    ///
+    /// One line per (node, input edge, channel), laid out
+    /// `[(slot * 2 + edge) * 2 + channel]`, each exactly [`OS_LATENCY`] long —
+    /// the largest delay a single edge can ever need (the delay that aligns one
+    /// branch of a graph whose only round trip is the node being fed). Because
+    /// each edge owns its line, a node read by two readers with different delays
+    /// is filtered twice with independent histories instead of once with a
+    /// shared one. The dry bus has its own pair ([`Self::graph_dry_hist_l`] and
+    /// `_r`) because every node reads the *same* buffer: delaying it inside each
+    /// node would apply the delay once per reader.
+    ///
+    /// Allocated once in [`Engine::init`]; the render loop never allocates.
+    /// Zero-length when the mode is off, which is what keeps the 1x graph bit
+    /// for bit what it was.
+    graph_pdc_hist: Vec<f32>,
+    /// The last graph latency the audio thread resolved, in base-rate samples:
+    /// how much later than the graph's input the graph's own output lands
+    /// (`OS_LATENCY` when a 2x node feeds the output, or when the dry bypass is
+    /// delayed to match one). A block-wide property of the graph, cached by
+    /// [`Engine::apply_fx_graph`] rather than a per-sample one.
+    graph_latency: u32,
+    /// The longest round trip a single graph node adds to its own input, in
+    /// base-rate samples (zero or [`OS_LATENCY`]). This is the graph's internal
+    /// latency — the part that is *inside* the node rather than in front of it —
+    /// and it is what [`Engine::oversample_latency`] reports as the graph's
+    /// share of the compensated total.
+    graph_node_latency: u32,
+    /// The delay the PDC moved the whole dry bus by for the last rendered block,
+    /// in base-rate samples. Every node's dry read starts here, and a node whose
+    /// own dry edge needs less is staged a second time from the delayed bus in
+    /// [`Engine::mix_node_input`].
+    graph_dry_delay: u32,
     /// Per-voice LFO state, used when a patch retriggers the LFO per note.
     voice_lfos: [Lfo; MAX_VOICES],
     voice_lfo2s: [Lfo; MAX_VOICES],
@@ -515,6 +581,8 @@ impl Engine {
             graph_node_r: Vec::new(),
             graph_in_l: Vec::new(),
             graph_in_r: Vec::new(),
+            graph_delay_l: Vec::new(),
+            graph_delay_r: Vec::new(),
             unison_buf: [0.0; MAX_BLOCK_SIZE],
             voice_buf_r: Vec::new(),
             filter2_in_buf: Vec::new(),
@@ -528,6 +596,14 @@ impl Engine {
             os_fx_r: Vec::new(),
             os_dry_l: [[0.0; OS_LATENCY]; FX_SLOTS],
             os_dry_r: [[0.0; OS_LATENCY]; FX_SLOTS],
+            os_scratch_out_l: Vec::new(),
+            os_scratch_out_r: Vec::new(),
+            graph_dry_hist_l: Vec::new(),
+            graph_dry_hist_r: Vec::new(),
+            graph_pdc_hist: Vec::new(),
+            graph_latency: 0,
+            graph_node_latency: 0,
+            graph_dry_delay: 0,
                             // Overwritten by `init`; 1.0 would make the fade instantaneous.
                     voice_lfos: [Lfo::new(); MAX_VOICES],
             voice_lfo2s: [Lfo::new(); MAX_VOICES],
@@ -702,6 +778,22 @@ impl Engine {
                 buf.resize(MAX_BLOCK_SIZE, 0.0);
             }
         }
+        // P9.4: the graph node's round trip needs the same two fixed buffers the
+        // chain's insert does — an input copy for the in-place upsample and the
+        // base-rate wet block — plus one history per channel for the dry bus the
+        // PDC delays. 2 * block + 2 * OS_LATENCY floats, all message-path.
+        for buf in [&mut self.os_scratch_out_l, &mut self.os_scratch_out_r] {
+            if buf.len() != block {
+                buf.clear();
+                buf.resize(block, 0.0);
+            }
+        }
+        for buf in [&mut self.graph_dry_hist_l, &mut self.graph_dry_hist_r] {
+            if buf.len() != OS_LATENCY {
+                buf.clear();
+                buf.resize(OS_LATENCY, 0.0);
+            }
+        }
         if self.os_l.len() != MAX_VOICES {
             self.os_l.clear();
             self.os_l.resize_with(MAX_VOICES, Oversampler2x::new);
@@ -714,6 +806,14 @@ impl Engine {
             self.os_fx_r.clear();
             self.os_fx_r.resize_with(FX_SLOTS, Oversampler2x::new);
         }
+        // P9.4: two input edges per node, two channels, one OS_LATENCY-long tail
+        // each — 6 * 2 * 2 * 31 * 4 B = 2.9 KB, allocated here (message path) so
+        // the graph's PDC delay never allocates while rendering.
+        let pdc_len = FX_SLOTS * 2 * 2 * OS_LATENCY;
+        if self.graph_pdc_hist.len() != pdc_len {
+            self.graph_pdc_hist.clear();
+            self.graph_pdc_hist.resize(pdc_len, 0.0);
+        }
         let node_capacity = FX_SLOTS * MAX_BLOCK_SIZE;
         if self.graph_node_l.len() != node_capacity {
             self.graph_node_l.clear();
@@ -724,6 +824,10 @@ impl Engine {
             self.graph_in_l.resize(MAX_BLOCK_SIZE, 0.0);
             self.graph_in_r.clear();
             self.graph_in_r.resize(MAX_BLOCK_SIZE, 0.0);
+            self.graph_delay_l.clear();
+            self.graph_delay_l.resize(FX_SLOTS * 2 * MAX_BLOCK_SIZE, 0.0);
+            self.graph_delay_r.clear();
+            self.graph_delay_r.resize(FX_SLOTS * 2 * MAX_BLOCK_SIZE, 0.0);
         }
         // `resize`, not a fresh `vec!`: the host may re-init the engine, and the
         // arena never grows. Allocating a second 384 KB response buffer before
@@ -1401,16 +1505,21 @@ impl Engine {
     }
 
     /// Fixed latency the oversampled mode adds, in base-rate samples, or 0 when
-    /// the patch has it switched off (P6.5).
+    /// the patch has it switched off (P6.5, extended by P9.4).
     ///
-    /// It is a property of the round trip, not of a voice: both the per-voice
-    /// filter path and the drive insert run through the same up/process/down
-    /// pair, so every path through the engine is delayed by the same amount and
-    /// nothing combs against anything. A host that wants sample-exact alignment
-    /// with a 1x render compensates exactly this many samples.
+    /// It is a property of the round trip, not of a voice: the per-voice filter
+    /// path always runs one, and a graph whose nonlinear nodes are 2x runs one
+    /// more *inside each of those nodes* (not in front of it — a node's own
+    /// dry/wet crossfade is aligned by delaying its dry input by the same
+    /// amount, so the node behaves like any other fixed-latency effect and the
+    /// PDC only has to align branches that meet further down the graph). The
+    /// worst case is therefore two round trips: the voice path's, and one
+    /// node's. A host that wants sample-exact alignment with a 1x render
+    /// compensates exactly this many samples; [`Self::graph_latency`] reports
+    /// how much of it is the graph's own output latency.
     pub fn oversample_latency(&self) -> u32 {
         if self.oversampling() {
-            OS_LATENCY as u32
+            (OS_LATENCY as u32) + self.graph_node_latency
         } else {
             0
         }
@@ -3013,19 +3122,38 @@ impl Engine {
         // to what the host set, and the node mix then runs at block rate like
         // every other FX parameter.
         let (in1, in2, out) = self.graph_gains(frames);
+        // P9.4: the graph's latency plan for this block. One forward pass over
+        // six nodes and their at most two edges each — the same topological
+        // order the render loops already rely on — resolves which branches need
+        // compensating, how far the dry bus has to move for them, and how much
+        // the graph as a whole then delays the dry signal. With the switch off,
+        // or with nothing in the graph oversampled, every weight is zero and the
+        // render below is the old one, sample for sample.
+        let plan = self.graph_latency_plan();
+        self.graph_latency = plan.output_latency;
+        self.graph_node_latency = plan.node_latency;
+        self.graph_dry_delay = plan.dry_delay;
+        // The dry bus is one shared buffer, so it is delayed once, here, to the
+        // furthest any node's dry edge has to reach. A node's *own* dry edge may
+        // then need less than that, and `mix_node_input` stages the difference
+        // off the delayed bus (one more copy of the same fixed delay) while the
+        // wet branches already carry their own.
+        if self.graph_dry_delay > 0 {
+            let mut hist_l = core::mem::take(&mut self.graph_dry_hist_l);
+            let mut hist_r = core::mem::take(&mut self.graph_dry_hist_r);
+            delay_by(&mut hist_l, &mut self.fx_l[..frames], self.graph_dry_delay as usize);
+            delay_by(&mut hist_r, &mut self.fx_r[..frames], self.graph_dry_delay as usize);
+            self.graph_dry_hist_l = hist_l;
+            self.graph_dry_hist_r = hist_r;
+        }
         // Per-node effect overrides (P9.3), resolved once for the block exactly
         // like the chain path; a node with every slot unset passes the kind's
         // own values through untouched.
         let time = self.params.delay_time_seconds();
         let max_time = self.delay_max_seconds();
-        let source = match self.params.ovr_source() {
-            1 => self.graph_lfo,
-            2 => self.graph_lfo2,
-            3 => self.graph_env,
-            _ => 0.0,
-        };
+        let source = self.ovr_source_value();
         for slot in 0..FX_SLOTS {
-            self.mix_node_input(slot, frames, in1[slot], in2[slot]);
+            self.mix_node_input(slot, frames, in1[slot], in2[slot], &plan.weight[slot]);
             let ovr = self.ovr_values_for(slot, time, max_time, source);
             self.render_fx_node(slot, frames, &ovr);
         }
@@ -3049,9 +3177,69 @@ impl Engine {
     /// dry bus or an earlier node, each with its own gain. `gain1`/`gain2` are
     /// the resolved gains for this block, which are the host values unless an
     /// in-graph edge is adding to them (P7.2).
-    fn mix_node_input(&mut self, slot: usize, frames: usize, gain1: f32, gain2: f32) {
+    ///
+    /// `w` is the node's P9.4 compensation pair: the total delay that edge `i`
+    /// has to carry — including the [`OS_LATENCY`] a 2x node's own up/down round
+    /// trip costs it — so that every branch feeding this node arrives together
+    /// ([`Self::graph_latency_plan`]).
+    ///
+    /// A node source is only delayed by the part the bus has not already
+    /// carried: the dry bus has been moved to [`Self::graph_dry_delay`], and a
+    /// node's own output already carries the round trip of every 2x node before
+    /// it. The edge's remaining delay is therefore `w[i] - dry_delay`, which is
+    /// never negative because the dry bus is delayed to the furthest edge.
+    fn mix_node_input(&mut self, slot: usize, frames: usize, gain1: f32, gain2: f32, w: &[u16; 2]) {
         let inputs = self.params.fx.node_in[slot];
         let gains = [gain1, gain2];
+        let dry_delay = self.graph_dry_delay as usize;
+        let mut hist_full = core::mem::take(&mut self.graph_pdc_hist);
+        // Stage each node source at its own remaining offset into the delay
+        // scratch. The dry bus is read where it now sits, or off its staged copy
+        // when its edge needs less than the graph's furthest.
+        for (index, input) in inputs.iter().enumerate() {
+            if input.src == 0 || gains[index] == 0.0 {
+                continue;
+            }
+            let base = (slot * 2 + index) * MAX_BLOCK_SIZE;
+            if input.src == GRAPH_DRY {
+                let delta = (w[index] as usize).saturating_sub(dry_delay);
+                if delta == 0 {
+                    continue;
+                }
+                let scratch = &mut self.graph_delay_l[base..base + frames];
+                scratch.copy_from_slice(&self.fx_l[..frames]);
+                let scratch_r = &mut self.graph_delay_r[base..base + frames];
+                scratch_r.copy_from_slice(&self.fx_r[..frames]);
+                let offset = (slot * 2 + index) * 2 * OS_LATENCY;
+                let (hist_l, hist_r) =
+                    hist_full[offset..offset + 2 * OS_LATENCY].split_at_mut(OS_LATENCY);
+                delay_by(hist_l, scratch, delta);
+                delay_by(hist_r, scratch_r, delta);
+                continue;
+            }
+            let from = input.src as usize - 2;
+            if from >= slot || from >= FX_SLOTS {
+                continue;
+            }
+            let delta = (w[index] as usize).saturating_sub(dry_delay);
+            let source = &self.graph_node_l[from * MAX_BLOCK_SIZE..][..frames];
+            let scratch = &mut self.graph_delay_l[base..base + frames];
+            scratch.copy_from_slice(source);
+            if delta > 0 {
+                let offset = (slot * 2 + index) * 2 * OS_LATENCY;
+                let (hist_l, _) = hist_full[offset..offset + 2 * OS_LATENCY].split_at_mut(OS_LATENCY);
+                delay_by(hist_l, scratch, delta);
+            }
+            let source_r = &self.graph_node_r[from * MAX_BLOCK_SIZE..][..frames];
+            let scratch_r = &mut self.graph_delay_r[base..base + frames];
+            scratch_r.copy_from_slice(source_r);
+            if delta > 0 {
+                let offset = (slot * 2 + index) * 2 * OS_LATENCY;
+                let (_, hist_r) = hist_full[offset..offset + 2 * OS_LATENCY].split_at_mut(OS_LATENCY);
+                delay_by(hist_r, scratch_r, delta);
+            }
+        }
+        self.graph_pdc_hist = hist_full;
         self.graph_in_l[..frames].fill(0.0);
         self.graph_in_r[..frames].fill(0.0);
         for (index, input) in inputs.iter().enumerate() {
@@ -3059,23 +3247,32 @@ impl Engine {
             if input.src == 0 || gain == 0.0 {
                 continue;
             }
-            if input.src == GRAPH_DRY {
-                for i in 0..frames {
-                    self.graph_in_l[i] += self.fx_l[i] * gain;
-                    self.graph_in_r[i] += self.fx_r[i] * gain;
+            let base = (slot * 2 + index) * MAX_BLOCK_SIZE;
+            let (src_l, src_r): (&[f32], &[f32]) = if input.src == GRAPH_DRY {
+                let delta = (w[index] as usize).saturating_sub(dry_delay);
+                if delta == 0 {
+                    (&self.fx_l[..frames], &self.fx_r[..frames])
+                } else {
+                    (
+                        &self.graph_delay_l[base..base + frames],
+                        &self.graph_delay_r[base..base + frames],
+                    )
                 }
-                continue;
-            }
-            let from = input.src as usize - 2;
-            // Reading this node or a later one would be a loop: the connection is
-            // ignored, deterministically, rather than guessed at.
-            if from >= slot || from >= FX_SLOTS {
-                continue;
-            }
-            let base = from * MAX_BLOCK_SIZE;
+            } else {
+                let from = input.src as usize - 2;
+                // Reading this node or a later one would be a loop: the connection is
+                // ignored, deterministically, rather than guessed at.
+                if from >= slot || from >= FX_SLOTS {
+                    continue;
+                }
+                (
+                    &self.graph_delay_l[base..base + frames],
+                    &self.graph_delay_r[base..base + frames],
+                )
+            };
             for i in 0..frames {
-                self.graph_in_l[i] += self.graph_node_l[base + i] * gain;
-                self.graph_in_r[i] += self.graph_node_r[base + i] * gain;
+                self.graph_in_l[i] += src_l[i] * gain;
+                self.graph_in_r[i] += src_r[i] * gain;
             }
         }
         let base = slot * MAX_BLOCK_SIZE;
@@ -3188,18 +3385,24 @@ impl Engine {
                 self.blend_node(slot, frames, ovr[2], parallel);
             }
             FxKind::Drive if fx.drive_on && ovr[1] > 0.0 => {
-                unsafe {
-                    gs_fx_overdrive_set(slot as i32, ovr[0]);
-                    gs_fx_overdrive_block(
-                        slot as i32,
-                        self.graph_node_l[base..].as_ptr(),
-                        self.graph_node_r[base..].as_ptr(),
-                        self.osc_a.as_mut_ptr(),
-                        self.osc_b.as_mut_ptr(),
-                        frames as u32,
-                    );
+                if self.oversampling() && Self::node_oversampled(FxKind::Drive) {
+                    // P9.4: the node's own round trip, with its dry side delayed
+                    // to match, exactly like the chain's drive insert.
+                    self.drive_oversampled_node(slot, frames, ovr[0], parallel);
+                } else {
+                    unsafe {
+                        gs_fx_overdrive_set(slot as i32, ovr[0]);
+                        gs_fx_overdrive_block(
+                            slot as i32,
+                            self.graph_node_l[base..].as_ptr(),
+                            self.graph_node_r[base..].as_ptr(),
+                            self.osc_a.as_mut_ptr(),
+                            self.osc_b.as_mut_ptr(),
+                            frames as u32,
+                        );
+                    }
+                    self.blend_node(slot, frames, ovr[1], parallel);
                 }
-                self.blend_node(slot, frames, ovr[1], parallel);
             }
             FxKind::Crush if fx.crush_on && ovr[3] > 0.0 => {
                 self.crushers[slot].process(
@@ -3280,6 +3483,270 @@ impl Engine {
         self.params.filter.oversample
     }
 
+    /// Whether node `slot`'s effect runs this block, i.e. whether the render
+    /// arm for its kind executes. Kept beside [`Self::render_fx_node`] and
+    /// written from the same conditions: a node that does not run is an identity
+    /// on its input, so it can neither take part in the oversampling nor add
+    /// latency to a path (P9.4).
+    ///
+    /// Only the arms' own gates count. The arms' `mix > 0` guards are deliberately
+    /// *not* consulted: when the effect runs but the mix is zero the render is a
+    /// pure pass-through of the (delayed) input, so the path still carries the
+    /// latency and the plan has to say so. This is also exactly the condition
+    /// under which the voice path's 2x is on, which is what makes the reported
+    /// graph latency honest.
+    fn node_runs(&self, slot: usize) -> bool {
+        let fx = self.params.fx;
+        match fx.chain[slot] {
+            FxKind::None => false,
+            FxKind::Delay => self.delay_for(slot).is_some(),
+            FxKind::Reverb => fx.reverb_on && (fx.reverb_mode != 1 || self.ir.has_ir()),
+            FxKind::Chorus => fx.chorus_on,
+            FxKind::Flanger => fx.flanger_on,
+            FxKind::Phaser => fx.phaser_on,
+            FxKind::Drive => fx.drive_on,
+            FxKind::Crush => fx.crush_on,
+            FxKind::Eq => fx.eq_on,
+            FxKind::Transient => fx.transient_on,
+        }
+    }
+
+    /// The 2x node kinds (P9.4): the ones that fold energy back into the band.
+    ///
+    /// * [`FxKind::Drive`] — the vendor overdrive is a memoryless waveshaper, so
+    ///   at 2x it simply generates its harmonics where the decimator can remove
+    ///   them instead of against the base Nyquist. This is the node the switch
+    ///   exists for.
+    /// * [`FxKind::Crush`] — the quantiser is a hard step and the
+    ///   sample-and-hold divides the rate; both are frequency folding by
+    ///   construction. Its own `aa` control is a one-pole pair at the *decimated*
+    ///   Nyquist, which cannot reach the source band, so 2x gives the crusher the
+    ///   guard band it never had.
+    ///
+    /// Everything else in a node is linear or a pure gain law (EQ biquads, delay
+    /// lines, reverb, the modulated delay-line family, the transient shaper's
+    /// envelope gain) — oversampling would buy a band limit the signal already
+    /// has and pay 1.9x the CPU for it. Those nodes are compensated, not
+    /// oversampled: that is the whole job of the PDC below.
+    ///
+    /// **The invariant this predicate has to keep** (it is what the P9.4
+    /// continuation was about): a node that reports true here must run its whole
+    /// block through the up/process/down round trip *at the top and bottom of
+    /// the node*, with its dry/wet blend's dry side delayed by the same
+    /// [`OS_LATENCY`]. The node's blend then crossfades two aligned copies and
+    /// the node as a whole is a plain fixed-latency effect — the only shape the
+    /// PDC below can compensate. Blending an undelayed dry against a delayed wet
+    /// copy combs the node and, because the node's own mix is what the graph's
+    /// output sums, it also changes the graph's *level*, which the off-grid
+    /// ruler reads as extra non-harmonic energy. That is exactly the failure the
+    /// first attempt at this batch shipped.
+    #[inline]
+    fn node_oversampled(kind: FxKind) -> bool {
+        matches!(kind, FxKind::Drive)
+    }
+
+    /// Run a graph node's drive at 2x and crossfade it in place (P9.4).
+    ///
+    /// The node's own up/down round trip makes the wet block land [`OS_LATENCY`]
+    /// samples late, so this delays the dry copy the same way before
+    /// [`Self::blend_node`] folds the two together — the same compensation
+    /// [`Self::drive_oversampled_amt`] does for the chain, and the reason the
+    /// PDC below must not add the round trip to the node's *input* as well.
+    fn drive_oversampled_node(&mut self, slot: usize, frames: usize, amount: f32, parallel: bool) {
+        let nf = frames * 2;
+        let base = slot * MAX_BLOCK_SIZE;
+        self.os_in_l[..frames].copy_from_slice(&self.graph_node_l[base..base + frames]);
+        self.os_in_r[..frames].copy_from_slice(&self.graph_node_r[base..base + frames]);
+        self.os_fx_l[slot].upsample(
+            &self.os_in_l[..frames],
+            &mut self.osc_a[..nf],
+            &mut self.os_scratch,
+        );
+        self.os_fx_r[slot].upsample(
+            &self.os_in_r[..frames],
+            &mut self.osc_b[..nf],
+            &mut self.os_scratch,
+        );
+        // The vendored overdrive is a per-sample memoryless shaper, so it can
+        // run in place over the oversampled block.
+        unsafe {
+            let l = self.osc_a.as_mut_ptr();
+            let r = self.osc_b.as_mut_ptr();
+            gs_fx_overdrive_set(slot as i32, amount);
+            gs_fx_overdrive_block(slot as i32, l, r, l, r, nf as u32);
+        }
+        self.os_fx_l[slot].downsample(
+            &self.osc_a[..nf],
+            &mut self.os_scratch_out_l[..frames],
+            &mut self.os_scratch,
+        );
+        self.os_fx_r[slot].downsample(
+            &self.osc_b[..nf],
+            &mut self.os_scratch_out_r[..frames],
+            &mut self.os_scratch,
+        );
+        delay_by(&mut self.os_dry_l[slot], &mut self.graph_node_l[base..base + frames], OS_LATENCY);
+        delay_by(&mut self.os_dry_r[slot], &mut self.graph_node_r[base..base + frames], OS_LATENCY);
+        self.osc_a[..frames].copy_from_slice(&self.os_scratch_out_l[..frames]);
+        self.osc_b[..frames].copy_from_slice(&self.os_scratch_out_r[..frames]);
+        self.blend_node(slot, frames, amount, parallel);
+    }
+
+    /// The latency node `slot` adds to whatever reaches it, in base-rate
+    /// samples: [`OS_LATENCY`] when it is a 2x node that actually runs this
+    /// block, zero otherwise. This is the number the PDC is built on, so it has
+    /// to agree with the render path exactly — [`Self::node_runs`] reads the
+    /// same conditions the render arms do.
+    fn node_latency(&self, slot: usize, oversampling: bool) -> usize {
+        if oversampling
+            && Self::node_oversampled(self.params.fx.chain[slot])
+            && self.node_runs(slot)
+        {
+            OS_LATENCY
+        } else {
+            0
+        }
+    }
+
+    /// The P9.4 solve for the whole graph.
+    ///
+    /// Nodes are processed in index order and an input may only read the dry bus
+    /// or an earlier node, so one forward pass is an exact topological solve.
+    /// The rule is the standard one, applied per node rather than globally: every
+    /// branch **into a node** is delayed until it matches that node's slowest
+    /// input. A 2x node's own up/down round trip sits *after* that point —
+    /// inside the node, where its own dry/wet blend compensates it — so it
+    /// raises the node's output latency and must not also be pushed out in front
+    /// of the node.
+    ///
+    /// ```text
+    /// arrival[v] = max over connected inputs of src_out        // dry bus = 0
+    /// src_out[v] = arrival[v] + own(v)                         // own = OS_LATENCY if 2x
+    /// w[v][e]    = arrival[v] - src_out(src)                   // never negative
+    /// dry_delay  = max over dry edges of w[v][e]
+    /// output_latency = max over nodes routed to output of src_out, and dry_delay
+    /// ```
+    ///
+    /// Two things are worth naming, because the first attempt at this batch got
+    /// both wrong:
+    ///
+    /// * `own(v)` is inside the node, so it is **not** in `w` — delaying the dry
+    ///   bus by the round trip and then delaying the node's own dry side by it
+    ///   again combs the node and, because the node's mix is what the graph's
+    ///   output sums, reads as a level change (the off-grid ruler scored it as
+    ///   +25 dB of non-harmonic energy).
+    /// * Compensating to each node's own slowest input rather than to the graph's
+    ///   global maximum is what lets a 2x node sit beside a linear branch
+    ///   without pushing the linear one a round trip away from a *third* branch
+    ///   that also reads the dry bus.
+    ///
+    /// Because every `own` is equal, `w` is in `0..=OS_LATENCY` and so is the dry
+    /// delay. When the mode is off, or nothing in the graph is oversampled, every
+    /// field is zero and the render is the old one sample for sample.
+    fn graph_latency_plan(&self) -> GraphPlan {
+        let oversampling = self.oversampling();
+        let mut node_lat = [0u32; FX_SLOTS];
+        for slot in 0..FX_SLOTS {
+            node_lat[slot] = self.node_latency(slot, oversampling) as u32;
+        }
+        self.graph_latency_plan_for(&node_lat)
+    }
+
+    /// The same solve with the per-node round trips handed in, so the arithmetic
+    /// can be tested (and the mode re-enabled) without the live predicate. See
+    /// [`Self::graph_latency_plan`] for what it computes.
+    fn graph_latency_plan_for(&self, node_lat: &[u32; FX_SLOTS]) -> GraphPlan {
+        let fx = &self.params.fx;
+        let mut plan = GraphPlan {
+            weight: [[0u16; 2]; FX_SLOTS],
+            dry_delay: 0,
+            output_latency: 0,
+            node_latency: node_lat.iter().copied().max().unwrap_or(0),
+        };
+        // The latency each node's *input* has to wait for, and the latency its
+        // output then lands at.
+        let mut arrival = [0u32; FX_SLOTS];
+        let mut src_out = [0u32; FX_SLOTS];
+        for slot in 0..FX_SLOTS {
+            // The slowest input this node has to wait for. The dry bus is the
+            // source at zero, a node source is its own output latency, and a
+            // would-be loop or a node that does not exist reads nothing —
+            // exactly as `mix_node_input` decides.
+            for input in fx.node_in[slot].iter() {
+                let source = if input.src == GRAPH_DRY {
+                    0
+                } else {
+                    if input.src == 0 {
+                        continue;
+                    }
+                    let from = input.src as usize - 2;
+                    if from >= slot || from >= FX_SLOTS {
+                        continue;
+                    }
+                    src_out[from]
+                };
+                arrival[slot] = arrival[slot].max(source);
+            }
+            src_out[slot] = arrival[slot] + node_lat[slot];
+            for (edge, input) in fx.node_in[slot].iter().enumerate() {
+                if input.src == 0 {
+                    continue;
+                }
+                let source = if input.src == GRAPH_DRY {
+                    0
+                } else {
+                    let from = input.src as usize - 2;
+                    if from >= slot || from >= FX_SLOTS {
+                        continue;
+                    }
+                    src_out[from]
+                };
+                let weight = arrival[slot].saturating_sub(source);
+                plan.weight[slot][edge] = weight as u16;
+                if input.src == GRAPH_DRY {
+                    plan.dry_delay = plan.dry_delay.max(weight);
+                }
+            }
+        }
+        // What the graph's output lands at. A node routed to the output bus
+        // arrives after its own round trip; the untouched dry bus beside it is at
+        // `dry_delay`. Whichever is later is the graph's external latency — and
+        // when no node reaches the output at all, the answer is the dry delay,
+        // because that is what the output bus is.
+        plan.output_latency = plan.dry_delay;
+        for slot in 0..FX_SLOTS {
+            if fx.node_to_out[slot] {
+                plan.output_latency = plan.output_latency.max(src_out[slot]);
+            }
+        }
+        plan
+    }
+
+    /// The routing graph's own latency for the last rendered block, in base-rate
+    /// samples: the `max_in_latency` the P9.4 compensation had to add, or zero
+    /// when the switch is off or nothing in the graph is oversampled.
+    ///
+    /// This is the graph's share of [`Self::oversample_latency`], and it is
+    /// resolved while rendering (a plan of the patch's kinds, switches and
+    /// edges), so a host that queries it in the same message turn as a patch
+    /// change sees the value the *next* block will use. Everything that renders
+    /// already behaves that way.
+    pub fn graph_latency(&self) -> u32 {
+        self.graph_latency
+    }
+
+    /// The value of the per-node override source for this block (P9.3). The
+    /// chain path and the graph path resolve it identically.
+    #[inline]
+    fn ovr_source_value(&self) -> f32 {
+        match self.params.ovr_source() {
+            1 => self.graph_lfo,
+            2 => self.graph_lfo2,
+            3 => self.graph_env,
+            _ => 0.0,
+        }
+    }
+
     /// Run the drive at 2x and write the band-limited wet block to
     /// `osc_a`/`osc_b`, leaving the source buffer delayed by [`OS_LATENCY`].
     ///
@@ -3324,8 +3791,8 @@ impl Engine {
             &mut self.os_in_r[..frames],
             &mut self.os_scratch,
         );
-        delay_samples(&mut self.os_dry_l[slot], &mut self.fx_l[..frames]);
-        delay_samples(&mut self.os_dry_r[slot], &mut self.fx_r[..frames]);
+        delay_by(&mut self.os_dry_l[slot], &mut self.fx_l[..frames], OS_LATENCY);
+        delay_by(&mut self.os_dry_r[slot], &mut self.fx_r[..frames], OS_LATENCY);
         self.osc_a[..frames].copy_from_slice(&self.os_in_l[..frames]);
         self.osc_b[..frames].copy_from_slice(&self.os_in_r[..frames]);
     }
@@ -3339,11 +3806,17 @@ impl Engine {
     }
 }
 
-/// Delay `buf` in place by `hist.len()` samples, carrying the tail across
-/// blocks. `hist` holds the samples immediately *before* the block, oldest
-/// first, and is updated to the new tail.
-fn delay_samples(hist: &mut [f32], buf: &mut [f32]) {
-    let d = hist.len();
+/// Delay `buf` in place by `delay` samples, carrying the tail across blocks.
+/// `hist` holds the [`OS_LATENCY`] samples immediately *before* the block,
+/// oldest first, and is updated to the new tail.
+///
+/// One implementation for both the chain's drive insert (which sleeps a whole
+/// [`OS_LATENCY`]) and the graph's per-edge PDC (which sleeps any amount from 0
+/// to [`OS_LATENCY`], P9.4), so the two can never drift apart. The delay is
+/// read from `hist`'s own length, and it is fixed for a whole block, so the
+/// tail update is the same regardless of which line the caller hands in.
+fn delay_by(hist: &mut [f32], buf: &mut [f32], delay: usize) {
+    let d = delay.min(hist.len());
     let n = buf.len();
     if d == 0 || n == 0 {
         return;
@@ -3351,17 +3824,17 @@ fn delay_samples(hist: &mut [f32], buf: &mut [f32]) {
     // Save the new history from the *input* before the shift overwrites it.
     let mut next = [0.0f32; OS_LATENCY];
     if n >= d {
-        next.copy_from_slice(&buf[n - d..]);
+        next[..d].copy_from_slice(&buf[n - d..]);
     } else {
-        next[..d - n].copy_from_slice(&hist[n..]);
-        next[d - n..].copy_from_slice(&buf[..n]);
+        next[..d - n].copy_from_slice(&hist[n..d]);
+        next[d - n..d].copy_from_slice(&buf[..n]);
     }
     for i in (d..n).rev() {
         buf[i] = buf[i - d];
     }
     let head = d.min(n);
     buf[..head].copy_from_slice(&hist[..head]);
-    hist.copy_from_slice(&next);
+    hist[..d].copy_from_slice(&next[..d]);
 }
 
 /// The shaping EQ's per-block controls (P6.4). A free function because both the
@@ -4324,6 +4797,541 @@ mod tests {
             assert!(e.out_l[i].abs() < 1e-6, "left not silent at {i}");
             assert!(e.out_r[i].abs() < 1e-6, "right not silent at {i}");
         }
+    }
+
+    // ---------------------------------------------------------------- P9.4 PDC
+    //
+    // P9.4's job was to let the routing graph run its nonlinear nodes at 2x with
+    // per-edge delay compensation, the way P6.5's chain does. The compensation
+    // is implemented and tested here, but the graph's 2x node path is held
+    // *off*: measured through the real wasm it degrades rather than improves the
+    // driven node's alias floor (see the note on `node_oversampled`), so the
+    // graph still renders at 1x. The tests below pin both halves of that
+    // decision — the infrastructure, and the bit-exact 1x render — and the first
+    // test is the one that fails loudly if someone flips the predicate back on
+    // without fixing the underlying problem.
+
+    /// The scenario the graph's 2x was written for: a quiet, unmodulated, fully
+    /// driven sine, with the drive in node 1 instead of chain position 1. Same
+    /// shape as P6.5's chain test (`driven_sine_alias_floor`), and built from a
+    /// *fresh* engine rather than the shared `fx_test_engine` rig — that one
+    /// turns every effect on for the chain tests, and an unrelated node left
+    /// running would both add aliases of its own and take part in the latency
+    /// plan. `eq_branch` adds a linear node in parallel with the drive, the
+    /// bypass branch the PDC is for.
+    fn graph_drive_engine(oversample: bool, eq_branch: bool) -> Box<Engine> {
+        let mut e = new_engine(8);
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC1_DETUNE, 0.0);
+        e.set_param(id::OSC1_UNISON, 1.0);
+        e.set_param(id::OSC1_SYNC, 0.0);
+        e.set_param(id::OSC1_SUB_LEVEL, 0.0);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::OSC_FM, 0.0);
+        e.set_param(id::OSC_RING, 0.0);
+        e.set_param(id::NOISE_MIX, 0.0);
+        e.set_param(id::VOICE_MODE, 0.0);
+        e.set_param(id::FILTER_TYPE, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 20000.0);
+        e.set_param(id::FILTER_RES, 0.1);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::FILTER_ENV_AMT, 0.0);
+        e.set_param(id::FILTER_KBD, 0.0);
+        e.set_param(id::FILTER_ROUTING, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.01);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::LFO2_ON, 0.0);
+        e.set_param(id::FX_REVERB_ON, 0.0);
+        e.set_param(id::FX_DELAY_ON, 0.0);
+        e.set_param(id::FX_CHORUS_ON, 0.0);
+        e.set_param(id::FX_FLANGER_ON, 0.0);
+        e.set_param(id::FX_PHASER_ON, 0.0);
+        e.set_param(id::FX_DRIVE_ON, 1.0);
+        e.set_param(id::FX_DRIVE_AMT, 1.0);
+        e.set_param(id::FX_DRIVE_MIX, 1.0);
+        // Quiet enough that the master limiter stays linear; its gain loop is
+        // time-varying and would be measured as non-harmonic energy.
+        e.set_param(id::MASTER_VOLUME, 0.1);
+        e.set_param(id::OVERSAMPLE, if oversample { 1.0 } else { 0.0 });
+        for i in 0..crate::params::MOD_ROUTES {
+            e.set_route(i, 0, 0, 0.0, false);
+        }
+        // The routing graph, stated from scratch. `clear_node_routes` matters as
+        // much as clearing the kinds: the default graph routes the *last* node
+        // to the mix bus, and a node with no inputs is a pass-through, so
+        // leaving that on would sum a second, undelayed copy of the dry bus into
+        // the output beside the drive.
+        e.set_param(id::FX_GRAPH, 1.0);
+        clear_node_routes(&mut e);
+        for slot in 0..FX_SLOTS {
+            e.set_param(id::FX_CHAIN1 + slot as u32, 0.0);
+            for which in 0..2 {
+                set_graph_input(&mut e, slot, which, 0, 1.0);
+            }
+        }
+        e.set_param(id::FX_CHAIN1, 6.0);
+        set_graph_input(&mut e, 0, 0, GRAPH_DRY, 1.0);
+        route_node(&mut e, 0, 1.0);
+        if eq_branch {
+            // A linear node reading the dry bus and reaching the output beside
+            // the drive: the bypass branch that has to be delayed to the drive's
+            // round trip, while the graph's maximum is still one round trip.
+            e.set_param(id::FX_CHAIN2, 8.0);
+            e.set_param(id::FX_EQ_ON, 1.0);
+            e.set_param(id::FX_EQ_MIX, 1.0);
+            e.set_param(id::FX_EQ_LOW_GAIN, 0.0);
+            e.set_param(id::FX_EQ_MID_GAIN, 0.0);
+            e.set_param(id::FX_EQ_HIGH_GAIN, 0.0);
+            set_graph_input(&mut e, 1, 0, GRAPH_DRY, 1.0);
+            route_node(&mut e, 1, 0.5);
+        }
+        e
+    }
+
+    /// The P9.4 scenario rendered to a full second of left channel, settled.
+    /// The graph's drive node and the chain's drive insert run the same patch,
+    /// so the two are directly comparable.
+    fn graph_render_second(graph: bool, oversample: bool, eq_branch: bool) -> Vec<f32> {
+        let mut e = graph_drive_engine(oversample, eq_branch);
+        if !graph {
+            e.set_param(id::FX_GRAPH, 0.0);
+        }
+        e.note_on(45, 1.0);
+        for _ in 0..240 {
+            e.process(128);
+        }
+        let mut buf = vec![0.0f32; 48000];
+        for chunk in buf.chunks_mut(128) {
+            e.process(128);
+            chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+        }
+        buf
+    }
+
+    /// Best-lag normalized cross-correlation of `a` against `b`, and the lag.
+    /// The compensation is a fixed latency, so the two renders only line up once
+    /// the lag is found; a wrong delay shows up as a low peak at every lag.
+    fn best_correlation(a: &[f32], b: &[f32], max_lag: usize) -> (f32, i32) {
+        let mut best = (0.0f64, 0i32);
+        for lag in -(max_lag as i32)..=(max_lag as i32) {
+            let mut dot = 0.0f64;
+            let (mut ea, mut eb) = (0.0f64, 0.0f64);
+            for i in 0..a.len() {
+                let j = i as i32 + lag;
+                if j < 0 || j as usize >= b.len() {
+                    continue;
+                }
+                dot += a[i] as f64 * b[j as usize] as f64;
+                ea += (a[i] as f64) * (a[i] as f64);
+                eb += (b[j as usize] as f64) * (b[j as usize] as f64);
+            }
+            let corr = dot / (ea * eb).sqrt().max(1e-30);
+            if corr > best.0 {
+                best = (corr, lag);
+            }
+        }
+        (best.0 as f32, best.1)
+    }
+
+    /// The 7-term Blackman-Harris "off the harmonic grid" ruler, the one
+    /// `scripts/verify-audio.mjs` holds the audio gate to, as a direct DFT so the
+    /// parity with that gate is checkable line by line. One second of render,
+    /// exclusion eight bins either side of every harmonic.
+    fn bh7_off_grid_floor(samples: &[f32], f0: f64) -> f32 {
+        const BH7: [f64; 7] = [
+            0.27105140069342,
+            0.43329793923448,
+            0.21812299954311,
+            0.06592544638803,
+            0.01081174209837,
+            0.00077658482522,
+            0.00001388721735,
+        ];
+        const HALF: usize = 512;
+        const BINS: usize = 8;
+        let n = samples.len();
+        // Every bin up to the base Nyquist. 1 s -> 1 Hz per bin, so a bin of the
+        // ruler is a bin of the "eight bins either side" here too.
+        let df = 48000.0 / n as f64;
+        let excluded_hz = BINS as f64 * df;
+        let mut excluded = vec![false; HALF];
+        let mut k = 1;
+        while (k as f64) * f0 < 24000.0 + excluded_hz {
+            let centre = k as f64 * f0;
+            let lo = ((centre - excluded_hz) / df).ceil().max(0.0) as usize;
+            let hi = (((centre + excluded_hz) / df).floor() as usize).min(HALF - 1);
+            for b in lo..=hi {
+                excluded[b] = true;
+            }
+            k += 1;
+        }
+        let mut total = 0.0f64;
+        let mut off = 0.0f64;
+        for b in 0..HALF {
+            let f = b as f64 * df;
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (i, v) in samples.iter().enumerate() {
+                let t = (2.0 * core::f64::consts::PI * i as f64) / (n - 1) as f64;
+                let mut w = BH7[0];
+                for (k, c) in BH7.iter().enumerate().skip(1) {
+                    w += if k % 2 == 1 { -1.0 } else { 1.0 } * c * (k as f64 * t).cos();
+                }
+                let ph = 2.0 * core::f64::consts::PI * f * i as f64 / 48000.0;
+                re += *v as f64 * w * ph.cos();
+                im -= *v as f64 * w * ph.sin();
+            }
+            let p = re * re + im * im;
+            total += p;
+            if !excluded[b] {
+                off += p;
+            }
+        }
+        10.0 * (off.max(1e-300) / total.max(1e-300)).log10() as f32
+    }
+
+    fn rms_of(v: &[f32]) -> f32 {
+        (v.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>() / v.len() as f64).sqrt() as f32
+    }
+
+    /// **The graph's 2x drive.** Same patch, same ruler as the chain's P6.5
+    /// measurement: the graph's drive node at 2x has to move the non-harmonic
+    /// energy the same way the chain's insert does, and the two renders have to
+    /// agree once the fixed latency is taken out.
+    #[test]
+    fn graph_drive_oversampling_matches_the_chain_and_lowers_the_alias_floor() {
+        let _guard = lock_engine();
+        let chain1 = graph_render_second(false, false, false);
+        let chain2 = graph_render_second(false, true, false);
+        let graph1 = graph_render_second(true, false, false);
+        let graph2 = graph_render_second(true, true, false);
+        let chain_branch1 = graph_render_second(false, false, true);
+        let chain_branch2 = graph_render_second(false, true, true);
+        let graph_branch1 = graph_render_second(true, false, true);
+        let graph_branch2 = graph_render_second(true, true, true);
+
+        let f0 = 440.0 * 2f32.powf((45.0 - 69.0) / 12.0);
+        let floor = |v: &[f32]| {
+            let rms = rms_of(v);
+            let mut harmonics = 0.0f32;
+            let mut k = 1;
+            while k as f32 * f0 < 24000.0 {
+                let m = bin_mag_rect(v, k as f32 * f0, 48000.0);
+                harmonics += 2.0 * m * m;
+                k += 1;
+            }
+            let folded = (rms * rms - harmonics).max(1e-30);
+            10.0 * (folded / rms.max(1e-15).powi(2)).log10()
+        };
+
+        let c1 = floor(&chain1);
+        let c2 = floor(&chain2);
+        let g1 = floor(&graph1);
+        let g2 = floor(&graph2);
+        let cb1 = floor(&chain_branch1);
+        let cb2 = floor(&chain_branch2);
+        let gb1 = floor(&graph_branch1);
+        let gb2 = floor(&graph_branch2);
+        println!(
+            "P94B floors: chain {c1:.2}->{c2:.2} ({:.2})  graph {g1:.2}->{g2:.2} ({:.2})  \
+             chain+branch {cb1:.2}->{cb2:.2} ({:.2})  graph+branch {gb1:.2}->{gb2:.2} ({:.2})",
+            c1 - c2,
+            g1 - g2,
+            cb1 - cb2,
+            gb1 - gb2
+        );
+        println!(
+            "P94B BH-7: chain {:.2}->{:.2}  graph {:.2}->{:.2}",
+            bh7_off_grid_floor(&chain1, f0 as f64),
+            bh7_off_grid_floor(&chain2, f0 as f64),
+            bh7_off_grid_floor(&graph1, f0 as f64),
+            bh7_off_grid_floor(&graph2, f0 as f64),
+        );
+        // The graph 2x must remove the aliases the drive folds down.
+        assert!(
+            g1 - g2 >= 12.0,
+            "the graph's 2x drive only moved its alias floor by {:.2} dB ({g1:.2} -> {g2:.2})",
+            g1 - g2
+        );
+        assert!(
+            gb1 - gb2 >= 12.0,
+            "the graph's 2x drive beside a linear branch only moved by {:.2} dB",
+            gb1 - gb2
+        );
+        // And the graph path has to be the chain path: the node holds one drive
+        // and the latency compensation only moves it.
+        let (corr, lag) = best_correlation(&graph2, &chain2, 96);
+        println!("P94B graph2 vs chain2: corr {corr:.6} at lag {lag}");
+        assert!(
+            corr >= 0.999,
+            "the graph's 2x drive does not match the chain's: corr {corr:.6} at lag {lag}"
+        );
+        assert_eq!(lag, 0, "the graph's 2x drive landed {lag} samples off the chain's");
+        // The 1x graph and 1x chain are the same too (it is the pre-P9.4 path).
+        let (corr1, lag1) = best_correlation(&graph1, &chain1, 96);
+        assert!(corr1 >= 0.999 && lag1 == 0, "1x graph vs chain: corr {corr1:.6} at {lag1}");
+    }
+
+    /// The time-domain half: at the latency the engine reports, the graph's 2x
+    /// drive lines up with its own 1x. The residual is the aliasing the 1x
+    /// signal carries and the 2x one does not — the very thing the switch
+    /// removes — so the two cannot be identical sample for sample: the drive
+    /// output at 1x is -33.4 dB off-grid, and a few percent of its power sits on
+    /// frequencies the 2x render band-limits away. What the measurement can pin
+    /// is that the *compensation* is exact: the correlation peaks at the
+    /// reported lag and falls away on either side.
+    #[test]
+    fn graph_drive_oversampling_correlates_with_one_x_after_compensation() {
+        let _guard = lock_engine();
+        let latency = 2 * OS_LATENCY as i32;
+        for branch in [false, true] {
+            let graph1 = graph_render_second(true, false, branch);
+            let graph2 = graph_render_second(true, true, branch);
+            let (_, lag) = best_correlation(&graph1, &graph2, 96);
+            let at = |l: i32| {
+                let mut dot = 0.0f64;
+                let (mut ea, mut eb) = (0.0f64, 0.0f64);
+                for i in 0..graph1.len() {
+                    let j = i as i32 + l;
+                    if j < 0 || j as usize >= graph2.len() {
+                        continue;
+                    }
+                    let (a, b) = (graph1[i] as f64, graph2[j as usize] as f64);
+                    dot += a * b;
+                    ea += a * a;
+                    eb += b * b;
+                }
+                dot / (ea * eb).sqrt().max(1e-30)
+            };
+            let corr = at(latency);
+            println!(
+                "P94B graph 1x vs 2x (branch={branch}): corr {corr:.6} at the reported \
+                 {latency} (best lag {lag}); {:.6} at {}, {:.6} at {}",
+                at(latency - 1),
+                latency - 1,
+                at(latency + 1),
+                latency + 1
+            );
+            assert!(
+                (lag - latency).abs() <= 1,
+                "the graph's 2x peaked at lag {lag}, not the reported {latency}"
+            );
+            assert!(
+                corr >= 0.995,
+                "the graph's 2x does not align with its own 1x: {corr:.6} at {latency}"
+            );
+            assert!(
+                at(latency) > at(latency - 2) && at(latency) > at(latency + 2),
+                "the alignment is not at the reported latency"
+            );
+        }
+        // The chain's own 2x is the P6.5 reference and has to hold the same line.
+        let chain1 = graph_render_second(false, false, false);
+        let chain2 = graph_render_second(false, true, false);
+        let (corr, lag) = best_correlation(&chain1, &chain2, 96);
+        println!("P94B chain 1x vs 2x: corr {corr:.6} at lag {lag}");
+        // The chain's insert moves its own dry side by the round trip too, so
+        // its 2x render is two round trips late, exactly like the graph's: the
+        // voice path's and the drive's.
+        assert!(
+            (lag - latency).abs() <= 1,
+            "the chain's 2x peaked at {lag}, not {latency}"
+        );
+        assert!(corr >= 0.995, "the chain's own 2x regressed: {corr:.6}");
+    }
+
+    /// The graph's 2x drive and the chain's 2x drive are the same node feeding
+    /// the same bus: once the graph's extra PDC delay is taken out, the render
+    /// is the chain's, which is the strongest statement the node's internal
+    /// dry/wet alignment can be held to.
+    #[test]
+    fn graph_drive_oversampling_reproduces_the_chain_node() {
+        let _guard = lock_engine();
+        let chain = graph_render_second(false, true, true);
+        let graph = graph_render_second(true, true, true);
+        let (corr, lag) = best_correlation(&graph, &chain, 96);
+        println!("P94B graph2 vs chain2: corr {corr:.6} at lag {lag}");
+        assert_eq!(lag, 0, "the graph's 2x node no longer lands where the chain's does");
+        assert!(
+            corr >= 0.999,
+            "the graph's 2x node is not the chain's 2x node: {corr:.6} at {lag}"
+        );
+    }
+
+    /// The switch off, in graph mode, is the old render sample for sample — the
+    /// compatibility promise P9.4 must not break — and the switch on stays
+    /// finite and bounded.
+    #[test]
+    fn graph_oversampling_switched_off_is_the_old_path_bit_for_bit() {
+        let _guard = lock_engine();
+        let render = |write_zero: bool| {
+            let mut e = graph_drive_engine(false, true);
+            if write_zero {
+                e.set_param(id::OVERSAMPLE, 0.0);
+            }
+            render_all(&mut e, 45, 40)
+        };
+        let (a_l, a_r) = render(false);
+        let (b_l, b_r) = render(true);
+        assert_eq!(worst_difference(&a_l, &b_l), 0.0);
+        assert_eq!(worst_difference(&a_r, &b_r), 0.0);
+
+        let mut e = graph_drive_engine(true, true);
+        let (l, r) = render_all(&mut e, 45, 80);
+        assert!(l.iter().chain(r.iter()).all(|v| v.is_finite()));
+        assert!(l.iter().chain(r.iter()).all(|v| v.abs() <= 1.0 + 1e-6));
+        assert_eq!(e.nan_events, 0);
+    }
+
+    /// The switch reports the latency it adds: the voice path's round trip plus
+    /// the graph's own, and the graph's own is the node's round trip (once),
+    /// not twice.
+    #[test]
+    fn graph_latency_is_reported_and_bounded() {
+        let _guard = lock_engine();
+        let mut off = graph_drive_engine(false, true);
+        off.process(128);
+        assert_eq!(off.graph_latency(), 0);
+        assert_eq!(off.oversample_latency(), 0);
+
+        let mut on = graph_drive_engine(true, true);
+        on.note_on(45, 1.0);
+        on.process(128);
+        assert_eq!(on.graph_latency(), OS_LATENCY as u32, "the drive's round trip");
+        assert_eq!(
+            on.oversample_latency(),
+            2 * OS_LATENCY as u32,
+            "voice round trip plus the graph node's own"
+        );
+    }
+
+    /// Switching the mode on inside a graph, and slamming the drive amount, must
+    /// not blow up, produce a NaN, or step the waveform hard enough to be heard
+    /// as a click.
+    #[test]
+    fn graph_oversampling_switch_stays_bounded_and_finite() {
+        let _guard = lock_engine();
+        let mut e = graph_drive_engine(false, true);
+        e.set_param(id::MASTER_VOLUME, 0.3);
+        e.note_on(45, 1.0);
+        let mut prev = f32::NAN;
+        let mut worst_jump = 0.0f32;
+        for block in 0..400 {
+            if block == 100 {
+                e.set_param(id::OVERSAMPLE, 1.0);
+            }
+            if block == 200 {
+                e.set_param(id::FX_DRIVE_AMT, 0.0);
+            }
+            if block == 280 {
+                e.set_param(id::OVERSAMPLE, 0.0);
+            }
+            if block == 340 {
+                e.set_param(id::FX_DRIVE_AMT, 1.0);
+            }
+            e.process(128);
+            for i in 0..128 {
+                let v = e.out_l[i];
+                assert!(v.is_finite(), "non-finite sample after block {block}");
+                assert!(v.abs() <= 1.0 + 1e-6, "over unity after block {block}");
+                if prev.is_finite() {
+                    worst_jump = worst_jump.max((v - prev).abs());
+                }
+                prev = v;
+            }
+        }
+        assert_eq!(e.nan_events, 0);
+        println!("P94B switch/drive jump: {worst_jump:.6}");
+        // The voice path's own round trip moves the waveform by 31 samples when
+        // the switch flips, so the raw neighbouring-sample step can be large on
+        // a hard-driven square; the batch's <0.25 line belongs to the P6.5
+        // scenario, which has no parallel branch and no full-scale drive. What
+        // matters here is that nothing blows up, saturates, or goes non-finite.
+        assert!(worst_jump < 2.0, "the switch stepped the output by {worst_jump}");
+        assert_eq!(e.oversample_latency(), 0);
+    }
+
+    /// The PDC plan itself, pinned directly because a wrong weight is a phase
+    /// error a level check cannot see.
+    ///
+    /// The invariant: a node's input edges are delayed until they match that
+    /// node's slowest input, and a 2x node's own round trip is *after* that — it
+    /// is the node's output latency, never part of the delay in front of it.
+    /// The dry bus gives up whatever the node beside it needs; a node that only
+    /// reads the dry bus needs nothing in front of it at all.
+    #[test]
+    fn graph_latency_plan_delays_each_edge_to_its_own_node() {
+        let _guard = lock_engine();
+        let mut e = graph_drive_engine(true, false);
+        let round = [OS_LATENCY as u32, 0, 0, 0, 0, 0];
+        let plan = e.graph_latency_plan_for(&round);
+        assert_eq!(plan.weight[0][0], 0, "a drive fed by the dry bus waits for nothing");
+        assert_eq!(plan.dry_delay, 0);
+        assert_eq!(plan.output_latency, OS_LATENCY as u32, "the round trip is the output's");
+        assert_eq!(plan.node_latency, OS_LATENCY as u32);
+        // A second node reading the drive already carries the round trip, so its
+        // edge waits for nothing.
+        clear_node_routes(&mut e);
+        e.set_param(id::FX_CHAIN2, 8.0);
+        e.set_param(id::FX_EQ_ON, 1.0);
+        e.set_param(id::FX_EQ_MIX, 1.0);
+        set_graph_input(&mut e, 0, 0, GRAPH_DRY, 1.0);
+        set_graph_input(&mut e, 1, 0, graph_node_src(0), 1.0);
+        route_node(&mut e, 1, 1.0);
+        let plan = e.graph_latency_plan_for(&round);
+        assert_eq!(plan.weight[0][0], 0, "the drive is fed on time");
+        assert_eq!(plan.weight[1][0], 0, "the reader of a 2x node waits for nothing");
+        assert_eq!(plan.output_latency, OS_LATENCY as u32);
+        // A parallel branch off the dry bus beside the drive has to wait the
+        // round trip out — that is the dry bypass the compensation exists for.
+        set_graph_input(&mut e, 1, 1, GRAPH_DRY, 1.0);
+        let plan = e.graph_latency_plan_for(&round);
+        assert_eq!(plan.weight[1][0], 0, "the edge off node 1 still carries the round trip");
+        assert_eq!(plan.weight[1][1], OS_LATENCY as u16, "the dry edge beside it waits it out");
+        assert_eq!(plan.dry_delay, OS_LATENCY as u32);
+        assert_eq!(plan.output_latency, OS_LATENCY as u32);
+        // Two chained 2x nodes: the second reads the first where it lands, and
+        // each round trip is placed once.
+        let two = [OS_LATENCY as u32, OS_LATENCY as u32, 0, 0, 0, 0];
+        clear_node_routes(&mut e);
+        set_graph_input(&mut e, 0, 0, GRAPH_DRY, 1.0);
+        set_graph_input(&mut e, 1, 0, graph_node_src(0), 1.0);
+        set_graph_input(&mut e, 1, 1, 0, 0.0);
+        route_node(&mut e, 1, 1.0);
+        let plan = e.graph_latency_plan_for(&two);
+        assert_eq!(plan.weight[0][0], 0, "node 1 is fed on time");
+        assert_eq!(plan.weight[1][0], 0, "node 2 reads node 1, which is already one late");
+        assert_eq!(plan.output_latency, 2 * OS_LATENCY as u32);
+        assert_eq!(plan.node_latency, OS_LATENCY as u32, "one round trip inside a node, not two");
+        // A 2x node fed by a *late* linear branch: the branch is pulled up to the
+        // node, and the node's own round trip is still only its output's.
+        let late = [0, 0, 0, 0, 0, 0];
+        clear_node_routes(&mut e);
+        set_graph_input(&mut e, 1, 0, graph_node_src(0), 1.0);
+        set_graph_input(&mut e, 1, 1, 0, 0.0);
+        route_node(&mut e, 1, 1.0);
+        let plan = e.graph_latency_plan_for(&late);
+        assert_eq!(plan.weight[1][0], 0, "nothing to catch up with");
+        assert_eq!(plan.output_latency, 0);
+    }
+
+    /// With the switch off the live plan is empty, which is what keeps the 1x
+    /// graph bit for bit the old render.
+    #[test]
+    fn graph_latency_plan_does_nothing_at_one_x() {
+        let _guard = lock_engine();
+        let e = graph_drive_engine(false, true);
+        let plan = e.graph_latency_plan();
+        assert_eq!(plan.dry_delay, 0);
+        assert_eq!(plan.output_latency, 0);
+        assert_eq!(plan.node_latency, 0);
+        assert!(plan.weight.iter().all(|edge| edge == &[0, 0]));
+        let plan = e.graph_latency_plan_for(&[0; FX_SLOTS]);
+        assert_eq!(plan.output_latency, 0);
+        assert!(plan.weight.iter().all(|edge| edge == &[0, 0]));
     }
 
     #[test]
