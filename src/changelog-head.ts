@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.102.0',
+    version: '1.103.0',
     date: '2026-09-13',
-    kind: 'sound',
+    kind: 'feature',
     items: [
       [
-        '**普通振荡器的混叠底噪基本消失**：锯齿/方波/三角改用硬同步那套带限振荡器，全键盘离格能量从最差 **−37.4/−39.0/−49.4 dB** 降到 **−100.8/−111.3/−72.9 dB**；正弦/波表/采样不变，并补上 23.5 样本延迟补偿。代价是振荡器约 2.6× CPU；**这是有意的音色改变**，81 个预设指纹已显式重录。',
-        '**The ordinary oscillators\' aliasing floor is essentially gone.** Saw, square and triangle now use hard sync\'s band-limited oscillator: their worst off-grid energy drops from **-37.4/-39.0/-49.4 dB** to **-100.8/-111.3/-72.9 dB**, while sine, wavetable and sample keep their path and gain a 23.5-sample delay compensation. The cost is about 2.6x CPU in the oscillator; **this is a deliberate change of sound**, so all 81 preset fingerprints were re-recorded.',
+        '**效果参数现在可以按节点覆盖**：路由图 6 个效果节点各自能覆盖自己的参数（延迟、混响、粉碎、EQ、drive 等，每个效果最多 4 个），不再出现「两个同类节点共用一组参数」。覆盖随分享码、`.gs1song` 与图模板携带，旧码仍可读；新增 8 条覆盖调制总线，可与既有图内调制同时把 8 个槽交给 LFO/包络。**不覆盖时与之前逐位相同。**顺带修好卡片拖拽（标题行在 Chromium 上高度为 0，此前一直没生效）。',
+        '**Effect parameters can now be overridden per node.** The graph\'s six effect nodes each carry their own values (delay, reverb, crusher, EQ, drive, … up to four per effect), so two nodes of the same kind no longer share one set. Overrides travel with the share code, `.gs1song` and graph templates, and old codes still load; eight new override-modulation buses can hand eight slots to the LFOs/envelope at once alongside the existing in-graph modulation. **With nothing overridden the render is bit-for-bit what it was.** A side fix: dragging a node card works for the first time — its title row measured zero height in Chromium.',
       ],
     ],
   };
