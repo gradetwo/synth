@@ -314,6 +314,31 @@ class RollSession {
     this.emit();
   }
 
+  /**
+   * End a gesture that was applied to the live document in several steps (a
+   * drag, a batch resize): replay the whole gesture on the pre-gesture document
+   * and record *that* as the single undo step.
+   *
+   * `settle` cannot do this job. The live document is already the result, so
+   * pushing the pre-gesture document would leave a plain `past.pop()` pointing
+   * at a document the gesture itself wrote — an undo would then re-apply the
+   * gesture instead of undoing it. Rebuilding the result from `before` costs one
+   * pass over the notes and makes "one edit, one undo step" true for every
+   * gesture, however many pointermove events produced it.
+   */
+  applyGesture(before: RollDoc, mutate: (from: RollDoc) => RollDoc): void {
+    if (before === this.doc) return;
+    const next = mutate(before);
+    if (next === before) return;
+    this.past.push(before);
+    if (this.past.length > MAX_HISTORY) this.past.shift();
+    this.future = [];
+    this.doc = next;
+    this.persist();
+    this.syncNow();
+    this.emit();
+  }
+
   private persist(): void {
     if (!this.base) return;
     const song = this.getSong();

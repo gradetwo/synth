@@ -1908,10 +1908,29 @@ input,textarea,[contenteditable='true']{
 .rn-handle.left{left:0;right:auto;
   background:linear-gradient(270deg,transparent,var(--shadow-1))}
 .roll-note.pending{opacity:.5;pointer-events:none;outline:1px dashed var(--sel-ring)}
+/* The box the pointer is dragging: it sits above the rows but under the notes
+   it is selecting, so the highlighted notes stay readable inside it. */
+.roll-marquee{position:absolute;pointer-events:none;z-index:1;border-radius:3px;
+  border:1px solid var(--accent);background:var(--accent-tint)}
 .roll-playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--accent);
   box-shadow:0 0 8px rgba(255,179,64,.8);pointer-events:none;z-index:4}
 .roll-empty{position:absolute;left:18px;top:16px;font:600 11px/1.4 var(--grot);
   color:var(--txt-dim);pointer-events:none;max-width:260px}
+
+/* ---- selection bar ------------------------------------------------------ */
+/* Shown whenever something is selected: what is selected, the four movement
+   nudge buttons, and the batch edit buttons. On a pointer-coarse device every
+   button is at least a 36 px target, and the row never wraps — on a narrow
+   screen it scrolls sideways like the toolbar instead of pushing the grid
+   off the bottom of the panel. */
+.roll-select{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;overflow-x:auto;
+  padding:7px 12px;border-bottom:1px solid var(--line-soft);
+  background:linear-gradient(90deg,rgba(255,199,106,.10),rgba(255,199,106,.03))}
+.roll-select::-webkit-scrollbar{height:0}
+.roll-select .roll-group{flex:none}
+.roll-select .roll-btn.sel{flex:none}
+.rs-count{font:700 10.5px/1 var(--grot);letter-spacing:.08em;color:var(--accent);
+  flex:none;white-space:nowrap}
 
 /* ---- selected-note inspector -------------------------------------------- */
 .roll-inspector{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:none;
@@ -1942,7 +1961,11 @@ input,textarea,[contenteditable='true']{
 .roll-kbd .keyboard-head{margin:2px 0 6px}
 
 @media (pointer: coarse){
+  /* The selection bar's batch buttons are the phone's whole editing path, so
+     they get a real 36 px target rather than the desktop's 30 px. */
   .roll-btn{min-height:38px;padding:0 12px}
+  .roll-select .roll-btn{min-height:36px}
+  .roll-select .rs-count{font-size:11px}
   .roll-note{min-height:14px}
   .rn-handle{width:20px;right:-8px;padding-right:8px}
   .rn-handle.left{left:-8px;padding-left:8px;padding-right:0}
@@ -1963,6 +1986,7 @@ input,textarea,[contenteditable='true']{
 
   .roll-field input[type='number']{width:54px}
   .roll-field.vel input[type='range']{width:70px}
+  .roll-select{padding:6px 10px;gap:6px}
   .roll-head{padding:10px 12px}
   .roll-kbd{padding:4px 8px calc(6px + env(safe-area-inset-bottom))}
   .roll-kbd .keyboard{height:84px}

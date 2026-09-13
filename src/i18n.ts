@@ -364,6 +364,37 @@ const DICT: Record<string, [string, string]> = {
   'roll.empty': ['空片段 · 点网格或弹琴键添加音符', 'Empty clip · tap the grid or play keys to add notes'],
   'roll.keyboard': ['输入键盘', 'Input keyboard'],
   'roll.seek': ['定位播放头', 'Seek playhead'],
+  'roll.selectedN': ['已选 {n} 个音符', '{n} note(s) selected'],
+  'roll.multi': ['多选', 'Multi'],
+  'roll.multiOn': [
+    '多选模式已开启 · 点音符累加选择，点空白清空',
+    'Multi-select on · tap notes to add to the selection, empty space to clear',
+  ],
+  'roll.multiOff': [
+    '多选模式 · 点一下即可累加选择（手机上代替 Ctrl 键）',
+    'Multi-select mode · tap to accumulate a selection (the phone stand-in for Ctrl)',
+  ],
+  'roll.nudgeLeft': ['把选中的音符向左移一格', 'Move the selection one grid step earlier'],
+  'roll.nudgeRight': ['把选中的音符向右移一格', 'Move the selection one grid step later'],
+  'roll.nudgeUp': ['把选中的音符升高一个半音', 'Move the selection up one semitone'],
+  'roll.nudgeDown': ['把选中的音符降低一个半音', 'Move the selection down one semitone'],
+  'roll.copy': ['复制', 'Copy'],
+  'roll.paste': ['粘贴', 'Paste'],
+  'roll.deselect': ['取消选择', 'Deselect'],
+  'roll.copyHint': ['复制所选音符（Ctrl/Cmd+C）', 'Copy the selected notes (Ctrl/Cmd+C)'],
+  'roll.pasteHint': [
+    '粘贴到播放头位置（Ctrl/Cmd+V），副本成为新的选择',
+    'Paste at the playhead (Ctrl/Cmd+V); the copies become the selection',
+  ],
+  'roll.quantizeSelection': ['只量化所选音符（一个撤销步）', 'Quantise only the selected notes (one undo step)'],
+  'roll.pasteHidden': [
+    '副本落在了原音符位置：先移动播放头，或把原音符拖开',
+    'The copies landed on the notes they came from — move the playhead, or drag the originals aside',
+  ],
+  'roll.crossLayerBlocked': [
+    '跨层移动暂不支持：一层是一套音符/take/片段编排，换层请先把音符复制到该层',
+    'Moving notes across layers is not supported: each layer has its own notes, takes and clip arrangement — copy them into the other layer instead',
+  ],
 
   // --- signal flow ---------------------------------------------------------
   'view.label': ['视图', 'View'],

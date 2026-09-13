@@ -6,6 +6,12 @@
  * Notes can be drawn, dragged, resized and deleted; the on-screen keyboard
  * strip, the computer keyboard and external MIDI gear all step-enter notes
  * while the input toggle is armed.
+ *
+ * Since P10.1 the editor works on a *selection set* rather than one note: a
+ * marquee, Ctrl/Cmd-click and Shift-click build it, and the batch edits (move,
+ * copy, paste, delete, resize, quantise, velocity) each land as exactly one undo
+ * step. The rules live in `midi/selection.ts` and are unit-tested there, so this
+ * file stays about gestures and pixels.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -23,7 +29,9 @@ import {
   clamp,
   clearNotes,
   isBlackKey,
+  MAX_NOTE,
   MIN_LENGTH,
+  MIN_NOTE,
   pitchRange,
   quantizeDoc,
   removeNote,
@@ -39,6 +47,26 @@ import {
   type RollDoc,
   type RollNote,
 } from '@/midi/roll';
+import {
+  clampSelectionDelta,
+  copySelection,
+  isSelected,
+  marqueeSelected,
+  moveSelection,
+  pasteCollides,
+  pasteSelection,
+  pruneSelection,
+  quantizeSelection,
+  rangeSelected,
+  removeSelection,
+  scaleSelection,
+  selectAll,
+  selectOnly,
+  selectedNotes,
+  setSelectionVelocity,
+  toggleSelected,
+  type NoteClipboard,
+} from '@/midi/selection';
 import { rollSession, useRollSession } from '@/state/roll';
 import { songTracks } from '@/midi/smf';
 import { clipsOf, clipsOfLayer } from '@/midi/clips';
@@ -49,6 +77,14 @@ import { TransportIcon } from './TransportIcon';
 const ROW_H = 20;
 /** Horizontal zoom steps, in pixels per beat. */
 const ZOOMS = [24, 36, 48, 64, 88, 120, 160];
+/** How far a note must move before a press counts as a drag. */
+const DRAG_SLOP = 4;
+/** Vertical step of a Shift+arrow, and of the Ctrl/Cmd fine step, in semitones. */
+const OCTAVE = 12;
+/** How far a drag must travel vertically before the cross-layer refusal shows. */
+const CROSS_LAYER_SLOP = ROW_H * 2;
+/** Where a paste lands when the playhead is at the very top of the clip. */
+const PASTE_FALLBACK_BEATS = 1.25;
 
 const snapLabel = (beats: number): string =>
   ({ 0.125: '1/32', 0.25: '1/16', 0.5: '1/8', 1: '1/4' })[beats] ?? `${beats}`;
@@ -61,18 +97,62 @@ const noteColor = (note: number, low: number, high: number, light = false): stri
     : `hsl(${Math.round(205 - ratio * 165)} 82% 56%)`;
 };
 
+/** A rectangle on the grid, in beats and semitones. */
+type GridRect = { beat0: number; beat1: number; pitch0: number; pitch1: number };
+
 type Gesture =
-  | { kind: 'tap'; x: number; y: number }
   | {
-      kind: 'note' | 'resize';
-      /** Which edge is being dragged, for resize gestures. */
+      kind: 'tap';
+      x: number;
+      y: number;
+      /** Grid position of the press, captured so a grid that scrolls
+       *  mid-gesture still draws the note where the pointer went down. */
+      beat: number;
+      pitch: number;
+    }
+  | {
+      kind: 'note';
+      /** Which edge the gesture took hold of; `undefined` moves the note. */
       edge?: 'l' | 'r';
       id: string;
-      orig: RollNote;
+      /** The note under the pointer plus every note that moves with it. */
+      group: RollNote[];
+      blocked: boolean;
       x: number;
       y: number;
       moved: boolean;
     };
+
+/** What a finished gesture produced, so pointerup can record exactly one step. */
+type GestureResult = { doc: RollDoc; selection?: string[] } | null;
+
+/** The fields a gesture may have changed, keyed by note id. */
+const changedNotes = (before: RollDoc, after: RollDoc): Map<string, RollNote> => {
+  const out = new Map<string, RollNote>();
+  for (const note of after.notes) {
+    const old = before.notes.find((n) => n.id === note.id);
+    if (!old || old.start !== note.start || old.note !== note.note || old.length !== note.length) {
+      out.set(note.id, note);
+    }
+  }
+  return out;
+};
+
+/**
+ * Replay a gesture on the document as it was before it started.
+ *
+ * A drag updates the live document on every pointermove, and the pointerup
+ * gesture must record exactly one undo step back to the *pre-drag* document —
+ * including the other notes `resolveOverlaps` trimmed on the way. Replaying the
+ * gesture's own changes solves that in one sentence instead of snapshot
+ * bookkeeping: apply what changed, keep the rest as it was.
+ */
+const settleGesture = (before: RollDoc, after: RollDoc): RollDoc => {
+  const changes = changedNotes(before, after);
+  if (changes.size === 0) return before;
+  const notes = before.notes.map((note) => changes.get(note.id) ?? note);
+  return { ...before, notes, beats: after.beats };
+};
 
 export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => void }) {
   /**
@@ -84,7 +164,11 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   const doc = session.doc;
   const snap = session.snap;
   const [track, setTrack] = useState<Track | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selection, setSelection] = useState<string[]>([]);
+  const [anchor, setAnchor] = useState<string | null>(null);
+  /** On a touch screen a plain tap has no modifier, so selection accumulates
+   *  while this is on and a tap on empty grid selects instead of drawing. */
+  const [multi, setMulti] = useState(false);
   const [zoom, setZoom] = useState(88);
   const [input, setInput] = useState(true);
   const [velocity, setVelocity] = useState(0.85);
@@ -92,11 +176,27 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   const [midiState, setMidiState] = useState(midi.snapshot());
   const [pending, setPending] = useState<{ note: number; start: number } | null>(null);
   const [keysOpen, setKeysOpen] = useState(true);
+  /** The box the pointer is dragging right now, kept in state so it renders. */
+  const [marquee, setMarquee] = useState<GridRect | null>(null);
+  /** True once something has been copied, so the paste button can enable.
+   *  A ref cannot be read while rendering, and this one bit is all the button
+   *  needs to know — the clipboard's contents are read in the handler. */
+  const [canPaste, setCanPaste] = useState(false);
 
   const snapRef = useRef(snap);
   const zoomRef = useRef(zoom);
   const velocityRef = useRef(velocity);
-  const selectedRef = useRef<string | null>(null);
+  const selectionRef = useRef<string[]>([]);
+  const anchorRef = useRef<string | null>(null);
+  const multiRef = useRef(false);
+  const beforeGesture = useRef<RollDoc | null>(null);
+  /**
+   * The box being dragged lives here rather than on `gesture`: the gesture is a
+   * ref, and a ref does not re-render. The `marquee` state above is what draws
+   * it; this is what pointerup reads to tell a box from a tap.
+   */
+  const marqueeRef = useRef<GridRect | null>(null);
+  const clipboard = useRef<NoteClipboard | null>(null);
   const gesture = useRef<Gesture | null>(null);
   const lastPitch = useRef<number | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
@@ -119,8 +219,14 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
     velocityRef.current = velocity;
   }, [velocity]);
   useEffect(() => {
-    selectedRef.current = selected;
-  }, [selected]);
+    selectionRef.current = selection;
+  }, [selection]);
+  useEffect(() => {
+    anchorRef.current = anchor;
+  }, [anchor]);
+  useEffect(() => {
+    multiRef.current = multi;
+  }, [multi]);
 
   useEffect(() => midiPlayer.subscribe(setPlayer), []);
   useEffect(() => midi.subscribe(() => setMidiState(midi.snapshot())), []);
@@ -129,16 +235,77 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
   const gridH = (high - low + 1) * ROW_H;
   const gridW = Math.max(4, doc.beats) * zoom;
   const playBeats = player.time / secondsPerBeat(doc.bpm);
-  const selectedNote = doc.notes.find((n) => n.id === selected) ?? null;
+  const selectedNote = doc.notes.find((n) => n.id === selection.at(-1)) ?? null;
+
+  /**
+   * The selection with anything the document no longer has dropped.
+   *
+   * An undo, a clip switch or a batch delete can remove notes the set still
+   * names. Pruning on every document change keeps the set honest, and because
+   * pruning preserves order and identity a stale id costs exactly one extra
+   * render.
+   */
+  const liveSelection = useMemo(() => pruneSelection(doc.notes, selection), [doc.notes, selection]);
+  useEffect(() => {
+    if (liveSelection.length === selection.length && liveSelection.every((id, i) => id === selection[i])) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelection(liveSelection);
+    if (anchorRef.current && !liveSelection.includes(anchorRef.current)) {
+      anchorRef.current = liveSelection.at(-1) ?? null;
+      setAnchor(anchorRef.current);
+    }
+  }, [liveSelection, selection]);
+
+  /**
+   * Adopt the library's current track. An editing session that is already on
+   * this track is left alone: the layer strip may have edits in it, and those
+   * are exactly the undo steps the user expects to still be there.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const current = midiLibrary.getCurrent();
+    if (current && rollSession.getTrackId() !== current.id) rollSession.open(0);
+    // Adopting the track when the editor opens is the point of the effect; the
+    // session owns the document itself and syncs the transport on its own.
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setTrack(current);
+    setSelection([]);
+    setAnchor(null);
+    setInput(true);
+    setMulti(false);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    // The clipboard survives the dialog: closing and reopening the roll with a
+    // copied figure still in it is what a user expects from copy/paste.
+  }, [open]);
+
+  const save = useCallback(() => {
+    if (!track) return;
+    const next = rollSession.getDoc();
+    const builtin = track.id.startsWith('demo:');
+    const name = builtin ? t('roll.copyOf', { name: next.name || t('roll.title') }) : next.name;
+    rollSession.setName(name);
+    rollSession.saveNow();
+    setTrack(midiLibrary.getCurrent());
+    toast(t('roll.saved', { name, n: rollSession.getDoc().notes.length }));
+    haptic(HAPTIC.medium);
+  }, [track]);
 
   /** Replace the document: one history entry, written out, previewed. */
   const commit = useCallback((next: RollDoc, record = true) => {
     rollSession.commit(next, { record });
   }, []);
 
-  /** Live drag update: no history entry (pointerup commits one). */
+  /** Live drag update: no history entry (pointerup records exactly one). */
   const commitLive = useCallback((next: RollDoc) => {
     rollSession.live(next);
+  }, []);
+
+  /** Replace the selection, in state and in the ref the handlers read. */
+  const applySelection = useCallback((ids: string[], nextAnchor: string | null) => {
+    selectionRef.current = ids;
+    anchorRef.current = nextAnchor;
+    setSelection(ids);
+    setAnchor(nextAnchor);
   }, []);
 
   /** Scroll a freshly written note into view (step input can land off-screen). */
@@ -196,66 +363,347 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
     haptic();
   }, []);
 
+  /**
+   * Delete the whole selection: one document replacement, so one undo step.
+   * The set is cleared, because none of it exists any more.
+   */
   const deleteSelected = useCallback(() => {
-    const id = selectedRef.current;
-    if (!id) return;
-    commit(removeNote(rollSession.getDoc(), id));
-    setSelected(null);
+    const ids = selectionRef.current;
+    if (ids.length === 0) return;
+    commit(removeSelection(rollSession.getDoc(), ids));
+    applySelection([], null);
     haptic();
-  }, [commit]);
+  }, [commit, applySelection]);
+
+  /** Copy the selection to the in-memory clipboard (Ctrl+C, or the phone button). */
+  const copySelected = useCallback(() => {
+    const clip = copySelection(rollSession.getDoc(), selectionRef.current);
+    if (!clip) return false;
+    clipboard.current = clip;
+    setCanPaste(true);
+    haptic();
+    return true;
+  }, []);
 
   /**
-   * Adopt the library's current track. An editing session that is already on
-   * this track is left alone: the layer strip may have edits in it, and those
-   * are exactly the undo steps the user expects to still be there.
+   * Paste at the playhead. The copies become the selection, so they can be
+   * dragged or transposed straight away. A landing spot on top of the notes the
+   * copies came from says so in a toast: a paste that silently hides an
+   * identical pile under the original is not a result anyone can see.
    */
-  useEffect(() => {
-    if (!open) return;
-    const current = midiLibrary.getCurrent();
-    if (current && rollSession.getTrackId() !== current.id) rollSession.open(0);
-    // Adopting the track when the editor opens is the point of the effect; the
-    // session owns the document itself and syncs the transport on its own.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setTrack(current);
+  const pasteClipboard = useCallback(() => {
+    const clip = clipboard.current;
+    if (!clip) return false;
+    const at = snapBeat(playBeats || PASTE_FALLBACK_BEATS, snap);
+    const before = rollSession.getDoc();
+    const hidden = pasteCollides(before, clip, at);
+    const result = pasteSelection(before, clip, at, () => addNote(before, 0, 0, snap).id);
+    if (result.doc === before) return false;
+    commit(result.doc);
+    applySelection(result.selection, result.selection.at(-1) ?? null);
+    haptic();
+    if (hidden) toast(t('roll.pasteHidden'));
+    return true;
+  }, [commit, applySelection, playBeats, snap]);
 
-    setSelected(null);
-    setInput(true);
-  }, [open]);
-
-  const save = useCallback(() => {
-    if (!track) return;
-    const next = rollSession.getDoc();
-    const builtin = track.id.startsWith('demo:');
-    const name = builtin ? t('roll.copyOf', { name: next.name || t('roll.title') }) : next.name;
-    rollSession.setName(name);
-    rollSession.saveNow();
-    setTrack(midiLibrary.getCurrent());
-    toast(t('roll.saved', { name, n: rollSession.getDoc().notes.length }));
-    haptic(HAPTIC.medium);
-  }, [track]);
-
-  // Centre the notes the first time the editor opens on a clip.
-  useEffect(() => {
-    if (!open) return;
-    const el = scrollRef.current;
-    if (!el) return;
+  /** Select every note of the document (Ctrl/Cmd+A, or the phone button). */
+  const selectAllNotes = useCallback(() => {
     const notes = rollSession.getDoc().notes;
-    const [lo, hi] = pitchRange(rollSession.getDoc());
-    const target = notes.length ? notes.reduce((sum, n) => sum + n.note, 0) / notes.length : (lo + hi) / 2;
-    el.scrollTop = Math.max(0, (hi - target) * ROW_H - el.clientHeight / 2 + ROW_H);
-    el.scrollLeft = 0;
-  }, [open]);
+    if (notes.length === 0) return;
+    const ids = selectAll(notes);
+    applySelection(ids, ids.at(-1) ?? null);
+    haptic();
+  }, [applySelection]);
 
-  // Keep the playhead in view while the preview runs.
-  useEffect(() => {
-    if (!player.playing) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    const x = playBeats * zoom;
-    if (x < el.scrollLeft + 48 || x > el.scrollLeft + el.clientWidth - 96) {
-      el.scrollLeft = Math.max(0, x - el.clientWidth / 3);
+  const clearSelected = useCallback(() => {
+    applySelection([], null);
+  }, [applySelection]);
+
+  /**
+   * Nudge the selection: one undo step per press, so holding an arrow key gives
+   * the user a history they can walk back through one grid step at a time.
+   */
+  const nudgeSelection = useCallback(
+    (beats: number, notes: number) => {
+      const ids = selectionRef.current;
+      if (ids.length === 0) return;
+      const current = rollSession.getDoc();
+      const next = moveSelection(current, ids, beats, notes);
+      if (next === current) return;
+      commit(next);
+      haptic();
+    },
+    [commit],
+  );
+
+  /**
+   * Every one-shot batch edit goes through here: one call, one commit, one
+   * entry in the undo history. `next.selection` may pick a new set, which is how
+   * paste hands the copies to the user.
+   */
+  const runBatch = useCallback(
+    (transform: (doc: RollDoc, ids: string[]) => GestureResult) => {
+      const ids = selectionRef.current;
+      if (ids.length === 0) return;
+      const current = rollSession.getDoc();
+      const result = transform(current, ids);
+      if (!result || result.doc === current) return;
+      commit(result.doc);
+      if (result.selection) applySelection(result.selection, result.selection.at(-1) ?? null);
+      haptic();
+    },
+    [commit, applySelection],
+  );
+
+  // ------------------------------------------------------------ grid geometry
+
+  const gridBox = () => {
+    const el = gridRef.current;
+    if (!el) return { left: 0, top: 0 };
+    const rect = el.getBoundingClientRect();
+    return { left: rect.left, top: rect.top };
+  };
+  const beatAt = (clientX: number): number => {
+    const { left } = gridBox();
+    return Math.max(0, (clientX - left) / zoomRef.current);
+  };
+  const pitchAt = (clientY: number): number => {
+    const { top } = gridBox();
+    const row = Math.floor((clientY - top) / ROW_H);
+    return clamp(high - row, MIN_NOTE, MAX_NOTE);
+  };
+  // ---------------------------------------------------------------- gestures
+
+  /**
+   * Select (or extend to) one note, honouring the modifier that was held.
+   *
+   * `mod` is deliberately "Ctrl/Cmd *or* multi-select mode": a touch screen has
+   * no modifier key, so the mode toggle in the toolbar is what stands in for
+   * one, and every place that asks "is this an additive selection?" has to ask
+   * the same question.
+   */
+  const selectOnPress = (event: React.PointerEvent<HTMLDivElement>, id: string) => {
+    const notes = rollSession.getDoc().notes;
+    const mod = event.metaKey || event.ctrlKey || multiRef.current;
+    if (event.shiftKey) {
+      const built = rangeSelected(selectionRef.current, notes, anchorRef.current, id);
+      applySelection(built.selection, built.anchor);
+      return;
     }
-  }, [player.playing, player.time, playBeats, zoom]);
+    if (mod) {
+      const built = toggleSelected(selectionRef.current, notes, id);
+      applySelection(built.selection, built.anchor);
+      return;
+    }
+    if (!isSelected(selectionRef.current, id)) {
+      // A plain press on an unselected note selects just it; a press *inside*
+      // the current selection keeps the set, which is what makes dragging a
+      // marquee-built group possible.
+      const built = selectOnly(id);
+      applySelection(built.selection, built.anchor);
+      return;
+    }
+    anchorRef.current = id;
+    setAnchor(id);
+  };
+
+  const onGridPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    beforeGesture.current = rollSession.getDoc();
+    const noteEl = (event.target as HTMLElement).closest('.roll-note') as HTMLElement | null;
+    if (noteEl?.dataset.note) {
+      const current = rollSession.getDoc().notes.find((n) => n.id === noteEl.dataset.note);
+      if (!current) return;
+      const handle = (event.target as HTMLElement).dataset.handle;
+      selectOnPress(event, current.id);
+      // Grabbing the set (rather than a Ctrl/Shift gesture) moves all of it;
+      // a resize handle only ever resizes the note it was taken hold of.
+      const group = handle
+        ? [current]
+        : (() => {
+            const held = selectedNotes(rollSession.getDoc(), selectionRef.current);
+            return held.some((n) => n.id === current.id) ? held : [current];
+          })();
+      lastPitch.current = current.note;
+      gesture.current = {
+        kind: 'note',
+        edge: handle === 'l' ? 'l' : handle === 'r' ? 'r' : undefined,
+        id: current.id,
+        group,
+        blocked: false,
+        x: event.clientX,
+        y: event.clientY,
+        moved: false,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      return;
+    }
+    gesture.current = {
+      kind: 'tap',
+      x: event.clientX,
+      y: event.clientY,
+      beat: beatAt(event.clientX),
+      pitch: pitchAt(event.clientY),
+    };
+  };
+
+  const onGridPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    // The selection box is handled first and independently of the gesture: it
+    // starts as a `tap`, and clearing the gesture at that moment is what stops
+    // the box from being mistaken for a draw. `marqueeRef` is what says "a box
+    // is being dragged", for as long as the pointer is down.
+    const rect = marqueeRef.current;
+    if (rect) {
+      const grown: GridRect = {
+        beat0: rect.beat0,
+        beat1: beatAt(event.clientX),
+        pitch0: rect.pitch0,
+        pitch1: pitchAt(event.clientY),
+      };
+      marqueeRef.current = grown;
+      setMarquee(grown);
+      applySelection(marqueeSelected(rollSession.getDoc().notes, grown), null);
+      return;
+    }
+    const g = gesture.current;
+    if (!g) return;
+    const dx = event.clientX - g.x;
+    const dy = event.clientY - g.y;
+    if (g.kind === 'tap') {
+      if (Math.abs(dx) < DRAG_SLOP && Math.abs(dy) < DRAG_SLOP) return;
+      // Dragging empty grid space draws a selection box. On a touch screen this
+      // is also how a selection starts without a modifier key.
+      const box: GridRect = {
+        beat0: g.beat,
+        beat1: beatAt(event.clientX),
+        pitch0: g.pitch,
+        pitch1: pitchAt(event.clientY),
+      };
+      gesture.current = null;
+      marqueeRef.current = box;
+      setMarquee(box);
+      applySelection(marqueeSelected(rollSession.getDoc().notes, box), null);
+      event.preventDefault();
+      return;
+    }
+    if (!g.moved && Math.abs(dx) < DRAG_SLOP && Math.abs(dy) < DRAG_SLOP) return;
+    g.moved = true;
+
+    // The layer strip edits one layer at a time and a clip carries no take link
+    // (P10.3), so a note cannot move to another layer without either losing the
+    // take semantics or silently rewriting the source. Refuse it *visibly*: the
+    // first sustained vertical drag says why and the drag stays on this layer.
+    if (!g.blocked && Math.abs(dy) > CROSS_LAYER_SLOP && tracksInSong.length > 1) {
+      g.blocked = true;
+      toast(t('roll.crossLayerBlocked'));
+    }
+
+    {
+      const note = g;
+      const base = note.group.find((n) => n.id === note.id) ?? note.group[0];
+      const delta = clampSelectionDelta(
+        note.group,
+        snapBeat(base.start + dx / zoom, snap) - base.start,
+        -Math.round(dy / ROW_H),
+      );
+      if (note.edge === undefined) {
+        // Move: the whole group travels by one clamped delta, so a chord keeps
+        // its shape and an audition follows the note under the pointer.
+        if (base.note + delta.notes !== lastPitch.current) {
+          lastPitch.current = base.note + delta.notes;
+          audition(base.note + delta.notes, base.velocity);
+        }
+        const moved = note.group.reduce(
+          (next, entry) =>
+            updateNote(next, entry.id, { start: entry.start + delta.beats, note: entry.note + delta.notes }),
+          rollSession.getDoc(),
+        );
+        commitLive(resolveOverlaps(moved, note.id));
+        return;
+      }
+
+      // A resize handle: dragging the right edge of any selected note scales the
+      // whole group to that end beat, and the left edge moves this note's start.
+      if (note.edge === 'l') {
+        const latest = Math.max(0, base.start + base.length - MIN_LENGTH);
+        const start = Math.min(latest, snapBeat(base.start + dx / zoom, snap));
+        commitLive(
+          resolveOverlaps(
+            updateNote(rollSession.getDoc(), note.id, {
+              start,
+              length: base.length + (base.start - start),
+            }),
+            note.id,
+          ),
+        );
+        return;
+      }
+      const end = Math.max(base.start + MIN_LENGTH, snapBeat(base.start + base.length + dx / zoom, snap));
+      commitLive(
+        resolveOverlaps(
+          scaleSelection(
+            rollSession.getDoc(),
+            note.group.map((n) => n.id),
+            end,
+          ),
+          note.id,
+        ),
+      );
+    }
+  };
+
+  const onGridPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const g: Gesture | null = gesture.current;
+    const dragged = marqueeRef.current !== null;
+    gesture.current = null;
+    marqueeRef.current = null;
+    setMarquee(null);
+    if (dragged) {
+      // The notes under the box were chosen as the pointer moved; letting go
+      // simply keeps them. The box itself is a selection gesture, never a draw.
+      haptic();
+      return;
+    }
+    if (!g) return;
+    if (g.kind === 'tap') {
+      if (Math.hypot(event.clientX - g.x, event.clientY - g.y) > 8) return;
+      // With the input armed a tap draws; with it off, or in multi-select mode,
+      // a tap on empty space is purely a selection gesture.
+      if (!input || multi) {
+        applySelection([], null);
+        return;
+      }
+      const start = snapBeat(g.beat, snap);
+      const note = g.pitch;
+      const added = addNote(rollSession.getDoc(), note, start, snap, velocityRef.current);
+      const next = resolveOverlaps(added.doc, added.id);
+      const id = added.id;
+      commit(next);
+      applySelection([id], id);
+      revealNote(note, start);
+      audition(note, velocityRef.current);
+      return;
+    }
+    if (!g.moved) {
+      // A plain click on a note selects it and plays its pitch, so you can hear
+      // what you are about to edit.
+      const note = rollSession.getDoc().notes.find((n) => n.id === g.id);
+      if (note) audition(note.note, note.velocity);
+      return;
+    }
+    // A drag edited the live document without history. Settling replays its
+    // changes on the pre-drag document, so one undo restores every note of the
+    // group — and the notes `resolveOverlaps` trimmed along the way.
+    const before = beforeGesture.current;
+    if (!before) return;
+    rollSession.applyGesture(before, (from) => settleGesture(from, rollSession.getDoc()));
+  };
+
+  const zoomBy = (dir: number) => {
+    const index = ZOOMS.indexOf(zoom);
+    setZoom(ZOOMS[clamp(index + dir, 0, ZOOMS.length - 1)]);
+  };
 
   // Capture-phase shortcuts so Ctrl/Cmd+Z undoes the clip, not the patch.
   useEffect(() => {
@@ -269,30 +717,83 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
         return;
       }
       const mod = event.metaKey || event.ctrlKey;
-      if (mod && event.key.toLowerCase() === 'z') {
+      const key = event.key;
+      const held = selectionRef.current.length > 0;
+      if (mod && key.toLowerCase() === 'z') {
         event.preventDefault();
         event.stopPropagation();
         if (event.shiftKey) redo();
         else undo();
-      } else if (mod && event.key.toLowerCase() === 'y') {
+      } else if (mod && key.toLowerCase() === 'y') {
         event.preventDefault();
         event.stopPropagation();
         redo();
-      } else if (event.key === 'Escape') {
+      } else if (mod && key.toLowerCase() === 'a') {
+        // Select all: the whole point is that it is the document, not the layer
+        // strip's private idea of one.
         event.preventDefault();
-        onClose();
-      } else if (event.key === ' ') {
+        event.stopPropagation();
+        selectAllNotes();
+      } else if (mod && key.toLowerCase() === 'c') {
+        if (copySelected()) event.preventDefault();
+        event.stopPropagation();
+      } else if (mod && key.toLowerCase() === 'v') {
+        if (pasteClipboard()) event.preventDefault();
+        event.stopPropagation();
+      } else if (key === 'Escape') {
+        event.preventDefault();
+        // Esc backs out one level: the selection first, the editor second.
+        if (held) clearSelected();
+        else onClose();
+      } else if (key === ' ') {
         event.preventDefault();
         if (midiPlayer.getState().playing) midiPlayer.pause();
         else midiPlayer.play();
-      } else if ((event.key === 'Delete' || event.key === 'Backspace') && selectedRef.current) {
+      } else if (key === 'Delete' || key === 'Backspace') {
+        if (!held) return;
         event.preventDefault();
         deleteSelected();
+      } else if (key.startsWith('Arrow')) {
+        if (!held) return;
+        event.preventDefault();
+        // Plain = one grid step and one semitone; Shift = an octave; Ctrl/Cmd =
+        // a sixteenth and one semitone (the fine step, for a group that is not
+        // on the grid).
+        const fine = mod;
+        const beats = fine ? 0.125 : snap;
+        const notes = key === 'ArrowUp' || key === 'ArrowDown' ? (event.shiftKey ? OCTAVE : 1) : 0;
+        if (key === 'ArrowLeft') nudgeSelection(-beats, 0);
+        else if (key === 'ArrowRight') nudgeSelection(beats, 0);
+        else if (key === 'ArrowUp') nudgeSelection(0, notes);
+        else if (key === 'ArrowDown') nudgeSelection(0, -notes);
       }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [open, onClose, undo, redo, deleteSelected]);
+  }, [
+    open,
+    onClose,
+    undo,
+    redo,
+    deleteSelected,
+    selectAllNotes,
+    copySelected,
+    pasteClipboard,
+    clearSelected,
+    nudgeSelection,
+    snap,
+  ]);
+
+  // Keep the playhead in view while the preview runs.
+  useEffect(() => {
+    if (!player.playing) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const x = playBeats * zoom;
+    if (x < el.scrollLeft + 48 || x > el.scrollLeft + el.clientWidth - 96) {
+      el.scrollLeft = Math.max(0, x - el.clientWidth / 3);
+    }
+  }, [player.playing, player.time, playBeats, zoom]);
 
   // Step input: notes played on the keyboard strip, the computer keyboard or
   // external MIDI land at the playhead while the transport is stopped, and the
@@ -322,7 +823,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       const added = addNote(rollSession.getDoc(), event.note, open_.start, length, open_.velocity);
       const next = resolveOverlaps(added.doc, added.id);
       const id = added.id;
-      setSelected(id);
+      applySelection([id], id);
       revealNote(event.note, open_.start);
       // Step forward past the written note.
       rollSession.commit(next, { seekBeats: open_.start + length });
@@ -332,136 +833,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
       held.clear();
       setPending(null);
     };
-  }, [open, input, commit, revealNote]);
-
-  const beatAt = (clientX: number): number => {
-    const el = gridRef.current;
-    if (!el) return 0;
-    return Math.max(0, (clientX - el.getBoundingClientRect().left) / zoom);
-  };
-  const pitchAt = (clientY: number): number => {
-    const el = gridRef.current;
-    if (!el) return high;
-    const row = Math.floor((clientY - el.getBoundingClientRect().top) / ROW_H);
-    return clamp(high - row, 0, 127);
-  };
-
-  const onGridPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.pointerType === 'mouse' && event.button !== 0) return;
-    const noteEl = (event.target as HTMLElement).closest('.roll-note') as HTMLElement | null;
-    if (noteEl?.dataset.note) {
-      const orig = rollSession.getDoc().notes.find((n) => n.id === noteEl.dataset.note);
-      if (!orig) return;
-      const handle = (event.target as HTMLElement).dataset.handle;
-      setSelected(orig.id);
-      lastPitch.current = orig.note;
-      gesture.current = {
-        kind: handle ? 'resize' : 'note',
-        edge: handle === 'l' ? 'l' : 'r',
-        id: orig.id,
-        orig,
-        x: event.clientX,
-        y: event.clientY,
-        moved: false,
-      };
-      event.currentTarget.setPointerCapture(event.pointerId);
-      event.preventDefault();
-      return;
-    }
-    gesture.current = { kind: 'tap', x: event.clientX, y: event.clientY };
-  };
-
-  const onGridPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    const g = gesture.current;
-    if (!g || g.kind === 'tap') return;
-    const dx = event.clientX - g.x;
-    const dy = event.clientY - g.y;
-    if (!g.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
-    g.moved = true;
-    if (g.kind === 'note') {
-      // Values always derive from the pre-drag snapshot, so a long drag never
-      // accumulates rounding error.
-      const pitch = g.orig.note - Math.round(dy / ROW_H);
-      if (pitch !== lastPitch.current) {
-        lastPitch.current = pitch;
-        audition(pitch, g.orig.velocity);
-      }
-      commitLive(
-        resolveOverlaps(
-          updateNote(rollSession.getDoc(), g.id, {
-            start: snapBeat(g.orig.start + dx / zoom, snap),
-            note: pitch,
-          }),
-          g.id,
-        ),
-      );
-    } else if (g.edge === 'l') {
-      // Dragging the left edge moves the start and keeps the end put.
-      const latest = Math.max(0, g.orig.start + g.orig.length - MIN_LENGTH);
-      const start = Math.min(latest, snapBeat(g.orig.start + dx / zoom, snap));
-      commitLive(
-        resolveOverlaps(
-          updateNote(rollSession.getDoc(), g.id, {
-            start,
-            length: g.orig.length + (g.orig.start - start),
-          }),
-          g.id,
-        ),
-      );
-    } else {
-      const snapped = snapBeat(g.orig.length + dx / zoom, snap);
-      commitLive(
-        resolveOverlaps(
-          updateNote(rollSession.getDoc(), g.id, { length: Math.max(MIN_LENGTH, snapped) }),
-          g.id,
-        ),
-      );
-    }
-  };
-
-  const onGridPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    const g = gesture.current;
-    gesture.current = null;
-    if (!g) return;
-    if (g.kind === 'tap') {
-      if (Math.hypot(event.clientX - g.x, event.clientY - g.y) > 8) return;
-      if (!input) {
-        setSelected(null);
-        return;
-      }
-      const start = snapBeat(beatAt(event.clientX), snap);
-      const note = pitchAt(event.clientY);
-      const added = addNote(rollSession.getDoc(), note, start, snap, velocityRef.current);
-      const next = resolveOverlaps(added.doc, added.id);
-      const id = added.id;
-      commit(next);
-      setSelected(id);
-      revealNote(note, start);
-      audition(note, velocityRef.current);
-      return;
-    }
-    if (!g.moved) {
-      // A plain click on a note selects it and plays its pitch, so you can hear
-      // what you are about to edit.
-      if (g.kind === 'note') {
-        setSelected(g.id);
-        audition(g.orig.note, g.orig.velocity);
-      }
-      return;
-    }
-    // The drag always derived from `g.orig`, so that is the pre-drag document:
-    // settling on it records one undo step and writes the result out.
-    const now = rollSession.getDoc();
-    rollSession.settle({
-      ...now,
-      notes: now.notes.map((n) => (n.id === g.id ? g.orig : n)),
-    });
-  };
-
-  const zoomBy = (dir: number) => {
-    const index = ZOOMS.indexOf(zoom);
-    setZoom(ZOOMS[clamp(index + dir, 0, ZOOMS.length - 1)]);
-  };
+  }, [open, input, commit, revealNote, applySelection]);
 
   const bars = Math.max(1, Math.round(doc.beats / 4));
   // Multi-track files are edited one layer at a time, exactly like the strip.
@@ -545,7 +917,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                 onChange={(event) => {
                   haptic();
                   rollSession.setClip(event.target.value || null);
-                  setSelected(null);
+                  applySelection([], null);
                 }}
               >
                 {layerClips.map((clip) => (
@@ -565,7 +937,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                 onChange={(event) => {
                   haptic();
                   rollSession.setLayer(Number(event.target.value));
-                  setSelected(null);
+                  applySelection([], null);
                 }}
               >
                 {tracksInSong.map((layer, index) => (
@@ -623,6 +995,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
             <button
               type="button"
               className="roll-btn wide"
+              data-act="roll-quantize"
               onClick={() => {
                 haptic();
                 commit(quantizeDoc(rollSession.getDoc(), snap));
@@ -680,6 +1053,21 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
             }}
           >
             ● {t('roll.input')}
+          </button>
+
+          <button
+            type="button"
+            className={`roll-btn${multi ? ' on' : ''}`}
+            aria-pressed={multi}
+            data-act="roll-multi"
+            title={multi ? t('roll.multiOn') : t('roll.multiOff')}
+            aria-label={t('roll.multi')}
+            onClick={() => {
+              haptic();
+              setMulti((v) => !v);
+            }}
+          >
+            ⬚ {t('roll.multi')}
           </button>
 
           <button
@@ -746,9 +1134,9 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
               type="button"
               className="roll-btn wide"
               onClick={() => {
-                haptic(HAPTIC.medium);
+                haptic();
                 commit(clearNotes(rollSession.getDoc()));
-                setSelected(null);
+                applySelection([], null);
               }}
             >
               {t('roll.clear')}
@@ -795,6 +1183,92 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
           </div>
         </div>
 
+        {liveSelection.length ? (
+          <div className="roll-select" data-act="roll-selection">
+            <span className="rs-count" aria-live="polite">
+              {t('roll.selectedN', { n: liveSelection.length })}
+            </span>
+            <div className="roll-group">
+              <button
+                type="button"
+                className="roll-btn sel"
+                data-act="sel-left"
+                title={t('roll.nudgeLeft')}
+                aria-label={t('roll.nudgeLeft')}
+                onClick={() => nudgeSelection(-snap, 0)}
+              >
+                ◀
+              </button>
+              <button
+                type="button"
+                className="roll-btn sel"
+                data-act="sel-right"
+                title={t('roll.nudgeRight')}
+                aria-label={t('roll.nudgeRight')}
+                onClick={() => nudgeSelection(snap, 0)}
+              >
+                ▶
+              </button>
+              <button
+                type="button"
+                className="roll-btn sel"
+                data-act="sel-down"
+                title={t('roll.nudgeDown')}
+                aria-label={t('roll.nudgeDown')}
+                onClick={() => nudgeSelection(0, -1)}
+              >
+                ▼
+              </button>
+              <button
+                type="button"
+                className="roll-btn sel"
+                data-act="sel-up"
+                title={t('roll.nudgeUp')}
+                aria-label={t('roll.nudgeUp')}
+                onClick={() => nudgeSelection(0, 1)}
+              >
+                ▲
+              </button>
+            </div>
+            <div className="roll-group">
+              <button
+                type="button"
+                className="roll-btn wide sel"
+                data-act="sel-copy"
+                title={t('roll.copyHint')}
+                onClick={() => copySelected()}
+              >
+                {t('roll.copy')}
+              </button>
+              <button
+                type="button"
+                className="roll-btn wide sel"
+                data-act="sel-paste"
+                disabled={!canPaste}
+                title={t('roll.pasteHint')}
+                onClick={() => pasteClipboard()}
+              >
+                {t('roll.paste')}
+              </button>
+              <button
+                type="button"
+                className="roll-btn wide sel"
+                data-act="sel-quantize"
+                title={t('roll.quantizeSelection')}
+                onClick={() => runBatch((current, ids) => ({ doc: quantizeSelection(current, ids, snap) }))}
+              >
+                {t('roll.quantize')}
+              </button>
+              <button type="button" className="roll-btn wide sel" data-act="sel-delete" onClick={deleteSelected}>
+                ⌫ {t('roll.delete')}
+              </button>
+              <button type="button" className="roll-btn wide sel" data-act="sel-clear" onClick={clearSelected}>
+                {t('roll.deselect')}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {selectedNote ? (
           <div className="roll-inspector">
             <span className="ri-pitch">{noteName(selectedNote.note)}</span>
@@ -837,9 +1311,11 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                 step={0.01}
                 value={selectedNote.velocity}
                 onChange={(event) =>
-                  commit(
-                    updateNote(rollSession.getDoc(), selectedNote.id, { velocity: Number(event.target.value) }),
-                  )
+                  // One slider, the whole selection: a velocity edit is a batch
+                  // edit too, and it is one undo step.
+                  runBatch((current, ids) => ({
+                    doc: setSelectionVelocity(current, ids, Number(event.target.value)),
+                  }))
                 }
               />
             </label>
@@ -908,6 +1384,8 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
               onPointerUp={onGridPointerUp}
               onPointerCancel={() => {
                 gesture.current = null;
+                marqueeRef.current = null;
+                setMarquee(null);
               }}
             >
               {Array.from({ length: high - low + 1 }, (_, i) => {
@@ -926,7 +1404,7 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                 return (
                   <div
                     key={note.id}
-                    className={`roll-note${selected === note.id ? ' sel' : ''}`}
+                    className={`roll-note${isSelected(liveSelection, note.id) ? ' sel' : ''}`}
                     data-note={note.id}
                     style={{
                       left: note.start * zoom,
@@ -942,10 +1420,10 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault();
-                        setSelected(note.id);
+                        applySelection([note.id], note.id);
                       } else if (event.key === 'Delete' || event.key === 'Backspace') {
                         event.preventDefault();
-                        commit(removeNote(rollSession.getDoc(), note.id));
+                        deleteSelected();
                       }
                     }}
                     onDoubleClick={() => commit(removeNote(rollSession.getDoc(), note.id))}
@@ -962,6 +1440,22 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
                   </div>
                 );
               })}
+
+              {marquee ? (
+                <div
+                  className="roll-marquee"
+                  data-act="roll-marquee"
+                  style={{
+                    left: Math.min(marquee.beat0, marquee.beat1) * zoom,
+                    top: (high - Math.max(marquee.pitch0, marquee.pitch1)) * ROW_H,
+                    width: Math.max(1, Math.abs(marquee.beat1 - marquee.beat0) * zoom),
+                    height: Math.max(
+                      ROW_H,
+                      (Math.abs(marquee.pitch1 - marquee.pitch0) + 1) * ROW_H,
+                    ),
+                  }}
+                />
+              ) : null}
 
               {pending ? (
                 <div

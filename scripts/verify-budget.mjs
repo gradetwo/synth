@@ -186,7 +186,35 @@ const BUDGETS = {
   // over a +5 KB step): it covers the release changelog entry that lands in the
   // first-screen chunk and nothing else. The next batch that grows the payload
   // comes back here and names its trade, as usual.
-  total: 1538 * 1024,
+  //
+  // P10.1 (timeline multi-select: marquee / Ctrl / Shift selection sets, batch
+  // move / copy / paste / delete / resize / quantise, the cross-layer refusal
+  // and the phone's multi-select bar) is the sixth UI batch and the second to
+  // spend this budget. Measured on this tree, clean tree 1536.8 KB -> this batch
+  // **1547.8 KB on the first build and 1547.9 KB on the `npm run verify` rebuild,
+  // i.e. +11.0/11.1 KB**, and the wasm cores are byte-identical (this batch
+  // touches no Rust; the three red lines reproduce verbatim — `test:dsp`
+  // 0.030735, 81 preset fingerprints · ABI 8, `verify:dsp:2x` 0.030852). Where
+  // it goes:
+  //   * `PianoRoll-*.js` 18.4 -> 24.5 KB raw (+6.1 KB): the marquee gesture and
+  //     its box, the selection-set plumbing and gesture settling, the batch edit
+  //     calls, the selection bar and its buttons;
+  //   * `index-*.js` raw (+~3 KB; first-screen JS gzip 133.3 -> 133.9 KB, still
+  //     inside the unchanged 134 KB line): the 20 new zh/en string pairs in
+  //     `i18n.ts`, most of them carrying a sentence of explanation;
+  //   * `index-*.css` raw (+~1 KB; CSS gzip unchanged at 20.1 KB): the marquee
+  //     box, the selection bar and the 36 px `pointer: coarse` targets;
+  //   * the remainder is the hashed-name and service-worker churn every build
+  //     carries, and the lazy `roll-*.js` chunk's copy of the selection module.
+  // 1550, not 1548: the 1548 the batch proposed was measured at 1547.9 KB *before*
+  // the release entry existed, and a release entry is not optional -- the head
+  // moves into the lazy history chunk, so every release adds its own ~1 KB to
+  // `dist` before anything else happens. That is a per-release cost the margin
+  // has to include, and 1548 left 0.1 KB for it. Measured with the entry in
+  // place: 1548.7 KB, so this is "measured + ~1.3 KB" -- and the entry itself was
+  // trimmed once on the way here rather than the line simply moved.
+  // `wasm` deliberately stays at 75 KB: this batch does not touch the engine.
+  total: 1550 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   // Measured 131.2 KB gzip. +2.8 KB (+2.1 %); the P8.5 plan target was 140 KB,
   // so this is the tight version of an already-reached goal.

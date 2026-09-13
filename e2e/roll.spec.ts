@@ -518,3 +518,305 @@ test.describe('layer strip note dragging', () => {
     await expect(notes).toHaveCount(2);
   });
 });
+
+/**
+ * P10.1: the piano roll edits a *selection set*, not one note.
+ *
+ * Every test here loads a four-note file so the notes sit on known beats and
+ * lanes, then asserts on the data the gestures produced — how many notes there
+ * are and where they are — rather than only on the selection highlight.
+ */
+const fourNoteSong = () =>
+  Buffer.from([
+    0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0,
+    0x4d, 0x54, 0x72, 0x6b, 0, 0, 0, 60,
+    0x00, 0xff, 0x51, 0x03, 0x07, 0xa1, 0x20,
+    // 60 at 0.0 s, 62 at 0.5 s, 64 at 1.0 s (two beats), 67 at 1.0 s.
+    0x00, 0x90, 0x3c, 0x64, 0x83, 0x60, 0x80, 0x3c, 0x40,
+    0x00, 0x90, 0x3e, 0x64, 0x83, 0x60, 0x80, 0x3e, 0x40,
+    0x00, 0x90, 0x40, 0x64, 0x87, 0x40, 0x80, 0x40, 0x40,
+    0x00, 0x90, 0x43, 0x64, 0x83, 0x60, 0x80, 0x43, 0x40,
+    0x00, 0xff, 0x2f, 0x00,
+  ]);
+
+/** Open the roll on a file whose notes sit on known beats and lanes. */
+async function openRollWithFourNotes(page: Page): Promise<number> {
+  await boot(page);
+  await page.locator('.player-open').click();
+  await page.locator('.player input[type=file]').setInputFiles({
+    name: 'four-notes.mid',
+    mimeType: 'audio/midi',
+    buffer: fourNoteSong(),
+  });
+  await page.locator('.player-btn.wide', { hasText: '编辑' }).click();
+  await expect(page.locator('.roll.open')).toHaveCount(1);
+  await expect(page.locator('.roll-note')).toHaveCount(4);
+  // The roll scrolls to the notes when it opens; wait for that to settle so a
+  // gesture does not race the scroll.
+  await page.waitForTimeout(300);
+  // The beats between the fixture's first two notes (one beat), read off the
+  // labels rather than hard-coded from the default zoom.
+  const starts = await page
+    .locator('.roll-note')
+    .evaluateAll((els) => els.map((el) => Number.parseFloat((el.getAttribute('aria-label') ?? '').split(' · ')[1])));
+  return starts[1] - starts[0];
+}
+
+const lefts = (page: Page) =>
+  page.locator('.roll-note').evaluateAll((els) =>
+    els.map((el) => Math.round(Number.parseFloat((el as HTMLElement).style.left))),
+  );
+
+test.describe('piano roll selection set', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('marquee-selects a group and drags the whole group', async ({ page }) => {
+    await openRollWithFourNotes(page);
+    const notes = page.locator('.roll-note');
+
+    // The box starts in the empty space *above* the notes — the pitch window
+    // always keeps room above the highest note — and is dragged down across
+    // their lane, so it never touches a note's resize handle. Both boxes are
+    // read now: the selection bar and inspector appear as soon as a note is
+    // selected, which moves the grid.
+    const grid = (await page.locator('.roll-grid').boundingBox())!;
+    const first = (await notes.nth(0).boundingBox())!;
+    const third = (await notes.nth(2).boundingBox())!;
+    await page.mouse.move(grid.x + 2, grid.y + 60);
+    await page.mouse.down();
+    await page.mouse.move(third.x + third.width - 8, first.y + first.height / 2, { steps: 10 });
+    // The box is drawn while the pointer is still down…
+    await expect(page.locator('[data-act="roll-marquee"]')).toBeVisible();
+    // …and every note under it is selected as the pointer moves: C4, D4 and E4
+    // sit on beats 0-2, G4 is up at beat 4 and outside the box.
+    await expect(page.locator('.roll-note.sel')).toHaveCount(3);
+    await page.mouse.up();
+    await expect(page.locator('[data-act="roll-selection"]')).toContainText('3');
+
+    // Dragging one of the selected notes moves the whole group by the same
+    // amount, and the note outside the selection stays exactly where it was.
+    const lefts = () =>
+      page.locator('.roll-note').evaluateAll((els) =>
+        els.map((el) => Math.round(Number.parseFloat((el as HTMLElement).style.left))),
+      );
+    const before = await lefts();
+    const from = (await page.locator('.roll-note.sel').nth(0).boundingBox())!;
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2 + 100, from.y + from.height / 2, { steps: 10 });
+    await page.mouse.up();
+    const after = await lefts();
+    expect(after[0]).toBeGreaterThan(before[0]);
+    expect(after[1] - before[1]).toBe(after[0] - before[0]); // same delta: the group held together
+    expect(after[2] - before[2]).toBe(after[0] - before[0]);
+    expect(after[3]).toBe(before[3]);
+    // Still the same three-note selection after the drag…
+    await expect(page.locator('.roll-note.sel')).toHaveCount(3);
+    // …and one undo puts the group back, so the drag was one step.
+    await page.keyboard.press('Control+z');
+    expect((await lefts()).slice(0, 3)).toEqual(before.slice(0, 3));
+  });
+
+  test('Ctrl-click adds and removes one note, and Delete removes the set at once', async ({ page }) => {
+    await openRollWithFourNotes(page);
+    const notes = page.locator('.roll-note');
+    // Every box is read just before it is used: selecting a note opens the
+    // selection bar and the inspector, which moves the grid down.
+    const centre = async (n: number) => {
+      const box = (await notes.nth(n).boundingBox())!;
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    };
+
+    const a = await centre(0);
+    await page.mouse.click(a.x, a.y);
+    await expect(page.locator('.roll-note.sel')).toHaveCount(1);
+    // Ctrl-click on a second note adds it without dropping the first. The key is
+    // held on the keyboard rather than passed as a click modifier: Playwright's
+    // `modifiers` option does not reach the app's pointerdown as `ctrlKey`.
+    const b = await centre(1);
+    await page.keyboard.down('Control');
+    await page.mouse.click(b.x, b.y);
+    await page.keyboard.up('Control');
+    await expect(page.locator('.roll-note.sel')).toHaveCount(2);
+    await expect(page.locator('[data-act="roll-selection"]')).toContainText('2');
+
+    // Delete takes the whole set in one press…
+    await page.keyboard.press('Delete');
+    await expect(notes).toHaveCount(2);
+    // …and one undo brings all of them back, so it was one step.
+    await page.keyboard.press('Control+z');
+    await expect(notes).toHaveCount(4);
+  });
+
+  test('Shift-click extends the selection over a time and pitch range', async ({ page }) => {
+    await openRollWithFourNotes(page);
+    const notes = page.locator('.roll-note');
+    const centre = async (n: number) => {
+      const box = (await notes.nth(n).boundingBox())!;
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    };
+    const first = await centre(0);
+    await page.mouse.click(first.x, first.y);
+    // Re-read the target: the first click opened the selection bars and moved
+    // the grid down.
+    const third = await centre(2);
+    await page.keyboard.down('Shift');
+    await page.mouse.click(third.x, third.y);
+    await page.keyboard.up('Shift');
+    // The rectangle between the two clicked notes covers C4, D4 and E4 — the
+    // fixture's notes on beats 0/1/2 — but not G4 up at beat 4.
+    await expect(page.locator('.roll-note.sel')).toHaveCount(3);
+    await expect(page.locator('[data-act="roll-selection"]')).toContainText('3');
+  });
+
+  test('the keyboard moves, copies, pastes and clears the selection', async ({ page }) => {
+    await openRollWithFourNotes(page);
+    const notes = page.locator('.roll-note');
+
+    // Select all, then walk the whole selection one grid step to the right.
+    await page.keyboard.press('Control+a');
+    await expect(page.locator('.roll-note.sel')).toHaveCount(4);
+    const startsOf = async () =>
+      page.locator('.roll-note').evaluateAll((els) =>
+        els.map((el) => Number.parseFloat((el.getAttribute('aria-label') ?? '').split(' · ')[1])),
+      );
+    const before = await startsOf();
+    await page.keyboard.press('ArrowRight');
+    const after = await startsOf();
+    // An arrow key moves one grid step, which is the snap resolution (a
+    // sixteenth by default) — not a whole beat.
+    const step = await page.locator('[data-act="roll-snap"]').inputValue().then(Number);
+    expect(step).toBeGreaterThan(0);
+    for (let i = 0; i < before.length; i += 1) expect(after[i] - before[i]).toBeCloseTo(step, 6);
+    // An arrow nudge is its own undo step.
+    await page.keyboard.press('Control+z');
+    expect(await startsOf()).toEqual(before);
+
+    // Copy/paste duplicates the four notes and selects the copies: paste lands
+    // at the playhead (beat 0 here), so the copies sit exactly on top of the
+    // originals and the toast says so rather than hiding a second pile.
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Control+c');
+    await page.keyboard.press('Control+v');
+    await expect(notes).toHaveCount(8);
+    await expect(page.locator('.roll-note.sel')).toHaveCount(4);
+    await expect(page.locator('.toast')).toContainText('副本');
+    // Esc backs out of the selection before it closes the editor.
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.roll-note.sel')).toHaveCount(0);
+    await expect(page.locator('.roll.open')).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.roll.open')).toHaveCount(0);
+  });
+
+  test('the selection bar edits the whole set', async ({ page }) => {
+    await openRollWithFourNotes(page);
+    const notes = page.locator('.roll-note');
+    const first = (await notes.nth(0).boundingBox())!;
+
+
+    await page.mouse.click(first.x + first.width / 2, first.y + first.height / 2);
+    await page.locator('[data-act="sel-right"]').click();
+    await expect(notes).toHaveCount(4);
+    const moved = await lefts(page);
+    expect(moved[0]).toBeGreaterThan(0);
+
+    // Copy then paste from the bar: the clip grows and the copies are selected.
+    await page.locator('[data-act="sel-copy"]').click();
+    await page.locator('[data-act="sel-paste"]').click();
+    await expect(notes).toHaveCount(5);
+    await expect(page.locator('.roll-note.sel')).toHaveCount(1);
+
+    // Delete from the bar, then one undo.
+    await page.locator('[data-act="sel-delete"]').click();
+    await expect(notes).toHaveCount(4);
+    await page.keyboard.press('Control+z');
+    await expect(notes).toHaveCount(5);
+  });
+});
+
+test.describe('piano roll selection on phone', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('multi-select mode plus the batch bar edits the set with big targets', async ({ page }) => {
+    await boot(page, true);
+    // Load a file whose notes sit on known lanes: the batch move is asserted
+    // through the note's own label, which needs two notes to move together.
+    await page.locator('.player-open').tap();
+    await page.locator('.player input[type=file]').setInputFiles({
+      name: 'four-notes.mid',
+      mimeType: 'audio/midi',
+      buffer: fourNoteSong(),
+    });
+    await page.locator('[data-act="strip-mode"]').tap();
+    await page.locator('.player-btn.wide', { hasText: '编辑' }).tap();
+    await expect(page.locator('.roll.open')).toHaveCount(1);
+    await expect(page.locator('.roll-note')).toHaveCount(4);
+    await page.waitForTimeout(400);
+
+    const notes = page.locator('.roll-note');
+    const before = await notes.count();
+    const centre = async (n: number) => {
+      const box = (await notes.nth(n).boundingBox())!;
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    };
+
+    // A tap selects one note…
+    const first = await centre(0);
+    await page.touchscreen.tap(first.x, first.y);
+    await expect(page.locator('.roll-note.sel')).toHaveCount(1);
+
+    // …and multi-select mode turns the next tap into an addition, which is the
+    // phone's stand-in for holding Ctrl. The second note's box is read after the
+    // toggle, because selecting the first one moved the grid.
+    await page.locator('[data-act="roll-multi"]').tap();
+    const second = await centre(1);
+    await page.touchscreen.tap(second.x, second.y);
+    await expect(page.locator('.roll-note.sel')).toHaveCount(2);
+    await expect(page.locator('[data-act="roll-selection"]')).toContainText('2');
+
+    // Every batch button is a real touch target: at least 36 px on both axes.
+    const targets = await page
+      .locator('[data-act="roll-selection"] .roll-btn')
+      .evaluateAll((els) =>
+        els.map((el) => {
+          const b = el.getBoundingClientRect();
+          return { act: (el as HTMLElement).dataset.act, w: Math.round(b.width), h: Math.round(b.height) };
+        }),
+      );
+    expect(targets.length).toBeGreaterThanOrEqual(6);
+    for (const target of targets) expect(target.h, `${target.act} height`).toBeGreaterThanOrEqual(36);
+    for (const target of targets) expect(target.w, `${target.act} width`).toBeGreaterThanOrEqual(36);
+
+    // Moving the set from the bar really moves the data (the notes are a lane
+    // higher afterwards, which the accessible label records).
+    const pitchBefore = await page.locator('.roll-note.sel').nth(0).getAttribute('aria-label');
+    await page.locator('[data-act="sel-up"]').tap();
+    await expect
+      .poll(async () => page.locator('.roll-note.sel').nth(0).getAttribute('aria-label'))
+      .not.toBe(pitchBefore);
+
+    // One undo puts it back, so the nudge was one step.
+    await page.keyboard.press('Control+z');
+    await expect
+      .poll(async () => page.locator('.roll-note.sel').nth(0).getAttribute('aria-label'))
+      .toBe(pitchBefore);
+
+    // Deleting from the bar removes the whole set at once.
+    await page.locator('[data-act="sel-delete"]').tap();
+    await expect(notes).toHaveCount(before - 2);
+    await page.keyboard.press('Control+z');
+    await expect(notes).toHaveCount(before);
+
+    // The bar must not push the sheet sideways on the narrowest screen.
+    const overflow = await page.evaluate(() => {
+      const el = document.querySelector('[data-act="roll-selection"]') as HTMLElement | null;
+      const roll = document.querySelector('.roll') as HTMLElement | null;
+      return {
+        bar: el ? el.scrollWidth - el.clientWidth : 0,
+        roll: roll ? roll.scrollWidth - roll.clientWidth : 0,
+      };
+    });
+    expect(overflow.roll).toBeLessThanOrEqual(1);
+  });
+});

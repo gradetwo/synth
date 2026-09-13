@@ -2,6 +2,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { midiLibrary, type Track } from '@/midi/library';
 import { midiPlayer } from '@/midi/player';
 import { addNote, removeNote, type RollDoc } from '@/midi/roll';
+import {
+  copySelection,
+  moveSelection,
+  pasteSelection,
+  quantizeSelection,
+  removeSelection,
+  scaleSelection,
+} from '@/midi/selection';
 import { foldLayer, makeClip, withClips } from '@/midi/clips';
 import type { MidiSong } from '@/midi/smf';
 import { rollSession } from './roll';
@@ -171,6 +179,148 @@ describe('editing session', () => {
     expect(rollSession.getState().pendingSync).toBe(true);
     // Settling on the same document it already has is not a step either.
     rollSession.settle(rollSession.getDoc());
+    expect(rollSession.getState().canUndo).toBe(false);
+  });
+});
+
+/**
+ * Batch edits (P10.1) at the session level: what the *library* ends up holding,
+ * and how many undo steps it took to get there.
+ */
+describe('batch edits and the undo history', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    const song: MidiSong = {
+      name: 'chord',
+      bpm: 120,
+      duration: 2,
+      notes: [],
+      tracks: [
+        {
+          name: 'Lead',
+          notes: [
+            { note: 60, velocity: 0.8, start: 0, duration: 0.5 },
+            { note: 64, velocity: 0.8, start: 0, duration: 0.5 },
+            { note: 67, velocity: 0.8, start: 0, duration: 0.5 },
+          ],
+        },
+        { name: 'Bass', notes: [{ note: 36, velocity: 0.8, start: 1, duration: 0.5 }] },
+      ],
+    };
+    song.notes = [...song.tracks![0].notes, ...song.tracks![1].notes];
+    putUserTrack(song);
+    rollSession.open(0);
+  });
+
+  const ids = () => rollSession.getDoc().notes.map((n) => n.id);
+  const starts = () => storedLayer(0).map((n) => n.start);
+  const pitches = (index = 0) => storedLayer(index).map((n) => n.note);
+
+  it('moves a whole selection in one undo step', () => {
+    expect(starts()).toEqual([0, 0, 0]);
+    rollSession.commit(moveSelection(rollSession.getDoc(), ids(), 1, 2), { sync: true });
+
+    // The three notes moved together: same relative timing, +2 semitones.
+    expect(pitches()).toEqual([62, 66, 69]);
+    expect(starts()).toEqual([0.5, 0.5, 0.5]);
+    // The other layer is untouched, and the song still has both layers.
+    expect(pitches(1)).toEqual([36]);
+    expect(midiLibrary.getCurrent()?.song.tracks).toHaveLength(2);
+
+    // Exactly one step back, and everything is where it was.
+    expect(rollSession.getState().canUndo).toBe(true);
+    rollSession.undo();
+    expect(pitches()).toEqual([60, 64, 67]);
+    expect(starts()).toEqual([0, 0, 0]);
+    expect(rollSession.getState().canUndo).toBe(false);
+  });
+
+  it('deletes a selection in one undo step', () => {
+    rollSession.commit(removeSelection(rollSession.getDoc(), ids().slice(0, 2)), { sync: true });
+    expect(pitches()).toEqual([67]);
+    expect(midiPlayer.getSong()?.notes).toHaveLength(2); // 67 + the bass note
+    rollSession.undo();
+    expect(pitches()).toEqual([60, 64, 67]);
+    // One pop, not three.
+    expect(rollSession.getState().canUndo).toBe(false);
+  });
+
+  it('pastes a copied group as one undo step, with fresh ids', () => {
+    const originals = ids().slice(0, 2);
+    const clip = copySelection(rollSession.getDoc(), originals)!;
+    let seed = 0;
+    const pasted = pasteSelection(rollSession.getDoc(), clip, 2, () => `copy${(seed += 1)}`);
+    rollSession.commit(pasted.doc, { sync: true });
+
+    expect(pitches()).toEqual([60, 64, 67, 60, 64]);
+    // The copies are new notes, so editing them cannot move the originals.
+    expect(pasted.selection.every((id) => !originals.includes(id))).toBe(true);
+    rollSession.commit(moveSelection(rollSession.getDoc(), pasted.selection, 0, 5), { sync: true });
+    expect(pitches()).toEqual([60, 64, 67, 65, 69]);
+    rollSession.undo();
+    expect(pitches()).toEqual([60, 64, 67, 60, 64]);
+    rollSession.undo();
+    expect(pitches()).toEqual([60, 64, 67]);
+    expect(rollSession.getState().canUndo).toBe(false);
+  });
+
+  it('scales a selection as one undo step', () => {
+    // At 120 BPM one beat is 0.5 s, so scaling the three quarter-second notes
+    // out to beat 4 gives each a two-second end.
+    rollSession.commit(scaleSelection(rollSession.getDoc(), ids(), 4), { sync: true });
+    expect(storedLayer(0).map((n) => n.start + n.duration)).toEqual([2, 2, 2]);
+    rollSession.undo();
+    expect(storedLayer(0).map((n) => n.start + n.duration)).toEqual([0.5, 0.5, 0.5]);
+    expect(rollSession.getState().canUndo).toBe(false);
+  });
+
+  it('quantises a selection in one undo step', () => {
+    // Put the group slightly off the grid first; that is its own step, so the
+    // quantise is the one under test.
+    // 0.1 beat is 0.05 s at 120 BPM, which is what the library stores.
+    rollSession.commit(moveSelection(rollSession.getDoc(), ids(), 0.1, 0), { sync: true });
+    expect(starts()).toEqual([0.05, 0.05, 0.05]);
+    rollSession.commit(quantizeSelection(rollSession.getDoc(), ids(), 0.25), { sync: true });
+    expect(starts()).toEqual([0, 0, 0]);
+    // One pop returns the off-grid document with the earlier step still there…
+    rollSession.undo();
+    expect(starts()).toEqual([0.05, 0.05, 0.05]);
+    expect(rollSession.getState().canUndo).toBe(true);
+    // …and the second pop is the nudge that made it off-grid.
+    rollSession.undo();
+    expect(starts()).toEqual([0, 0, 0]);
+    expect(rollSession.getState().canUndo).toBe(false);
+  });
+
+  it('cannot leak a batch edit across layers', () => {
+    // The cross-layer decision (P10.1) is "refuse, visibly" rather than
+    // implement, so a batch edit on layer 0 has to leave layer 1 identical,
+    // whatever the selection contains.
+    const bass = storedLayer(1).map((n) => ({ ...n }));
+    rollSession.commit(moveSelection(rollSession.getDoc(), ids(), 2, 7), { sync: true });
+    expect(storedLayer(1)).toEqual(bass);
+    // …and the session stays pointed at the layer it was editing.
+    expect(rollSession.getLayerIndex()).toBe(0);
+    expect(pitches()).toEqual([67, 71, 74]);
+    rollSession.setLayer(1);
+    expect(pitches(1)).toEqual([36]);
+  });
+
+  it('settles a multi-step gesture as one step from the pre-gesture document', () => {
+    const from = rollSession.getDoc();
+    const group = from.notes.map((n) => n.id);
+    const base = moveSelection(from, group, 1, 0);
+    // Two live updates, as a drag emits them…
+    rollSession.live(moveSelection(base, group, 1, 0));
+    rollSession.live(moveSelection(base, group, 2, 0));
+    expect(rollSession.getState().canUndo).toBe(false);
+    // …then the gesture settles: the result is rebuilt from the pre-drag
+    // document, and one undo takes the whole group home.
+    rollSession.applyGesture(from, (before) => moveSelection(before, group, 2, 0));
+    expect(starts()).toEqual([1, 1, 1]);
+    expect(rollSession.getState().canUndo).toBe(true);
+    rollSession.undo();
+    expect(starts()).toEqual([0, 0, 0]);
     expect(rollSession.getState().canUndo).toBe(false);
   });
 });
