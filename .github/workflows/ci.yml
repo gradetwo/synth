@@ -69,6 +69,9 @@ jobs:
       - name: Preset fingerprints (every factory preset)
         run: npm run verify:presets
 
+      - name: Preset fingerprints (2x oversampling)
+        run: npm run verify:presets:2x
+
       - name: Sustained-load benchmark
         run: npm run verify:bench
 

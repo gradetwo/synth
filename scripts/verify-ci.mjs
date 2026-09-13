@@ -66,6 +66,7 @@ const required = [
   ['payload budget', 'npm run verify:budget'],
   ['audio quality gates', 'npm run verify:audio'],
   ['preset fingerprints', 'npm run verify:presets'],
+  ['2x oversampling preset fingerprints', 'npm run verify:presets:2x'],
   ['sustained-load benchmark', 'npm run verify:bench'],
   ['DSP regression baseline', 'npm run test:dsp'],
   ['2x oversampling DSP baseline', 'npm run verify:dsp:2x'],

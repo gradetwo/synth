@@ -24,6 +24,14 @@
  * module it needs with esbuild (which vite already brings) and imports the
  * result from `.tmp/`. It never touches the app bundle.
  *
+ * P11.4 adds the oversampled path. `scripts/dsp-baseline.mjs` already keeps two
+ * fingerprints for its one patch; the presets were only fingerprinted on the
+ * default 1x path, so a preset that breaks *because* of 2x (the saturating
+ * filter path is the one oversampling changes) went unseen. `--oversampled`
+ * selects `tests/preset-fingerprint-2x.json`, mirroring the DSP baseline's
+ * `tests/dsp-baseline-2x.json`, and `npm run verify:presets:2x` is the gate.
+ * Both modes are hard gates; neither is derived from the other.
+ *
  * `--report` prints the largest movement per preset with its ratio against the
  * tolerance, whether or not it failed: that is how the tolerances below were
  * chosen, and how a suspicious run is read afterwards.
@@ -34,31 +42,38 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const wasmPath = resolve(root, 'src/generated/synth_core.wasm');
-const baselinePath = resolve(root, 'tests/preset-fingerprint.json');
-const bundlePath = resolve(root, '.tmp/preset-fingerprint-bundle.mjs');
-
 const argv = process.argv.slice(2);
 const update = argv.includes('--update');
 const reasonIndex = argv.indexOf('--reason');
 const reason = reasonIndex >= 0 ? argv[reasonIndex + 1] : undefined;
+/** The second mode. Same phrase, same bands, the 2x oversampled filter path. */
+const oversampled = argv.includes('--oversampled');
+const tag = oversampled ? '[presets 2x]' : '[presets]';
+const baselinePath = resolve(
+  root,
+  oversampled ? 'tests/preset-fingerprint-2x.json' : 'tests/preset-fingerprint.json',
+);
+const updateCommand = oversampled ? 'presets:update:2x' : 'presets:update';
 if (update && !reason) {
-  console.error('[presets] --update needs a reason: npm run presets:update -- --reason "..."');
+  console.error(`${tag} --update needs a reason: npm run ${updateCommand} -- --reason "..."`);
   process.exit(2);
 }
 
 if (!existsSync(wasmPath)) {
-  console.error('[presets] src/generated/synth_core.wasm missing — run "npm run build:wasm"');
+  console.error(`${tag} src/generated/synth_core.wasm missing — run "npm run build:wasm"`);
   process.exit(1);
 }
 
 // ---------------------------------------------------------------- presets
 
+const bundlePath = resolve(root, '.tmp/preset-fingerprint-bundle.mjs');
+
 let build;
 try {
   ({ build } = await import('esbuild'));
 } catch (error) {
-  console.error('[presets] esbuild is required (vite ships it) — run "npm install"');
-  console.error(`[presets] ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`${tag} esbuild is required (vite ships it) — run "npm install"`);
+  console.error(`${tag} ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
 }
 
@@ -67,7 +82,7 @@ await build({
   stdin: {
     contents: `
       export { FACTORY_PRESETS, presetParams, presetRoutes } from '@/state/presets';
-      export { DEFAULT_PARAMS } from '@/audio/params';
+      export { DEFAULT_PARAMS, Param } from '@/audio/params';
     `,
     resolveDir: root,
     sourcefile: 'preset-fingerprint-entry.ts',
@@ -80,7 +95,7 @@ await build({
   logLevel: 'error',
   outfile: bundlePath,
 });
-const { FACTORY_PRESETS, presetParams, presetRoutes, DEFAULT_PARAMS } = await import(
+const { FACTORY_PRESETS, presetParams, presetRoutes, DEFAULT_PARAMS, Param } = await import(
   pathToFileURL(bundlePath).href
 );
 
@@ -132,6 +147,9 @@ function render(preset) {
   for (const [id, value] of Object.entries(presetParams(preset))) {
     ex.gs_set_param(Number(id), value);
   }
+  // The second mode (P11.4): force 2x on, whatever the preset file says. It is
+  // a global engine switch, so it is set once per instance, not per layer.
+  if (oversampled) ex.gs_set_param(Param.OVERSAMPLE, 1);
   presetRoutes(preset).forEach((route, index) => {
     ex.gs_set_mod_route(index, route.src, route.dst, route.amount, route.enabled ? 1 : 0);
   });
@@ -209,6 +227,7 @@ const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath
 const abi = new WebAssembly.Instance(module, {}).exports.gs_abi_version();
 const payload = {
   abi,
+  oversampled,
   sampleRate: SR,
   seconds: SECONDS,
   phrase: PHRASE,
@@ -223,6 +242,7 @@ const serialise = (value) => {
   const lines = [
     '{',
     ` "abi": ${value.abi},`,
+    ` "oversampled": ${value.oversampled === true},`,
     ` "sampleRate": ${value.sampleRate},`,
     ` "seconds": ${value.seconds},`,
     ` "phrase": ${JSON.stringify(value.phrase)},`,
@@ -285,7 +305,7 @@ if (update || !baseline) {
   writeFileSync(baselinePath, serialise(payload));
   const verb = update ? '--update' : 'first run';
   console.log(
-    `[presets] baseline written (${verb}) · ${Object.keys(measured).length} presets · ABI ${abi}`,
+    `${tag} baseline written (${verb}) · ${Object.keys(measured).length} presets · ABI ${abi}`,
   );
   if (update && baseline) {
     const moved = diff(baseline.presets, measured).filter((entry) => entry.severity > 1);
@@ -296,8 +316,8 @@ if (update || !baseline) {
 }
 
 if (baseline.abi !== abi) {
-  console.error(`[presets] the parameter ABI changed (${baseline.abi} -> ${abi})`);
-  console.error('[presets] regenerate: npm run presets:update -- --reason "why"');
+  console.error(`${tag} the parameter ABI changed (${baseline.abi} -> ${abi})`);
+  console.error(`${tag} regenerate: npm run ${updateCommand} -- --reason "why"`);
   process.exit(1);
 }
 
@@ -307,7 +327,7 @@ const failures = entries.filter((entry) => entry.severity > 1);
 // `--report` says what moved and by how much, tolerance or not: it is how the
 // tolerances above were chosen, and how a suspicious run is read afterwards.
 if (report) {
-  console.log('[presets] sensitivity report (ratio 1.0 = exactly at tolerance):');
+  console.log(`${tag} sensitivity report (ratio 1.0 = exactly at tolerance):`);
   for (const entry of entries.slice(0, 30)) {
     if (!entry.worst) continue;
     const { label, was, now, delta, severity } = entry.worst;
@@ -318,12 +338,12 @@ if (report) {
 }
 
 if (failures.length === 0) {
-  console.log(`[presets] ${Object.keys(measured).length} presets unchanged · ABI ${abi}`);
+  console.log(`${tag} ${Object.keys(measured).length} presets unchanged · ABI ${abi}`);
   process.exit(0);
 }
 
-console.error('[presets] REGRESSION detected:');
+console.error(`${tag} REGRESSION detected:`);
 for (const entry of failures) console.error(`  ${entry.id}: ${entry.moved.join(', ')}`);
-console.error('[presets] if the presets are meant to sound different now:');
-console.error('[presets]   npm run presets:update -- --reason "why"');
+console.error(`${tag} if the presets are meant to sound different now:`);
+console.error(`${tag}   npm run ${updateCommand} -- --reason "why"`);
 process.exit(1);
