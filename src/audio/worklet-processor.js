@@ -201,6 +201,59 @@ const PARAMS = [
   ['fxTransientAttack', 180, 0, -1, 1],
   ['fxTransientSustain', 181, 0, -1, 1],
   ['fxTransientMix', 182, 1, 0, 1],
+  // Per-node effect overrides (P9.3), four shared slots per node (id 183-206).
+  // The value is the override itself; -2 means "follow the kind's own knob" and
+  // is the default, so an untouched patch renders exactly as it did. The kind
+  // decides what each slot means, which is why one pool serves every effect —
+  // and that is also why the range is the widest any slot can need (an EQ
+  // corner is 8000 Hz, crush bits are 16) rather than 0..1: the core clamps
+  // each slot to its own kind's range, but the browser would clamp it to the
+  // AudioParam first and quietly turn 8000 Hz into 4.
+  ['fxOvr1_1', 183, -2, -2, 8000],
+  ['fxOvr1_2', 184, -2, -2, 8000],
+  ['fxOvr1_3', 185, -2, -2, 8000],
+  ['fxOvr1_4', 186, -2, -2, 8000],
+  ['fxOvr2_1', 187, -2, -2, 8000],
+  ['fxOvr2_2', 188, -2, -2, 8000],
+  ['fxOvr2_3', 189, -2, -2, 8000],
+  ['fxOvr2_4', 190, -2, -2, 8000],
+  ['fxOvr3_1', 191, -2, -2, 8000],
+  ['fxOvr3_2', 192, -2, -2, 8000],
+  ['fxOvr3_3', 193, -2, -2, 8000],
+  ['fxOvr3_4', 194, -2, -2, 8000],
+  ['fxOvr4_1', 195, -2, -2, 8000],
+  ['fxOvr4_2', 196, -2, -2, 8000],
+  ['fxOvr4_3', 197, -2, -2, 8000],
+  ['fxOvr4_4', 198, -2, -2, 8000],
+  ['fxOvr5_1', 199, -2, -2, 8000],
+  ['fxOvr5_2', 200, -2, -2, 8000],
+  ['fxOvr5_3', 201, -2, -2, 8000],
+  ['fxOvr5_4', 202, -2, -2, 8000],
+  ['fxOvr6_1', 203, -2, -2, 8000],
+  ['fxOvr6_2', 204, -2, -2, 8000],
+  ['fxOvr6_3', 205, -2, -2, 8000],
+  ['fxOvr6_4', 206, -2, -2, 8000],
+  // The override modulation bus (P9.3): eight bus slots, each naming one
+  // override slot to sweep (0 off, else 1 + node * 4 + slot) with its own
+  // signed fraction of that slot's range, plus the one source code they all
+  // read (0 off, 1 LFO 1, 2 LFO 2, 3 the envelope).
+  ['fxOvrTarget1', 207, 0, 0, 24],
+  ['fxOvrTarget2', 208, 0, 0, 24],
+  ['fxOvrTarget3', 209, 0, 0, 24],
+  ['fxOvrTarget4', 210, 0, 0, 24],
+  ['fxOvrTarget5', 211, 0, 0, 24],
+  ['fxOvrTarget6', 212, 0, 0, 24],
+  ['fxOvrTarget7', 213, 0, 0, 24],
+  ['fxOvrTarget8', 214, 0, 0, 24],
+  ['fxOvrDepth1', 215, 0, -1, 1],
+  ['fxOvrDepth2', 216, 0, -1, 1],
+  ['fxOvrDepth3', 217, 0, -1, 1],
+  ['fxOvrDepth4', 218, 0, -1, 1],
+  ['fxOvrDepth5', 219, 0, -1, 1],
+  ['fxOvrDepth6', 220, 0, -1, 1],
+  ['fxOvrDepth7', 221, 0, -1, 1],
+  ['fxOvrDepth8', 222, 0, -1, 1],
+  ['fxOvrSrc', 223, 0, 0, 3],
 ];
 
 const SPECTRUM_BINS = 36;

@@ -236,10 +236,217 @@ pub mod id {
     pub const FX_TRANSIENT_ATTACK: u32 = 180;
     pub const FX_TRANSIENT_SUSTAIN: u32 = 181;
     pub const FX_TRANSIENT_MIX: u32 = 182;
+    /// Per-node effect parameter overrides (P9.3): [`OVR_SLOTS`] shared slot
+    /// values per effect node, six nodes. A slot's *meaning* depends on the
+    /// node's kind (see [`ovr_slot_base`]); its value is the override, or
+    /// [`FX_OVR_UNSET`] for "follow the kind's own knob", which is the default
+    /// and the reason an existing patch renders bit for bit its old self.
+    ///
+    /// The pool is shared across kinds so that six nodes cost
+    /// `OVR_KINDS * FX_SLOTS` ids for every kind put together instead of
+    /// `6 * 9` separate sets — the id budget in the batch report.
+    pub const FX_OVR1_1: u32 = 183;
+    pub const FX_OVR1_2: u32 = 184;
+    pub const FX_OVR1_3: u32 = 185;
+    pub const FX_OVR1_4: u32 = 186;
+    pub const FX_OVR2_1: u32 = 187;
+    pub const FX_OVR2_2: u32 = 188;
+    pub const FX_OVR2_3: u32 = 189;
+    pub const FX_OVR2_4: u32 = 190;
+    pub const FX_OVR3_1: u32 = 191;
+    pub const FX_OVR3_2: u32 = 192;
+    pub const FX_OVR3_3: u32 = 193;
+    pub const FX_OVR3_4: u32 = 194;
+    pub const FX_OVR4_1: u32 = 195;
+    pub const FX_OVR4_2: u32 = 196;
+    pub const FX_OVR4_3: u32 = 197;
+    pub const FX_OVR4_4: u32 = 198;
+    pub const FX_OVR5_1: u32 = 199;
+    pub const FX_OVR5_2: u32 = 200;
+    pub const FX_OVR5_3: u32 = 201;
+    pub const FX_OVR5_4: u32 = 202;
+    pub const FX_OVR6_1: u32 = 203;
+    pub const FX_OVR6_2: u32 = 204;
+    pub const FX_OVR6_3: u32 = 205;
+    pub const FX_OVR6_4: u32 = 206;
+    /// The override modulation bus (P9.3), the per-node counterpart of the
+    /// P7.2 in-graph edges: one source sweeping a **set** of override slots,
+    /// with the amount carried per slot so one LFO can push a delay time and a
+    /// reverb size by different amounts.
+    ///
+    /// `TARGETk` picks the override slot bus slot `k` sweeps: 0 = off,
+    /// otherwise `1 + node * OVR_SLOTS + slot`. `SRC` is the source code
+    /// (0 off, 1 LFO 1, 2 LFO 2, 3 the envelope) shared by every bus slot, and
+    /// `DEPTHk` is the signed fraction of that slot's own range — so **up to
+    /// [`OVR_MOD_SLOTS`] override slots are modulatable at once**, each by its
+    /// own amount. A slot that has no override of its own sweeps from its
+    /// kind's value, so a sweep is audible without setting a base first.
+    ///
+    /// Every value defaults to 0, which is exactly the "no modulation" of a
+    /// patch written before this existed.
+    pub const FX_OVR_TARGET1: u32 = 207;
+    pub const FX_OVR_TARGET2: u32 = 208;
+    pub const FX_OVR_TARGET3: u32 = 209;
+    pub const FX_OVR_TARGET4: u32 = 210;
+    pub const FX_OVR_TARGET5: u32 = 211;
+    pub const FX_OVR_TARGET6: u32 = 212;
+    pub const FX_OVR_TARGET7: u32 = 213;
+    pub const FX_OVR_TARGET8: u32 = 214;
+    pub const FX_OVR_DEPTH1: u32 = 215;
+    pub const FX_OVR_DEPTH2: u32 = 216;
+    pub const FX_OVR_DEPTH3: u32 = 217;
+    pub const FX_OVR_DEPTH4: u32 = 218;
+    pub const FX_OVR_DEPTH5: u32 = 219;
+    pub const FX_OVR_DEPTH6: u32 = 220;
+    pub const FX_OVR_DEPTH7: u32 = 221;
+    pub const FX_OVR_DEPTH8: u32 = 222;
+    /// One source code for the whole override bus.
+    pub const FX_OVR_SRC: u32 = 223;
 }
 
 /// Highest parameter id + 1.
-pub const PARAM_COUNT: usize = 183;
+pub const PARAM_COUNT: usize = 224;
+
+/// Override slots the modulation bus can sweep at once (P9.3). Eight covers
+/// "a couple of nodes of each kind" without spending an id per pool slot; the
+/// id budget in the batch report is the reason it is not [`FX_OVR_POOL`].
+pub const OVR_MOD_SLOTS: usize = 8;
+
+/// Parameter id of one override modulation target: `index` is 0-based.
+pub const fn ovr_target_id(index: usize) -> u32 {
+    id::FX_OVR_TARGET1 + index as u32
+}
+
+/// Parameter id of one override modulation depth: `index` is 0-based.
+pub const fn ovr_depth_id(index: usize) -> u32 {
+    id::FX_OVR_DEPTH1 + index as u32
+}
+
+/// Which bus slot a target or depth parameter id addresses: the pair is
+/// contiguous, `OVR_MOD_SLOTS` targets then `OVR_MOD_SLOTS` depths.
+pub fn ovr_bus_param_index(param_id: u32) -> Option<usize> {
+    if let Some(offset) = param_id.checked_sub(id::FX_OVR_TARGET1) {
+        let index = offset as usize;
+        if index < OVR_MOD_SLOTS {
+            return Some(index);
+        }
+    }
+    let offset = param_id.checked_sub(id::FX_OVR_DEPTH1)?;
+    let index = offset as usize;
+    (index < OVR_MOD_SLOTS).then_some(index)
+}
+
+/// Overridable slots per effect node (P9.3). Every kind uses at most four, and
+/// the slots a kind does not use stay [`FX_OVR_UNSET`] for ever.
+pub const OVR_SLOTS: usize = 4;
+
+/// Slot values in the pool, one per node and slot.
+pub const FX_OVR_POOL: usize = FX_SLOTS * OVR_SLOTS;
+
+/// The value that means "this slot is not overridden, use the kind's own knob".
+///
+/// Deliberately below every legal range ([`ovr_slot_range`] starts at -1), so a
+/// slot that is set can always be told from one that is not, even for the
+/// controls whose range reaches -1: `Params::set` stores override slots
+/// verbatim (including this sentinel) instead of clamping them, so the flag
+/// cannot be rounded or clamped away.
+pub const FX_OVR_UNSET: f32 = -2.0;
+
+/// Parameter id of one override slot: node 0-based, slot 0-based.
+pub const fn ovr_id(node: usize, slot: usize) -> u32 {
+    id::FX_OVR1_1 + (node * OVR_SLOTS + slot) as u32
+}
+
+/// (node, slot) of an override slot parameter id, or `None` for any other id.
+pub fn ovr_param_slot(param_id: u32) -> Option<(usize, usize)> {
+    let offset = param_id.checked_sub(id::FX_OVR1_1)?;
+    let index = offset as usize;
+    (index < FX_OVR_POOL).then(|| (index / OVR_SLOTS, index % OVR_SLOTS))
+}
+
+/// Which slot of its kind an override index addresses. `0` is the knob a player
+/// reaches for first (delay time, reverb size, chorus depth, …), `1` the second
+/// and so on; a kind with fewer than four overridable controls leaves the tail
+/// unused.
+pub const fn ovr_slot_base(kind: FxKind, slot: usize) -> u32 {
+    let table: &[u32] = match kind {
+        FxKind::Delay => &[
+            // Slot 0 is delay time, which has no kind-level id of its own: it
+            // is derived from tempo and the sync division. `0` marks the tail
+            // that only a kind-level parameter could have addressed.
+            0,
+            id::FX_DELAY_FB,
+            id::FX_DELAY_MIX,
+            id::FX_DELAY_DAMP,
+        ],
+        FxKind::Reverb => &[
+            id::FX_REVERB_SIZE,
+            id::FX_REVERB_MIX,
+            id::FX_REVERB_DAMP,
+            id::FX_REVERB_PREDELAY,
+        ],
+        FxKind::Chorus => &[id::FX_CHORUS_DEPTH, id::FX_CHORUS_RATE, id::FX_CHORUS_MIX, 0],
+        FxKind::Flanger => &[id::FX_FLANGER_FB, id::FX_FLANGER_RATE, id::FX_FLANGER_MIX, 0],
+        FxKind::Phaser => &[id::FX_PHASER_FB, id::FX_PHASER_RATE, id::FX_PHASER_MIX, 0],
+        FxKind::Drive => &[id::FX_DRIVE_AMT, id::FX_DRIVE_MIX, 0, 0],
+        FxKind::Crush => &[id::FX_CRUSH_BITS, id::FX_CRUSH_DOWN, id::FX_CRUSH_AA, id::FX_CRUSH_MIX],
+        FxKind::Eq => &[
+            id::FX_EQ_LOW_GAIN,
+            id::FX_EQ_MID_GAIN,
+            id::FX_EQ_HIGH_GAIN,
+            id::FX_EQ_MID_FREQ,
+        ],
+        FxKind::Transient => &[
+            id::FX_TRANSIENT_ATTACK,
+            id::FX_TRANSIENT_SUSTAIN,
+            id::FX_TRANSIENT_MIX,
+            0,
+        ],
+        FxKind::None => &[0, 0, 0, 0],
+    };
+    table[if slot < OVR_SLOTS { slot } else { OVR_SLOTS - 1 }]
+}
+
+/// Whether an override slot addresses delay time, which is derived from tempo
+/// and the sync division rather than stored as a knob of its own.
+pub const fn ovr_slot_is_time(kind: FxKind, slot: usize) -> bool {
+    matches!(kind, FxKind::Delay) && slot == 0
+}
+
+/// Legal range of one override slot, as `(min, max)`.
+///
+/// Delay time is the odd one out: it is measured in seconds and its top end is
+/// the pool's own line length, so the slot carries seconds rather than a
+/// fraction. Every other slot mirrors the range its kind-level knob already
+/// accepts in [`Params::set`], which is what lets an override be clamped in
+/// exactly one place.
+pub fn ovr_slot_range(kind: FxKind, slot: usize, max_delay_seconds: f32) -> (f32, f32) {
+    if ovr_slot_is_time(kind, slot) {
+        return (0.001, max_delay_seconds.clamp(0.001, 4.0));
+    }
+    match (kind, slot) {
+        (FxKind::Delay, 1) => (0.0, 0.95),
+        (FxKind::Delay, _) => (0.0, 1.0),
+        (FxKind::Reverb, 3) => (0.0, 0.1),
+        (FxKind::Reverb, _) => (0.0, 1.0),
+        (FxKind::Chorus, 1) => (0.02, 10.0),
+        (FxKind::Chorus, _) => (0.0, 1.0),
+        (FxKind::Flanger, 1) => (0.02, 10.0),
+        (FxKind::Flanger, 0) => (0.0, 0.95),
+        (FxKind::Flanger, _) => (0.0, 1.0),
+        (FxKind::Phaser, 1) => (0.02, 10.0),
+        (FxKind::Phaser, 0) => (0.0, 0.95),
+        (FxKind::Phaser, _) => (0.0, 1.0),
+        (FxKind::Drive, _) => (0.0, 1.0),
+        (FxKind::Crush, 0) => (4.0, 16.0),
+        (FxKind::Crush, 1) => (1.0, 64.0),
+        (FxKind::Crush, _) => (0.0, 1.0),
+        (FxKind::Eq, 3) => (200.0, 8000.0),
+        (FxKind::Eq, _) => (-18.0, 18.0),
+        (FxKind::Transient, _) => (-1.0, 1.0),
+        (FxKind::None, _) => (0.0, 1.0),
+    }
+}
 
 /// Positions in the effect chain (A5). Six is one per effect: the chain is a
 /// permutation, so reordering can never lose an effect or double one up.
@@ -282,6 +489,40 @@ pub fn mod_dst_code(value: f32) -> u8 {
         return 0;
     }
     (value as u32).min(GRAPH_GAINS as u32) as u8
+}
+
+/// Mask of the slot code inside one override modulation target value.
+pub const OVR_TARGET_SLOT_MASK: u8 = 0x1f;
+
+/// Slot code of one override slot: `1 + node * OVR_SLOTS + slot`, and 0 means
+/// "this bus slot is off". This is the whole wire format of an
+/// [`id::FX_OVR_TARGET1`] parameter.
+pub const fn ovr_slot_code(node: usize, slot: usize) -> u8 {
+    (1 + node * OVR_SLOTS + slot) as u8
+}
+
+/// Clamp a written target into a slot code: anything past the pool reads as
+/// "off" rather than wrapping onto another node's slot.
+pub fn ovr_target_code(value: f32) -> u8 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+    let code = value as u32;
+    if code > FX_OVR_POOL as u32 {
+        0
+    } else {
+        code as u8
+    }
+}
+
+/// The slot a target code sweeps, or `None` when it is off.
+pub fn ovr_target_slot(value: u8) -> Option<(usize, usize)> {
+    let slot = (value & OVR_TARGET_SLOT_MASK) as usize;
+    if slot == 0 || slot > FX_OVR_POOL {
+        return None;
+    }
+    let index = slot - 1;
+    Some((index / OVR_SLOTS, index % OVR_SLOTS))
 }
 
 /// Which effect runs at a chain position.
@@ -435,6 +676,42 @@ pub fn is_continuous(param_id: u32) -> bool {
             | p::FX_MOD2_DEPTH
             | p::FX_MOD3_DEPTH
             | p::FX_MOD4_DEPTH
+            // Per-node override slots (P9.3) are smoothed so a knob drag on a
+            // node does not click. The slot that addresses delay time rides the
+            // same smoother and is one of the controls that most needs it. The
+            // target code is stepped; the sweep amount is a depth and ramps.
+            | p::FX_OVR1_1
+            | p::FX_OVR1_2
+            | p::FX_OVR1_3
+            | p::FX_OVR1_4
+            | p::FX_OVR2_1
+            | p::FX_OVR2_2
+            | p::FX_OVR2_3
+            | p::FX_OVR2_4
+            | p::FX_OVR3_1
+            | p::FX_OVR3_2
+            | p::FX_OVR3_3
+            | p::FX_OVR3_4
+            | p::FX_OVR4_1
+            | p::FX_OVR4_2
+            | p::FX_OVR4_3
+            | p::FX_OVR4_4
+            | p::FX_OVR5_1
+            | p::FX_OVR5_2
+            | p::FX_OVR5_3
+            | p::FX_OVR5_4
+            | p::FX_OVR6_1
+            | p::FX_OVR6_2
+            | p::FX_OVR6_3
+            | p::FX_OVR6_4
+            | p::FX_OVR_DEPTH1
+            | p::FX_OVR_DEPTH2
+            | p::FX_OVR_DEPTH3
+            | p::FX_OVR_DEPTH4
+            | p::FX_OVR_DEPTH5
+            | p::FX_OVR_DEPTH6
+            | p::FX_OVR_DEPTH7
+            | p::FX_OVR_DEPTH8
     )
 }
 
@@ -951,6 +1228,25 @@ pub struct FxParams {
     /// Signed gain on a note's falling envelope, -1..1 (0 = leave it alone).
     pub transient_sustain: f32,
     pub transient_mix: f32,
+    /// Per-node effect parameter overrides (P9.3), one row per effect node and
+    /// [`OVR_SLOTS`] columns. Every cell starts at [`FX_OVR_UNSET`], which
+    /// reads as "whatever the kind-level knob above says": a patch that never
+    /// touches them renders through exactly the code path it always did.
+    ///
+    /// The columns are *shared* across kinds — column `k` means
+    /// [`ovr_slot_base`]`(kind, k)` — so six nodes cost
+    /// `FX_SLOTS * OVR_SLOTS` ids for every kind together.
+    pub ovr: [[f32; OVR_SLOTS]; FX_SLOTS],
+    /// The override modulation bus (P9.3): a source code (0 off, 1 LFO 1,
+    /// 2 LFO 2, 3 the envelope) and, per bus slot, which override slot it
+    /// sweeps plus the signed fraction of that slot's own range. `src == 0`
+    /// means no sweep, which is what keeps an untouched patch bit for bit its
+    /// old self.
+    pub ovr_src: u8,
+    /// Slot each bus slot sweeps: 0 = off, else `1 + node * OVR_SLOTS + slot`.
+    pub ovr_target: [u8; OVR_MOD_SLOTS],
+    /// Signed fraction of the target slot's own range, -1..1, per bus slot.
+    pub ovr_depth: [f32; OVR_MOD_SLOTS],
 }
 
 /// Complete engine parameter snapshot. `Copy` keeps the render loop allocation
@@ -1153,6 +1449,13 @@ impl Params {
                 transient_attack: 0.0,
                 transient_sustain: 0.0,
                 transient_mix: 1.0,
+                // Every override slot starts unset and the modulation bus
+                // starts disconnected, so the kind-level knobs above are the
+                // only thing the renderer reads (P9.3).
+                ovr: [[FX_OVR_UNSET; OVR_SLOTS]; FX_SLOTS],
+                ovr_src: 0,
+                ovr_target: [0; OVR_MOD_SLOTS],
+                ovr_depth: [0.0; OVR_MOD_SLOTS],
             },
             routes: [
                 ModRoute {
@@ -1214,6 +1517,27 @@ impl Params {
                 ModField::Src => self.fx.mod_src[slot] = (value as u32).min(3) as u8,
                 ModField::Dst => self.fx.mod_dst[slot] = mod_dst_code(value),
                 ModField::Depth => self.fx.mod_depth[slot] = value.clamp(-1.0, 1.0),
+            }
+            return;
+        }
+        // Per-node override slots (P9.3). Stored **verbatim**, sentinel and all:
+        // [`FX_OVR_UNSET`] is below every legal range and is the flag that says
+        // "no override here", so clamping it would turn every unset slot into a
+        // real override sitting at its minimum. The renderer clamps the value it
+        // actually uses, in one place ([`ovr_slot_range`]).
+        if let Some((node, slot)) = ovr_param_slot(param_id) {
+            self.fx.ovr[node][slot] = value;
+            return;
+        }
+        // A modulation-bus slot (P9.3): each bus slot owns one target code and
+        // one amount, addressed by its own id so several slots can be live at
+        // once. The blocks are contiguous rather than named, which is what the
+        // index helper above is for.
+        if let Some(index) = ovr_bus_param_index(param_id) {
+            if param_id < p::FX_OVR_DEPTH1 {
+                self.fx.ovr_target[index] = ovr_target_code(value);
+            } else {
+                self.fx.ovr_depth[index] = value.clamp(-1.0, 1.0);
             }
             return;
         }
@@ -1361,9 +1685,163 @@ impl Params {
             p::FX_TRANSIENT_ATTACK => self.fx.transient_attack = value.clamp(-1.0, 1.0),
             p::FX_TRANSIENT_SUSTAIN => self.fx.transient_sustain = value.clamp(-1.0, 1.0),
             p::FX_TRANSIENT_MIX => self.fx.transient_mix = clamp01(value),
+            // The override modulation bus (P9.3): the source is one code for
+            // the whole bus, and each depth id names the slot it sweeps, so a
+            // patch can push several override slots at once (up to
+            // `OVR_MOD_SLOTS`) without an id per slot in the pool.
+            p::FX_OVR_SRC => self.fx.ovr_src = (value as u32).min(3) as u8,
             _ => {}
         }
     }
+
+    /// The four override values one node resolves to this block (P9.3).
+    ///
+    /// `kind` is the effect the node runs, `delay_time` is what the tempo and
+    /// sync division say the node would delay by with no override, and
+    /// `scale`/`source` are the global override modulation bus (a zero `scale`
+    /// is "no sweep", which is the default). Every returned cell is either
+    /// exactly the kind-level value the engine always used, or the override —
+    /// the two are never blended, which is what keeps an unset slot bit for bit
+    /// its old self.
+    pub fn ovr_values(
+        &self,
+        node: usize,
+        kind: FxKind,
+        delay_time: f32,
+        max_delay_seconds: f32,
+        source: f32,
+    ) -> [f32; OVR_SLOTS] {
+        let mut out = [0.0f32; OVR_SLOTS];
+        for slot in 0..OVR_SLOTS {
+            let base = if ovr_slot_is_time(kind, slot) {
+                delay_time
+            } else {
+                self.fx_base(ovr_slot_base(kind, slot))
+            };
+            let scale = self.ovr_scale(node, slot);
+            out[slot] = self.resolve_ovr(node, slot, kind, base, max_delay_seconds, scale, source);
+        }
+        out
+    }
+
+    /// One slot, resolved: the kind's own value unless this node overrides it,
+    /// plus the global modulation bus when one is live.
+    ///
+    /// The `scale == 0.0` arm is the compatibility rule: with no sweep the
+    /// stored value comes back untouched, so an unset slot is *the* base value
+    /// rather than the same number recomputed through a multiply.
+    fn resolve_ovr(
+        &self,
+        node: usize,
+        slot: usize,
+        kind: FxKind,
+        base: f32,
+        max_delay_seconds: f32,
+        scale: f32,
+        source: f32,
+    ) -> f32 {
+        if node >= FX_SLOTS || slot >= OVR_SLOTS {
+            return base;
+        }
+        let stored = self.fx.ovr[node][slot];
+        if scale == 0.0 {
+            // No sweep: the stored value is either the sentinel (use the base)
+            // or the node's own value. Nothing is recomputed.
+            if stored == FX_OVR_UNSET {
+                return base;
+            }
+            let (lo, hi) = ovr_slot_range(kind, slot, max_delay_seconds);
+            return stored.clamp(lo, hi);
+        }
+        let (lo, hi) = ovr_slot_range(kind, slot, max_delay_seconds);
+        let start = if stored == FX_OVR_UNSET { base } else { stored };
+        let start = start.clamp(lo, hi);
+        (start + scale * source * (hi - lo)).clamp(lo, hi)
+    }
+
+    /// The value a kind-level parameter id holds today. Every override slot
+    /// maps onto one of these, except delay time, which the caller supplies.
+    fn fx_base(&self, base: u32) -> f32 {
+        use id as p;
+        match base {
+            p::FX_DELAY_FB => self.fx.delay_fb,
+            p::FX_DELAY_MIX => self.fx.delay_mix,
+            p::FX_DELAY_DAMP => self.fx.delay_damp,
+            p::FX_REVERB_SIZE => self.fx.reverb_size,
+            p::FX_REVERB_MIX => self.fx.reverb_mix,
+            p::FX_REVERB_DAMP => self.fx.reverb_damp,
+            p::FX_REVERB_PREDELAY => self.fx.reverb_predelay,
+            p::FX_CHORUS_DEPTH => self.fx.chorus_depth,
+            p::FX_CHORUS_RATE => self.fx.chorus_rate,
+            p::FX_CHORUS_MIX => self.fx.chorus_mix,
+            p::FX_FLANGER_FB => self.fx.flanger_fb,
+            p::FX_FLANGER_RATE => self.fx.flanger_rate,
+            p::FX_FLANGER_MIX => self.fx.flanger_mix,
+            p::FX_PHASER_FB => self.fx.phaser_fb,
+            p::FX_PHASER_RATE => self.fx.phaser_rate,
+            p::FX_PHASER_MIX => self.fx.phaser_mix,
+            p::FX_DRIVE_AMT => self.fx.drive_amt,
+            p::FX_DRIVE_MIX => self.fx.drive_mix,
+            p::FX_CRUSH_BITS => self.fx.crush_bits,
+            p::FX_CRUSH_DOWN => self.fx.crush_down,
+            p::FX_CRUSH_AA => self.fx.crush_aa,
+            p::FX_CRUSH_MIX => self.fx.crush_mix,
+            p::FX_EQ_LOW_GAIN => self.fx.eq_low_gain,
+            p::FX_EQ_MID_GAIN => self.fx.eq_mid_gain,
+            p::FX_EQ_HIGH_GAIN => self.fx.eq_high_gain,
+            p::FX_EQ_MID_FREQ => self.fx.eq_mid_freq,
+            p::FX_TRANSIENT_ATTACK => self.fx.transient_attack,
+            p::FX_TRANSIENT_SUSTAIN => self.fx.transient_sustain,
+            p::FX_TRANSIENT_MIX => self.fx.transient_mix,
+            _ => 0.0,
+        }
+    }
+
+    /// Delay time in seconds one node runs with, once its override is applied.
+    ///
+    /// The engine uses [`Self::ovr_values`] instead (it needs all four slots at
+    /// once); this is the single-slot view the tests pin the sentinel with.
+    pub fn ovr_delay_time(&self, node: usize, delay_time: f32, max_delay_seconds: f32) -> f32 {
+        let scale = self.ovr_scale(node, 0);
+        self.resolve_ovr(
+            node,
+            0,
+            FxKind::Delay,
+            delay_time,
+            max_delay_seconds,
+            scale,
+            self.ovr_source() as f32,
+        )
+    }
+
+    /// Fraction of slot `(node, slot)`'s own range this block's sweep adds.
+    ///
+    /// Zero unless one of the bus's slots names exactly this `(node, slot)`
+    /// pair, which is what keeps a sweep from leaking into the other five nodes
+    /// and the other three columns of the same node. Up to
+    /// [`OVR_MOD_SLOTS`] pairs can be live at once, each with its own amount.
+    pub fn ovr_scale(&self, node: usize, slot: usize) -> f32 {
+        if self.fx.ovr_src == 0 {
+            return 0.0;
+        }
+        let code = ovr_slot_code(node, slot);
+        let mut scale = 0.0f32;
+        for index in 0..OVR_MOD_SLOTS {
+            if self.fx.ovr_target[index] == code {
+                // Two entries may name the same pair; the amounts add, exactly
+                // like two P7.2 in-graph edges landing on one gain.
+                scale += self.fx.ovr_depth[index];
+            }
+        }
+        scale.clamp(-1.0, 1.0)
+    }
+
+    /// Source code the override modulation bus reads: 0 off, 1 LFO 1, 2 LFO 2,
+    /// 3 the envelope — the same four codes an in-graph edge carries (P7.2).
+    pub fn ovr_source(&self) -> u8 {
+        self.fx.ovr_src.min(3)
+    }
+
 
     pub fn set_route(&mut self, index: usize, src: u32, dst: u32, amount: f32, enabled: bool) {
         if index >= MOD_ROUTES {
@@ -1431,7 +1909,23 @@ mod tests {
             id::FX_MOD4_DEPTH,
             "the edge block is three contiguous ids per slot"
         );
-        assert_eq!(PARAM_COUNT, id::FX_TRANSIENT_MIX as usize + 1);
+        assert_eq!(PARAM_COUNT, id::FX_OVR_SRC as usize + 1);
+        // The per-node override block (P9.3) is `FX_SLOTS * OVR_SLOTS` ids,
+        // four per node and shared across every kind, followed by the two-id
+        // modulation bus: 26 ids for the whole feature, which is what keeps it
+        // off the "one set per kind, per node" path.
+        assert_eq!(ovr_id(0, 0), id::FX_OVR1_1);
+        assert_eq!(ovr_id(FX_SLOTS - 1, OVR_SLOTS - 1), id::FX_OVR6_4);
+        assert_eq!(id::FX_OVR6_4 + 1, id::FX_OVR_TARGET1);
+        assert_eq!(id::FX_OVR_TARGET1 + (OVR_MOD_SLOTS as u32 - 1), id::FX_OVR_TARGET8);
+        assert_eq!(id::FX_OVR_TARGET8 + 1, id::FX_OVR_DEPTH1);
+        assert_eq!(id::FX_OVR_DEPTH1 + (OVR_MOD_SLOTS as u32 - 1), id::FX_OVR_DEPTH8);
+        assert_eq!(id::FX_OVR_DEPTH8 + 1, id::FX_OVR_SRC);
+        assert_eq!(id::FX_OVR1_1, id::FX_TRANSIENT_MIX + 1);
+        assert_eq!(ovr_param_slot(id::FX_OVR1_1), Some((0, 0)));
+        assert_eq!(ovr_param_slot(id::FX_OVR6_4), Some((FX_SLOTS - 1, OVR_SLOTS - 1)));
+        assert_eq!(ovr_param_slot(id::FX_OVR1_1 - 1), None);
+        assert_eq!(ovr_param_slot(id::FX_OVR_DEPTH1), None);
         // Every id from `FX_MOD1_SRC` to `FX_MOD4_DEPTH` belongs to the edge
         // block and nothing past it does, so an edge can never be confused with
         // the effect parameters appended after it.
@@ -1472,6 +1966,194 @@ mod tests {
         assert!(p.fx.mod_src[1..].iter().all(|src| *src == 0));
         assert!(p.fx.mod_dst[1..].iter().all(|dst| *dst == 0));
         assert!(p.fx.mod_depth[1..].iter().all(|depth| *depth == 0.0));
+    }
+
+    /// The per-node override slots (P9.3): the sentinel, the one-place clamp,
+    /// and the rule that an unset slot is the kind's own value *exactly*.
+    #[test]
+    fn node_overrides_are_bit_exact_until_set() {
+        let mut p = Params::new();
+        // A fresh patch: every slot unset, and every resolved value is the
+        // kind-level number itself, compared bit for bit rather than with a
+        // tolerance — this is the claim the whole backward-compatibility story
+        // rests on.
+        let delay_time = p.delay_time_seconds();
+        let base = p.ovr_values(0, FxKind::Delay, delay_time, 2.0, 0.0);
+        assert!(base[0].to_bits() == delay_time.to_bits());
+        assert!(base[1].to_bits() == p.fx.delay_fb.to_bits());
+        assert!(base[2].to_bits() == p.fx.delay_mix.to_bits());
+        assert!(base[3].to_bits() == p.fx.delay_damp.to_bits());
+        let reverb = p.ovr_values(3, FxKind::Reverb, delay_time, 2.0, 0.0);
+        assert!(reverb[0].to_bits() == p.fx.reverb_size.to_bits());
+        assert!(reverb[1].to_bits() == p.fx.reverb_mix.to_bits());
+        assert!(reverb[2].to_bits() == p.fx.reverb_damp.to_bits());
+        assert!(reverb[3].to_bits() == p.fx.reverb_predelay.to_bits());
+
+        // Overriding one node must not touch another node of the same kind.
+        p.set(ovr_id(1, 1), 0.7); // node 2's delay feedback
+        let two = p.ovr_values(1, FxKind::Delay, delay_time, 2.0, 0.0);
+        let one = p.ovr_values(0, FxKind::Delay, delay_time, 2.0, 0.0);
+        assert_eq!(two[1], 0.7);
+        assert!(one[1].to_bits() == p.fx.delay_fb.to_bits());
+
+        // The sentinel survives `set` (it is *not* clamped into a real value),
+        // and a value out of range is clamped in the one place that owns the
+        // ranges.
+        p.set(ovr_id(1, 1), FX_OVR_UNSET);
+        assert_eq!(p.fx.ovr[1][1], FX_OVR_UNSET);
+        assert!(p.ovr_values(1, FxKind::Delay, delay_time, 2.0, 0.0)[1].to_bits()
+            == p.fx.delay_fb.to_bits());
+        p.set(ovr_id(0, 1), 9.0);
+        assert_eq!(p.ovr_values(0, FxKind::Delay, delay_time, 2.0, 0.0)[1], 0.95);
+        p.set(ovr_id(0, 1), -9.0);
+        assert_eq!(p.ovr_values(0, FxKind::Delay, delay_time, 2.0, 0.0)[1], 0.0);
+        // Delay time is the one slot measured in seconds, and its top end is
+        // the pool's line length rather than 1.
+        p.set(ovr_id(0, 0), 1.5);
+        assert_eq!(p.ovr_values(0, FxKind::Delay, delay_time, 2.0, 0.0)[0], 1.5);
+        p.set(ovr_id(0, 0), 99.0);
+        assert_eq!(p.ovr_values(0, FxKind::Delay, delay_time, 2.0, 0.0)[0], 2.0);
+    }
+
+    /// What a node's slots hold when its kind changes (P9.3).
+    ///
+    /// The columns are a shared pool: column `k` means *this node's* column
+    /// `k`, interpreted by whatever kind the node runs now. A value is
+    /// therefore **kept and reinterpreted**, not cleared — switching delay →
+    /// reverb → delay gives the delay settings back, which is the only
+    /// behaviour that does not silently destroy work when a player auditions a
+    /// different effect in the same node. The re-interpretation is visible, not
+    /// hidden: the value is clamped to the new kind's range on read, so an
+    /// EQ mid frequency (200..8000) landing in a delay's feedback column reads
+    /// as the feedback ceiling rather than as a wild number.
+    #[test]
+    fn a_slot_keeps_its_value_when_the_node_changes_kind() {
+        let mut p = Params::new();
+        // Node 4 (index 3) is a delay with a 0.4 s time and heavy feedback.
+        p.set(id::FX_CHAIN4, 1.0);
+        p.set(ovr_id(3, 0), 0.4);
+        p.set(ovr_id(3, 1), 0.8);
+        let delay = p.ovr_values(3, FxKind::Delay, p.delay_time_seconds(), 2.0, 0.0);
+        assert_eq!(delay[0], 0.4);
+        assert_eq!(delay[1], 0.8);
+        // The same columns as a reverb: kept, read as size and mix.
+        p.set(id::FX_CHAIN4, 2.0);
+        let reverb = p.ovr_values(3, FxKind::Reverb, p.delay_time_seconds(), 2.0, 0.0);
+        assert_eq!(reverb[0], 0.4, "size, reinterpreted from the delay time");
+        assert_eq!(reverb[1], 0.8, "mix, reinterpreted from the feedback");
+        // The stored values are untouched by the read, so going back is exact.
+        assert_eq!(p.fx.ovr[3][0], 0.4);
+        assert_eq!(p.fx.ovr[3][1], 0.8);
+        p.set(id::FX_CHAIN4, 1.0);
+        let back = p.ovr_values(3, FxKind::Delay, p.delay_time_seconds(), 2.0, 0.0);
+        assert_eq!(back[0], 0.4);
+        assert_eq!(back[1], 0.8);
+        // A value outside the new kind's range clamps on read rather than
+        // reaching the DSP: an EQ mid frequency in a delay's feedback column.
+        p.set(id::FX_CHAIN4, 8.0);
+        p.set(ovr_id(3, 1), 2000.0);
+        let eq = p.ovr_values(3, FxKind::Eq, p.delay_time_seconds(), 2.0, 0.0);
+        assert_eq!(eq[0], 0.4, "0.4 is a legal +0.4 dB low gain, so it stays");
+        p.set(id::FX_CHAIN4, 1.0);
+        let clamped = p.ovr_values(3, FxKind::Delay, p.delay_time_seconds(), 2.0, 0.0);
+        assert_eq!(clamped[1], 0.95, "2000 in the feedback column reads as the ceiling");
+        assert_eq!(p.fx.ovr[3][1], 2000.0, "and the stored value is still 2000");
+    }
+
+    /// The override modulation bus (P9.3): a slot code per bus slot, one
+    /// source, one amount each, and a sweep that moves a slot by a fraction of
+    /// *its own* range.
+    #[test]
+    fn node_override_modulation_bus() {
+        assert_eq!(ovr_target_slot(0), None);
+        assert_eq!(ovr_slot_code(0, 0), 1);
+        assert_eq!(ovr_slot_code(FX_SLOTS - 1, OVR_SLOTS - 1), FX_OVR_POOL as u8);
+        assert_eq!(ovr_target_slot(ovr_slot_code(0, 0)), Some((0, 0)));
+        assert_eq!(
+            ovr_target_slot(ovr_slot_code(FX_SLOTS - 1, OVR_SLOTS - 1)),
+            Some((FX_SLOTS - 1, OVR_SLOTS - 1))
+        );
+        assert_eq!(ovr_target_slot(5), Some((1, 0)));
+        assert_eq!(ovr_target_code(-1.0), 0);
+        assert_eq!(ovr_target_code(f32::NAN), 0);
+        assert_eq!(ovr_target_code(0.0), 0);
+        assert_eq!(ovr_target_slot(ovr_target_code((FX_OVR_POOL + 1) as f32)), None);
+        assert_eq!(ovr_target_slot(ovr_target_code(FX_OVR_POOL as f32)), Some((5, 3)));
+        assert_eq!(ovr_bus_param_index(id::FX_OVR_TARGET1), Some(0));
+        assert_eq!(ovr_bus_param_index(id::FX_OVR_TARGET8), Some(OVR_MOD_SLOTS - 1));
+        assert_eq!(ovr_bus_param_index(id::FX_OVR_DEPTH1), Some(0));
+        assert_eq!(ovr_bus_param_index(id::FX_OVR_DEPTH8), Some(OVR_MOD_SLOTS - 1));
+        assert_eq!(ovr_bus_param_index(id::FX_OVR_DEPTH8 + 1), None);
+        assert_eq!(ovr_bus_param_index(id::FX_OVR_SRC), None);
+
+        let mut p = Params::new();
+        // No source: the amounts are irrelevant and every slot's scale is zero.
+        p.set(id::FX_OVR_DEPTH1, 1.0);
+        assert_eq!(p.ovr_scale(1, 0), 0.0);
+        p.set(ovr_target_id(0), ovr_slot_code(1, 0) as f32);
+        assert_eq!(p.ovr_scale(1, 0), 0.0, "a target without a source is silent");
+        p.set(id::FX_OVR_SRC, 1.0);
+        assert_eq!(p.ovr_source(), 1);
+        assert_eq!(p.ovr_scale(1, 0), 1.0);
+        // The sweep touches the slots named, and nothing else: not the node's
+        // other columns, not another node's identical column.
+        assert_eq!(p.ovr_scale(1, 1), 0.0);
+        assert_eq!(p.ovr_scale(0, 0), 0.0);
+
+        // Several slots at once, each with its own amount: this is what the
+        // per-slot depth ids exist for. Slot 0 sweeps node 2's time, slot 1
+        // node 4's time, slot 2 node 1's feedback.
+        p.set(ovr_target_id(0), ovr_slot_code(1, 0) as f32);
+        p.set(ovr_depth_id(0), 0.5);
+        assert_eq!(p.ovr_scale(1, 0), 0.5, "the bus slot took its own target");
+        assert_eq!(p.ovr_scale(1, 1), 0.0);
+        p.set(ovr_target_id(1), ovr_slot_code(3, 0) as f32);
+        p.set(ovr_depth_id(1), 0.25);
+        assert_eq!(p.ovr_scale(3, 0), 0.25);
+        p.set(id::FX_OVR_SRC, 3.0);
+        // A full bus: all eight slots name a different pair, so eight override
+        // slots across the six nodes are modulatable at once.
+        for index in 0..OVR_MOD_SLOTS {
+            p.set(ovr_target_id(index), ovr_slot_code(index, 1) as f32);
+            p.set(ovr_depth_id(index), 0.25);
+        }
+        // Six nodes, eight bus slots: every node can have a live sweep at once,
+        // and the code for a node past the pool reads as "off" rather than
+        // wrapping onto another node.
+        for index in 0..FX_SLOTS {
+            assert_eq!(p.ovr_scale(index, 1), 0.25);
+            assert_eq!(p.ovr_scale(index, 0), 0.0);
+        }
+        assert_eq!(ovr_target_code(ovr_slot_code(FX_SLOTS, 0) as f32), 0);
+
+        // A live sweep walks a slot by a fraction of its own range: slot 0 of a
+        // delay is time, and its range is 0.001..2 s.
+        // Back to a single live sweep for the range checks.
+        for index in 0..OVR_MOD_SLOTS {
+            p.set(ovr_target_id(index), 0.0);
+            p.set(ovr_depth_id(index), 0.0);
+        }
+        p.set(ovr_target_id(0), ovr_slot_code(1, 0) as f32);
+        p.set(ovr_depth_id(0), 1.0);
+        let swept = p.ovr_values(1, FxKind::Delay, 0.001, 2.0, 1.0);
+        assert_eq!(swept[0], 2.0, "the sweep travels the whole 0.001..2 s range");
+        p.set(ovr_depth_id(0), 0.5);
+        let swept = p.ovr_values(1, FxKind::Delay, 0.001, 2.0, 1.0);
+        assert!((swept[0] - (0.001 + 0.9995)).abs() < 1e-3);
+        p.set(ovr_depth_id(0), 1.0);
+        let swept = p.ovr_values(1, FxKind::Delay, 0.25, 2.0, 1.0);
+        assert_eq!(swept[0], 2.0, "a sweep past the top clamps at the slot's own top");
+        assert!(swept[1].to_bits() == p.fx.delay_fb.to_bits());
+        let swept = p.ovr_values(1, FxKind::Delay, 0.1, 2.0, -1.0);
+        assert!((swept[0] - 0.001).abs() < 1e-6);
+        // A slot that is not the target stays exactly the kind's value, even
+        // while a sweep is live: that is what keeps an unrelated node bit for
+        // bit what it was.
+        assert!(p.ovr_values(0, FxKind::Delay, 1.0, 2.0, 1.0)[0].to_bits() == 1.0f32.to_bits());
+        // ...and with no source at all, the targeted node is the kind's value
+        // too, bit for bit: the bus is the only thing that changes anything.
+        p.set(id::FX_OVR_SRC, 0.0);
+        assert!(p.ovr_values(1, FxKind::Delay, 1.0, 2.0, 1.0)[0].to_bits() == 1.0f32.to_bits());
     }
 
     #[test]

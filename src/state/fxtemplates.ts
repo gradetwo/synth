@@ -24,6 +24,8 @@ import {
   DEFAULT_PARAMS,
   FX_DELAY_INSTANCES,
   FX_KINDS,
+  FX_OVR_SLOTS,
+  FX_OVR_UNSET,
   FX_SLOTS,
   GRAPH_DRY,
   GRAPH_FROM_CHAIN_IDS,
@@ -35,6 +37,7 @@ import {
   graphInId,
   graphOutGainId,
   graphToOutId,
+  ovrId,
   parallelId,
   type FxKind,
   type ParamId,
@@ -72,6 +75,18 @@ for (let slot = 0; slot < FX_SLOTS; slot++) {
   CLAMPS.set(graphOutGainId(slot), (value) => clampNum(value, 0, 4));
 }
 CLAMPS.set(Param.FX_GRAPH, switch01);
+// Per-node effect overrides (P9.3): a template carries them, because "node 2 is
+// the short slapback, node 4 is the long one" is part of the routing a template
+// is for. Every slot is accepted generically — the column means different
+// things per kind, and the engine clamps each slot to its kind's own range — but
+// the two ids that could cross into timbre territory stay out: `FX_OVR_TARGET`
+// and `FX_OVR_DEPTH`, the override modulation bus, are a routing's *modulation*
+// rather than its wiring, exactly like the P7.2 in-graph edges below.
+for (const node of Array.from({ length: FX_SLOTS }, (_, index) => index)) {
+  for (const slot of Array.from({ length: FX_OVR_SLOTS }, (_, index) => index)) {
+    CLAMPS.set(ovrId(node, slot), (value) => clampNum(value, FX_OVR_UNSET, 64));
+  }
+}
 
 /**
  * The ids a template is allowed to carry, in the order it writes them.
@@ -84,6 +99,11 @@ export const FX_TEMPLATE_PARAM_IDS: ParamId[] = [
   ...Array.from({ length: FX_SLOTS }, (_, slot) => chainId(slot)),
   ...Array.from({ length: FX_SLOTS }, (_, slot) => parallelId(slot)),
   ...GRAPH_FROM_CHAIN_IDS,
+  // The per-node override pool (P9.3). The modulation bus is deliberately not
+  // here: a template sets routing, not modulation.
+  ...Array.from({ length: FX_SLOTS }, (_, node) =>
+    Array.from({ length: FX_OVR_SLOTS }, (_, slot) => ovrId(node, slot)),
+  ).flat(),
 ];
 
 /** Whether an id may travel in a template. */

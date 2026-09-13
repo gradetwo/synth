@@ -25,8 +25,8 @@ use crate::fx_shaping::{
 };
 use crate::params::{
     graph_node_src, id, is_continuous, FilterRouting, FxKind, FxParams, GraphInput, LfoTarget, ModDst,
-    ModSrc, OscParams, Params, FX_SLOTS, GRAPH_DRY, GRAPH_GAINS, MAX_BLOCK_SIZE, MAX_UNISON,
-    MAX_VOICES, MOD_SLOTS, PARAM_COUNT,
+    ModSrc, OscParams, Params, FX_OVR_UNSET, FX_SLOTS, GRAPH_DRY, GRAPH_GAINS, MAX_BLOCK_SIZE,
+    MAX_UNISON, MAX_VOICES, MOD_SLOTS, OVR_SLOTS, PARAM_COUNT,
 };
 use crate::voice::{NoteOnResult, VoiceManager};
 
@@ -1053,6 +1053,16 @@ impl Engine {
                 env_changed = true;
             }
             self.smooth_value[index] = value;
+            // An override slot that is not overriding anything (P9.3) holds
+            // the sentinel, which must stay *exactly* the sentinel: smoothing
+            // it to zero would silently turn every unset slot into an override
+            // sitting at its minimum.
+            if value == FX_OVR_UNSET {
+                self.smooth_value[index] = FX_OVR_UNSET;
+                self.smooth_target[index] = FX_OVR_UNSET;
+                self.smooth_ready[index] = true;
+                continue;
+            }
             self.params.set(param_id, value);
         }
         // Instance B: the same one-pole, so the second layer cannot zipper
@@ -1073,6 +1083,12 @@ impl Engine {
                 env_changed = true;
             }
             self.smooth_value_b[index] = value;
+            if value == FX_OVR_UNSET {
+                self.smooth_value_b[index] = FX_OVR_UNSET;
+                self.smooth_target_b[index] = FX_OVR_UNSET;
+                self.smooth_ready_b[index] = true;
+                continue;
+            }
             self.params_b.set(param_id, value);
         }
         if env_changed {
@@ -2598,10 +2614,27 @@ impl Engine {
             self.apply_fx_graph(frames);
             return;
         }
+        let time = self.params.delay_time_seconds();
+        let max_time = self.delay_max_seconds();
+        // The per-node overrides and the one global sweep are resolved once per
+        // block (P9.3), like every other FX parameter: six nodes x four slots,
+        // no allocation, and no work at all when a node runs a kind with fewer
+        // than four overridable controls.
+        let source = match self.params.ovr_source() {
+            1 => self.graph_lfo,
+            2 => self.graph_lfo2,
+            3 => self.graph_env,
+            _ => 0.0,
+        };
+        let mut ovr = [[0.0f32; OVR_SLOTS]; FX_SLOTS];
+        for slot in 0..FX_SLOTS {
+            ovr[slot] = self.ovr_values_for(slot, time, max_time, source);
+        }
         for slot in 0..FX_SLOTS {
             let kind = self.params.fx.chain[slot];
             let parallel = self.params.fx.parallel[slot];
             let fx = self.params.fx;
+            let ovr = ovr[slot];
             match kind {
                 FxKind::None => {}
                 FxKind::Delay => {
@@ -2611,13 +2644,14 @@ impl Engine {
                     // a bypass (the line keeps running so its tail does not pop
                     // back when it is switched on again). Each position drives
                     // its own line (P7.1); one with no line left passes through.
+                    // Its override slots (P9.3) are time, feedback, mix, damp.
                     let Some(instance) = self.delay_for(slot) else { continue };
                     self.delays[instance].process(
                         DelayParams {
-                            time_s: self.params.delay_time_seconds(),
-                            feedback: fx.delay_fb,
-                            mix: if fx.delay_on { fx.delay_mix } else { 0.0 },
-                            damp: fx.delay_damp,
+                            time_s: ovr[0],
+                            feedback: ovr[1],
+                            mix: if fx.delay_on { ovr[2] } else { 0.0 },
+                            damp: ovr[3],
                             ping_pong: fx.delay_ping_pong,
                         },
                         &mut self.fx_l[..frames],
@@ -2626,7 +2660,7 @@ impl Engine {
                     );
                 }
                 FxKind::Reverb => {
-                    let mix = if fx.reverb_on { fx.reverb_mix } else { 0.0 };
+                    let mix = if fx.reverb_on { ovr[1] } else { 0.0 };
                     if fx.reverb_mode == 1 && self.ir.has_ir() {
                         // The imported response, trimmed so its level sits where
                         // the patch expects the reverb to sit. Every convolution
@@ -2643,21 +2677,22 @@ impl Engine {
                         }
                     } else {
                         // Damped, modulated and with a pre-delay, which the old
-                        // Soundpipe `revsc` could not do.
+                        // Soundpipe `revsc` could not do. Its override slots are
+                        // size, mix, damp, pre-delay.
                         self.reverbs[slot].set_params(ReverbParams {
-                            size: if fx.reverb_on { fx.reverb_size } else { 0.0 },
-                            damp: fx.reverb_damp,
+                            size: if fx.reverb_on { ovr[0] } else { 0.0 },
+                            damp: ovr[2],
                             mix,
                             width: fx.reverb_width,
-                            predelay: fx.reverb_predelay,
+                            predelay: ovr[3],
                         });
                         self.reverbs[slot]
                             .process(&mut self.fx_l[..frames], &mut self.fx_r[..frames]);
                     }
                 }
-                FxKind::Chorus if fx.chorus_on && fx.chorus_mix > 0.0 => {
+                FxKind::Chorus if fx.chorus_on && ovr[2] > 0.0 => {
                     unsafe {
-                        gs_fx_chorus_set(slot as i32, fx.chorus_depth, fx.chorus_rate, 20.0, 0.25);
+                        gs_fx_chorus_set(slot as i32, ovr[0], ovr[1], 20.0, 0.25);
                         gs_fx_chorus_block(
                             slot as i32,
                             self.fx_l.as_ptr(),
@@ -2667,11 +2702,11 @@ impl Engine {
                             frames as u32,
                         );
                     }
-                    self.mix_effect(frames, fx.chorus_mix, parallel);
+                    self.mix_effect(frames, ovr[2], parallel);
                 }
-                FxKind::Flanger if fx.flanger_on && fx.flanger_mix > 0.0 => {
+                FxKind::Flanger if fx.flanger_on && ovr[2] > 0.0 => {
                     unsafe {
-                        gs_fx_flanger_set(slot as i32, 0.5, fx.flanger_rate, 2.0, fx.flanger_fb);
+                        gs_fx_flanger_set(slot as i32, 0.5, ovr[1], 2.0, ovr[0]);
                         gs_fx_flanger_block(
                             slot as i32,
                             self.fx_l.as_ptr(),
@@ -2681,11 +2716,11 @@ impl Engine {
                             frames as u32,
                         );
                     }
-                    self.mix_effect(frames, fx.flanger_mix, parallel);
+                    self.mix_effect(frames, ovr[2], parallel);
                 }
-                FxKind::Phaser if fx.phaser_on && fx.phaser_mix > 0.0 => {
+                FxKind::Phaser if fx.phaser_on && ovr[2] > 0.0 => {
                     unsafe {
-                        gs_fx_phaser_set(slot as i32, 0.8, fx.phaser_rate, fx.phaser_fb, 4);
+                        gs_fx_phaser_set(slot as i32, 0.8, ovr[1], ovr[0], 4);
                         gs_fx_phaser_block(
                             slot as i32,
                             self.fx_l.as_ptr(),
@@ -2695,18 +2730,18 @@ impl Engine {
                             frames as u32,
                         );
                     }
-                    self.mix_effect(frames, fx.phaser_mix, parallel);
+                    self.mix_effect(frames, ovr[2], parallel);
                 }
-                FxKind::Drive if fx.drive_on && fx.drive_mix > 0.0 => {
+                FxKind::Drive if fx.drive_on && ovr[1] > 0.0 => {
                     if self.oversampling() {
                         // P6.5: the drive is the saturator the switch is for.
                         // (The free-form graph has no latency compensation yet,
                         // so it deliberately keeps the 1x drive — see the note
                         // on `Engine::oversampling`.)
-                        self.drive_oversampled(slot, frames);
+                        self.drive_oversampled_amt(slot, frames, ovr[0]);
                     } else {
                         unsafe {
-                            gs_fx_overdrive_set(slot as i32, fx.drive_amt);
+                            gs_fx_overdrive_set(slot as i32, ovr[0]);
                             gs_fx_overdrive_block(
                                 slot as i32,
                                 self.fx_l.as_ptr(),
@@ -2717,9 +2752,9 @@ impl Engine {
                             );
                         }
                     }
-                    self.mix_effect(frames, fx.drive_mix, parallel);
+                    self.mix_effect(frames, ovr[1], parallel);
                 }
-                FxKind::Crush if fx.crush_on && fx.crush_mix > 0.0 => {
+                FxKind::Crush if fx.crush_on && ovr[3] > 0.0 => {
                     self.crushers[slot].process(
                         &self.fx_l[..frames],
                         &self.fx_r[..frames],
@@ -2727,37 +2762,48 @@ impl Engine {
                         &mut self.osc_b,
                         frames,
                         CrushParams {
-                            bits: fx.crush_bits,
-                            down: fx.crush_down,
-                            aa: fx.crush_aa,
+                            bits: ovr[0],
+                            down: ovr[1],
+                            aa: ovr[2],
                         },
                         self.sample_rate,
                     );
-                    self.mix_effect(frames, fx.crush_mix, parallel);
+                    self.mix_effect(frames, ovr[3], parallel);
                 }
                 FxKind::Eq if fx.eq_on && fx.eq_mix > 0.0 => {
+                    // Its override slots are the three band gains and the mid
+                    // frequency; everything else still comes from the kind.
+                    let mut eq = fx;
+                    eq.eq_low_gain = ovr[0];
+                    eq.eq_mid_gain = ovr[1];
+                    eq.eq_high_gain = ovr[2];
+                    eq.eq_mid_freq = ovr[3];
                     self.eqs[slot].process(
                         &self.fx_l[..frames],
                         &self.fx_r[..frames],
                         &mut self.osc_a,
                         &mut self.osc_b,
                         frames,
-                        eq_params(fx),
+                        eq_params(eq),
                         self.sample_rate,
                     );
                     self.mix_effect(frames, fx.eq_mix, parallel);
                 }
                 FxKind::Transient if fx.transient_on && fx.transient_mix > 0.0 => {
+                    let mut shaper = fx;
+                    shaper.transient_attack = ovr[0];
+                    shaper.transient_sustain = ovr[1];
+                    shaper.transient_mix = ovr[2];
                     self.transients[slot].process(
                         &self.fx_l[..frames],
                         &self.fx_r[..frames],
                         &mut self.osc_a,
                         &mut self.osc_b,
                         frames,
-                        transient_params(fx),
+                        transient_params(shaper),
                         self.sample_rate,
                     );
-                    self.mix_effect(frames, fx.transient_mix, parallel);
+                    self.mix_effect(frames, shaper.transient_mix, parallel);
                 }
                 _ => {}
             }
@@ -2816,6 +2862,29 @@ impl Engine {
         }
         self.delay_used = delays;
         self.conv_used = convs;
+    }
+
+    /// The four override values node `slot` runs with this block (P9.3).
+    ///
+    /// With no live sweep and every slot unset — the only state a patch that
+    /// predates P9.3 can be in — each cell comes back as the kind-level value
+    /// the engine always read, untouched. The `scale == 0.0` guard inside the
+    /// parameter model is what makes that identity rather than arithmetic.
+    #[inline]
+    fn ovr_values_for(
+        &self,
+        slot: usize,
+        delay_time: f32,
+        max_delay_seconds: f32,
+        source: f32,
+    ) -> [f32; OVR_SLOTS] {
+        self.params.ovr_values(
+            slot,
+            self.params.fx.chain[slot],
+            delay_time,
+            max_delay_seconds,
+            source,
+        )
     }
 
     /// The delay instance a node drives, if it has one (the pool may be full).
@@ -2944,9 +3013,21 @@ impl Engine {
         // to what the host set, and the node mix then runs at block rate like
         // every other FX parameter.
         let (in1, in2, out) = self.graph_gains(frames);
+        // Per-node effect overrides (P9.3), resolved once for the block exactly
+        // like the chain path; a node with every slot unset passes the kind's
+        // own values through untouched.
+        let time = self.params.delay_time_seconds();
+        let max_time = self.delay_max_seconds();
+        let source = match self.params.ovr_source() {
+            1 => self.graph_lfo,
+            2 => self.graph_lfo2,
+            3 => self.graph_env,
+            _ => 0.0,
+        };
         for slot in 0..FX_SLOTS {
             self.mix_node_input(slot, frames, in1[slot], in2[slot]);
-            self.render_fx_node(slot, frames);
+            let ovr = self.ovr_values_for(slot, time, max_time, source);
+            self.render_fx_node(slot, frames, &ovr);
         }
         let fx = self.params.fx;
         self.fx_l[..frames].fill(0.0);
@@ -3006,7 +3087,7 @@ impl Engine {
     /// Run one node's effect on its own buffer, in place. The blend law is the
     /// same one the chain uses: an insert crossfades, a send adds its wet signal
     /// to the untouched input.
-    fn render_fx_node(&mut self, slot: usize, frames: usize) {
+    fn render_fx_node(&mut self, slot: usize, frames: usize, ovr: &[f32; OVR_SLOTS]) {
         let fx = self.params.fx;
         let kind = fx.chain[slot];
         let parallel = fx.parallel[slot];
@@ -3022,10 +3103,10 @@ impl Engine {
                 // Runs even when it is off (mix 0), so the line keeps moving and
                 // switching it back on does not replay a stale tail.
                 let params = DelayParams {
-                    time_s: self.params.delay_time_seconds(),
-                    feedback: fx.delay_fb,
-                    mix: if fx.delay_on { fx.delay_mix } else { 0.0 },
-                    damp: fx.delay_damp,
+                    time_s: ovr[0],
+                    feedback: ovr[1],
+                    mix: if fx.delay_on { ovr[2] } else { 0.0 },
+                    damp: ovr[3],
                     ping_pong: fx.delay_ping_pong,
                 };
                 self.delays[instance].process(
@@ -3036,7 +3117,7 @@ impl Engine {
                 );
             }
             FxKind::Reverb => {
-                let mix = if fx.reverb_on { fx.reverb_mix } else { 0.0 };
+                let mix = if fx.reverb_on { ovr[1] } else { 0.0 };
                 if fx.reverb_mode == 1 && self.ir.has_ir() {
                     // Two convolution nodes share the response's partition
                     // spectra but never a delay line, so their tails stay apart.
@@ -3052,11 +3133,11 @@ impl Engine {
                     }
                 } else {
                     self.reverbs[slot].set_params(ReverbParams {
-                        size: if fx.reverb_on { fx.reverb_size } else { 0.0 },
-                        damp: fx.reverb_damp,
+                        size: if fx.reverb_on { ovr[0] } else { 0.0 },
+                        damp: ovr[2],
                         mix,
                         width: fx.reverb_width,
-                        predelay: fx.reverb_predelay,
+                        predelay: ovr[3],
                     });
                     self.reverbs[slot].process(
                         &mut self.graph_node_l[base..base + frames],
@@ -3064,9 +3145,9 @@ impl Engine {
                     );
                 }
             }
-            FxKind::Chorus if fx.chorus_on && fx.chorus_mix > 0.0 => {
+            FxKind::Chorus if fx.chorus_on && ovr[2] > 0.0 => {
                 unsafe {
-                    gs_fx_chorus_set(slot as i32, fx.chorus_depth, fx.chorus_rate, 20.0, 0.25);
+                    gs_fx_chorus_set(slot as i32, ovr[0], ovr[1], 20.0, 0.25);
                     gs_fx_chorus_block(
                         slot as i32,
                         self.graph_node_l[base..].as_ptr(),
@@ -3076,11 +3157,11 @@ impl Engine {
                         frames as u32,
                     );
                 }
-                self.blend_node(slot, frames, fx.chorus_mix, parallel);
+                self.blend_node(slot, frames, ovr[2], parallel);
             }
-            FxKind::Flanger if fx.flanger_on && fx.flanger_mix > 0.0 => {
+            FxKind::Flanger if fx.flanger_on && ovr[2] > 0.0 => {
                 unsafe {
-                    gs_fx_flanger_set(slot as i32, 0.5, fx.flanger_rate, 2.0, fx.flanger_fb);
+                    gs_fx_flanger_set(slot as i32, 0.5, ovr[1], 2.0, ovr[0]);
                     gs_fx_flanger_block(
                         slot as i32,
                         self.graph_node_l[base..].as_ptr(),
@@ -3090,11 +3171,11 @@ impl Engine {
                         frames as u32,
                     );
                 }
-                self.blend_node(slot, frames, fx.flanger_mix, parallel);
+                self.blend_node(slot, frames, ovr[2], parallel);
             }
-            FxKind::Phaser if fx.phaser_on && fx.phaser_mix > 0.0 => {
+            FxKind::Phaser if fx.phaser_on && ovr[2] > 0.0 => {
                 unsafe {
-                    gs_fx_phaser_set(slot as i32, 0.8, fx.phaser_rate, fx.phaser_fb, 4);
+                    gs_fx_phaser_set(slot as i32, 0.8, ovr[1], ovr[0], 4);
                     gs_fx_phaser_block(
                         slot as i32,
                         self.graph_node_l[base..].as_ptr(),
@@ -3104,11 +3185,11 @@ impl Engine {
                         frames as u32,
                     );
                 }
-                self.blend_node(slot, frames, fx.phaser_mix, parallel);
+                self.blend_node(slot, frames, ovr[2], parallel);
             }
-            FxKind::Drive if fx.drive_on && fx.drive_mix > 0.0 => {
+            FxKind::Drive if fx.drive_on && ovr[1] > 0.0 => {
                 unsafe {
-                    gs_fx_overdrive_set(slot as i32, fx.drive_amt);
+                    gs_fx_overdrive_set(slot as i32, ovr[0]);
                     gs_fx_overdrive_block(
                         slot as i32,
                         self.graph_node_l[base..].as_ptr(),
@@ -3118,9 +3199,9 @@ impl Engine {
                         frames as u32,
                     );
                 }
-                self.blend_node(slot, frames, fx.drive_mix, parallel);
+                self.blend_node(slot, frames, ovr[1], parallel);
             }
-            FxKind::Crush if fx.crush_on && fx.crush_mix > 0.0 => {
+            FxKind::Crush if fx.crush_on && ovr[3] > 0.0 => {
                 self.crushers[slot].process(
                     &self.graph_node_l[base..base + frames],
                     &self.graph_node_r[base..base + frames],
@@ -3128,37 +3209,46 @@ impl Engine {
                     &mut self.osc_b,
                     frames,
                     CrushParams {
-                        bits: fx.crush_bits,
-                        down: fx.crush_down,
-                        aa: fx.crush_aa,
+                        bits: ovr[0],
+                        down: ovr[1],
+                        aa: ovr[2],
                     },
                     self.sample_rate,
                 );
-                self.blend_node(slot, frames, fx.crush_mix, parallel);
+                self.blend_node(slot, frames, ovr[3], parallel);
             }
             FxKind::Eq if fx.eq_on && fx.eq_mix > 0.0 => {
+                let mut eq = fx;
+                eq.eq_low_gain = ovr[0];
+                eq.eq_mid_gain = ovr[1];
+                eq.eq_high_gain = ovr[2];
+                eq.eq_mid_freq = ovr[3];
                 self.eqs[slot].process(
                     &self.graph_node_l[base..base + frames],
                     &self.graph_node_r[base..base + frames],
                     &mut self.osc_a,
                     &mut self.osc_b,
                     frames,
-                    eq_params(fx),
+                    eq_params(eq),
                     self.sample_rate,
                 );
                 self.blend_node(slot, frames, fx.eq_mix, parallel);
             }
             FxKind::Transient if fx.transient_on && fx.transient_mix > 0.0 => {
+                let mut shaper = fx;
+                shaper.transient_attack = ovr[0];
+                shaper.transient_sustain = ovr[1];
+                shaper.transient_mix = ovr[2];
                 self.transients[slot].process(
                     &self.graph_node_l[base..base + frames],
                     &self.graph_node_r[base..base + frames],
                     &mut self.osc_a,
                     &mut self.osc_b,
                     frames,
-                    transient_params(fx),
+                    transient_params(shaper),
                     self.sample_rate,
                 );
-                self.blend_node(slot, frames, fx.transient_mix, parallel);
+                self.blend_node(slot, frames, shaper.transient_mix, parallel);
             }
             _ => {}
         }
@@ -3199,7 +3289,10 @@ impl Engine {
     /// phase-aligned; the node as a whole is then a fixed-latency effect, which
     /// is what the chain already is (every effect in it delays the bus by
     /// whatever it delays it by) and what a graph would have to compensate for.
-    fn drive_oversampled(&mut self, slot: usize, frames: usize) {
+    /// The drive-bearing filter path at 2x (P6.5), with the amount this node
+    /// resolved for the block (P9.3): the only caller that is not the
+    /// kind-level knob is the per-node override.
+    fn drive_oversampled_amt(&mut self, slot: usize, frames: usize, amount: f32) {
         self.os_in_l[..frames].copy_from_slice(&self.fx_l[..frames]);
         self.os_in_r[..frames].copy_from_slice(&self.fx_r[..frames]);
         let nf = frames * 2;
@@ -3218,7 +3311,7 @@ impl Engine {
         unsafe {
             let l = self.osc_a.as_mut_ptr();
             let r = self.osc_b.as_mut_ptr();
-            gs_fx_overdrive_set(slot as i32, self.params.fx.drive_amt);
+            gs_fx_overdrive_set(slot as i32, amount);
             gs_fx_overdrive_block(slot as i32, l, r, l, r, nf as u32);
         }
         self.os_fx_l[slot].downsample(

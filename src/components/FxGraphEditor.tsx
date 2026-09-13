@@ -22,6 +22,9 @@ import {
   FX_MOD_SLOTS,
   FX_MOD_SOURCES,
   FX_MOD_SRC_LABELS,
+  FX_OVR_MOD_SLOTS,
+  FX_OVR_SLOTS,
+  FX_OVR_UNSET,
   FX_SLOTS,
   GRAPH_DRY,
   GRAPH_FROM_CHAIN_IDS,
@@ -40,6 +43,16 @@ import {
   graphOutGainId,
   graphToOutId,
   intToFxKind,
+  ovrDepthBusId,
+  ovrId,
+  FX_OVR_SLOTS_BY_KIND,
+  ovrSlotCode,
+  ovrSlotFormat,
+  ovrSlotLabel,
+  ovrSlotParam,
+  ovrSlotRange,
+  ovrTargetBusId,
+  ovrUnifyBusEntries,
   type FxKind,
   type FxModSrc,
   type ParamId,
@@ -55,7 +68,7 @@ import { toast } from './Toast';
 
 /* Card geometry (px). The canvas scrolls when the screen is narrower. */
 const CARD_W = 208;
-const CARD_H = 132;
+const CARD_H = 218;
 const CARD_GAP = 14;
 const DRY_W = 176;
 const COL_X = [12, 292, 572];
@@ -154,6 +167,26 @@ const ON_PARAM: Partial<Record<FxKind, ParamId>> = {
   eq: Param.FX_EQ_ON,
   transient: Param.FX_TRANSIENT_ON,
 };
+
+/**
+ * The value a kind-level parameter holds today (P9.3).
+ *
+ * An override knob starts from this, and "follows the kind's default" displays
+ * it, so the override section reads the same patch the engine would without an
+ * override. Delay time has no kind-level id: it is derived from the tempo and
+ * the sync division, which is why it is special-cased here the same way
+ * `ovr_slot_is_time` does in the core. Both instances share one tempo and one
+ * sync, so reading instance 1 is the base for either.
+ */
+function kindBaseValue(params: Record<number, number>, kind: FxKind, slot: number): number {
+  if (kind === 'delay' && slot === 0) {
+    const quarter = 60 / Math.max(20, params[Param.TEMPO] ?? 120);
+    const sync = Math.round(params[Param.FX_DELAY_SYNC] ?? 2);
+    return sync === 0 ? quarter : sync === 1 ? quarter * 0.75 : sync === 2 ? quarter * 0.5 : quarter * 0.25;
+  }
+  const param = ovrSlotParam(kind, slot);
+  return param === null ? 0 : (params[param] ?? 0);
+}
 
 export function FxGraphEditor({ onClose }: { onClose: () => void }) {
   const snapshot = useSynth();
@@ -317,6 +350,39 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
     depth: params[graphModDepthId(edge)] ?? 0,
   }));
   const liveMods = modEdges.filter((e) => e.src !== 0 && e.dst !== 0 && e.depth !== 0);
+
+  /** Constant source of the whole override modulation bus: 0 off, 1..3. */
+  const ovrModSrc = Math.round(params[Param.FX_OVR_SRC] ?? 0) as FxModSrc;
+  /**
+   * Which override slot each node's bus row sweeps, and how far (P9.3).
+   *
+   * The core stores eight independent rows, so any eight of the twenty-four
+   * slots can be swept at once; the editor shows one row per node, which is the
+   * same shape as the P7.2 edges above and keeps the panel short. Pointing a
+   * node's row at a new slot moves the whole pair (`ovrUnifyBusEntries`), so no
+   * amount is left sweeping a slot the player can no longer see.
+   */
+  const ovrModRows = Array.from({ length: FX_SLOTS }, (_, node) => {
+    let target = 0;
+    let depth = 0;
+    let bus = 0;
+    let found = false;
+    const wanted: number[] = [];
+    for (let column = 0; column < FX_OVR_SLOTS; column += 1) {
+      if (ovrSlotLabel(nodes[node].kind, column) !== '') wanted.push(ovrSlotCode(node, column));
+    }
+    for (let index = 0; index < FX_OVR_MOD_SLOTS; index += 1) {
+      const code = Math.round(params[ovrTargetBusId(index)] ?? 0);
+      if (code === 0 || !wanted.includes(code)) continue;
+      if (!found) {
+        found = true;
+        bus = index;
+        target = code;
+        depth = params[ovrDepthBusId(index)] ?? 0;
+      }
+    }
+    return { node, bus, target, depth, found };
+  });
 
   const setModEdge = (edge: number, src: number, dst: number, depth: number) => {
     ensureGraph();
@@ -528,6 +594,99 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
     </div>
   );
 
+  /**
+   * One node's override slots (P9.3).
+   *
+   * A slot is either unset — the engine reads the kind's own knob and the
+   * editor says so — or an explicit value, and the toggle is what moves it
+   * between the two. The controls are full-width range inputs so a phone gets
+   * the same 36 px target here as everywhere else in this editor.
+   */
+  const overrideBlock = (slot: number) => {
+    const kind = nodes[slot].kind;
+    if (kind === 'none') return null;
+    const rows = Array.from({ length: FX_OVR_SLOTS }, (_, column) => {
+      const empty = ovrSlotLabel(kind, column) === '';
+      if (empty) return null;
+      const id = ovrId(slot, column);
+      const stored = params[id] ?? FX_OVR_UNSET;
+      const on = stored !== FX_OVR_UNSET;
+      const base = kindBaseValue(params, kind, column);
+      const [min, max] = ovrSlotRange(kind, column);
+      const format = ovrSlotFormat(kind, column);
+      const value = on ? stored : base;
+      return (
+        <div className="fxg-ovr-row" key={column} data-ovr-row={`${slot}:${column}`}>
+          <button
+            type="button"
+            className={`fxg-ovr-toggle${on ? ' on' : ''}`}
+            data-act="ovr-toggle"
+            data-node={slot}
+            data-ovr-slot={column}
+            aria-pressed={on}
+            aria-label={`${t('fxg.node')} ${slot + 1} ${ovrSlotLabel(kind, column)} ${t('fxg.ovr')}`}
+            title={on ? t('fxg.ovr') : t('fxg.ovrFollow', { name: FX_KIND_LABELS[kind] })}
+            onClick={() => {
+              haptic(HAPTIC.light);
+              if (on) store.setParam(id, FX_OVR_UNSET);
+              else store.setParam(id, kindBaseValue(params, kind, column));
+            }}
+          >
+            {on ? '●' : '○'}
+          </button>
+          <span className="fxg-mix-label">{ovrSlotLabel(kind, column)}</span>
+          <input
+            type="range"
+            className="fxg-gain"
+            data-act="ovr-value"
+            data-node={slot}
+            data-ovr-slot={column}
+            min={min}
+            max={max}
+            step={(max - min) / 200}
+            value={value}
+            disabled={!on}
+            aria-label={`${t('fxg.node')} ${slot + 1} ${ovrSlotLabel(kind, column)}`}
+            onChange={(event) =>
+              store.setParam(id, Math.max(min, Math.min(max, Number(event.target.value))))
+            }
+          />
+          <span className={`fxg-gain-val${on ? '' : ' follow'}`}>
+            {on ? format(value) : t('fxg.ovrFollowShort')}
+          </span>
+        </div>
+      );
+    });
+    const used = rows.filter(Boolean).length;
+    return (
+      <div className="fxg-ovr" data-ovr-node={slot}>
+        <div className="fxg-ovr-head">
+          <span className="fxg-ovr-title" title={t('fxg.ovrHint')}>
+            {t('fxg.ovr')}
+          </span>
+          <button
+            type="button"
+            className="fxg-wire-del"
+            data-act="ovr-follow"
+            data-node={slot}
+            aria-label={`${t('fxg.node')} ${slot + 1} ${t('fxg.ovrClear')}`}
+            title={t('fxg.ovrClear')}
+            onClick={() => {
+              haptic(HAPTIC.light);
+              store.setParams(
+                Array.from({ length: FX_OVR_SLOTS }, (_, column) => [ovrId(slot, column), FX_OVR_UNSET] as [ParamId, number]),
+                { immediate: true },
+              );
+            }}
+          >
+            {t('fxg.ovrClear')}
+          </button>
+        </div>
+        {used > 0 ? rows : null}
+      </div>
+    );
+  };
+
   const cardBody = (slot: number) => {
     const node = nodes[slot];
     const mixParam = MIX_PARAM[node.kind];
@@ -616,6 +775,7 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
           {inputRow(slot, 0, node.in1)}
           {inputRow(slot, 1, node.in2)}
         </div>
+        {overrideBlock(slot)}
       </>
     );
   };
@@ -871,6 +1031,104 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
                 data-mod-row={edge.edge}
                 aria-label={`${t('fxg.modDelete')} ${edge.edge + 1}`}
                 onClick={() => disconnectMod(edge.edge)}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/*
+          Per-node parameter overrides (P9.3) can be modulated too, by one
+          source bus with an amount per node. The rows follow the same shape as
+          the P7.2 edges above: a source, a target and a depth, reachable
+          without a pointer, which is what a phone gets.
+        */}
+        <div className="fxg-mod" data-view="ovr-mod">
+          <span className="fxg-mod-title" title={t('fxg.ovrModHint')}>
+            {t('fxg.ovrMod')}
+          </span>
+          <select
+            className="fxg-src"
+            data-act="ovr-src"
+            aria-label={t('fxg.modSource')}
+            value={ovrModSrc}
+            onChange={(event) =>
+              store.setParam(Param.FX_OVR_SRC, Number(event.target.value), { immediate: true })
+            }
+          >
+            {FX_MOD_SOURCES.map((src) => (
+              <option key={src} value={src}>
+                {FX_MOD_SRC_LABELS[src]}
+              </option>
+            ))}
+          </select>
+          {ovrModRows.map((row) => (
+            <div className="fxg-mod-row" key={row.node} data-ovr-bus={row.node}>
+              <select
+                className="fxg-src"
+                data-act="ovr-bus-target"
+                data-ovr-bus={row.node}
+                aria-label={`${t('fxg.ovrModTarget')} ${row.node + 1}`}
+                value={row.target}
+                onChange={(event) => {
+                  ensureGraph();
+                  store.setParams(
+                    [
+                      ...ovrUnifyBusEntries(params, row.node, 0, FX_OVR_MOD_SLOTS),
+                      [ovrTargetBusId(ovrModRows[row.node].bus), Number(event.target.value)],
+                    ],
+                    { immediate: true },
+                  );
+                  if (Number(event.target.value) !== 0 && ovrModSrc === 0) {
+                    store.setParam(Param.FX_OVR_SRC, 1, { immediate: true });
+                  }
+                }}
+              >
+                <option value={0}>{t('fxg.none')}</option>
+                {FX_OVR_SLOTS_BY_KIND[nodes[row.node].kind].map((_, column) => {
+                  const label = ovrSlotLabel(nodes[row.node].kind, column);
+                  if (label === '') return null;
+                  return (
+                    <option key={column} value={ovrSlotCode(row.node, column)}>
+                      {label}
+                    </option>
+                  );
+                })}
+              </select>
+              <input
+                type="range"
+                className="fxg-gain"
+                data-act="ovr-bus-depth"
+                data-ovr-bus={row.node}
+                min={-100}
+                max={100}
+                value={Math.round(row.depth * 100)}
+                aria-label={`${t('fxg.modDepth')} ${row.node + 1}`}
+                onChange={(event) =>
+                  store.setParam(
+                    ovrDepthBusId(ovrModRows[row.node].bus),
+                    Number(event.target.value) / 100,
+                  )
+                }
+              />
+              <span className="fxg-gain-val">{Math.round(row.depth * 100)}%</span>
+              <button
+                type="button"
+                className="fxg-wire-del"
+                data-act="ovr-bus-del"
+                data-ovr-bus={row.node}
+                aria-label={`${t('fxg.modDelete')} ${row.node + 1}`}
+                onClick={() => {
+                  ensureGraph();
+                  store.setParams(
+                    [
+                      ...ovrUnifyBusEntries(params, row.node, 0, FX_OVR_MOD_SLOTS),
+                      [ovrTargetBusId(ovrModRows[row.node].bus), 0],
+                    ],
+                    { immediate: true },
+                  );
+                }}
               >
                 ✕
               </button>

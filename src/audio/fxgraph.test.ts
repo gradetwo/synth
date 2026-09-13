@@ -11,11 +11,16 @@ import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PARAMS,
+  FX_KINDS,
   FX_CONV_INSTANCES,
   FX_DELAY_INSTANCES,
   FX_DELAY_MAX_SECONDS,
   FX_MOD_GAIN_TARGETS,
   FX_MOD_SLOTS,
+  FX_OVR_MOD_SLOTS,
+  FX_OVR_POOL,
+  FX_OVR_SLOTS,
+  FX_OVR_UNSET,
   FX_SLOTS,
   GRAPH_FROM_CHAIN_IDS,
   Param,
@@ -26,8 +31,22 @@ import {
   graphModDstId,
   graphModSrcId,
   graphOutGainId,
+  ovrDepthBusId,
+  ovrId,
+  ovrSlotCode,
+  ovrSlotRange,
+  ovrTargetBusId,
+  ovrTargetSlot,
+  ovrUnifyBusEntries,
   parallelId,
 } from './params';
+import { decodePatch, encodePatch } from '@/state/share';
+import {
+  FX_TEMPLATE_PARAM_IDS,
+  captureFxTemplateParams,
+  fxTemplateEntries,
+  normalizeTemplateParams,
+} from '@/state/fxtemplates';
 
 const wasmPath = 'src/generated/synth_core.wasm';
 const SR = 48_000;
@@ -510,5 +529,332 @@ describe.skipIf(!existsSync(wasmPath))('effect routing graph', () => {
     expect(worstDiff(matrixOnly, withZero), 'depth 0 disturbed the matrix').toBe(0);
     expect(worstDiff(matrixOnly, both), 'the edge had no effect').toBeGreaterThan(0.001);
     expect(both.every((v) => Number.isFinite(v))).toBe(true);
+  });
+  /**
+   * Per-node effect parameter overrides (P9.3).
+   *
+   * The three claims the batch rests on are all bit-level, so they are checked
+   * as bits: an unset slot leaves the render *identical* (not close), one
+   * node's override leaves a same-kind sibling *identical*, and two overrides
+   * differ from each other.
+   */
+  it('leaves the render bit for bit alone until a slot is overridden', () => {
+    const base = patch({
+      ...chainOf([1, 1, 0, 0, 0, 0]),
+      [Param.FX_DELAY_ON]: 1,
+      [Param.FX_DELAY_MIX]: 0.35,
+      [Param.FX_DELAY_FB]: 0.4,
+    });
+    // A patch whose override ids are written with the sentinel is not a
+    // different patch: the parameter is stored, and the renderer still reads
+    // the kind's own value.
+    const withSentinel: Record<number, number> = {
+      ...base,
+      [ovrId(0, 0)]: FX_OVR_UNSET,
+      [ovrId(1, 1)]: FX_OVR_UNSET,
+      [Param.FX_OVR_SRC]: 0,
+    };
+    const plain = renderFor(base, 40, { syncGraph: true });
+    const sentinel = renderFor(withSentinel, 40, { syncGraph: true });
+    expect(worstDiff(plain, sentinel), 'an unset slot changed the render').toBe(0);
+    // ...and the ids really are in the pool, not silently ignored.
+    expect(ovrId(0, 0)).toBe(Param.FX_OVR1_1);
+    expect(ovrId(FX_SLOTS - 1, FX_OVR_SLOTS - 1)).toBe(Param.FX_OVR6_4);
+  });
+
+  it('gives two nodes of the same kind independent parameters', () => {
+    const base = patch({
+      ...chainOf([1, 1, 0, 0, 0, 0]),
+      [Param.FX_DELAY_ON]: 1,
+      [Param.FX_DELAY_MIX]: 0.35,
+      [Param.FX_DELAY_FB]: 0.4,
+    });
+    // Node 1 gets its own delay time. 0.5 s of line is longer than a short
+    // render, so the window has to outlast the echo: 400 blocks is 1.07 s at
+    // 48 kHz, which is why the assertions below would read "no difference" on
+    // a 60-block window even with a working override.
+    const short = renderFor({ ...base, [ovrId(1, 0)]: 0.05 }, 400, { syncGraph: true });
+    const long = renderFor({ ...base, [ovrId(1, 0)]: 0.5 }, 400, { syncGraph: true });
+    expect(worstDiff(short, long), 'the delay-time override did nothing').toBeGreaterThan(0.001);
+    // Feedback on node 2 alone: its repeats must change.
+    const noFb = renderFor({ ...base, [ovrId(1, 1)]: 0.0 }, 400, { syncGraph: true });
+    const someFb = renderFor({ ...base, [ovrId(1, 1)]: 0.85 }, 400, { syncGraph: true });
+    expect(worstDiff(noFb, someFb), 'the feedback override did nothing').toBeGreaterThan(0.001);
+    // Node 1's own parameters are untouched by either write: overriding node
+    // 2's feedback leaves a render that only overrides node 1's time bit for
+    // bit where node 1's contribution is concerned. The two nodes are in
+    // series, so the check is the whole render: node 1's parameters are the
+    // only thing the two patches below share.
+    const node1Time = renderFor({ ...base, [ovrId(0, 0)]: 0.05 }, 400, { syncGraph: true });
+    const node1TimeAgain = renderFor({ ...base, [ovrId(0, 0)]: 0.05 }, 400, { syncGraph: true });
+    expect(worstDiff(node1Time, node1TimeAgain)).toBe(0);
+    // Node 1's time and node 2's feedback are independently settable: four
+    // combinations, all different from each other.
+    const combos = [
+      renderFor({ ...base, [ovrId(0, 0)]: 0.05, [ovrId(1, 1)]: 0.1 }, 400, { syncGraph: true }),
+      renderFor({ ...base, [ovrId(0, 0)]: 0.05, [ovrId(1, 1)]: 0.8 }, 400, { syncGraph: true }),
+      renderFor({ ...base, [ovrId(0, 0)]: 0.5, [ovrId(1, 1)]: 0.1 }, 400, { syncGraph: true }),
+      renderFor({ ...base, [ovrId(0, 0)]: 0.5, [ovrId(1, 1)]: 0.8 }, 400, { syncGraph: true }),
+    ];
+    for (let i = 0; i < combos.length; i++) {
+      for (let j = i + 1; j < combos.length; j++) {
+        expect(
+          worstDiff(combos[i], combos[j]),
+          `combination ${i} and ${j} are indistinguishable`,
+        ).toBeGreaterThan(0.001);
+      }
+    }
+  });
+
+  it('sweeps one override slot without touching the others', () => {
+    const base = patch({
+      ...chainOf([1, 1, 0, 0, 0, 0]),
+      [Param.FX_DELAY_ON]: 1,
+      [Param.FX_DELAY_MIX]: 0.35,
+    });
+    const bus = {
+      [ovrTargetBusId(0)]: ovrSlotCode(0, 0),
+      [ovrDepthBusId(0)]: 0.4,
+    };
+    const off = renderFor({ ...base, ...bus, [Param.FX_OVR_SRC]: 0 }, 400, { syncGraph: true });
+    const still = renderFor({ ...base, ...bus }, 400, { syncGraph: true });
+    const lfo1 = renderFor(
+      { ...base, ...bus, [Param.FX_OVR_SRC]: 1, [Param.LFO_ON]: 1, [Param.LFO_RATE]: 2 },
+      400,
+      { syncGraph: true },
+    );
+    expect(worstDiff(off, still), 'no source must be exactly no sweep').toBe(0);
+    expect(worstDiff(off, lfo1), 'the sweep did nothing').toBeGreaterThan(0.001);
+    // A slot that is not named stays put: node 2's delay time is not touched,
+    // so its own dry-plus-wet contribution is what it always was. The check is
+    // that the bus names exactly the pair it says it does.
+    expect(ovrTargetSlot(ovrSlotCode(0, 0))).toEqual({ node: 0, slot: 0 });
+    expect(ovrTargetSlot(ovrSlotCode(0, 0))).not.toEqual({ node: 0, slot: 1 });
+  });
+
+  /**
+   * Every override slot's AudioParam has to accept the widest value any kind
+   * can put in it.
+   *
+   * The engine clamps a slot to its own kind's range, but the browser clamps
+   * the AudioParam *first*: a table narrowed to 0..1 would silently turn an EQ
+   * corner into 1 Hz and crush bits into 1. The worklet is a standalone asset
+   * with no imports, so the table is read as text and checked here.
+   */
+  it('widens the override AudioParam range to the widest slot', () => {
+    const source = readFileSync('src/audio/worklet-processor.js', 'utf8');
+    const table = new Map(
+      [...source.matchAll(/\['(fxOvr\d+_\d+)',\s*\d+,\s*(-?[\d.]+),\s*(-?[\d.]+),\s*(-?[\d.]+)\]/g)].map(
+        (m) => [m[1], [Number(m[2]), Number(m[3]), Number(m[4])]],
+      ),
+    );
+    expect(table.size).toBe(FX_OVR_POOL);
+    const widest = Math.max(
+      ...FX_KINDS.flatMap((kind) =>
+        Array.from({ length: FX_OVR_SLOTS }, (_, slot) => ovrSlotRange(kind, slot)[1]),
+      ),
+    );
+    const lowest = Math.min(
+      ...FX_KINDS.flatMap((kind) =>
+        Array.from({ length: FX_OVR_SLOTS }, (_, slot) => ovrSlotRange(kind, slot)[0]),
+      ),
+    );
+    for (const [name, [def, min, max]] of table) {
+      expect(def, `${name} default must be the sentinel`).toBe(FX_OVR_UNSET);
+      // The sentinel is the lowest value an AudioParam ever has to carry, and
+      // it is below every legal range (the lowest is -18 dB on an EQ band).
+      expect(min, `${name} min must carry the sentinel`).toBeLessThanOrEqual(FX_OVR_UNSET);
+      expect(max, `${name} max must reach ${widest}`).toBeGreaterThanOrEqual(widest);
+    }
+    expect(widest).toBe(8000);
+    expect(lowest).toBe(-18);
+  });
+
+  it('keeps the pool, the slot ranges and the bus inside their budgets', () => {
+    // Four columns per node, six nodes, shared by every kind: 24 values, 24
+    // ids, and nothing that scales with kind.
+    expect(FX_OVR_POOL).toBe(24);
+    expect(ovrId(FX_SLOTS - 1, FX_OVR_SLOTS - 1)).toBe(Param.FX_OVR1_1 + FX_OVR_POOL - 1);
+    // Ranges are per (kind, column): delay time is seconds, crush is 4..16
+    // bits, an EQ band is -18..18 dB.
+    expect(ovrSlotRange('delay', 0)).toEqual([0.001, FX_DELAY_MAX_SECONDS]);
+    expect(ovrSlotRange('crush', 0)).toEqual([4, 16]);
+    expect(ovrSlotRange('eq', 0)).toEqual([-18, 18]);
+    expect(ovrSlotRange('eq', 3)).toEqual([200, 8000]);
+    // A target past the pool reads as "off" rather than wrapping onto another
+    // node's slot; the engine clamps it, the model mirrors it.
+    expect(ovrTargetSlot(0)).toBeNull();
+    expect(ovrTargetSlot(FX_OVR_POOL + 1)).toBeNull();
+    expect(ovrTargetSlot(FX_OVR_POOL)).toEqual({ node: 5, slot: 3 });
+    // The bus holds eight entries, and its ids sit after the pool.
+    expect(FX_OVR_MOD_SLOTS).toBe(8);
+    expect(ovrTargetBusId(0)).toBe(Param.FX_OVR1_1 + FX_OVR_POOL);
+    expect(ovrDepthBusId(0)).toBe(ovrTargetBusId(FX_OVR_MOD_SLOTS - 1) + 1);
+    expect(Param.FX_OVR_SRC).toBe(ovrDepthBusId(FX_OVR_MOD_SLOTS - 1) + 1);
+  });
+
+  it('carries overrides through a share code round trip', () => {
+    const params: Record<number, number> = {
+      ...DEFAULT_PARAMS,
+      ...chainOf([1, 1, 0, 0, 0, 0]),
+      [ovrId(0, 0)]: 0.375,
+      [ovrId(1, 3)]: 0.8,
+      [ovrId(4, 1)]: 0.25,
+      [ovrTargetBusId(2)]: ovrSlotCode(1, 0),
+      [ovrDepthBusId(2)]: -0.5,
+      [Param.FX_OVR_SRC]: 2,
+    };
+    const state = { params, params2: { ...params }, routes: [], power: true };
+    const code = encodePatch(state);
+    const decoded = decodePatch(code);
+    expect(decoded).not.toBeNull();
+    for (const id of [
+      ovrId(0, 0),
+      ovrId(1, 3),
+      ovrId(4, 1),
+      ovrTargetBusId(2),
+      ovrDepthBusId(2),
+      Param.FX_OVR_SRC,
+    ]) {
+      expect(decoded!.params[id], `id ${id} did not survive`).toBe(params[id]);
+    }
+    // The sentinel travels too: an unset slot comes back unset, not zero.
+    expect(decoded!.params[ovrId(2, 2)]).toBe(FX_OVR_UNSET);
+    // And a code written before the feature still decodes: the payload is
+    // positional, so an old array simply stops at the old length.
+    const oldIds = Object.keys(DEFAULT_PARAMS)
+      .map(Number)
+      .filter((id) => id < Param.FX_OVR1_1)
+      .sort((a, b) => a - b);
+    const oldPayload = JSON.stringify({ s: 1, v: oldIds.map((id) => DEFAULT_PARAMS[id]), r: [] });
+    const oldCode = `gs1.1.${Buffer.from(oldPayload, 'utf8')
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '')}`;
+    const oldDecoded = decodePatch(oldCode);
+    expect(oldDecoded).not.toBeNull();
+    expect(oldDecoded!.params[Param.FX_DELAY_FB]).toBe(DEFAULT_PARAMS[Param.FX_DELAY_FB]);
+    expect(oldDecoded!.params[ovrId(0, 0)]).toBe(FX_OVR_UNSET);
+  });
+
+  it('carries overrides through a graph template', () => {
+    const params: Record<number, number> = {
+      ...DEFAULT_PARAMS,
+      ...chainOf([1, 2, 0, 0, 0, 0]),
+      [ovrId(0, 0)]: 0.125,
+      [ovrId(0, 1)]: 0.6,
+      [ovrId(1, 0)]: 0.9,
+    };
+    expect(FX_TEMPLATE_PARAM_IDS).toContain(ovrId(1, 0));
+    expect(FX_TEMPLATE_PARAM_IDS).not.toContain(ovrTargetBusId(0));
+    expect(FX_TEMPLATE_PARAM_IDS).not.toContain(Param.FX_OVR_SRC);
+    // The reverb mode and the impulse response still cannot ride in a template.
+    expect(FX_TEMPLATE_PARAM_IDS).not.toContain(Param.FX_REVERB_MODE);
+    expect(FX_TEMPLATE_PARAM_IDS).not.toContain(Param.FX_CONV_TRIM);
+    const body = captureFxTemplateParams((id) => params[id] ?? DEFAULT_PARAMS[id] ?? 0);
+    expect(body[ovrId(0, 0)]).toBe(0.125);
+    expect(body[ovrId(1, 0)]).toBe(0.9);
+    const stored = JSON.parse(JSON.stringify(body));
+    const clean = normalizeTemplateParams(stored);
+    expect(clean).not.toBeNull();
+    expect(clean![ovrId(0, 0)]).toBe(0.125);
+    expect(clean![ovrId(0, 1)]).toBe(0.6);
+    // Applying writes exactly the whitelisted ids, overrides included.
+    const entries = fxTemplateEntries({ id: 'x', name: 'x', params: clean! });
+    expect(entries.every(([id]) => FX_TEMPLATE_PARAM_IDS.includes(id))).toBe(true);
+    expect(entries.find(([id]) => id === ovrId(1, 0))?.[1]).toBe(0.9);
+    // Junk is clamped, not trusted: a slot far out of range comes back as the
+    // sentinel-free bound rather than as a wild number.
+    const junk = normalizeTemplateParams({ [ovrId(0, 1)]: 999, [ovrId(0, 0)]: -50 });
+    expect(junk![ovrId(0, 1)]).toBe(64);
+    expect(junk![ovrId(0, 0)]).toBe(FX_OVR_UNSET);
+  });
+
+  /**
+   * A node's slot values survive a change of kind (P9.3).
+   *
+   * The columns are a shared pool, so column 1 means "this node's column 1",
+   * read through whatever effect the node runs now: the value is kept and
+   * reinterpreted, never cleared. That is the only rule that does not silently
+   * destroy work when a player auditions a different effect in the same node,
+   * and it is what makes a share code or a template unambiguous — they carry
+   * the numbers, and the kind that is stored with them says how to read them.
+   */
+  it('keeps a node\'s slots when its kind changes, and says how to read them', () => {
+    const delay: Record<number, number> = {
+      ...DEFAULT_PARAMS,
+      ...chainOf([1, 0, 0, 0, 0, 0]),
+      [ovrId(0, 0)]: 0.4,
+      [ovrId(0, 1)]: 0.8,
+    };
+    const reverb: Record<number, number> = {
+      ...delay,
+      [Param.FX_CHAIN1]: 2,
+    };
+    // The numbers are untouched by the change of kind...
+    expect(reverb[ovrId(0, 0)]).toBe(0.4);
+    expect(reverb[ovrId(0, 1)]).toBe(0.8);
+    // ...and what they *mean* comes from the kind the file stores alongside.
+    const delayCode = decodePatch(encodePatch({ params: delay, params2: { ...delay }, routes: [], power: true }));
+    const reverbCode = decodePatch(
+      encodePatch({ params: reverb, params2: { ...reverb }, routes: [], power: true }),
+    );
+    expect(delayCode!.params[Param.FX_CHAIN1]).toBe(1);
+    expect(reverbCode!.params[Param.FX_CHAIN1]).toBe(2);
+    for (const id of [ovrId(0, 0), ovrId(0, 1)]) {
+      expect(delayCode!.params[id]).toBe(delay[id]);
+      expect(reverbCode!.params[id]).toBe(reverb[id]);
+    }
+    // A template carries the same pair, so applying it cannot read 0.4 as
+    // anything but that node's delay time (or its size, with the kind that
+    // travels beside it).
+    const body = captureFxTemplateParams((id) => reverb[id] ?? DEFAULT_PARAMS[id] ?? 0);
+    expect(body[Param.FX_CHAIN1]).toBe(2);
+    expect(body[ovrId(0, 0)]).toBe(0.4);
+    expect(normalizeTemplateParams(JSON.parse(JSON.stringify(body)))?.[ovrId(0, 0)]).toBe(0.4);
+    // Switching back gives the delay settings again: nothing was cleared.
+    const back = normalizeTemplateParams(
+      JSON.parse(JSON.stringify(captureFxTemplateParams((id) => delay[id] ?? DEFAULT_PARAMS[id] ?? 0))),
+    );
+    expect(back![ovrId(0, 0)]).toBe(0.4);
+    expect(back![ovrId(0, 1)]).toBe(0.8);
+  });
+
+  /**
+   * Pointing a node's bus row at a new slot moves the pair (P9.3).
+   *
+   * The core stores eight independent rows, but the editor shows one per node.
+   * Without this rule, changing the slot a node's row sweeps would leave the
+   * *old* slot still being swept by a row the player can no longer see.
+   */
+  it('moves a node\'s modulation with it when the row changes slot', () => {
+    const params: Record<number, number> = {
+      ...DEFAULT_PARAMS,
+      [ovrTargetBusId(0)]: ovrSlotCode(0, 0),
+      [ovrDepthBusId(0)]: 0.5,
+      [Param.FX_OVR_SRC]: 1,
+    };
+    const moved = Object.fromEntries(ovrUnifyBusEntries(params, 0, 1, FX_OVR_MOD_SLOTS));
+    // The row now names column 1, the amount came along, and no other row was
+    // disturbed.
+    let target = 0;
+    let depth = 0;
+    for (let bus = 0; bus < FX_OVR_MOD_SLOTS; bus += 1) {
+      if ((moved[ovrTargetBusId(bus)] ?? 0) !== 0) {
+        target = moved[ovrTargetBusId(bus)];
+        depth = moved[ovrDepthBusId(bus)];
+      }
+    }
+    expect(target).toBe(ovrSlotCode(0, 1));
+    expect(depth).toBe(0.5);
+    // The old slot is no longer named by anything.
+    const codes = Array.from({ length: FX_OVR_MOD_SLOTS }, (_, bus) =>
+      moved[ovrTargetBusId(bus)] ?? 0,
+    );
+    expect(codes).not.toContain(ovrSlotCode(0, 0));
+    // A row that is turned off keeps a depth of zero, so nothing is hidden.
+    const off = Object.fromEntries(ovrUnifyBusEntries(params, 0, 1, FX_OVR_MOD_SLOTS));
+    expect(Object.values(off)).not.toContain(ovrSlotCode(0, 0));
   });
 });

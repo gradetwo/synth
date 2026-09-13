@@ -307,6 +307,9 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 .fxg-drag:active{cursor:grabbing}
 .fxg-dry,.fxg-out{justify-content:center}
 .fxg-card-title{font:700 9px/1 var(--grot);letter-spacing:.1em;color:var(--txt-2);
+  /* A real hit target: with a line-height of 1 and no padding this box used to
+     measure zero pixels tall on Chromium, so the drag never started. */
+  min-height:14px;display:flex;align-items:center;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fxg-card-sub{font:500 8.5px/1.35 var(--grot);color:var(--txt-dim);
   overflow:hidden;text-overflow:ellipsis}
@@ -324,6 +327,24 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
   background:var(--bg-socket);color:var(--txt-2);font:600 9px/1 var(--mono);padding:0 3px}
 .fxg-gain{width:56px;flex:none;height:18px;accent-color:var(--accent);background:none}
 .fxg-gain-val{width:30px;flex:none;font:600 8px/1 var(--mono);color:var(--txt-dim);text-align:right}
+/* Per-node effect overrides (P9.3): a toggle plus one row per slot, inside the
+   node card itself. The rows reuse the editor's existing label, range and value
+   classes — only the head, the toggle and the row box are new, which is what
+   keeps the stylesheet within its budget. */
+.fxg-ovr{display:flex;flex-direction:column;gap:2px;margin-top:2px;
+  border-top:1px solid var(--line-soft-2);padding-top:3px}
+.fxg-ovr-head{display:flex;align-items:center;gap:4px}
+.fxg-ovr-title{font:700 8px/1 var(--grot);letter-spacing:.1em;color:var(--txt-dim);flex:1;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:help}
+.fxg-ovr-toggle{width:16px;height:16px;flex:none;border-radius:5px;border:1px solid var(--border);
+  background:var(--bg-socket);color:var(--txt-dim);font:700 8px/1 var(--mono);
+  padding:0;cursor:pointer}
+.fxg-ovr-toggle.on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
+.fxg-ovr-row{display:flex;align-items:center;gap:5px;min-width:0}
+.fxg-ovr-row .fxg-mix-label{width:44px;overflow:hidden;text-overflow:ellipsis}
+.fxg-ovr-row .fxg-gain{flex:1;width:auto;min-width:0;height:14px}
+.fxg-ovr-row .fxg-gain:disabled{opacity:.4;accent-color:var(--txt-dim)}
+.fxg-ovr-row .fxg-gain-val.follow{color:var(--txt-dim);opacity:.7}
 .fxg-port{position:absolute;width:18px;height:18px;border-radius:50%;border:1px solid var(--accent-dim);
   background:var(--bg-panel);cursor:crosshair;padding:0}
 .fxg-port.in{left:-9px}
@@ -348,6 +369,14 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
   .fxg-gain{width:110px;height:34px}
   .fxg-port{width:30px;height:30px}
   .fxg-list-node{padding:10px}
+  /* A phone reaches the override controls with the same 36 px target as the
+     rest of the editor; the card grows with the rows, so nothing is clipped. */
+  .fxg-ovr-toggle{width:36px;height:36px;font-size:11px}
+  .fxg-ovr-row{gap:6px}
+  .fxg-ovr-row .fxg-mix-label{width:56px;font-size:9.5px}
+  /* The rule above is more specific than the plain `.fxg-gain` one, so the
+     target is widened here rather than left at the canvas' compact 14 px. */
+  .fxg-ovr-row .fxg-gain{height:36px}
 }
 .fx-chain-list{display:flex;gap:4px;flex-wrap:wrap}
 .fx-chip{display:inline-flex;align-items:center;gap:2px;background:var(--bg-inset);

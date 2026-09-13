@@ -242,6 +242,69 @@ export const Param = {
   FX_TRANSIENT_ATTACK: 180,
   FX_TRANSIENT_SUSTAIN: 181,
   FX_TRANSIENT_MIX: 182,
+  /**
+   * Per-node effect parameter overrides (P9.3), four shared slot values per
+   * effect node. A slot's *meaning* comes from the node's kind
+   * (`FX_OVR_SLOTS_BY_KIND`): the pool is shared across kinds, so six nodes
+   * cost 24 ids for every kind together instead of a set per kind per node.
+   *
+   * A slot holds `FX_OVR_UNSET` until the player overrides it, and that
+   * sentinel is what keeps every patch written before P9.3 bit for bit its old
+   * self: the renderer reads the kind's own knob unless the slot says
+   * otherwise.
+   */
+  FX_OVR1_1: 183,
+  FX_OVR1_2: 184,
+  FX_OVR1_3: 185,
+  FX_OVR1_4: 186,
+  FX_OVR2_1: 187,
+  FX_OVR2_2: 188,
+  FX_OVR2_3: 189,
+  FX_OVR2_4: 190,
+  FX_OVR3_1: 191,
+  FX_OVR3_2: 192,
+  FX_OVR3_3: 193,
+  FX_OVR3_4: 194,
+  FX_OVR4_1: 195,
+  FX_OVR4_2: 196,
+  FX_OVR4_3: 197,
+  FX_OVR4_4: 198,
+  FX_OVR5_1: 199,
+  FX_OVR5_2: 200,
+  FX_OVR5_3: 201,
+  FX_OVR5_4: 202,
+  FX_OVR6_1: 203,
+  FX_OVR6_2: 204,
+  FX_OVR6_3: 205,
+  FX_OVR6_4: 206,
+  /**
+   * The override modulation bus (P9.3): one source driving up to eight
+   * override slots at once, each with its own amount.
+   *
+   * `FX_OVR_TARGETk` is the slot bus slot `k` sweeps: 0 off, otherwise
+   * `1 + node * 4 + slot`. `FX_OVR_DEPTHk` is the signed fraction of that
+   * slot's own range, and `FX_OVR_SRC` is the source every bus slot reads —
+   * the same four codes an in-graph edge carries (0 off, 1 LFO 1, 2 LFO 2,
+   * 3 the envelope). Everything defaults to 0, which is exactly "no
+   * modulation".
+   */
+  FX_OVR_TARGET1: 207,
+  FX_OVR_TARGET2: 208,
+  FX_OVR_TARGET3: 209,
+  FX_OVR_TARGET4: 210,
+  FX_OVR_TARGET5: 211,
+  FX_OVR_TARGET6: 212,
+  FX_OVR_TARGET7: 213,
+  FX_OVR_TARGET8: 214,
+  FX_OVR_DEPTH1: 215,
+  FX_OVR_DEPTH2: 216,
+  FX_OVR_DEPTH3: 217,
+  FX_OVR_DEPTH4: 218,
+  FX_OVR_DEPTH5: 219,
+  FX_OVR_DEPTH6: 220,
+  FX_OVR_DEPTH7: 221,
+  FX_OVR_DEPTH8: 222,
+  FX_OVR_SRC: 223,
 } as const;
 
 /** The dry (pre-effect) bus, as a graph source code. */
@@ -338,6 +401,182 @@ export const FX_DELAY_INSTANCES = 2;
 export const FX_CONV_INSTANCES = 2;
 /** Longest delay one instance holds, seconds (`MAX_DELAY_SECONDS` in `dsp/delay.rs`). */
 export const FX_DELAY_MAX_SECONDS = 2;
+
+/**
+ * Per-node effect parameter overrides (P9.3). Four slots per node, shared by
+ * every kind; keep every number here in step with `params.rs`.
+ */
+export const FX_OVR_SLOTS = 4;
+
+/** The value that means "this slot follows the kind's own knob". */
+export const FX_OVR_UNSET = -2;
+
+/** The whole override pool: one slot value per node and column. */
+export const FX_OVR_POOL = FX_SLOTS * FX_OVR_SLOTS;
+
+/**
+ * Which parameter each slot overrides, per kind.
+ *
+ * Order matters — it is the wire order the engine resolves — and a kind with
+ * fewer than four overridable controls carries `null` for the tail, which the
+ * editor renders as "no slot here" rather than an inert knob. The first column
+ * is the control a player reaches for first: delay time, reverb size, chorus
+ * depth, EQ low gain, and so on. Delay time is special: it is derived from
+ * tempo and the sync division rather than stored as a knob of its own.
+ */
+export const FX_OVR_SLOTS_BY_KIND: Record<FxKind, (ParamId | null)[]> = {
+  none: [null, null, null, null],
+  delay: [null, Param.FX_DELAY_FB, Param.FX_DELAY_MIX, Param.FX_DELAY_DAMP],
+  reverb: [Param.FX_REVERB_SIZE, Param.FX_REVERB_MIX, Param.FX_REVERB_DAMP, Param.FX_REVERB_PREDELAY],
+  chorus: [Param.FX_CHORUS_DEPTH, Param.FX_CHORUS_RATE, Param.FX_CHORUS_MIX, null],
+  flanger: [Param.FX_FLANGER_FB, Param.FX_FLANGER_RATE, Param.FX_FLANGER_MIX, null],
+  phaser: [Param.FX_PHASER_FB, Param.FX_PHASER_RATE, Param.FX_PHASER_MIX, null],
+  drive: [Param.FX_DRIVE_AMT, Param.FX_DRIVE_MIX, null, null],
+  crush: [Param.FX_CRUSH_BITS, Param.FX_CRUSH_DOWN, Param.FX_CRUSH_AA, Param.FX_CRUSH_MIX],
+  eq: [Param.FX_EQ_LOW_GAIN, Param.FX_EQ_MID_GAIN, Param.FX_EQ_HIGH_GAIN, Param.FX_EQ_MID_FREQ],
+  transient: [Param.FX_TRANSIENT_ATTACK, Param.FX_TRANSIENT_SUSTAIN, Param.FX_TRANSIENT_MIX, null],
+};
+
+/** Label of a slot whose parameter has no id of its own (delay time). */
+export const FX_OVR_TIME_LABEL = 'TIME';
+
+/** The parameter id of one slot: node and column, both 0-based. */
+export function ovrId(node: number, slot: number): ParamId {
+  return (Param.FX_OVR1_1 + node * FX_OVR_SLOTS + slot) as ParamId;
+}
+
+/** (node, slot) of an override id, or `null` for any other parameter. */
+export function ovrSlotOf(id: number): { node: number; slot: number } | null {
+  const index = Math.round(id) - Param.FX_OVR1_1;
+  if (!Number.isFinite(index) || index < 0 || index >= FX_OVR_POOL) return null;
+  return { node: Math.floor(index / FX_OVR_SLOTS), slot: index % FX_OVR_SLOTS };
+}
+
+/**
+ * Legal range of one slot, mirroring `ovr_slot_range` in `params.rs`.
+ *
+ * Delay time is in seconds and tops out at the pool's line length; everything
+ * else mirrors the kind-level knob's own range, which is what lets the engine
+ * clamp an override in exactly one place.
+ */
+export function ovrSlotRange(kind: FxKind, slot: number): [number, number] {
+  if (kind === 'delay' && slot === 0) return [0.001, FX_DELAY_MAX_SECONDS];
+  switch (kind) {
+    case 'delay':
+      return slot === 1 ? [0, 0.95] : [0, 1];
+    case 'reverb':
+      return slot === 3 ? [0, 0.1] : [0, 1];
+    case 'chorus':
+      return slot === 1 ? [0.02, 10] : [0, 1];
+    case 'flanger':
+      if (slot === 1) return [0.02, 10];
+      return slot === 0 ? [0, 0.95] : [0, 1];
+    case 'phaser':
+      if (slot === 1) return [0.02, 10];
+      return slot === 0 ? [0, 0.95] : [0, 1];
+    case 'drive':
+      return [0, 1];
+    case 'crush':
+      if (slot === 0) return [4, 16];
+      return slot === 1 ? [1, 64] : [0, 1];
+    case 'eq':
+      return slot === 3 ? [200, 8000] : [-18, 18];
+    case 'transient':
+      return [-1, 1];
+    default:
+      return [0, 1];
+  }
+}
+
+/** Display of one slot value: the same units the kind's own knob shows. */
+export function ovrSlotFormat(kind: FxKind, slot: number): (v: number) => string {
+  if (kind === 'delay' && slot === 0) return (v) => `${Math.round(v * 1000)} ms`;
+  if (kind === 'eq' && slot === 3) return fmt.hz;
+  if (kind === 'eq') return fmt.db;
+  if (kind === 'crush' && slot === 0) return (v) => `${Math.round(v)} bit`;
+  if (kind === 'crush' && slot === 1) return (v) => `${Math.round(v)}×`;
+  if (kind === 'chorus' && slot === 1) return (v) => `${v.toFixed(2)} Hz`;
+  if (kind === 'flanger' && slot === 1) return (v) => `${v.toFixed(2)} Hz`;
+  if (kind === 'phaser' && slot === 1) return (v) => `${v.toFixed(2)} Hz`;
+  if (kind === 'reverb' && slot === 3) return (v) => `${Math.round(v * 1000)} ms`;
+  if (kind === 'transient' && slot < 2) {
+    return (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(0)}%`;
+  }
+  return fmt.pct;
+}
+
+/** Parameter id of one slot's knob, or `null` when the slot is empty. */
+export function ovrSlotParam(kind: FxKind, slot: number): ParamId | null {
+  return FX_OVR_SLOTS_BY_KIND[kind]?.[slot] ?? null;
+}
+
+/** Short label for one slot, from the kind's own knob label where there is one. */
+export function ovrSlotLabel(kind: FxKind, slot: number): string {
+  if (kind === 'delay' && slot === 0) return FX_OVR_TIME_LABEL;
+  const param = ovrSlotParam(kind, slot);
+  if (param === null) return '';
+  return SPEC_BY_ID[param]?.label ?? String(param);
+}
+
+/**
+ * Override slots the modulation bus can sweep at once (P9.3). Eight covers
+ * "a couple of nodes of each kind"; keep in step with `OVR_MOD_SLOTS`.
+ */
+export const FX_OVR_MOD_SLOTS = 8;
+
+/** Slot code of one override slot: `0` off, else `1 + node * 4 + slot`. */
+export function ovrSlotCode(node: number, slot: number): number {
+  return 1 + node * FX_OVR_SLOTS + slot;
+}
+
+/** Parameter id of one bus slot's target: which override slot it sweeps. */
+export function ovrTargetBusId(bus: number): ParamId {
+  return (Param.FX_OVR_TARGET1 + bus) as ParamId;
+}
+
+/**
+ * One target/depth pair per override slot, as a batch.
+ *
+ * The bus is stored as eight independent rows so the core can sweep any eight
+ * of the twenty-four slots at once. The editor presents it as "one row per
+ * node", which means pointing a node's row at its new slot has to move the
+ * whole pair and give the slot a fresh amount — otherwise the old slot would
+ * keep sweeping from a row the player can no longer see. This is that batch.
+ */
+export function ovrUnifyBusEntries(
+  params: Record<number, number>,
+  node: number,
+  slot: number,
+  busCount: number,
+): [ParamId, number][] {
+  const code = ovrSlotCode(node, slot);
+  const entries: [ParamId, number][] = [];
+  let first = -1;
+  for (let bus = 0; bus < busCount; bus += 1) {
+    if (Math.round(params[ovrTargetBusId(bus)] ?? 0) === code) {
+      if (first === -1) first = bus;
+      else entries.push([ovrTargetBusId(bus), 0], [ovrDepthBusId(bus), 0]);
+    }
+  }
+  const keep = first === -1 ? 0 : first;
+  entries.push([ovrTargetBusId(keep), code]);
+  if (first === -1) entries.push([ovrDepthBusId(keep), 0.5]);
+  return entries;
+}
+
+/** Parameter id of one bus slot's depth: how far it sweeps. */
+export function ovrDepthBusId(bus: number): ParamId {
+  return (Param.FX_OVR_DEPTH1 + bus) as ParamId;
+}
+
+/** Slot a bus slot's target names, or `null` when that bus slot is off. */
+export function ovrTargetSlot(target: number): { node: number; slot: number } | null {
+  const code = Math.round(target);
+  if (!Number.isFinite(code) || code < 1 || code > FX_OVR_POOL) return null;
+  const index = code - 1;
+  return { node: Math.floor(index / FX_OVR_SLOTS), slot: index % FX_OVR_SLOTS };
+}
+
 
 /** What can run at a chain position. Keep in step with `FxKind` in params.rs. */
 export type FxKind =
@@ -586,6 +825,51 @@ export const PARAM_NAMES: Record<ParamId, string> = {
   [Param.FX_TRANSIENT_ATTACK]: 'fxTransientAttack',
   [Param.FX_TRANSIENT_SUSTAIN]: 'fxTransientSustain',
   [Param.FX_TRANSIENT_MIX]: 'fxTransientMix',
+  // Per-node effect overrides (P9.3): one AudioParam name per slot, in pool
+  // order, plus the target/depth pair of the modulation bus. Listed out rather
+  // than generated so `PARAM_NAMES` stays a complete `Record<ParamId, string>`
+  // and a lookup can never be `undefined`.
+  [Param.FX_OVR1_1]: 'fxOvr1_1',
+  [Param.FX_OVR1_2]: 'fxOvr1_2',
+  [Param.FX_OVR1_3]: 'fxOvr1_3',
+  [Param.FX_OVR1_4]: 'fxOvr1_4',
+  [Param.FX_OVR2_1]: 'fxOvr2_1',
+  [Param.FX_OVR2_2]: 'fxOvr2_2',
+  [Param.FX_OVR2_3]: 'fxOvr2_3',
+  [Param.FX_OVR2_4]: 'fxOvr2_4',
+  [Param.FX_OVR3_1]: 'fxOvr3_1',
+  [Param.FX_OVR3_2]: 'fxOvr3_2',
+  [Param.FX_OVR3_3]: 'fxOvr3_3',
+  [Param.FX_OVR3_4]: 'fxOvr3_4',
+  [Param.FX_OVR4_1]: 'fxOvr4_1',
+  [Param.FX_OVR4_2]: 'fxOvr4_2',
+  [Param.FX_OVR4_3]: 'fxOvr4_3',
+  [Param.FX_OVR4_4]: 'fxOvr4_4',
+  [Param.FX_OVR5_1]: 'fxOvr5_1',
+  [Param.FX_OVR5_2]: 'fxOvr5_2',
+  [Param.FX_OVR5_3]: 'fxOvr5_3',
+  [Param.FX_OVR5_4]: 'fxOvr5_4',
+  [Param.FX_OVR6_1]: 'fxOvr6_1',
+  [Param.FX_OVR6_2]: 'fxOvr6_2',
+  [Param.FX_OVR6_3]: 'fxOvr6_3',
+  [Param.FX_OVR6_4]: 'fxOvr6_4',
+  [Param.FX_OVR_TARGET1]: 'fxOvrTarget1',
+  [Param.FX_OVR_TARGET2]: 'fxOvrTarget2',
+  [Param.FX_OVR_TARGET3]: 'fxOvrTarget3',
+  [Param.FX_OVR_TARGET4]: 'fxOvrTarget4',
+  [Param.FX_OVR_TARGET5]: 'fxOvrTarget5',
+  [Param.FX_OVR_TARGET6]: 'fxOvrTarget6',
+  [Param.FX_OVR_TARGET7]: 'fxOvrTarget7',
+  [Param.FX_OVR_TARGET8]: 'fxOvrTarget8',
+  [Param.FX_OVR_DEPTH1]: 'fxOvrDepth1',
+  [Param.FX_OVR_DEPTH2]: 'fxOvrDepth2',
+  [Param.FX_OVR_DEPTH3]: 'fxOvrDepth3',
+  [Param.FX_OVR_DEPTH4]: 'fxOvrDepth4',
+  [Param.FX_OVR_DEPTH5]: 'fxOvrDepth5',
+  [Param.FX_OVR_DEPTH6]: 'fxOvrDepth6',
+  [Param.FX_OVR_DEPTH7]: 'fxOvrDepth7',
+  [Param.FX_OVR_DEPTH8]: 'fxOvrDepth8',
+  [Param.FX_OVR_SRC]: 'fxOvrSrc',
   [Param.OSC1_ON]: 'osc1On',
   [Param.OSC1_WAVE]: 'osc1Wave',
   [Param.OSC1_PITCH]: 'osc1Pitch',
@@ -1042,6 +1326,28 @@ export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.FX_MOD4_SRC]: 0,
   [Param.FX_MOD4_DST]: 0,
   [Param.FX_MOD4_DEPTH]: 0,
+  // Per-node effect overrides (P9.3). Every slot starts unset, so the kind's
+  // own knob is the only thing the renderer reads and an older patch renders
+  // exactly as it did; the modulation bus starts disconnected.
+  ...Object.fromEntries(
+    Array.from({ length: FX_OVR_POOL }, (_, index) => [
+      Param.FX_OVR1_1 + index,
+      FX_OVR_UNSET,
+    ]),
+  ),
+  ...Object.fromEntries(
+    Array.from({ length: FX_OVR_MOD_SLOTS }, (_, index) => [
+      Param.FX_OVR_TARGET1 + index,
+      0,
+    ]),
+  ),
+  ...Object.fromEntries(
+    Array.from({ length: FX_OVR_MOD_SLOTS }, (_, index) => [
+      Param.FX_OVR_DEPTH1 + index,
+      0,
+    ]),
+  ),
+  [Param.FX_OVR_SRC]: 0,
 };
 
 /**

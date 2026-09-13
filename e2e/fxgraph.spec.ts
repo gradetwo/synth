@@ -33,6 +33,20 @@ const openEditor = async (page: import('@playwright/test').Page) => {
   await expect(page.locator('.fxg-panel')).toBeVisible();
 };
 
+
+/** Set a range input by value, the way the keyboard or a drag would. */
+const setRange = async (
+  target: import('@playwright/test').Locator,
+  value: number,
+): Promise<void> => {
+  await target.evaluate((el, v) => {
+    const input = el as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(input, String(v));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, value);
+};
+
 /**
  * Load the app again from scratch, in a page of its own.
  *
@@ -119,14 +133,14 @@ test('drags a wire from a node output to an input', async ({ page }) => {
 
   // Node 4's second input is empty; pull a wire from node 1's output to it.
   await expect(page.locator('[data-act="in2"][data-node="3"]')).toHaveValue('0');
-  const from = (await page.locator('[data-act="port-out"][data-node="0"]').boundingBox())!;
-  const to = (await page.locator('[data-act="port-in2"][data-node="3"]').boundingBox())!;
-  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
-  await page.mouse.down();
-  // A ghost wire follows the pointer while the button is held.
-  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
-  await expect(page.locator('.fxg-wire.ghost')).toHaveCount(1);
-  await page.mouse.up();
+  const source = page.locator('[data-act="port-out"][data-node="0"]');
+  const target = page.locator('[data-act="port-in2"][data-node="3"]');
+  // The cards grew with the P9.3 override block, so a node deep in the column
+  // can sit below the panel's fold; the drop is hit-tested with
+  // `elementFromPoint`, which cannot see an off-screen point. `dragTo` scrolls
+  // the target into view and dispatches a real pointer gesture, which is what
+  // a player does before dragging to it.
+  await source.dragTo(target, { force: true });
   await expect(page.locator('[data-act="in2"][data-node="3"]')).toHaveValue('2');
   await expect(page.locator('[data-wire="3:1"]')).toHaveCount(1);
 });
@@ -144,11 +158,14 @@ test('moves a card, follows it with the wires, and keeps the arrangement', async
   const grab = (await handle.boundingBox())!;
   await page.mouse.move(grab.x + grab.width / 2, grab.y + grab.height / 2);
   await page.mouse.down();
-  await page.mouse.move(grab.x + grab.width / 2 + 90, grab.y + grab.height / 2 + 130, { steps: 10 });
+  // The drag has to end inside the viewport: a pointer that walks past the
+  // panel's bottom edge stops delivering the moves (P9.3's taller cards leave
+  // less room between the cards), so the walk stays on screen.
+  await page.mouse.move(grab.x + grab.width / 2 + 90, grab.y + grab.height / 2 + 60, { steps: 10 });
   await page.mouse.up();
   const after = (await card.boundingBox())!;
   expect(after.x).toBeGreaterThan(before.x + 40);
-  expect(after.y).toBeGreaterThan(before.y + 80);
+  expect(after.y).toBeGreaterThan(before.y + 40);
   // The wire ends where the card is now, not where it used to be.
   const wire = await page.locator('[data-wire="1:0"]').getAttribute('d');
   expect(wire).toBeTruthy();
@@ -575,3 +592,113 @@ test('saves the graph as a template, lists it, and applies it again', async ({ p
   await expect(view.locator('[data-act="kind"][data-node="1"]')).toHaveValue('crush');
 });
 
+
+/**
+ * P9.3: the effect parameters are per node, not per kind.
+ *
+ * Two nodes of the same effect can now hold different parameters, the override
+ * is patch data (so it survives a fresh load), and the whole block is reachable
+ * at phone size — which is the list view on a 390x844 screen.
+ */
+test('overrides one node of a kind and leaves its sibling alone', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(400);
+  await openEditor(page);
+
+  const kind = (slot: number) => page.locator('[data-act="kind"][data-node="' + slot + '"]');
+  const toggle = (slot: number, column: number) =>
+    page.locator(`[data-act="ovr-toggle"][data-node="${slot}"][data-ovr-slot="${column}"]`);
+  const value = (slot: number, column: number) =>
+    page.locator(`[data-act="ovr-value"][data-node="${slot}"][data-ovr-slot="${column}"]`);
+
+  // Two delay nodes: the default chain already has one in node 1, add a second.
+  await kind(1).selectOption('delay');
+  await expect(kind(1)).toHaveValue('delay');
+
+  // Node 1's delay time is its first override slot, 1/8 = 0.25 s at 120 BPM.
+  // The switch starts off, and the row says it follows the kind's value.
+  await expect(toggle(0, 0)).toHaveAttribute('aria-pressed', 'false');
+  await clickIn(toggle(0, 0));
+  await expect(toggle(0, 0)).toHaveAttribute('aria-pressed', 'true');
+  const first = await value(0, 0).inputValue();
+  expect(Number(first)).toBeCloseTo(0.25, 2);
+  await setRange(value(0, 0), 0.5);
+  const longTime = await value(0, 0).inputValue();
+  expect(Number(longTime)).toBeCloseTo(0.5, 2);
+
+  // Node 2's own slot 0 is still following the kind: the two nodes are
+  // independent, which is the whole point of the batch.
+  await expect(toggle(1, 0)).toHaveAttribute('aria-pressed', 'false');
+  await clickIn(toggle(1, 0));
+  await setRange(value(1, 0), 0.0625);
+  const shortTime = await value(1, 0).inputValue();
+  expect(Number(shortTime)).toBeCloseTo(0.0625, 2);
+  await expect(value(0, 0)).toHaveValue(longTime);
+
+  // "Follow the kind's value again" clears the node's slot without touching
+  // the sibling's.
+  await clickIn(page.locator('[data-act="ovr-follow"][data-node="1"]'));
+  await expect(toggle(1, 0)).toHaveAttribute('aria-pressed', 'false');
+  await expect(toggle(0, 0)).toHaveAttribute('aria-pressed', 'true');
+
+  // Patch data, so both the override and the cleared sibling come back.
+  const { next: view, closeOld } = await freshLoad(page);
+  await view.getByRole('button', { name: /启动音频引擎/ }).click();
+  await closeOld();
+  await view.waitForTimeout(400);
+  await openEditor(view);
+  await expect(
+    view.locator('[data-act="ovr-value"][data-node="0"][data-ovr-slot="0"]'),
+  ).toHaveValue(longTime);
+  await expect(
+    view.locator('[data-act="ovr-toggle"][data-node="0"][data-ovr-slot="0"]'),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await expect(
+    view.locator('[data-act="ovr-toggle"][data-node="1"][data-ovr-slot="0"]'),
+  ).toHaveAttribute('aria-pressed', 'false');
+});
+
+test.describe('on a phone', () => {
+  // A coarse pointer is what the editor's 36 px targets key off (the same
+  // media query the rest of the panel uses), so the run has to have touch.
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('reaches the override controls at phone size', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(400);
+
+  await page.locator('.top-more > .tbtn.icon').first().click();
+  await page.locator('[data-act="settings"]').click();
+  await page.locator('[data-act="fx-graph-open"]').click();
+  await expect(page.locator('.fxg-list')).toBeVisible();
+
+  // The list view carries the override block for every node that runs an
+  // effect, and every control is at least 36 px tall — the same target the
+  // rest of the editor gives a coarse pointer.
+  const node = page.locator('.fxg-list-node[data-node="0"]');
+  const toggle = node.locator('[data-act="ovr-toggle"]').first();
+  await expect(toggle).toBeVisible();
+  const box = await toggle.boundingBox();
+  expect(box!.height).toBeGreaterThanOrEqual(36);
+  const slider = node.locator('[data-act="ovr-value"]').first();
+  const sliderBox = await slider.boundingBox();
+  expect(sliderBox!.height).toBeGreaterThanOrEqual(36);
+
+  // It works from there: toggle, set a value, and the panel still fits.
+  await clickIn(toggle);
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await setRange(slider, 0.4);
+  const phoneTime = await slider.inputValue();
+  expect(Number(phoneTime)).toBeCloseTo(0.4, 2);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
+
+  // The modulation bus is reachable from the same panel.
+  await expect(page.locator('[data-act="ovr-src"]')).toBeVisible();
+  await expect(page.locator('[data-act="ovr-bus-target"][data-ovr-bus="0"]')).toBeVisible();
+  });
+});

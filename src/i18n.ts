@@ -606,6 +606,26 @@ const DICT: Record<string, [string, string]> = {
   'fxg.modTargetLabel': ['节点 {node} {port}', 'Node {node} {port}'],
   'fxg.modFull': ['调制边已满（{slots} 条）', 'all {slots} modulation edges are in use'],
   'fxg.modDelete': ['删除调制边', 'Delete modulation edge'],
+  // Per-node effect parameters (P9.3). A node can override the parameters its
+  // effect kind shares with every other node of that kind; the toggle is what
+  // decides whether the slot values in the patch are read at all.
+  'fxg.ovr': ['参数覆盖', 'Override'],
+  'fxg.ovrHint': [
+    '每个节点可以覆盖自己那份效果参数：延迟时间/反馈/混合/阻尼、混响大小/混合/阻尼/预延迟、EQ 三段、失真量……未覆盖时跟随该效果的默认值。覆盖随分享码与图模板一起保存。',
+    'A node can override its own copy of the effect parameters: delay time/feedback/mix/damping, reverb size/mix/damping/pre-delay, the three EQ bands, drive amount, and so on. Left alone, a slot follows that effect’s own value. Overrides travel in share codes and graph templates.',
+  ],
+  'fxg.ovrFollow': ['跟随种类默认', 'follows the kind’s default'],
+  'fxg.ovrFollowShort': ['默认', 'default'],
+  'fxg.ovrClear': ['全部跟随默认', 'Follow defaults'],
+  'fxg.ovrSlot': ['覆盖槽位', 'override slot'],
+  'fxg.ovrTime': ['时间', 'TIME'],
+  'fxg.ovrMod': ['覆盖调制', 'Override modulation'],
+  'fxg.ovrModHint': [
+    '用 LFO / ENV 扫一个覆盖槽位，深度是该槽位自身量程的比例；只影响被选中的那一个槽位。目标槽位未开启覆盖时，从该效果的默认值起扫。',
+    'Sweep one override slot with LFO 1, LFO 2 or the envelope. The depth is a fraction of that slot’s own range, and only the selected slot is affected. A slot with no override of its own starts from the effect’s default value.',
+  ],
+  'fxg.ovrModTarget': ['调制槽位', 'modulated slot'],
+  'fxg.ovrModRow': ['第 {n} 条', 'bus {n}'],
   'fx.moveLeft': ['前移一位', 'Move earlier'],
   'fx.moveRight': ['后移一位', 'Move later'],
   'fx.parallel': ['并联送出', 'Parallel send'],

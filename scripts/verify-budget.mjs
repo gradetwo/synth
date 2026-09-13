@@ -100,21 +100,49 @@ const lame = files.find((file) => /lamejs-.*\.js$/.test(file));
 // BSS, so they cost no wasm bytes at all — only the ~5 KB of code does.
 // This is the batch that re-recorded `tests/dsp-baseline{,-2x}.json` and all 81
 // preset fingerprints on purpose.
+// P9.3 (per-node effect parameters) is the fourth, and it is the first batch
+// that spends the budget on *ids and resolution* rather than on a new effect.
+// Measured: clean tree 1683.9 KB / largest wasm gzip 71.2 KB, this batch
+// 1709.8 KB / 73.1 KB. The +25.9 KB is:
+//   * +10.5 KB of wasm raw (both cores: the override pool, the per-node resolve
+//     loop and the `fx_base` mapping — the `[_; PARAM_COUNT]` smoother arrays
+//     grew with the 41 new ids, which is where most of it goes);
+//   * +9.7 KB of `index-*.js` raw (+1.7 KB gzip: 41 ids and their defaults, the
+//     worklet's PARAM table, the editor's override block and its bus rows);
+//   * +3.8 KB of `index-*.css` raw (+0.3 KB gzip: the override controls,
+//     including the 36 px targets a coarse pointer gets);
+//   * +2.3 KB in the lazy FxGraphEditor chunk, plus the hashed-name and
+//     service-worker churn every build carries.
+// The editor stylesheet deliberately reuses the existing `.fxg-gain`,
+// `.fxg-src`, `.fxg-mix-label` and `.fxg-gain-val` rules for the override rows
+// instead of adding a parallel set, and the modulation bus is rendered as one
+// row per node rather than one per core row; both were done before this note
+// was written and are already in the measurement above.
+//
+// **Correction to the P9.1b note below.** P11.1 (`wasm-opt -Oz`) buys back the
+// *dist total* handily — it removes 32-35 % of wasm **raw**, which is what the
+// dist total sums — but it does **not** buy back the wasm **gzip** line: the
+// measured gzip gain is 71 272 (from 72 197) and 68 244 (from 69 342), i.e.
+// about 1 KB per core. This batch's +1.9 KB of gzip is therefore close to
+// permanent, and the ceiling below is "measured + ~1.5 KB" rather than a
+// round number with room to spare.
 const BUDGETS = {
-  // Measured 1683.0 KB after P9.1b (1677.6 KB on the clean tree, +5.4 KB, of
-  // which +5.5 KB is wasm raw). 1684 KB keeps the P8.5 "measured + small
-  // margin" rule at ~1 KB.
-  total: 1684 * 1024,
+  // Measured 1709.8 KB after P9.3 (1683.9 KB on the clean tree, +25.9 KB).
+  // 1712 KB keeps the P8.5 "measured + small margin" rule: the release entry for
+  // this batch lives in the first-screen chunk and measured 1711.4 KB once it
+  // was written, so the margin is ~0.6 KB. P11.1 is expected to claw the wasm
+  // raw share back (~90 KB); until then this is the ceiling.
+  total: 1712 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   // Measured 131.2 KB gzip. +2.8 KB (+2.1 %); the P8.5 plan target was 140 KB,
   // so this is the tight version of an already-reached goal.
   initialJs: 134 * 1024,
   // Measured 19.7 KB gzip. +1.3 KB.
   initialCss: 21 * 1024,
-  // The larger of the two cores. Measured 71.2 KB gzip after P9.1b (69.4 KB on
-  // the clean tree, +1.8 KB): any change to the DSP core should be a deliberate,
-  // reviewed bump. P11.1's `wasm-opt` will not help here — see above.
-  wasm: 72 * 1024,
+  // The larger of the two cores. Measured 73.1 KB gzip after P9.3 (71.2 KB on
+  // the clean tree, +1.9 KB). `wasm-opt` will not bring this back — see the
+  // correction above — so it is a deliberate, reviewed bump.
+  wasm: 74 * 1024,
 };
 
 let failures = 0;
