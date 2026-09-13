@@ -793,9 +793,21 @@ export class SynthStore {
     this.setKeyboardVisible(!this.layout.keyboardVisible);
   }
 
+  /**
+   * Switch the UI language.
+   *
+   * Kept synchronous: it is a store API with synchronous callers (the shell test
+   * renders right after it). The flicker-free precondition is enforced by the
+   * settings drawer, the only UI that calls it — it awaits `loadAllStrings()`
+   * first, so by the time the layout commits every lazy panel already has both
+   * languages and no frame can show a key name. If that load fails the switch
+   * still happens: a missing panel string degrades to its key, which beats a
+   * dead switch.
+   */
   toggleLang() {
-    this.layout = { ...this.layout, lang: this.layout.lang === 'zh' ? 'en' : 'zh' };
-    setLang(this.layout.lang);
+    const next = this.layout.lang === 'zh' ? 'en' : 'zh';
+    this.layout = { ...this.layout, lang: next };
+    setLang(next);
     this.commit();
   }
 

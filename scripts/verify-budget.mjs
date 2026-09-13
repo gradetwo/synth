@@ -253,33 +253,66 @@ const BUDGETS = {
   total: 1562 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   //
-  // **This line moved 134 -> 136 in P10.2, and that is a debt with an owner:
-  // P11.2 (i18n split by language, projected 8-12 KB).** It is written down
-  // here rather than left as a silent bump. Measured 131.2 KB gzip at P8.5,
-  // 133.9 KB after P10.1, and **134.6 KB now (137 834 B exactly, 618 B past the
-  // 134 line)**. Where those 618 bytes are, measured rather than guessed:
-  //   * ~340 B: the ten new zh/en string pairs for the strip's second row
-  //     (picker labels, the two explanations, the three confirmations). The copy
-  //     was already trimmed twice on the way here -- the first draft named the
-  //     full rule in each sentence and cost ~1.1 KB gzip; what is left states
-  //     the same facts in one clause each. The `clip.tplDefaultName` key was
-  //     dropped outright (nothing read it).
-  //   * ~255 B: the parts of `midi/clips.ts`, `state/store.ts` and
-  //     `state/layout.ts` that the *boot* path needs -- the stored-template
-  //     field, its normalizer, and the two store operations. The new arrangement
-  //     primitives themselves (`copyClipToLayer`, `foldClipsInto`,
-  //     `clipFromNotes`, `clipTemplates`) are **not** in this chunk: the entry
-  //     has no copy of them (checked by name), so the lazy `roll`/`PlayerPanel`
-  //     chunks pay for the feature and the first screen pays only for what a
-  //     stored song has to be able to read.
-  // Cutting the rest was possible and rejected: it would mean either deleting
-  // the two sentences that make "the copy does not share state" and "a layer
-  // decides the timbre, not the register" visible at the point of use, or
-  // dropping the non-finite-note guard from the shared note copier (the one that
-  // keeps a corrupt stored figure from becoming a NaN velocity on every path
-  // that builds a clip). Neither is worth 618 bytes, and 136 is what the line
-  // costs with them. `initialCss` and `wasm` are untouched by this batch.
-  initialJs: 136 * 1024,
+  // **P11.2 (i18n split) settled the P10.2 debt and moved this line down
+  // 136 -> 129 KB.** The 136 line was a written-down debt with an owner: P10.2
+  // measured 134.6 KB (137 834 B exactly, 618 B past the old 134) and this batch
+  // was named as the one that buys it back.
+  //
+  // What was done: `src/i18n.ts`'s flat 565-entry table was split structurally,
+  // not wrapped. The first-screen core keeps only the copy the first frame can
+  // render (174 keys: the boot gate, the top bar, the module grid with its
+  // parameter labels and wave/mode names, the performance keyboard, and the
+  // error strings the engine can toast before any panel exists). The other 355
+  // keys ship in `src/i18n-panels.ts` and are registered at runtime: the effect
+  // routing graph, the player panel with its takes and clip arrangement, the
+  // piano roll, the preset library drawer, the imported wavetable/sampler rows,
+  // the settings drawer (an off-canvas panel), the audio settings drawer, the
+  // guide and changelog dialogs and the signal-flow canvas. That module is
+  // reached only by `import()`, so its copy is not in the entry chunk. Each lazy
+  // panel's import in `App.tsx` goes through its loader first; the three eager
+  // components whose copy is lazy (the settings drawer and the two
+  // imported-source pickers) gate on a sentinel key with `useStringsReady()`,
+  // so they render nothing for that microtask instead of painting a key name.
+  // After the move, **no core key has a lazy-only or gated-only reader**: every
+  // one of the 174 is read by code that runs in the first frame.
+  //
+  // 36 keys were also **deleted as dead copy**, with the evidence: zero
+  // references anywhere in `src/`, `e2e/`, `scripts/` or `index.html`. Sixteen
+  // are the `module.<id>` names that `state/layout.ts` hard-codes as
+  // `MODULE_META[i].title` (so the dictionary entry was never read), plus
+  // `app.startHint`, `app.noScript` (the text lives in `index.html`'s
+  // `<noscript>`), `top.power`, `panel.bins`, `module.wavePreview`,
+  // `module.crushOn`, `module.eqOn`, `module.transientAttack/Sustain`,
+  // `drawer.noResult`, `theme.switched`, `app.built`, `err.wasmMissing`,
+  // `err.wasmInstantiate`, and 14 unused `fxg.ovr*` / `roll.*` / `player.*` /
+  // `layer.*` entries. This follows the P10.2 precedent of dropping
+  // `clip.tplDefaultName` outright rather than leaving unread copy behind.
+  //
+  // The key names themselves are **derived** from each table at registration
+  // (`Object.keys`) rather than declared in a parallel `readonly string[]`. The
+  // parallel list was the split's first design and it is the right shape for
+  // `hasKey()` in the abstract, but it sits in the same chunk as the copy it
+  // names, so `dist` (a raw byte sum) paid ~7 KB for strings that gzip had
+  // already seen next to them. Registration is atomic, so a caller that gates on
+  // "this table has arrived" probes one sentinel key instead of holding a list.
+  //
+  // Measured on this tree (node zlib level 9, the same gzip this gate uses):
+  //   * `index-*.js`        299 983 -> 271 040 B raw, 92 238 -> 81 084 B gzip;
+  //   * first-screen JS     137 878 -> 126 724 B gzip (134.65 -> 123.75 KB,
+  //     **-10.89 KB**);
+  //   * dist total          1556.9 -> 1558.3 KB (+1.4 KB, inside the unchanged
+  //     1562 KB line).
+  // The first screen is what the batch was for and the i18n chunk pays for
+  // itself: the moved copy costs ~30 KB of new chunk and the 29 KB off the entry
+  // plus the deleted dead copy covers it. A per-panel split (one i18n chunk per
+  // lazy panel) was measured too and was 1.7 KB *worse* on `dist` (six more
+  // chunk headers, six weaker compression contexts) for the same first-screen
+  // number, which is why the copy is one module.
+  //
+  // 125 KB is "measured + ~1.2 KB": enough for the release changelog entry that
+  // lands in the first-screen chunk (~0.3-0.5 KB per release) and a little
+  // slack, and tighter than any previous value on this line.
+  initialJs: 125 * 1024,
   // Measured 19.7 KB gzip, 20.1 KB after P10.1, **20.2 KB** now: the new strip
   // row. Inside the line either way.
   initialCss: 21 * 1024,

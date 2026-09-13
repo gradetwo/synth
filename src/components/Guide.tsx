@@ -1,5 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { getLang, t } from '@/i18n';
+// Register this dialog's copy at module scope (P11.2); see `i18n.ts`.
+import { loadDocsStrings } from '@/i18n-panels';
+void loadDocsStrings();
 import { GUIDE_SECTIONS, type Bi, type Block } from '@/guide/content';
 
 const pick = (b: Bi): string => (getLang() === 'zh' ? b[0] : b[1]);

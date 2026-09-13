@@ -14,6 +14,15 @@ import '@fontsource/ibm-plex-mono/latin-600.css';
 import './styles/gs1.css';
 
 import App from './App';
+import { loadAllStrings } from './i18n';
+
+// Start pulling the lazy i18n tables (P11.2) before React mounts. They are a
+// couple of KB in one shared chunk, they are not on the critical path — the
+// first frame is painted from the inline core table — and having them in flight
+// from the start is what makes a language switch a microtask instead of a
+// visible wait. `App` also arms an idle preload, which covers browsers where
+// this has not finished by then.
+void loadAllStrings().catch(() => {});
 
 const root = document.getElementById('root');
 if (root) {

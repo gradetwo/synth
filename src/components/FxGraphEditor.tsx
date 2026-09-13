@@ -64,6 +64,11 @@ import { useSynth } from '@/hooks/useSynth';
 import { useViewport } from '@/hooks/useViewport';
 import { haptic, HAPTIC } from '@/hooks/useInputMode';
 import { t } from '@/i18n';
+// Register this panel's copy at module scope (P11.2): the import is awaited by
+// `App.tsx` before the component module resolves, so the first render already
+// has real strings. Idempotent, and normally already done by the idle preload.
+import { loadFxStrings } from '@/i18n-panels';
+void loadFxStrings();
 import { toast } from './Toast';
 
 /* Card geometry (px). The canvas scrolls when the screen is narrower. */

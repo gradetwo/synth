@@ -16,6 +16,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '@/i18n';
+// Register this panel's copy at module scope (P11.2); see `i18n.ts`.
+import { loadRollStrings } from '@/i18n-panels';
+void loadRollStrings();
 import { toast } from './Toast';
 import { haptic, HAPTIC, useInputMode } from '@/hooks/useInputMode';
 import { midiPlayer, type PlayerState } from '@/midi/player';

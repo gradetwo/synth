@@ -19,9 +19,20 @@ import { VELOCITY_CURVES, velocityCurveLabel } from '@/audio/velocity';
 import { parseScala } from '@/audio/scala';
 import { toast } from './Toast';
 import { fxGraphOpen } from '@/state/overlays';
-import { LANG_LABELS, t } from '@/i18n';
+import { LANG_LABELS, loadAllStrings, t } from '@/i18n';
 import { useHaptics, useLang, useTheme, useContrast } from '@/hooks/useSynth';
+import { useStringsReady } from '@/hooks/useStringsReady';
 import { canVibrate, haptic, HAPTIC } from '@/hooks/useInputMode';
+
+/**
+ * One key from the drawer's lazy table, used as the readiness sentinel.
+ * Registration is atomic, so this one probe answers "is the drawer's copy in
+ * memory"; a hand-written list of all 45 keys would be ~1 KB of duplicated
+ * strings in the entry chunk for the same answer.
+ */
+const SETTINGS_SENTINEL = ['settings.title'];
+
+
 
 export function SettingsDrawer({
   open,
@@ -44,6 +55,17 @@ export function SettingsDrawer({
   // Bumped after a mutation so the selects re-read the store.
   const [, bump] = useState(0);
   const scaleRef = useRef<HTMLInputElement | null>(null);
+  /**
+   * The drawer's own copy is lazy (P11.2): it is an off-canvas panel, so none
+   * of it is on the first screen, and the ~45 keys cost more than the rest of
+   * the core table put together. Until the table registers this returns null —
+   * the drawer is closed and hidden at that point, so nothing flickers; the
+   * boot preload in `main.tsx` normally wins the race before a user can click
+   * the gear at all.
+   */
+  const stringsReady = useStringsReady(SETTINGS_SENTINEL);
+
+  if (!stringsReady) return null;
 
   const temperamentLabel = (id: string) => {
     if (id === 'custom') {
@@ -303,7 +325,12 @@ export function SettingsDrawer({
                 <button
                   type="button"
                   className="roll-btn"
-                  onClick={() => store.toggleLang()}
+                  onClick={() => {
+                    // Load the lazy tables first, then switch: the commit below
+                    // re-renders every open panel, and none of them may paint a
+                    // key name for a frame (P11.2). A failed load still switches.
+                    void loadAllStrings().catch(() => {}).then(() => store.toggleLang());
+                  }}
                   title={lang === 'zh' ? 'Switch to English' : '切换为中文'}
                 >
                   {lang === 'zh' ? LANG_LABELS.en : LANG_LABELS.zh}

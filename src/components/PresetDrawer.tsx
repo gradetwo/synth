@@ -5,6 +5,10 @@ import { PRESET_CATEGORIES, type PresetCategory } from '@/state/presets';
 import { WaveIcon } from './controls';
 import { toast } from './Toast';
 import { localizeName, t } from '@/i18n';
+// The drawer's own copy is `drawer.*` (core) but it shares `player.*` labels
+// with the player panel, so it registers that table too (P11.2).
+import { loadPlayerStrings } from '@/i18n-panels';
+void loadPlayerStrings();
 import { haptic } from '@/hooks/useInputMode';
 
 const SW_COLOR: Record<string, string> = {

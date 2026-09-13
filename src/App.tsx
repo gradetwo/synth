@@ -14,40 +14,81 @@ import { ModuleFor } from '@/panels/modules';
 import { ModulesGrid } from '@/components/Module';
 // The three dialogs carry a lot of copy (the guide alone is tens of KB) and
 // ship as their own chunks: the synth itself should not wait for a manual.
-const Guide = lazy(() => import('@/components/Guide').then((m) => ({ default: m.Guide })));
+//
+// Each lazy panel waits for its own *string table* as well as its code (P11.2):
+// the tables live in `src/i18n.<panel>.ts`, and they are registered before the
+// component module resolves, so the panel renders its first frame with real
+// copy instead of key names. The idle preload in `src/i18n.ts` normally beats
+// this, and registration is idempotent, so this is cheap insurance rather than
+// the only path.
+const Guide = lazy(() =>
+  import('@/i18n-panels')
+    .then((m) => m.loadDocsStrings())
+    .then(() => import('@/components/Guide'))
+    .then((m) => ({ default: m.Guide })),
+);
 // The routing editor is a whole canvas: it belongs in a chunk of its own, not in
 // the bundle every visitor downloads.
 // The piano roll is a canvas editing surface behind a button: a chunk of its
 // own, loaded when it is first opened.
-import { SettingsDrawer } from '@/components/SettingsDrawer';
 
-const PianoRoll = lazy(() => import('@/components/PianoRoll').then((m) => ({ default: m.PianoRoll })));
+const PianoRoll = lazy(() =>
+  import('@/i18n-panels')
+    .then((m) => m.loadRollStrings())
+    .then(() => import('@/components/PianoRoll'))
+    .then((m) => ({ default: m.PianoRoll })),
+);
 // The player panel renders the whole track list whether or not it is open, so it
 // belongs in a chunk of its own and mounts the first time it is opened.
 const PlayerPanel = lazy(() =>
-  import('@/components/PlayerPanel').then((m) => ({ default: m.PlayerPanel })),
+  import('@/i18n-panels')
+    .then((m) => m.loadPlayerStrings())
+    .then(() => import('@/components/PlayerPanel'))
+    .then((m) => ({ default: m.PlayerPanel })),
 );
 // The preset drawer and the flow canvas are behind a click or a view switch too.
-// The settings drawer stays in the main chunk: it is the panel the shell test
-// renders through, and keeping it eager keeps that test honest.
 const PresetDrawer = lazy(() =>
-  import('@/components/PresetDrawer').then((m) => ({ default: m.PresetDrawer })),
+  import('@/i18n-panels')
+    .then((m) => m.loadPlayerStrings())
+    .then(() => import('@/components/PresetDrawer'))
+    .then((m) => ({ default: m.PresetDrawer })),
 );
-const SignalFlow = lazy(() => import('@/components/SignalFlow').then((m) => ({ default: m.SignalFlow })));
+const SignalFlow = lazy(() =>
+  import('@/i18n-panels')
+    .then((m) => m.loadFlowStrings())
+    .then(() => import('@/components/SignalFlow'))
+    .then((m) => ({ default: m.SignalFlow })),
+);
 const FxGraphEditor = lazy(() =>
-  import('@/components/FxGraphEditor').then((m) => ({ default: m.FxGraphEditor })),
+  import('@/i18n-panels')
+    .then((m) => m.loadFxStrings())
+    .then(() => import('@/components/FxGraphEditor'))
+    .then((m) => ({ default: m.FxGraphEditor })),
 );
-const Changelog = lazy(() => import('@/components/Changelog').then((m) => ({ default: m.Changelog })));
+const Changelog = lazy(() =>
+  import('@/i18n-panels')
+    .then((m) => m.loadDocsStrings())
+    .then(() => import('@/components/Changelog'))
+    .then((m) => ({ default: m.Changelog })),
+);
 const AudioSettings = lazy(() =>
-  import('@/components/AudioSettings').then((m) => ({ default: m.AudioSettings })),
+  import('@/i18n-panels')
+    .then((m) => m.loadAudioStrings())
+    .then(() => import('@/components/AudioSettings'))
+    .then((m) => ({ default: m.AudioSettings })),
 );
+// The settings drawer stays in the main chunk: it is the panel the shell test
+// renders through, and keeping it eager keeps that test honest. Its copy is
+// therefore core (`settings.*`, `scene.*`, `inst.*`, `velocity.*`); only the
+// theme-name strings it shares with nothing else moved out (P11.2).
+import { SettingsDrawer } from '@/components/SettingsDrawer';
 import { ToastHost } from '@/components/Toast';
 import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/register';
 import { setHapticsEnabled } from '@/hooks/useInputMode';
 import { readShareCode } from '@/state/share';
 import { APP_VERSION } from '@/version';
 
-import { getLang, t } from '@/i18n';
+import { getLang, preloadStrings, t } from '@/i18n';
 import { toast } from '@/components/Toast';
 import { midiPlayer } from '@/midi/player';
 import { recorder } from '@/midi/recorder';
@@ -205,6 +246,9 @@ export default function App() {
       void import('@/components/PresetDrawer');
       void import('@/components/PianoRoll');
       void import('@/components/FxGraphEditor');
+      // The string tables ride along with the same idle slot; `preloadStrings()`
+      // covers the panels the warm-up list does not name.
+      void import('@/i18n-panels').then((m) => Promise.all(m.STRING_LOADERS.map((load) => load())));
     };
     const idle = (window as Window & typeof globalThis & {
       requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number;
@@ -220,6 +264,19 @@ export default function App() {
   const theme = useTheme();
   const contrast = useContrast();
   const [systemDark, setSystemDark] = useState(true);
+
+  /**
+   * Pull the lazy i18n tables in while the browser is idle (P11.2).
+   *
+   * The first frame only needs the inline core, but every panel that owns a
+   * lazy table would otherwise wait for its copy the first time it opens, and a
+   * language switch would have to wait for one. Nothing here blocks paint: it
+   * is a `requestIdleCallback` (with a timer fallback), and a failure is
+   * retried by the panel's own loader.
+   */
+  useEffect(() => {
+    preloadStrings();
+  }, []);
 
   useEffect(() => {
     // Apply a shared patch from the URL hash on first load.
@@ -440,7 +497,12 @@ export default function App() {
         // the same path the transport's stop button uses (P5.4). The recording
         // commit is imported on demand: the take model belongs to the recording
         // flow, and pulling it in here would put it in the first-load bundle.
-        void import('@/state/recording').then(({ finishRecording }) => finishRecording(clip));
+        // Its copy lives in the player module (P11.2), so that table is loaded
+        // first — `finishRecording` toasts take/player strings synchronously.
+        void import('@/i18n-panels')
+          .then((m) => m.loadPlayerStrings())
+          .then(() => import('@/state/recording'))
+          .then(({ finishRecording }) => finishRecording(clip));
       }
     }
     midiPlayer.stop();

@@ -16,6 +16,7 @@ import {
   subscribeUserSample,
 } from '@/audio/userSample';
 import { useParam } from '@/hooks/useSynth';
+import { useStringsReady } from '@/hooks/useStringsReady';
 import { store } from '@/state/store';
 import { t } from '@/i18n';
 import { Knob, Segment } from './controls';
@@ -47,6 +48,10 @@ export function UserSamplePicker({ which }: { which: 1 | 2 }) {
   const loaded = useSyncExternalStore(subscribeUserSample, getUserSample, getUserSample);
   const mode = Math.round(useParam(Param.SMP_MODE));
   const fileRef = useRef<HTMLInputElement>(null);
+  // This row is eager UI with lazy copy (P11.2); see `useStringsReady`.
+  const stringsReady = useStringsReady(['smp.import']);
+
+  if (!stringsReady) return null;
 
   const pick = async (file: File) => {
     try {

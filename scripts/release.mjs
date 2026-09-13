@@ -21,6 +21,7 @@
  *   --skip-verify  skip `npm run verify` (assumes it just passed)
  *   --skip-e2e     skip the Chromium suite
  *   --skip-deploy  do not deploy, but still package and tag
+ *   --skip-git-check  do not require a clean tree (for a gate drill, never a ship)
  *   --quiet        only print step headers and the final verdict
  */
 import { spawnSync } from 'node:child_process';
@@ -33,6 +34,19 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const site = process.env.GS1_SITE ?? 'https://synth.wangda.today';
 const args = process.argv.slice(2);
 
+/**
+ * First-interactive budget for the release gate (P11.5).
+ *
+ * Same number and the same override as `e2e/performance.spec.ts`'s
+ * `BOOT_BUDGET_MS`: 3 200 ms is "the slowest full parallel suite run seen on
+ * this machine (2 450 ms) plus ~30 %", and the spec is the thing that actually
+ * measures it. This step exists so the budget is a *named, overridable release
+ * gate* rather than a side effect of the E2E suite: it re-checks the number the
+ * spec printed, so a run with `--skip-e2e` still cannot ship a boot regression,
+ * and a CI box with its own baseline can pin it with `GS1_BOOT_BUDGET_MS`.
+ */
+const BOOT_BUDGET_MS = Number(process.env.GS1_BOOT_BUDGET_MS ?? 3200);
+
 const flag = (name) => args.includes(`--${name}`);
 const positional = args.filter((a) => !a.startsWith('--'));
 const flags = {
@@ -41,6 +55,7 @@ const flags = {
   skipVerify: flag('skip-verify'),
   skipE2E: flag('skip-e2e'),
   skipDeploy: flag('skip-deploy'),
+  skipGitCheck: flag('skip-git-check'),
   quiet: flag('quiet'),
 };
 
@@ -57,7 +72,7 @@ const fail = (message) => {
 
 // --------------------------------------------------------------- helpers
 
-function run(cmd, cmdArgs, { capture = false, env = {}, mutates = false } = {}) {
+function run(cmd, cmdArgs, { capture = false, env = {}, mutates = false, echo = false } = {}) {
   if (mutates && flags.dryRun) {
     log(`[release]   $ ${cmd} ${cmdArgs.join(' ')}  (dry run: skipped)`);
     return '';
@@ -69,6 +84,7 @@ function run(cmd, cmdArgs, { capture = false, env = {}, mutates = false } = {}) 
     env: { ...process.env, ...env },
     encoding: 'utf8',
   });
+  if (echo && capture && result.stdout) process.stdout.write(result.stdout);
   if (result.error) fail(`${cmd} could not run — ${result.error.message}`);
   if (result.status !== 0) fail(`${cmd} ${cmdArgs.join(' ')} exited ${result.status}`);
   return capture ? (result.stdout ?? '') : '';
@@ -109,6 +125,34 @@ async function liveIndexHash() {
   const res = await fetch(url, { headers: { 'cache-control': 'no-cache' } });
   if (!res.ok) fail(`live check: ${url} returned ${res.status}`);
   return indexHash(await res.text());
+}
+
+/**
+ * First-interactive gate (P11.5).
+ *
+ * The measurement itself lives in `e2e/performance.spec.ts` and the spec already
+ * asserts the budget, so the point of this code is *not* to measure again: it
+ * is to make the budget a named release step with an overridable threshold, and
+ * to re-check the number the spec printed. The spec emits one machine-readable
+ * line — `[boot-budget] interactive N ms of [...] · FCP ... · budget M ms` —
+ * which is parsed here.
+ *
+ * Normal path: the Chromium suite runs once and its output is scanned, so the
+ * gate costs nothing extra and cannot be skipped by accident (`npm run test:e2e`
+ * is also what CI runs). `--skip-e2e` is the exception: then the suite is not
+ * running at all, so this runs the one spec file to keep the gate honest.
+ */
+const BOOT_LINE = /\[boot-budget\] interactive (\d+) ms .*? budget (\d+) ms/;
+
+/** Scan a captured run for the boot line and check it. */
+function checkBootFrom(output, what) {
+  const match = output.match(BOOT_LINE);
+  if (!match) fail(`boot budget: ${what} printed no [boot-budget] line`);
+  const interactive = Number(match[1]);
+  if (interactive > BOOT_BUDGET_MS) {
+    fail(`boot budget: interactive ${interactive} ms > ${BOOT_BUDGET_MS} ms`);
+  }
+  log(`[release]   ✓ first interactive ${interactive} ms ≤ ${BOOT_BUDGET_MS} ms (${what})`);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -170,13 +214,15 @@ function preflight() {
   const sorted = [...versions].sort(compareVersions).reverse();
   check('changelog versions are unique and newest-first', versions.join() === sorted.join(), `${versions.length} releases`);
 
-  if (!flags.check) {
+  if (!flags.check && !flags.skipGitCheck) {
     const dirty = git(['status', '--porcelain'])
       .split('\n')
       .filter((line) => line.trim() && !/^\?\? (release|dist|\.tmp|test-results|playwright-report)\//.test(line));
     check('no uncommitted changes', dirty.length === 0, dirty.slice(0, 3).join(' | '));
     const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
     check('on a branch (not detached)', branch !== 'HEAD', branch);
+  } else if (flags.skipGitCheck) {
+    log('[release]   (git cleanliness check skipped by --skip-git-check)');
   }
 
   const bad = checks.filter((c) => !c.ok);
@@ -198,8 +244,24 @@ async function main() {
   }
 
   if (!flags.skipE2E) {
-    step('Chromium end-to-end suite');
-    run('npm', ['run', 'test:e2e', '--', '--project=chromium']);
+    step(`Chromium end-to-end suite (first-interactive budget ${BOOT_BUDGET_MS} ms)`);
+    const output = run('npm', ['run', 'test:e2e', '--', '--project=chromium'], {
+      capture: true,
+      echo: true,
+      env: { GS1_BOOT_BUDGET_MS: String(BOOT_BUDGET_MS) },
+    });
+    checkBootFrom(output, 'from the suite run');
+  } else {
+    // `--skip-e2e` skips the browser suite, so the boot gate has to stand on its
+    // own or it would silently disappear from exactly the release that opted out
+    // of the suite. One spec file, not the suite.
+    step(`first-interactive budget only (${BOOT_BUDGET_MS} ms; --skip-e2e)`);
+    const output = run(
+      'npx',
+      ['playwright', 'test', 'e2e/performance.spec.ts', '--project=chromium', '--reporter=list'],
+      { capture: true, echo: true, env: { GS1_BOOT_BUDGET_MS: String(BOOT_BUDGET_MS) } },
+    );
+    checkBootFrom(output, 'from e2e/performance.spec.ts');
   }
 
   step('package release artefacts');

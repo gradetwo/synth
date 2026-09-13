@@ -1,20 +1,59 @@
 /**
- * Bilingual UI strings (zh / en).
+ * Bilingual UI strings (zh / en) — the **first-screen core table**.
  *
- * A flat `key: [zh, en]` table keeps the two languages side by side. Components
- * call `t('key')`; the active language is mirrored from the persisted layout
- * state via `setLang()`, so changing it re-renders through the normal store
- * subscription. Missing keys fall back to the key itself, which makes gaps
- * obvious without throwing.
+ * Only the copy the first frame can render lives here: the boot gate, the top
+ * bar, the module grid with its parameter labels and wave/mode names, the
+ * performance keyboard, the filter and impulse-response selectors, and the
+ * error strings the engine can toast before any panel exists. The test is
+ * per-key, not per-prefix: every key below is read by code that runs during the
+ * first frame, and `i18n.test.ts` asserts that by walking the eager import
+ * graph.
+ *
+ * Everything else — the preset library drawer, the settings drawer, the audio
+ * settings drawer, the player panel with its takes and clip arrangement, the
+ * piano roll, the routing graph, the guide and changelog, the signal-flow
+ * canvas and the imported-source rows — lives in `src/i18n-panels.ts` and is
+ * registered at runtime. The three eager components whose copy is lazy (the
+ * settings drawer and the two imported-source pickers) gate on a sentinel key
+ * with `useStringsReady()`, so they render nothing for that microtask instead of
+ * painting a key name.
+ *
+ * This is a structural split, not a lazy wrapper around a synchronous `t()`:
+ * the string tables themselves leave the entry chunk, which is what moves the
+ * first-screen JS gzip line (the measured before/after numbers are in
+ * `scripts/verify-budget.mjs`).
+ *
+ * ## The loading contract
+ *
+ * * `hasKey()` answers for every key the app references **anywhere**, because
+ *   registration folds in the keys of every table that has loaded. Registration
+ *   is atomic, so "has this table arrived" is answered by probing one of its
+ *   keys. `i18n.test.ts` loads everything first and then checks that every
+ *   statically referenced key is covered, and that no key sits in two tables.
+ * * `t()` and `getLang()` stay **synchronous** on purpose: toast helpers,
+ *   `aria-label`s, canvas drawing and the worklet-status path call them from
+ *   code that cannot await. A key whose table has not arrived falls back to the
+ *   key name — the pre-existing "missing key" behaviour — which is why a panel
+ *   must load its strings *before* it renders, exactly as it waits for its own
+ *   chunk.
+ * * Changing the language goes through `loadAllStrings()` and only then commits
+ *   the layout (the settings drawer does the awaiting, so `store.toggleLang()`
+ *   stays synchronous for its own callers), so a switch can never paint one
+ *   language and correct itself a frame later.
  */
 
 export type Lang = 'zh' | 'en';
 
-const DICT: Record<string, [string, string]> = {
+/** One string in both languages: `[zh, en]`. */
+export type Bi = [string, string];
+
+/** A table of `key: [zh, en]` pairs, as each module exports it. */
+export type StringTable = Record<string, Bi>;
+
+const CORE: StringTable = {
   // --- app shell -----------------------------------------------------------
   'app.start': ['启动音频引擎', 'Start Audio Engine'],
   'app.starting': ['正在启动…', 'Starting…'],
-  'app.startHint': ['浏览器需要一次点击才能播放声音', 'Browsers need one tap before audio can play'],
   'app.startFailed': ['启动失败', 'Startup failed'],
   'app.retry': ['重试', 'Retry'],
   'app.updateReady': ['新版本已就绪', 'New version ready'],
@@ -23,10 +62,8 @@ const DICT: Record<string, [string, string]> = {
   'app.suspended': ['⏸ 音频已暂停 · 点按此处恢复', '⏸ Audio suspended · tap to resume'],
   'app.sharedLoaded': ['已载入分享音色', 'Shared patch loaded'],
   'preset.initName': ['INIT · 初始正弦', 'INIT · Sine'],
-  'app.noScript': ['GROOVE SYNTH GS-1 需要启用 JavaScript 才能运行。', 'GROOVE SYNTH GS-1 requires JavaScript.'],
 
   // --- top bar -------------------------------------------------------------
-  'top.power': ['电源开关', 'Power'],
   'top.prevPreset': ['上一个预设', 'Previous preset'],
   'top.nextPreset': ['下一个预设', 'Next preset'],
   'top.openPresets': ['点击打开预设库', 'Open the preset library'],
@@ -54,7 +91,6 @@ const DICT: Record<string, [string, string]> = {
   'panel.scope': ['SCOPE · 时域波形', 'SCOPE · Waveform'],
   'panel.spectrum': ['SPECTRUM · 频谱', 'SPECTRUM · Spectrum'],
   'panel.monitor': ['MONITOR · 监视', 'MONITOR · Monitor'],
-  'panel.bins': ['36 BINS · PEAK HOLD', '36 BINS · PEAK HOLD'],
   'monitor.polyTitle': ['负载过高时自动降低的复音上限', 'Polyphony cap reduced automatically under load'],
   'canvas.scopeAria': ['时域波形示波器', 'Waveform oscilloscope'],
   'canvas.spectrumAria': ['频谱分析', 'Spectrum analyser'],
@@ -62,28 +98,19 @@ const DICT: Record<string, [string, string]> = {
   'canvas.vuAria': ['输出电平', 'Output level'],
 
   // --- modules -------------------------------------------------------------
-  'module.osc1': ['OSC 1', 'OSC 1'],
   'module.osc1.sub': ['振荡器 A', 'Oscillator A'],
-  'module.osc2': ['OSC 2', 'OSC 2'],
   'module.osc2.sub': ['振荡器 B', 'Oscillator B'],
-  'module.filter': ['FILTER', 'FILTER'],
   'module.filter.sub': ['滤波器', 'Filter'],
-  'module.env': ['AMP ENV', 'AMP ENV'],
   'module.env.sub': ['振幅包络', 'Amp envelope'],
-  'module.lfo': ['LFO', 'LFO'],
   'module.lfo.sub': ['低频振荡', 'Low-frequency oscillator'],
-  'module.matrix': ['MOD MATRIX', 'MOD MATRIX'],
   'module.matrix.sub': ['调制路由', 'Modulation routing'],
-  'module.fx': ['FX', 'FX'],
   'module.fx.sub': ['效果处理', 'Effects'],
-  'module.fx2': ['FX 2', 'FX 2'],
   'module.fx2.sub': ['调制效果', 'Modulation effects'],
   'module.drag': ['拖动排序', 'Drag to reorder'],
   'module.dragAria': ['拖动 {title} 排序', 'Drag {title} to reorder'],
   'module.collapse': ['收起', 'Collapse'],
   'module.expand': ['展开', 'Expand'],
   'module.ledAria': ['{title} 开关', '{title} on/off'],
-  'module.wavePreview': ['WAVE PREVIEW', 'WAVE PREVIEW'],
   'module.addRoute': ['＋ 添加调制路由', '+ Add modulation route'],
   'module.voiceMode': ['声部模式', 'Voice mode'],
   'module.modePoly': ['复音', 'Poly'],
@@ -115,12 +142,8 @@ const DICT: Record<string, [string, string]> = {
   'module.reverbOn': ['混响开关', 'Reverb on/off'],
   'module.delayOn': ['延迟开关', 'Delay on/off'],
   'module.crush': ['比特压碎', 'BIT CRUSH'],
-  'module.crushOn': ['比特压碎开关', 'Bit-crusher on/off'],
   'module.eq': ['塑形均衡', 'SHAPING EQ'],
-  'module.eqOn': ['塑形均衡开关', 'Shaping EQ on/off'],
   'module.transient': ['瞬态整形', 'TRANSIENT'],
-  'module.transientAttack': ['起音：提升（+）或削减（-）音符起跳的瞬态', 'Attack: lift (+) or cut (-) the onset of a note'],
-  'module.transientSustain': ['延音：提升（+）或削减（-）音符衰减的尾段', 'Sustain: lift (+) or cut (-) the falling tail of a note'],
   'module.matrixSrc': ['调制源', 'Source'],
   'module.matrixDst': ['调制目标', 'Destination'],
   'module.matrixAmt': ['调制量', 'Amount'],
@@ -130,290 +153,27 @@ const DICT: Record<string, [string, string]> = {
   'env.valueHint': ['长按或拖动上下调节 · 点击输入数值', 'Hold/drag vertically to adjust · tap to type a value'],
 
   // --- preset drawer -------------------------------------------------------
-  'drawer.title': ['PRESET LIBRARY · 预设库', 'PRESET LIBRARY'],
-  'drawer.close': ['关闭', 'Close'],
-  'drawer.search': ['搜索音色 / 风格 / 分类…', 'Search tone / style / category…'],
-  'drawer.noResult': ['NO PRESET FOUND', 'NO PRESET FOUND'],
-  'drawer.loaded': ['已载入预设 <b>{name}</b>', 'Loaded preset <b>{name}</b>'],
-  'drawer.delete': ['删除预设', 'Delete preset'],
-  'drawer.deleted': ['已删除用户预设', 'User preset deleted'],
-  'drawer.import': ['导入', 'Import'],
-  'drawer.export': ['导出', 'Export'],
-  'drawer.share': ['分享', 'Share'],
-  'drawer.guide': ['使用指南', 'Guide'],
-  'drawer.changelog': ['更新记录', 'Changelog'],
-  'drawer.contrast': ['高对比', 'Contrast'],
   'theme.label': ['主题', 'Theme'],
   'theme.dark': ['深色', 'Dark'],
   'theme.light': ['浅色', 'Light'],
   'theme.auto': ['自动', 'Auto'],
-  'theme.autoHint': ['跟随系统', 'Follow system'],
-  'theme.switched': ['主题：{name}', 'Theme: {name}'],
-  'drawer.haptics': ['振动反馈', 'Haptics'],
-  'drawer.hapticsOn': ['已开启振动反馈', 'Haptic feedback on'],
-  'drawer.hapticsOff': ['已关闭振动反馈', 'Haptic feedback off'],
-  'drawer.reset': ['重置布局', 'Reset layout'],
-  'drawer.imported': ['已导入音色文件', 'Patch file imported'],
-  'drawer.importFailed': ['文件格式无法识别', 'Unrecognised file format'],
-  'drawer.exported': ['已导出当前音色 · <b>.gs1.json</b>', 'Exported the current patch · <b>.gs1.json</b>'],
-  'drawer.shareFile': [
-    '曲目太长，已改为下载 .gs1song 文件（对方用预设库「导入」即可）',
-    'The song is too long for a link, so it was downloaded as a .gs1song file (the other side imports it from the preset library)',
-  ],
-  'drawer.shared': ['分享链接已复制到剪贴板', 'Share link copied to the clipboard'],
-  'drawer.shareFailed': ['分享链接已写入地址栏', 'Share link written to the address bar'],
-  'drawer.contrastOn': ['已切换高对比配色', 'High-contrast theme on'],
-  'drawer.contrastOff': ['已切换默认配色', 'Default theme restored'],
-  'drawer.resetDone': ['已重置面板布局与键盘显示', 'Layout and keyboard display reset'],
-  'drawer.footer': ['共 <b>{n}</b> 个预设 · {m} 个本地收藏', '<b>{n}</b> presets · {m} local'],
 
   // --- guide ---------------------------------------------------------------
-  'guide.title': ['使用指南', 'Guide'],
-  'changelog.title': ['更新记录', 'Changelog'],
-  'changelog.sub': ['版本历史与更新内容 · 当前版本', 'Release history · running'],
-  'changelog.current': ['当前版本', 'current'],
-  'changelog.footer': ['更新记录随应用离线保存；部署新版本后这里会列出对应的改动。', 'The changelog ships with the app and works offline; each deployment lists its changes here.'],  'guide.sub': ['合成器基础 · 新手教学 · 使用帮助 · 从零捏音色', 'Synthesis · Getting started · Help · Sound design'],
-  'guide.toc': ['目录', 'Contents'],
-  'guide.footer': ['按 Esc 或点击空白处关闭 · 全部内容随应用离线可用', 'Press Esc or click outside to close · fully offline'],
-
-  // --- responsive chrome ---------------------------------------------------
   'display.expand': ['展开示波器与频谱', 'Show scope & spectrum'],
   'display.collapse': ['收起示波器与频谱', 'Hide scope & spectrum'],
   'top.more': ['更多操作', 'More actions'],
 
   // --- player / midi -------------------------------------------------------
   'player.title': ['播放器', 'Player'],
-  'player.play': ['播放', 'Play'],
-  'player.pause': ['暂停', 'Pause'],
-  'player.stop': ['停止', 'Stop'],
-  'player.loop': ['循环', 'Loop'],
-  'player.seek': ['播放进度', 'Seek'],
-  'app.built': ['版本号（更新记录里可查看是否有新版）', 'current build (see Changelog for newer)'],
   'app.overload': [
     '设备负载偏高：已自动把复音数降到 {n}（监视器可查看 DSP 负载%）',
     'Device load is high: polyphony dropped to {n} automatically (the monitor shows the DSP load)',
   ],
-  'tuning.import': ['导入 .scl', 'Import .scl'],
-  'tuning.importHint': ['导入 Scala 调律文件（.scl），支持任意音数与非八度周期', 'Import a Scala tuning file (.scl): any number of notes, non-octave periods included'],
-  'tuning.imported': ['已导入 {name}（{notes} 音）', 'Imported {name} ({notes} notes)'],
-  'tuning.importFailed': ['导入失败：{msg}', 'Import failed: {msg}'],
-  'tuning.scala.tooShort': ['文件太短', 'file too short'],
-  'tuning.scala.badCount': ['音数无效', 'invalid note count'],
-  'tuning.scala.tooFewNotes': ['音数不足', 'fewer intervals than declared'],
-  'tuning.scala.badInterval': ['音程无法解析', 'unreadable interval'],
-  'tuning.scala.badRatio': ['音程比值无效', 'invalid ratio'],
-  'tuning.scala.badPeriod': ['周期无效', 'invalid period'],
-  'scene.title': ['场景', 'Scenes'],
-  'scene.pick': ['选择场景…', 'Recall a scene…'],
-  'scene.save': ['保存当前', 'Save current'],
-  'scene.delete': ['删除最后一个', 'Delete last'],
-  'scene.defaultName': ['场景', 'Scene'],
-  'scene.saved': ['已保存 {name}', 'Saved {name}'],
-  'scene.applied': ['已切换到该场景', 'Scene recalled'],
-  'scene.deleted': ['已删除场景', 'Scene deleted'],
-  'velocity.title': ['力度曲线', 'Velocity curve'],
-  'velocity.changed': ['力度曲线：{name}', 'Velocity curve: {name}'],
-  'tuning.title': ['调律', 'Tuning'],
-  'tuning.changed': ['调律已改为 {name}', 'Tuning set to {name}'],
-  'midi.outTitle': ['MIDI 输出', 'MIDI output'],
-  'midi.outHint': ['把演奏的音符发送到外部设备（硬件合成器、鼓机、DAW）；需要先在顶栏授权 MIDI', 'Send played notes to an external device (hardware synth, drum machine, DAW); grant MIDI access in the top bar first'],
-  'midi.outPort': ['输出端口', 'Output port'],
-  'midi.outNone': ['未检测到 MIDI 输出设备。', 'No MIDI output device found.'],
-  'midi.mpe': ['MPE 输入', 'MPE input'],
-  'midi.mpeHint': ['每个音独立弯音（每通道一音，通道压力仍作用于整体）', 'Per-note pitch bend (one note per channel; channel pressure still applies globally)'],
-  'cc.title': ['MIDI CC 映射', 'MIDI CC mapping'],
-  'cc.hint': ['选一个控件 → 点「学习」→ 转动 MIDI 控制器上的旋钮即可绑定（可在下面查看/清除）。映射会记住。',
-    'Pick a control, press Learn, then move the knob on your MIDI controller. Mappings are listed below and remembered.'],
-  'cc.param': ['要映射的控件', 'Control to map'],
-  'cc.learn': ['学习', 'Learn'],
-  'cc.waiting': ['等待 CC…（点此取消）', 'Waiting for CC…'],
-  'cc.clear': ['清除', 'Clear'],
-  'cc.none': ['尚未映射任何 CC。', 'No controllers mapped yet.'],
-  'audio.output': ['输出设备', 'Output device'],
-  'audio.outputHint': ['把声音送到指定设备（需要浏览器支持，且设备标签可能需要先授权麦克风才可见）', 'Route the output to a chosen device (browser support required; labels may need microphone permission first)'],
-  'audio.outputSet': ['已切换输出设备', 'Output device switched'],
-  'audio.outputUnsupported': ['此浏览器不支持选择输出设备', 'This browser cannot select an output device'],
-  'audio.refresh': ['刷新', 'Refresh'],
-  'audio.title': ['音频设置', 'Audio settings'],
-  'audio.sub': ['引擎状态 · 采样率 · 延迟 · 复音数 · 实时负载', 'Engine · sample rate · latency · polyphony · live load'],
-  'audio.engine': ['引擎状态', 'Engine'],
-  'audio.notStarted': ['未启动（点“启动音频引擎”）', 'not started'],
-  'audio.sampleRate': ['采样率', 'Sample rate'],
-  'audio.latency': ['输出延迟', 'Output latency'],
-  'audio.core': ['DSP 内核', 'DSP core'],
-  'audio.peak': ['输出峰值', 'Output peak'],
-  'audio.load': ['DSP 负载', 'DSP load'],
-  'audio.loadHint': ['占每个渲染量子的时间预算；长期 >90% 说明设备吃力，建议降低复音或关闭效果', 'Share of the render-quantum budget; sitting above 90% means the device is struggling'],
-  'audio.polyphony': ['复音数', 'Polyphony'],
-  'audio.polyHint': ['负载过高时引擎会自动下调；这里可以手动设一个上限。', 'The engine lowers this automatically under load; set a ceiling here if you prefer.'],
-  'audio.resume': ['恢复音频', 'Resume audio'],
-  'audio.footer': ['这些数字来自浏览器与渲染线程本身，用于判断“音质问题”到底出在哪一环。', 'These numbers come from the browser and the render thread, so a sound problem can be traced to the right stage.'],
-  'drawer.checkUpdate': ['检查更新', 'Updates'],
-  'drawer.updateCurrent': ['已是最新版本', 'You are on the latest version'],
-  'drawer.updateFound': ['发现新版本，正在更新…', 'New version found, updating…'],
-  'drawer.updateUnsupported': ['离线模式不可用', 'Update check unavailable'],
-  'player.metronome': ['节拍器', 'Metronome'],
-  'player.setA': ['把 A 点设在当前位置（配合 B 循环这一段）', 'Set loop point A at the playhead'],
-  'player.setB': ['把 B 点设在当前位置', 'Set loop point B at the playhead'],
-  'player.clearAB': ['清除 A/B 循环段', 'Clear the A/B loop'],
-  'player.countIn': ['预备拍', 'Count-in'],
-  'player.rate': ['速度', 'Rate'],
-  'player.transpose': ['移调', 'Transpose'],
-  'player.track': ['曲目', 'Track'],
-  'player.record': ['录制', 'Record'],
-  'player.stopRec': ['停止录制', 'Stop recording'],
-  'player.recordingName': ['我的录制', 'My recording'],
-  'player.recordedBy': ['现场演奏', 'Live take'],
-  'player.import': ['导入 MIDI', 'Import MIDI'],
-  'player.importedBy': ['导入文件', 'Imported file'],
-  'player.imported': ['已导入 <b>{name}</b> · {n} 个音符', 'Imported <b>{name}</b> · {n} notes'],
-  'player.importFailed': ['MIDI 导入失败：{msg}', 'MIDI import failed: {msg}'],
-  'player.emptyFile': ['文件里没有音符', 'the file contains no notes'],
-  'player.exportMidi': ['导出 MIDI', 'Export MIDI'],
-  'player.midiSaved': ['已导出 <b>{name}.mid</b>', 'Exported <b>{name}.mid</b>'],
-  'player.exportWav': ['导出 WAV（无损）', 'Export WAV'],
-  'player.wavSaved': ['已保存 {name}.wav（无损，体积较大）', 'Saved {name}.wav (lossless, large)'],
-  'player.wavHint': ['无损导出：文件更大，但没有任何编码噪声——如果 MP3 听起来有底噪，用它对比', 'Lossless export: larger, no encoder noise at all — use it to check whether an MP3 artefact is the encoder'],
-  'player.exportMp3': ['导出 MP3', 'Export MP3'],
-  'player.mp3Saved': ['已导出 <b>{name}.mp3</b>', 'Exported <b>{name}.mp3</b>'],
-  'player.mp3Failed': ['MP3 导出失败：{msg}', 'MP3 export failed: {msg}'],
-  'player.rendering': ['渲染中…', 'Rendering…'],
-  'player.notes': ['音符', 'notes'],
-  'player.search': ['搜索曲目…', 'Search tracks…'],
-  'player.groupClip': ['录制', 'Recordings'],
-  'player.groupImported': ['导入', 'Imported'],
-  'player.groupBuiltin': ['内置曲目', 'Built-in'],
-  'player.quantise': ['量化', 'Quantise'],
-  'player.quantiseHint': ['录制结束时把音符对齐到网格（不影响已有曲目）', 'Snap a recording to the grid when it is saved (does not touch existing tracks)'],
-  'player.clipSavedQuantised': ['已保存录制（{n} 个音，已按 {grid} 量化）', 'Recording saved ({n} notes, quantised to {grid})'],
-  'player.clipSaved': [
-    '录制完成 · {n} 个音符 · 点「编辑」可在钢琴卷帘里修改',
-    'Take finished · {n} notes — tap Edit to tweak it in the piano roll',
-  ],
-  'player.copyright': [
-    '古典与民乐为公版作品，已完整编配；现代影视 / 游戏主题仅作简短示范，版权归原作者所有。',
-    'Classical and folk pieces are public domain and fully arranged; modern film/game themes are short demonstrations and remain the property of their owners.',
-  ],
-
-  // --- recorded takes (P5.4, P10.3) ----------------------------------------
-  'take.title': ['录音分层', 'Takes'],
-  'take.defaultName': ['第 {n} 遍', 'Take {n}'],
-  'take.rename': ['重命名', 'Rename'],
-  'take.renameHint': ['重命名这条录音（回车提交，Esc 取消）', 'Rename this take (Enter to save, Esc to cancel)'],
-  'take.renameCancel': ['取消重命名', 'Cancel rename'],
-  'take.ab': ['A/B 试听', 'A/B'],
-  'take.abHint': [
-    '在同一点来回试听两条录音（键盘 A / B）；停止或按 Esc 回到 A',
-    'Compare two takes from the same point (keys A / B); stop or press Esc to return to A',
-  ],
-  'take.abOn': ['A {a} · B {b}', 'A {a} · B {b}'],
-  'take.abBack': ['试听结束 · 已回到 <b>{name}</b>', 'Audition over — back on <b>{name}</b>'],
-  'take.mergeUnion': ['并集合并', 'Merge (union)'],
-  'take.mergeUnionHint': [
-    '合并后播放每一条 take 的全部音符（现有的合并方式）',
-    'Merged take plays every note of every take (the existing merge)',
-  ],
-  'take.mergeOverwrite': ['覆盖合并', 'Merge (overwrite)'],
-  'take.mergeOverwriteHint': [
-    '新 take 覆盖同一时间上旧 take 的音符，只保留旧 take 没被盖住的部分',
-    'A newer take replaces the older notes it plays over; only the uncovered older material stays',
-  ],
-  'take.foldedHint': [
-    '该层已折叠为片段：take 仅作素材，切换/合并都不会改变听感',
-    'This layer is folded into clips — takes are material only, so switching or merging will not change what plays',
-  ],
-
-  // --- piano roll ----------------------------------------------------------
   'roll.title': ['钢琴卷帘', 'Piano roll'],
   'roll.open': ['钢琴卷帘编辑', 'Piano roll editor'],
-  'roll.edit': ['编辑', 'Edit'],
-  'roll.bpm': ['速度 BPM', 'Tempo BPM'],
-  'roll.snap': ['网格', 'Grid'],
-  'roll.length': ['长度', 'Length'],
-  'roll.bars': ['小节', 'bars'],
-  'roll.beats': ['拍', 'beats'],
-  'roll.quantize': ['量化到网格', 'Quantize to grid'],
-  'roll.transpose': ['移调', 'Transpose'],
-  'roll.octaveDown': ['降低八度', 'Down an octave'],
-  'roll.octaveUp': ['升高八度', 'Up an octave'],
-  'roll.velocity': ['力度', 'Velocity'],
-  'roll.pitch': ['音高', 'Pitch'],
-  'roll.start': ['起点', 'Start'],
-  'roll.duration': ['时长', 'Length'],
-  'roll.holdHint': ['按住琴键的时长决定音符长度', 'Hold a key longer to write a longer note'],
-  'roll.input': ['输入', 'Input'],
-  'roll.inputOn': ['输入已开启 · 点网格或弹琴键添加音符', 'Input armed · tap the grid or play keys to add notes'],
-  'roll.inputOff': ['输入已关闭 · 只试听不写入', 'Input off · keys only audition'],
-  'roll.midiIn': ['MIDI 输入', 'MIDI in'],
-  'roll.midiConnect': ['连接 MIDI', 'Connect MIDI'],
-  'roll.midiDevices': ['MIDI 输入 · {n} 个设备', 'MIDI in · {n} device(s)'],
-  'roll.midiUnsupported': ['此浏览器不支持 Web MIDI', 'Web MIDI is not available in this browser'],
-  'roll.delete': ['删除所选音符', 'Delete selected note'],
-  'roll.undo': ['撤销', 'Undo'],
-  'roll.redo': ['重做', 'Redo'],
-  'roll.clear': ['清空音符', 'Clear notes'],
-  'roll.save': ['保存到播放器', 'Save to player'],
-  'roll.saved': ['已保存 · <b>{name}</b> · {n} 个音符', 'Saved · <b>{name}</b> · {n} notes'],
-  'roll.copyOf': ['{name} · 编辑', '{name} · edit'],
-  'roll.layer': ['层', 'Layer'],
-  'roll.layerHint': [
-    '多轨文件一次编辑一层；时间线条上的改动会立刻出现在这里',
-    'A multi-track file is edited one layer at a time; edits on the layer strip show up here at once',
-  ],
-  'roll.builtinHint': ['内置曲目保存时会另存为新片段', 'Built-in tracks are saved as a new clip'],
-  'roll.empty': ['空片段 · 点网格或弹琴键添加音符', 'Empty clip · tap the grid or play keys to add notes'],
-  'roll.keyboard': ['输入键盘', 'Input keyboard'],
-  'roll.seek': ['定位播放头', 'Seek playhead'],
-  'roll.selectedN': ['已选 {n} 个音符', '{n} note(s) selected'],
-  'roll.multi': ['多选', 'Multi'],
-  'roll.multiOn': [
-    '多选模式已开启 · 点音符累加选择，点空白清空',
-    'Multi-select on · tap notes to add to the selection, empty space to clear',
-  ],
-  'roll.multiOff': [
-    '多选模式 · 点一下即可累加选择（手机上代替 Ctrl 键）',
-    'Multi-select mode · tap to accumulate a selection (the phone stand-in for Ctrl)',
-  ],
-  'roll.nudgeLeft': ['把选中的音符向左移一格', 'Move the selection one grid step earlier'],
-  'roll.nudgeRight': ['把选中的音符向右移一格', 'Move the selection one grid step later'],
-  'roll.nudgeUp': ['把选中的音符升高一个半音', 'Move the selection up one semitone'],
-  'roll.nudgeDown': ['把选中的音符降低一个半音', 'Move the selection down one semitone'],
-  'roll.copy': ['复制', 'Copy'],
-  'roll.paste': ['粘贴', 'Paste'],
-  'roll.deselect': ['取消选择', 'Deselect'],
-  'roll.copyHint': ['复制所选音符（Ctrl/Cmd+C）', 'Copy the selected notes (Ctrl/Cmd+C)'],
-  'roll.pasteHint': [
-    '粘贴到播放头位置（Ctrl/Cmd+V），副本成为新的选择',
-    'Paste at the playhead (Ctrl/Cmd+V); the copies become the selection',
-  ],
-  'roll.quantizeSelection': ['只量化所选音符（一个撤销步）', 'Quantise only the selected notes (one undo step)'],
-  'roll.pasteHidden': [
-    '副本落在了原音符位置：先移动播放头，或把原音符拖开',
-    'The copies landed on the notes they came from — move the playhead, or drag the originals aside',
-  ],
-  'roll.crossLayerBlocked': [
-    '跨层移动暂不支持：一层是一套音符/take/片段编排，换层请先把音符复制到该层',
-    'Moving notes across layers is not supported: each layer has its own notes, takes and clip arrangement — copy them into the other layer instead',
-  ],
-
-  // --- signal flow ---------------------------------------------------------
   'view.label': ['视图', 'View'],
   'view.modules': ['模块', 'Modules'],
   'view.flow': ['信号流', 'Flow'],
-  'flow.enable': ['启用', 'Enable'],
-  'flow.disable': ['旁通', 'Bypass'],
-  'flow.expand': ['展开参数', 'Open parameters'],
-  'flow.remove': ['从画布移除', 'Remove from canvas'],
-  'flow.always': ['始终启用', 'always on'],
-  'flow.removed': ['已移除：', 'Removed:'],
-  'flow.reset': ['重置画布', 'Reset canvas'],
-  'flow.master': ['主音量', 'Master'],
-  'flow.zoom': ['画布缩放', 'Canvas zoom'],
-  'flow.zoomIn': ['放大', 'Zoom in'],
-  'flow.zoomOut': ['缩小', 'Zoom out'],
-  'flow.fit': ['适应全部节点', 'Fit all nodes'],
-
-  // --- keyboard ------------------------------------------------------------
   'kbd.region': ['演奏键盘', 'Performance keyboard'],
   'kbd.octDown': ['降低八度', 'Octave down'],
   'kbd.octUp': ['升高八度', 'Octave up'],
@@ -446,11 +206,8 @@ const DICT: Record<string, [string, string]> = {
   'wave.pink': ['粉噪', 'Pink'],
   'wave.brown': ['棕噪', 'Brown'],
   'wave.wavetable': ['波表（PW 选表）', 'Wavetable (PW picks it)'],
-  'audio.streamed': ['流式编译', 'streamed'],
   'top.settings': ['设置', 'Settings'],
   // --- settings drawer -----------------------------------------------------
-  'settings.title': ['设置', 'Settings'],
-  'settings.workspace': ['工作区', 'Workspace'],
   'module.subOff': ['无 sub', 'No sub oscillator'],
   'module.subOne': ['低一个八度', 'One octave down'],
   'module.subTwo': ['低两个八度', 'Two octaves down'],
@@ -463,113 +220,8 @@ const DICT: Record<string, [string, string]> = {
     'OSC 2 → OSC 1 · FM 相位调制 / RING 环形调制 / SYNC 硬同步（需要 OSC 2 打开）· NOISE 混入白噪',
     'OSC 2 → OSC 1 · FM phase modulation / RING ring modulation / SYNC hard sync (needs OSC 2 on) · NOISE blends white noise in',
   ],
-  'player.tempoMapHint': [
-    '速度与拍号：每一段从上一段结束处开始；最后的「小节」是这段的长度（空 = 到曲末）。读数为「小节.拍」',
-    'Tempo and signature: each section starts where the last one ends; the number is how many bars it lasts (blank = to the end). The readout is bar.beat',
-  ],
-  'player.tempoBpm': ['速度（BPM）', 'Tempo (BPM)'],
-  'player.tempoBar': ['拍号', 'Time signature'],
-  'player.tempoAdd': ['加一段速度/拍号', 'Add a tempo section'],
-  'player.tempoRemove': ['删掉最后一段', 'Remove the last section'],
-  'clip.lane': ['片段编排', 'Clip lane'],
-  'clip.fold': ['折叠成片段', 'Fold into a clip'],
-  'clip.foldHint': [
-    '把这一层折叠成一个片段：之后可以拖动、复制、循环铺排；片段内部仍可点「编辑」进卷帘修改',
-    'Fold this layer into a clip: drag it, copy it, loop it; its notes are still edited in the piano roll',
-  ],
-  'clip.moveEarlier': ['向前移一个窗口', 'Move one window earlier'],
-  'clip.moveLater': ['向后移一个窗口', 'Move one window later'],
-  'clip.copy': ['复制片段', 'Duplicate the clip'],
-  'clip.windowShorter': ['缩短循环窗口（超出的音符不再播放，加长可复原）', 'Shorten the loop window (notes past it stop playing; widening brings them back)'],
-  'clip.windowLonger': ['加长循环窗口', 'Lengthen the loop window'],
-  'clip.repeatLess': ['少铺一次', 'One repeat fewer'],
-  'clip.repeatMore': ['多铺一次', 'One repeat more'],
-  'clip.delete': ['删除片段', 'Delete the clip'],
-  'clip.copyLayer': ['复制到另一层…', 'Copy to another layer…'],
-  'clip.copyLayerHint': [
-    '原样复制到选中的层：起点、窗口、重复与音高都不变（层决定音色，不改音区）',
-    'Copies to the chosen layer as it is: same start, window, repeats and pitches (a layer sets timbre, not register)',
-  ],
-  'clip.copyLayerShort': ['复制过去', 'Copy over'],
-  'clip.copyLayerDone': ['已复制「{name}」到第 {n} 层', 'Copied “{name}” to layer {n}'],
-  'clip.tpl': ['片段模板', 'Clip template'],
-  'clip.tplPick': ['套用片段模板…', 'Apply clip template…'],
-  'clip.tplSave': ['存为模板', 'Save as template'],
-  'clip.tplSaveHint': [
-    '存进工作区（不进音色、不进分享码）；套用生成新片段，与原件互不影响',
-    'Saved in the workspace (not the patch, not a share code); applying makes a new, independent clip',
-  ],
-  'clip.tplDelete': ['删除片段模板', 'Delete clip template'],
-  'clip.tplSavedToast': ['已保存模板 · {name}', 'Template saved · {name}'],
-  'clip.tplApplied': ['已套用模板 · {name}', 'Template applied · {name}'],
-  'clip.tplDeleted': ['已删除模板', 'Template deleted'],
-  'clip.label': ['片段', 'Clip'],
-  'clip.pickHint': [
-    '这一层有片段编排：卷帘编辑的是所选片段的内容，循环由时间线决定',
-    'This layer is arranged with clips: the roll edits the selected clip, and the timeline decides the loops',
-  ],
-  'layer.mute': ['静音', 'Mute'],
-  'layer.volume': ['音量', 'Volume'],
-  'layer.pan': ['声像', 'Pan'],
-  'layer.map': ['时间线', 'Timeline'],
-  'layer.mapHint': [
-    '点一下定位播放位置；拖动音符可左右移动、拖右缘改长度、双击删除；拖动空白处整体前后移动这一层',
-    'Tap to scrub; drag a note to move it, drag its right edge to resize, double-click to delete; drag the background to move the whole layer',
-  ],
-  'layer.note': ['音符', 'Note'],
-  'layer.modeArrange': ['编排', 'Arrange'],
-  'layer.modeNote': ['音符', 'Notes'],
-  'layer.modeHintArrange': [
-    '编排模式：拖空白处整体移动这一层，点一下定位播放位置；切到「音符」可直接改音符',
-    'Arrange mode: drag the background to move this layer, tap it to seek; switch to “Notes” to edit notes',
-  ],
-  'layer.modeHintNote': [
-    '音符模式：拖动音符改位置，拖右缘改长度，双击删除，选中后用下面的按钮微调',
-    'Notes mode: drag a note to move it, drag its right edge to resize, double-click to delete, then nudge it with the buttons below',
-  ],
-  'layer.selected': ['已选：{note} · {start} 秒起 · {length} 秒长', 'Selected: {note} · from {start}s · {length}s long'],
-  'layer.editHint': ['选中一个音符后可在这里微调（手机上没有拖拽也能编辑）', 'Select a note to nudge it here — no dragging needed on a phone'],
-  'layer.earlier': ['提前一格', 'Earlier one step'],
-  'layer.later': ['推后一格', 'Later one step'],
-  'layer.shorter': ['缩短一格', 'Shorter one step'],
-  'layer.longer': ['加长一格', 'Longer one step'],
-  'layer.delete': ['删除这个音符', 'Delete this note'],
-  'layer.copied': ['内置曲目不能改，已存成副本 <b>{name}</b> 继续编辑', 'Built-in songs cannot be edited: saved <b>{name}</b> as a copy to edit'],
-  'layer.solo': ['独奏', 'Solo'],
-  'settings.instances': ['第二层音色', 'Second timbre'],
-  'settings.performance': ['演奏', 'Playing'],
   // --- two instances -------------------------------------------------------
-  'inst.pick': ['正在编辑', 'Editing'],
-  'inst.hint': ['1 = 主音色，2 = 第二层（面板显示正在编辑的那一层）', '1 = main patch, 2 = second layer (the panels show the one being edited)'],
-  'inst.route': ['按键分配', 'Routing'],
-  'inst.single': ['只用第 1 层', 'Instance 1'],
-  'inst.layer': ['叠加两层', 'Layer both'],
-  'inst.split': ['按音高分区', 'Split by key'],
-  'inst.splitAt': ['分界音', 'Split at'],
-  'settings.appearance': ['界面', 'Appearance'],
-  'settings.behaviour': ['交互', 'Interaction'],
-  'settings.about': ['关于与文档', 'About & docs'],
-  'settings.docs': ['文档', 'Docs'],
-  'settings.openAudio': ['打开音频设置', 'Audio settings'],
   // --- sampler (A) ---------------------------------------------------------
-  'wave.sample': ['采样', 'Sample'],
-  'smp.import': ['导入采样', 'Import sample'],
-  'smp.none': ['未导入', 'none'],
-  'smp.hint': [
-    '导入一个音频文件（WAV/AIFF/FLAC/MP3）作为采样音源；按 ROOT 指定的音高变速播放，超过 4 秒会截断',
-    'Import an audio file (WAV/AIFF/FLAC/MP3) as a sampler source; it plays at speed by pitch from ROOT, and files over 4 s are truncated',
-  ],
-  'smp.clearHint': ['移除导入的采样', 'Remove the imported sample'],
-  'smp.loaded': ['已导入采样 {name}', 'Imported sample {name}'],
-  'smp.cleared': ['已移除采样', 'Sample removed'],
-  'smp.modeOneShot': ['一次性：放完即停（鼓、音效）', 'One-shot: play once and stop (drums, effects)'],
-  'smp.modeLoop': ['循环：到循环终点跳回起点（持续音）', 'Loop: jump back to the loop start (sustained tones)'],
-  'smp.modePingPong': ['乒乓循环：到端点反向（铺底、磁带感）', 'Ping-pong: reverse at each bound (pads, tape feel)'],
-  'smp.err.short': ['采样太短，无法播放', 'That sample is too short to play'],
-  'smp.err.silent': ['采样里没有声音', 'That sample is silent'],
-  'smp.err.notFinite': ['采样含有无效数据', 'That sample contains invalid data'],
-  'smp.err.decode': ['无法解码这个文件（格式不支持或文件损坏）', 'That file could not be decoded (unsupported or damaged)'],
-  'smp.err.noRoom': ['内存不足，无法载入这段采样', 'Not enough room to load that sample'],
   // --- impulse response reverb (A5) ---------------------------------------
   'ir.algo': ['算法', 'Algo'],
   'ir.ir': ['IR', 'IR'],
@@ -594,110 +246,10 @@ const DICT: Record<string, [string, string]> = {
     'The order effects are processed in: earlier runs first. Use ‹ › to swap positions, ∥ to turn an insert effect into a parallel send (dry kept, effect added)',
   ],
   'fxg.title': ['效果路由图', 'Effect routing'],
-  'fxg.open': ['打开路由图', 'Open routing'],
-  'fxg.canvas': ['画布', 'Canvas'],
-  'fxg.list': ['列表', 'List'],
-  'fxg.rebuild': ['从信号链重建', 'Rebuild from chain'],
-  'fxg.resetLayout': ['重置布局', 'Reset layout'],
-  // Graph templates (P7.3): the routing is saved in the workspace, so the list
-  // travels with the browser rather than with the patch or a share code.
-  'fxg.tpl': ['图模板', 'Graph template'],
-  'fxg.tplPick': ['套用模板…', 'Apply template…'],
-  'fxg.tplBuiltin': ['内置', 'Built-in'],
-  'fxg.tplSaved': ['已保存', 'Saved'],
-  'fxg.tplSave': ['存为模板', 'Save as template'],
-  'fxg.tplSaveHint': [
-    '把当前的节点、连线与增益存进工作区（不进音色、不进分享码）',
-    'Save the current nodes, wires and gains into the workspace (not the patch, not a share code)',
-  ],
-  'fxg.tplDefaultName': ['模板', 'Template'],
-  'fxg.tplApplied': ['已套用模板 · {name}', 'Template applied · {name}'],
-  'fxg.tplSavedToast': ['已保存模板 · {name}', 'Template saved · {name}'],
-  'fxg.tplDeleted': ['已删除模板', 'Template deleted'],
-  'fxg.tplDelete': ['删除模板', 'Delete template'],
-  'fxg.tpl.serial': ['经典串联', 'Classic serial'],
-  'fxg.tpl.dualDelay': ['双延迟', 'Dual delay'],
-  'fxg.tpl.parallelReverb': ['并行混响', 'Parallel reverb'],
-  'fxg.tpl.driveSplit': ['失真分路', 'Drive split'],
-  'fxg.tpl.empty': ['空图（仅干声）', 'Empty (dry only)'],
-  'fxg.dragHint': ['拖动卡片标题可移动位置', 'Drag a card by its title to move it'],
-  'fxg.rebuilt': ['已按当前信号链重建路由', 'Routing rebuilt from the current chain'],
-  'fxg.close': ['关闭路由图', 'Close routing'],
   'fxg.hintOn': [
     '信号从左往右流：从干声或任一节点的输出拖（或先点输出再点输入）到输入端口即可连线；点连线或输入行的「无」断开。每个节点可有两路输入，一起求和。',
     'Signal flows left to right: drag from the dry source or a node output to an input (or tap the output, then the input) to connect; click a wire or pick “none” to disconnect. A node can sum two inputs.',
   ],
-  'fxg.hintOff': [
-    '当前用的是信号链。改动这里会自动切到路由图，并按当前信号链为起点，所以声音不会跳变。',
-    'The chain is in charge right now. Editing here switches to the graph, seeded from the current chain, so the sound does not jump.',
-  ],
-  'fxg.dry': ['干声', 'DRY'],
-  'fxg.dryHint': ['未经过效果的信号', 'Before the effects'],
-  'fxg.outHint': ['送到主输出', 'To the master bus'],
-  'fxg.node': ['节点', 'Node'],
-  'fxg.input': ['输入', 'input'],
-  'fxg.output': ['输出', 'output'],
-  'fxg.source': ['来源', 'source'],
-  'fxg.gain': ['增益', 'gain'],
-  'fxg.mix': ['混合', 'MIX'],
-  'fxg.effect': ['效果', 'effect'],
-  'fxg.on': ['开关', 'on/off'],
-  'fxg.parallel': ['并联送出', 'Parallel send'],
-  'fxg.toOut': ['送到输出', 'To output'],
-  'fxg.outGain': ['输出增益', 'output gain'],
-  'fxg.none': ['无', 'none'],
-  'fxg.disconnect': ['断开', 'Disconnect'],
-  'fxg.poolFull': ['池已满', 'pool full'],
-  'fxg.delayPoolFull': [
-    '延迟池已满：{capacity} 条延迟线 × {seconds} s 都已分配给节点',
-    'the delay pool is full: all {capacity} lines × {seconds} s are assigned to nodes',
-  ],
-  'fxg.convPoolFull': [
-    '卷积池已满：{capacity} 个卷积节点都已分配（IR 共享，尾部各自独立）',
-    'the convolution pool is full: all {capacity} convolution nodes are in use (the response is shared, the tails are not)',
-  ],
-  'fxg.delayPool': [
-    '延迟池 {used}/{capacity} · 剩余可分配 {left} s',
-    'delay pool {used}/{capacity} · {left} s still available',
-  ],
-  'fxg.convPool': ['卷积池 {used}/{capacity}', 'convolution pool {used}/{capacity}'],
-  'fxg.wireHint': ['点连线可以改这条连线的增益或断开它', 'Click a wire to set its gain or cut it'],
-  // In-graph modulation (P7.2). The depth lives on the edge, so the source
-  // cards carry no amount of their own.
-  'fxg.mod': ['图内调制', 'In-graph modulation'],
-  'fxg.modHint': [
-    'LFO / ENV 是图中的调制源：从它们的输出拖到节点底部的 I1 / I2 / O 端口即可拉一条调制线，深度在线上。它和 8 槽调制矩阵并存：矩阵按声部控制率跑，图内调制按块率加到节点增益上，写入前先过平滑器。',
-    'LFO and ENV are modulation sources in the graph: drag from their output to a node’s I1 / I2 / O port to pull a modulation wire, whose depth sits on the wire. It lives alongside the 8-slot matrix: the matrix runs per voice at control rate while an in-graph edge adds to a node gain at block rate, through the smoother.',
-  ],
-  'fxg.modSource': ['调制源', 'modulation source'],
-  'fxg.modTarget': ['调制目标', 'modulation target'],
-  'fxg.modDepth': ['调制深度', 'modulation depth'],
-  'fxg.modPortIn1': ['输入 1 增益', 'input 1 gain'],
-  'fxg.modPortIn2': ['输入 2 增益', 'input 2 gain'],
-  'fxg.modPortOut': ['输出增益', 'output gain'],
-  'fxg.modTargetLabel': ['节点 {node} {port}', 'Node {node} {port}'],
-  'fxg.modFull': ['调制边已满（{slots} 条）', 'all {slots} modulation edges are in use'],
-  'fxg.modDelete': ['删除调制边', 'Delete modulation edge'],
-  // Per-node effect parameters (P9.3). A node can override the parameters its
-  // effect kind shares with every other node of that kind; the toggle is what
-  // decides whether the slot values in the patch are read at all.
-  'fxg.ovr': ['参数覆盖', 'Override'],
-  'fxg.ovrHint': [
-    '每个节点可以覆盖自己那份效果参数：延迟时间/反馈/混合/阻尼、混响大小/混合/阻尼/预延迟、EQ 三段、失真量……未覆盖时跟随该效果的默认值。覆盖随分享码与图模板一起保存。',
-    'A node can override its own copy of the effect parameters: delay time/feedback/mix/damping, reverb size/mix/damping/pre-delay, the three EQ bands, drive amount, and so on. Left alone, a slot follows that effect’s own value. Overrides travel in share codes and graph templates.',
-  ],
-  'fxg.ovrFollow': ['跟随种类默认', 'follows the kind’s default'],
-  'fxg.ovrFollowShort': ['默认', 'default'],
-  'fxg.ovrClear': ['全部跟随默认', 'Follow defaults'],
-  'fxg.ovrSlot': ['覆盖槽位', 'override slot'],
-  'fxg.ovrTime': ['时间', 'TIME'],
-  'fxg.ovrMod': ['覆盖调制', 'Override modulation'],
-  'fxg.ovrModHint': [
-    '用 LFO / ENV 扫一个覆盖槽位，深度是该槽位自身量程的比例；只影响被选中的那一个槽位。目标槽位未开启覆盖时，从该效果的默认值起扫。',
-    'Sweep one override slot with LFO 1, LFO 2 or the envelope. The depth is a fraction of that slot’s own range, and only the selected slot is affected. A slot with no override of its own starts from the effect’s default value.',
-  ],
-  'fxg.ovrModTarget': ['调制槽位', 'modulated slot'],
-  'fxg.ovrModRow': ['第 {n} 条', 'bus {n}'],
   'fx.moveLeft': ['前移一位', 'Move earlier'],
   'fx.moveRight': ['后移一位', 'Move later'],
   'fx.parallel': ['并联送出', 'Parallel send'],
@@ -712,30 +264,61 @@ const DICT: Record<string, [string, string]> = {
     'Echoes alternate between the speakers; off, each channel repeats its own input',
   ],
   // --- imported single-cycle wavetable (A6.2) ------------------------------
-  'wt.import': ['导入波形', 'Import wave'],
-  'wt.use': ['使用', 'Use'],
-  'wt.none': ['未导入', 'none'],
-  'wt.hint': [
-    '导入一个单周期波形（WAV/AIFF/FLAC/MP3）。超过一周期会自动找出周期并取平均',
-    'Import one cycle (WAV/AIFF/FLAC/MP3). A longer file has its period found and averaged',
-  ],
-  'wt.clearHint': ['移除导入的波形', 'Remove the imported waveform'],
-  'wt.loaded': ['已导入波形 {name}', 'Imported {name}'],
-  'wt.cleared': ['已移除导入波形', 'Imported waveform removed'],
-  'wt.err.short': ['波形太短，无法作为波表', 'That waveform is too short to be a table'],
-  'wt.err.silent': ['文件里没有声音', 'That file is silent'],
-  'wt.err.notFinite': ['文件含有无效采样', 'That file contains invalid samples'],
-  'wt.err.decode': ['无法解码这个文件（格式不支持或文件损坏）', 'That file could not be decoded (unsupported or damaged)'],
-  'wt.err.noRoom': ['内存不足，无法载入这个波形', 'Not enough room to load that wavetable'],
 
   // --- errors / diagnostics ------------------------------------------------
   'err.wasmFetch': ['WASM 下载失败 (HTTP {status})', 'WASM download failed (HTTP {status})'],
   'err.wasmValidate': ['WASM 模块校验失败（SIMD 与标量核心均不可用）', 'WASM validation failed (neither the SIMD nor the scalar core is usable)'],
-  'err.wasmMissing': ['缺少 WASM 数据', 'Missing WASM data'],
-  'err.wasmInstantiate': ['WASM 实例化失败：{msg}', 'WASM instantiation failed: {msg}'],
   'err.midiUnsupported': ['此浏览器不支持 Web MIDI', 'Web MIDI is not supported in this browser'],
   'err.midiDevice': ['未命名设备', 'Unnamed device'],
 };
+
+/**
+ * Runtime table: the core entries plus every module that has been registered.
+ * Registration is additive and idempotent, so loading a module twice is free.
+ */
+const DICT: StringTable = { ...CORE };
+
+/**
+ * Key names of every module that ships copy, folded in at registration time.
+ * This is what keeps `hasKey()` complete without putting the copy in the entry
+ * chunk.
+ */
+const DECLARED = new Set<string>(Object.keys(CORE));
+
+/** Keys that actually came from a lazy module; the tests tell the two apart. */
+const FROM_MODULES = new Set<string>();
+
+/** Listeners that want to know when new copy has arrived (see the hook). */
+const REGISTRY_LISTENERS = new Set<() => void>();
+
+/**
+ * Subscribe to registry changes. Used by `useStringsReady()`, which gates the
+ * imported-source rows: they are eager UI whose copy is not, so they wait for
+ * the registration rather than rendering a key name for a frame.
+ */
+export function subscribeStrings(listener: () => void): () => void {
+  REGISTRY_LISTENERS.add(listener);
+  return () => REGISTRY_LISTENERS.delete(listener);
+}
+
+/**
+ * Register a module's copy. Called by the module loaders.
+ *
+ * The key names come from the table itself rather than from a parallel list:
+ * the list used to be a separate `readonly string[]` next to each table, but it
+ * lives in the same chunk as the copy it names, so for the `dist` budget (a raw
+ * byte sum) it was ~7 KB of duplicated strings rather than the "cheap key names"
+ * the split was designed around. Registration is atomic — the whole table lands
+ * and then the listeners fire — so callers may gate on any single key.
+ */
+export function registerStrings(table: StringTable): void {
+  for (const key of Object.keys(table)) {
+    DECLARED.add(key);
+    FROM_MODULES.add(key);
+  }
+  Object.assign(DICT, table);
+  for (const listener of REGISTRY_LISTENERS) listener();
+}
 
 let current: Lang = 'zh';
 
@@ -771,9 +354,75 @@ export function localizeName(name: string): string {
   return name;
 }
 
-/** True when the key exists (used by the coverage test). */
+/** How many keys the inline table holds; the lazy tables add the rest. */
+export function coreKeyCount(): number {
+  return Object.keys(CORE).length;
+}
+
+/** True when the key's copy is in the inline first-screen table. */
+export function hasCoreCopy(key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(CORE, key);
+}
+
+/** Keys that have arrived from a lazy module so far (test helper). */
+export function moduleKeyCount(): number {
+  return FROM_MODULES.size;
+}
+
+/** True when the key is declared, whether or not its copy has arrived yet. */
 export function hasKey(key: string): boolean {
+  return DECLARED.has(key);
+}
+
+/** True once a key's copy is actually in the runtime table (test helper). */
+export function hasCopy(key: string): boolean {
   return Object.prototype.hasOwnProperty.call(DICT, key);
 }
 
+/**
+ * Load every lazy string module and register it.
+ *
+ * This is the switch's precondition: `store.toggleLang()` awaits it *before*
+ * committing the new language, so the re-render that follows already has both
+ * languages for every key and can never show one language and correct itself on
+ * the next frame. The idle preload below calls the same function, so by the
+ * time a user reaches the settings drawer the modules are normally there and
+ * the switch resolves in a microtask.
+ */
+export async function loadAllStrings(): Promise<void> {
+  const { STRING_LOADERS } = await import('./i18n-panels');
+  await Promise.all(STRING_LOADERS.map((load) => load()));
+}
+
+/** True once every declared key has copy (used by the i18n tests). */
+export function isFullyLoaded(): boolean {
+  return DECLARED.size === Object.keys(DICT).length;
+}
+
+/**
+ * Warm every lazy table while the browser is idle.
+ *
+ * The modules are tiny and the browser is otherwise waiting for a gesture at
+ * this point, so this costs nothing on the critical path; it exists so the
+ * *first* open of a panel does not have to wait on copy. A failure is swallowed
+ * on purpose: the panel's own loader retries the same import, and a genuinely
+ * missing chunk is already reported by that panel's Suspense boundary.
+ */
+export function preloadStrings(): void {
+  const idle = window as Window & {
+    requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number;
+  };
+  const warm = () => void loadAllStrings().catch(() => {});
+  if (typeof idle.requestIdleCallback === 'function') idle.requestIdleCallback(warm, { timeout: 4000 });
+  else window.setTimeout(warm, 800);
+}
+
+/**
+ * The language button's own label, shown by the settings drawer.
+ *
+ * Two literals rather than a `DICT` pair on purpose: each label is written in
+ * the language it switches *to*. They live in this module (and so in the entry
+ * chunk) because the drawer's button needs a label the moment it mounts, whether
+ * or not the lazy settings table has arrived yet.
+ */
 export const LANG_LABELS: Record<Lang, string> = { zh: '中文', en: 'EN' };

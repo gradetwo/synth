@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { t } from '@/i18n';
+// Register this panel's copy at module scope (P11.2); see `i18n.ts`.
+import { loadAudioStrings } from '@/i18n-panels';
+void loadAudioStrings();
 import { toast } from './Toast';
 import { engine } from '@/audio/engine';
 import { analysis } from '@/audio/analysis';

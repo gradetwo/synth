@@ -188,8 +188,13 @@ test.describe('first interactive', () => {
     const best = Math.min(...attempts);
     const all = attempts.map((v) => v.toFixed(0)).join(', ');
     const fcpText = fcp >= 0 ? `${fcp.toFixed(0)} ms` : 'n/a';
+    // Two readers of this one line: a human, and `scripts/release.mjs`, which
+    // parses `[boot-budget]` out of the captured stdout and re-checks it against
+    // `GS1_BOOT_BUDGET_MS`. That is what makes the boot budget part of the
+    // release gate without running the browser suite twice — keep the shape
+    // stable if this ever changes.
     console.log(
-      `[boot] interactive best ${best.toFixed(0)} ms of [${all}] · FCP ${fcpText} · budget ${BOOT_BUDGET_MS} ms`,
+      `[boot-budget] interactive ${best.toFixed(0)} ms of [${all}] · FCP ${fcpText} · budget ${BOOT_BUDGET_MS} ms`,
     );
     expect(best, 'the start button never became clickable').toBeGreaterThan(0);
     expect(
@@ -208,6 +213,12 @@ test.describe('first interactive', () => {
  * whole viewport behind them. On a software-rendered page that cost more than
  * the audio: measured 7.5 fps idle in headless Chromium against 60 fps once the
  * work was made demand-driven. This guards the regression, not the exact number.
+ *
+ * P11.5 extends it from "the engine runs" to the two loads a player actually
+ * spends time in: a song playing (the transport, the playhead, the player's own
+ * nine canvases and the engine all at once) and the routing graph being edited
+ * (the canvas, the wires, the card drag). Those are the states that used to be
+ * the expensive ones, so they are the ones worth pinning to the same floor.
  */
 test.describe('interface frame cost', () => {
   test.use({ viewport: { width: 1280, height: 900 } });
@@ -229,15 +240,102 @@ test.describe('interface frame cost', () => {
       ms,
     );
 
-  test('the page keeps its frame rate while the engine runs', async ({ page }) => {
-    test.setTimeout(120_000);
+  /**
+   * Floor for every load below. Generous on purpose: the point is to catch a
+   * return to per-frame repainting (which measured 7 fps here), not to police a
+   * machine.
+   */
+  const FPS_FLOOR = 20;
+
+  /**
+   * Best of a few windows, not one sample — the same rule the boot budget uses
+   * above and `scripts/bench.mjs` uses for its machine probe. These tests share
+   * the machine with the rest of the suite: a single window landing behind a
+   * scheduler stall reads low, and host load can only ever make a window slower,
+   * never faster, so the best window is the closest thing to the app's own cost.
+   * Measured while the parallel suite was booting: playback read 20.0 fps on one
+   * window and 40+ on the next, on the same build. Five short windows rather
+   * than three longer ones: a stall is a whole-window event, so more windows is
+   * what finds a clean one, and five 800 ms windows cost less than three of
+   * 1 200 ms.
+   */
+  const bestFps = async (page: Page, windowMs: number, tries: number) => {
+    const samples: number[] = [];
+    for (let i = 0; i < tries; i++) samples.push((await frames(page, windowMs)) / (windowMs / 1000));
+    const best = Math.max(...samples);
+    return { best, all: samples.map((v) => v.toFixed(1)).join(', ') };
+  };
+
+  const startEngine = async (page: Page) => {
     await page.goto('/');
     await page.getByRole('button', { name: /启动音频引擎/ }).click();
     await expect(page.locator('.kbd-dock.open')).toBeVisible();
+  };
+
+  test('the page keeps its frame rate while the engine runs', async ({ page }) => {
+    test.setTimeout(120_000);
+    await startEngine(page);
     await page.waitForTimeout(500);
-    const fps = (await frames(page, 1500)) / 1.5;
-    // Generous on purpose: the point is to catch a return to per-frame
-    // repainting (which measured 7 fps here), not to police a machine.
-    expect(fps, `interface ran at ${fps.toFixed(1)} fps`).toBeGreaterThan(20);
+    const { best, all } = await bestFps(page, 800, 5);
+    console.log(`[fps] idle-with-engine best ${best.toFixed(1)} of [${all}] fps`);
+    expect(best, `interface ran at ${best.toFixed(1)} fps of [${all}]`).toBeGreaterThan(FPS_FLOOR);
+  });
+
+  test('the page keeps its frame rate while a song plays', async ({ page }) => {
+    test.setTimeout(180_000);
+    await startEngine(page);
+
+    // Open the player and start the first built-in track. The panel is lazily
+    // loaded and its own chunk is warmed at idle, so the wait is the panel
+    // mounting, not a cold fetch.
+    const keyboard = page.locator('[data-kb="1"][aria-pressed="true"]');
+    if (await keyboard.count()) {
+      await keyboard.first().click();
+      await expect(page.locator('.kbd-dock.open')).toHaveCount(0);
+    }
+    await page.locator('.player-open').first().click({ force: true });
+    const play = page.locator('.player-play').first();
+    await expect(play).toBeVisible();
+    await play.click();
+    // The transport has to actually be running, otherwise this measures the
+    // idle case a second time.
+    await expect(play).toHaveClass(/on/);
+    await page.waitForTimeout(700);
+
+    const { best, all } = await bestFps(page, 800, 5);
+    console.log(`[fps] playback best ${best.toFixed(1)} of [${all}] fps`);
+    expect(best, `playback ran at ${best.toFixed(1)} fps of [${all}]`).toBeGreaterThan(FPS_FLOOR);
+  });
+
+  test('the page keeps its frame rate while the graph is edited', async ({ page }) => {
+    test.setTimeout(180_000);
+    await startEngine(page);
+
+    const keyboard = page.locator('[data-kb="1"][aria-pressed="true"]');
+    if (await keyboard.count()) {
+      await keyboard.first().click();
+      await expect(page.locator('.kbd-dock.open')).toHaveCount(0);
+    }
+    await page.locator('[data-act="fx-graph"]').first().click({ force: true });
+    await expect(page.locator('.fxg-panel')).toBeVisible();
+
+    // Hold a card by its title and walk it around while frames are counted: a
+    // static graph would not exercise the wire redraw this guard is for.
+    const handle = page.locator('[data-act="drag-node"][data-node="1"]');
+    const grab = (await handle.boundingBox())!;
+    await page.mouse.move(grab.x + grab.width / 2, grab.y + grab.height / 2);
+    await page.mouse.down();
+    const dragged = (async () => {
+      for (let i = 0; i < 24; i++) {
+        await page.mouse.move(grab.x + grab.width / 2 + (i % 8) * 12, grab.y + grab.height / 2 + (i % 5) * 10);
+        await page.waitForTimeout(60);
+      }
+    })();
+    const { best, all } = await bestFps(page, 800, 5);
+    await page.mouse.up();
+    await dragged;
+
+    console.log(`[fps] graph-edit best ${best.toFixed(1)} of [${all}] fps`);
+    expect(best, `graph editing ran at ${best.toFixed(1)} fps of [${all}]`).toBeGreaterThan(FPS_FLOOR);
   });
 });

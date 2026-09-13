@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getLang, t } from '@/i18n';
+// Register this panel's copy at module scope (P11.2); see `i18n.ts`.
+import { loadPlayerStrings } from '@/i18n-panels';
+void loadPlayerStrings();
 import { noteName } from '@/audio/noteBus';
 import { toast } from './Toast';
 import { haptic, HAPTIC } from '@/hooks/useInputMode';

@@ -139,9 +139,8 @@ headless Chromium 是软件渲染，所以数字是秒级而不是几十毫秒�
    （约 30–80 KB raw）。代价：`scripts/build-wasm.mjs` 要依赖一个本机没有的二进制、CI 与 `verify:release`
    要跟着装，且必须重跑 `test:dsp`（0.030806）与 `verify:presets`（81 unchanged）确认语义未变。
    本机 `wasm-opt` 缺失，未做。
-2. **按语言拆 `i18n.ts`（45 KB 源）**：首屏 `index-*.js` 里两种语言的字符串都在。运行时按
-   `getLang()` 动态 import 另一语言，raw 不动、首屏 gzip 可能 −8～12 KB。代价：`t()` 从同步变异步，
-   涉及所有 UI 文案调用点，风险高。
+2. **~~按语言拆 `i18n.ts`（45 KB 源）~~ 已在 P11.2 兑现**，但拆的是**键组**不是语言（理由见第九节）：
+   首屏 JS gzip **134.6 → 127.3 KB**，代价是 dist **+7.8 KB**。
 3. **CSS 按 chunk 拆**：`index-*.css` 101.8 KB 里含只有懒面板才用的规则；拆出去能降首屏 CSS，
    **但 dist 总量不变**（还是那些字节），对本批瓶颈无帮助。
 4. **字体再子集化**：6 个字重共 82.3 KB。若确认某个 500 字重页面从未用到可删一个（−13～15 KB），
@@ -160,3 +159,51 @@ PLAYWRIGHT_BROWSERS_PATH=$PWD/.pw-browsers npx playwright test e2e/performance.s
 
 `songs.ts` 的懒加载账用临时 `manualChunks` 测（把 `src/midi/songs.ts` 指到 `probe-songs`），
 `index-*.js` 前后对比即可复现；脚手架不留在仓库里。
+
+## 九、P11.2（v1.110.0）：i18n 结构性拆分，首屏 134.65 → 123.75 KB（−10.89 KB）
+
+第七节第 2 条（「按语言拆 i18n」）在本批兑现，但做法不是按语言，而是**结构性地把「首屏最小集」留在
+内联表里、其余按键组分到懒模块**。选按键组而不是按语言：`DICT` 是 `key: [zh, en]` 的扁平双语表，
+按语言拆意味着「切到 en 时中文仍在首屏 chunk 里」（或要再请求一次），而按键组拆收益一样，却**不把同步
+`t()`/`getLang()` 变成异步**——它们被 toast、`aria-label`、canvas 与 worklet 状态路径调用。
+
+| | 前 | 后 | Δ |
+| :-- | --: | --: | --: |
+| `index-*.js` raw | 299 983 B | 271 040 B | −28 943 B |
+| `index-*.js` gzip | 92 238 B | 81 084 B | −11 154 B |
+| **首屏 JS gzip（index + vendor-react）** | **137 878 B（134.65 KB）** | **126 724 B（123.75 KB）** | **−11 154 B（−10.89 KB）** |
+| dist 总量 | 1556.9 KB | 1558.3 KB | **+1.4 KB** |
+| 首屏 CSS gzip | 20.2 KB | 20.2 KB | 0 |
+| 最大 WASM gzip | 74.2 KB | 74.2 KB | 0（本批不碰引擎） |
+
+- **首屏最小集 = 174 键**（内联在 `src/i18n.ts`）。判据不是「哪个前缀」，而是**每个键都由首帧会执行的
+  代码读取**：启动门 `app.*`、顶栏 `top.*`、示波器行 `panel.*`/`canvas.*`/`monitor.*`、模块标签
+  `module.*`（含 `state/layout.ts` 的 `MODULE_META[i].sub` 与 `modules.tsx` 的标签表）、滤波器类型
+  `filter.*`、波表/采样选择器的 `wave.*`（`controls.tsx` 的 `t(\`wave.${w}\`)`）、卷积混响选择
+  `ir.*`、FX 链头 `fx.*`、演奏键盘 `kbd.*`（含 tips 数组）、首帧的 `preset.initName`/`roll.title`/
+  `roll.open`/`player.title`/`theme.label`/`env.valueHint`/`knob.fine`，以及引擎在面板出现前就可能
+  toast 的 `err.*`。移动后**再跑一遍审计：没有任何 core 键的读者是懒组件或 gated 组件**。
+- **懒模块 = 355 键**（`src/i18n-panels.ts`，只被 `import()` 到达），按面板分表：`fxg`、`roll`、
+  `player`（含 `clip`/`layer`/`take`）、`drawer`（预设库抽屉）、`sources`（导入波表/采样）、
+  `settings`（设置抽屉）、`audio`（含 `cc`）、`docs`（指南/更新记录）、`flow`。
+- **设置抽屉与预设库抽屉的文案为什么能搬**：两者都**不是首帧渲染的内容**（设置抽屉在 DOM 里但被 CSS
+  移出视口；预设库抽屉只在点击后挂载）。`useStringsReady('settings.title')` 让设置抽屉在这一微任务里
+  渲染 `null`（本来也看不见），而不是先把 key 名画进 DOM；为此 `App.test.tsx` 的 `beforeAll` 里
+  `await loadAllStrings()`——浏览器里由 `main.tsx` 在挂载前启动同一个加载。
+- **键名清单改成 `Object.keys(table)` 派生**：第一版给每个表配了一份 `readonly string[]` 清单，但清单和
+  文案在**同一个 chunk** 里，而 `dist` 按 raw 求和，于是那 355 个键名是 ~7 KB 的重复字符串（gzip 早就
+  见过它们）。注册是原子的，所以需要「这个表到了吗」的调用点只探一个哨兵键。
+- **删掉 36 个死键**：先用「`src/`、`e2e/`、`scripts/`、`index.html` 里零引用」筛出候选，再逐个 grep
+  确认。多为被硬编码取代的名字（16 个 `module.<id>` 被 `MODULE_META[i].title` 取代、`app.noScript` 的
+  文案在 `index.html` 的 `<noscript>` 里）与从未接线的条目（`drawer.noResult`、`err.wasmMissing`/
+  `Instantiate`、`panel.bins`、`theme.switched` 等）。沿用 P10.2 删 `clip.tplDefaultName` 的先例。
+- **不闪的做法**：`main.tsx` 在 React 挂载前 `loadAllStrings()`（**不 await**，首帧不等它），`App` 再在
+  idle 里预载；每个懒面板的 `lazy()` 是「先 `loadXStrings()` 再 import 组件」；三处「eager UI 用懒文案」
+  用 `useStringsReady()` 门住，未就绪时渲染 `null`；切换语言由设置抽屉 `await loadAllStrings()` 之后才
+  `store.toggleLang()`，所以切换那一帧两种语言的表都已在内存里。
+- **守卫**（`src/i18n.test.ts`）：①所有 `t('字面量')` 都有键；②每个懒表两个方向一致且有 zh/en、不与
+  core 重复；③**首屏 import 图**（静态 import，排除 `import()`）里出现的键必须都在 core；④三个 gated
+  文件必须真的调用 `useStringsReady()`。
+- **首帧不等 chunk 的证据**：③是断言而非声明（首屏会渲染的文案全在 core 表内）；三个 gated 组件在表未到
+  时渲染 `null`；`e2e/i18n.spec.ts` 的 reload 用例断言首帧就有 `Start Audio Engine` 与模块名；切换用例用
+  MutationObserver 记录整段文本变更，断言**从未**出现 `player.*`/`settings.*` 之类的 key 名。

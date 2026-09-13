@@ -4,6 +4,9 @@ import { useFlowHidden, useFlowPos, useKeyboardVisible, useSynth } from '@/hooks
 import { useViewport } from '@/hooks/useViewport';
 import { haptic, HAPTIC } from '@/hooks/useInputMode';
 import { t } from '@/i18n';
+// Register this panel's copy at module scope (P11.2); see `i18n.ts`.
+import { loadFlowStrings } from '@/i18n-panels';
+void loadFlowStrings();
 import type { ModuleId } from '@/state/layout';
 import { Param, type ModRoute } from '@/audio/params';
 import { engine } from '@/audio/engine';

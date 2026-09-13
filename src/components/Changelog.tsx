@@ -1,5 +1,8 @@
 import { useEffect, type ReactNode } from 'react';
 import { getLang, t } from '@/i18n';
+// Register this dialog's copy at module scope (P11.2); see `i18n.ts`.
+import { loadDocsStrings } from '@/i18n-panels';
+void loadDocsStrings();
 import { CHANGELOG, CURRENT_VERSION, releaseDateLabel, type Release } from '@/changelog';
 
 const pick = (b: [string, string]): string => (getLang() === 'zh' ? b[0] : b[1]);

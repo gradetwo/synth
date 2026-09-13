@@ -17,6 +17,7 @@ import {
   subscribeUserWave,
 } from '@/audio/userWave';
 import { useParam } from '@/hooks/useSynth';
+import { useStringsReady } from '@/hooks/useStringsReady';
 import { store } from '@/state/store';
 import { t } from '@/i18n';
 import { toast } from './Toast';
@@ -41,6 +42,11 @@ export function UserWavePicker({ which }: { which: 1 | 2 }) {
   const loaded = useSyncExternalStore(subscribeUserWave, getUserWave, getUserWave);
   const useUser = useParam(Param.WT_USER) >= 0.5;
   const fileRef = useRef<HTMLInputElement>(null);
+  // This row is eager UI with lazy copy (P11.2): render nothing until the
+  // `wt.*` table has been registered rather than showing `wt.none` for a frame.
+  const stringsReady = useStringsReady(['wt.import']);
+
+  if (!stringsReady) return null;
 
   const pick = async (file: File) => {
     try {
