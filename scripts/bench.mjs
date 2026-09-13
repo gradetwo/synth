@@ -120,7 +120,13 @@ function hostLoad() {
   try {
     const [one, , ] = readFileSync('/proc/loadavg', 'utf8').trim().split(/\s+/);
     const cpus = os.cpus().length || 1;
-    return { load: Number(one), cpus, busy: Number(one) > cpus * 0.75 };
+    // Half the cores, not three quarters. The line is where wall-clock numbers
+    // stop being decidable, and it was measured: the same 16-voice scene reads
+    // p50 1169 µs (44 %) at load ~2 on this 8-core box and 1621 µs (61 %) at
+    // load 5.8 — a 38 % swing from the host alone, which is the size of the
+    // regression this gate exists to catch. At 72 % occupancy the number simply
+    // is not about the DSP, so the timing checks say so instead of guessing.
+    return { load: Number(one), cpus, busy: Number(one) > cpus * 0.5 };
   } catch {
     return { load: 0, cpus: 1, busy: false };
   }
@@ -217,6 +223,13 @@ for (const note of notes) ex.gs_note_on(note, 0.9);
 for (let i = 0; i < 60; i++) ex.gs_process(BLOCK);
 
 const run = measure(SECONDS);
+// A load that arrived *during* the run counts too. The host loadaverage was
+// sampled before this scene started and the scene runs for seconds, so a spike
+// in the middle of it is invisible to that first sample — which is how a release
+// run at load 14.5 failed `most blocks fit the budget` while the DSP was
+// unchanged. Re-sampling here, before the timing assertions rather than after
+// them, is the other half of "the load average at the ends of the run".
+if (hostLoad().busy) loaded = 'late';
 const { mean, p50, p99, p99Steady, worst, overBudget, blocks, peak, nonFinite } = run;
 const load = (mean / BUDGET_US) * 100;
 const p50Load = (p50 / BUDGET_US) * 100;
@@ -284,8 +297,9 @@ ex.gs_set_param(P.FX_CONV_TRIM, 0.8);
 for (let i = 0; i < 60; i++) ex.gs_process(BLOCK);
 const irRun = measure(SECONDS);
 const irLoad = (irRun.mean / BUDGET_US) * 100;
-// A load that arrived during the run counts too.
-if (hostLoad().busy) loaded = loaded || true;
+// The same re-sample for the impulse-response run: it is measured after the
+// first one, so a spike that arrived in between has to count for its checks too.
+if (hostLoad().busy) loaded = 'late';
 
 console.log('[bench] sustained load with an imported impulse response');
 check('the response is in use', irCode === 0 && ex.gs_ir_has() === 1, `import code ${irCode}`);
