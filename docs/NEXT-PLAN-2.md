@@ -1,4 +1,4 @@
-# 下一阶段开发 · 完善 · 改进计划（v1.108.0 起）
+# 下一阶段开发 · 完善 · 改进计划（v1.109.0 起）
 
 > 接在 `docs/NEXT-PLAN.md`（v1.79.0–v1.97.0，14 个批次全部交付）之后。本文档规划 **P9–P12 四个方向、23 个批次**
 > （原为 21 个；P9.1a 的实测发现把「硬同步重启对齐」立为新的 **P9.1c**，P9.1b 的实测发现把
@@ -145,9 +145,18 @@
 - 两个已处理的坑（写下来免得再踩）：Playwright 的 `click({modifiers})` 在本机**不会**把 ctrlKey 带进 `pointerdown`（E2E 改用 `keyboard.down('Control')`）；V8 的 `Math.max(-0.25, -0)` 返回 `-0` 且 `-0.25 > -0` 为 `false`（`clampSelectionDelta` 改成对正数量级比较）。
 - 行为变化（记录）：Esc 现在「有选择时先清选择」，再按才关闭编辑器；检查器仍以最后选中的音符为主（起点/时长只改它，力度改整组）；粘贴固定落播放头（压住原件时 toast 提示，但副本确实存在）；多选时拖**左**边缘仍只改被抓的那个音符（右边缘才整组缩放）。
 
-**P10.2 片段编排二期**（1 批）
-- 要点：片段内直接编辑、跨层复制片段、片段模板（存/套用到其它层）。
-- 验收：展开结果与「逐音符复制」播放**逐位一致**；复制不共享状态（改一个不影响另一个）；E2E 编排 → 导出跟随。
+**P10.2 片段编排二期** ✅ **v1.109.0 交付**
+- **① 片段内直接编辑**：入口就是既有的那条路（片段泳道与卷帘**共用一份文档** `rollSession`），所以 P10.1 的批量编辑直接作用在片段文档上，`commit` 一次 = 一个撤销步；**不去改源层 take**（`syncTakeFromLayer` 对已折叠层早退，既有语义，用测试钉住）。
+- **② 跨层复制片段**：新增 `copyClipToLayer`（`start/length/repeat` 不变、音符逐个深拷贝）与 `foldClipsInto`（把整条时间线含 repeat/窗口裁切折成一个片段）。**音高映射故意取恒等**：`MidiClip` 存绝对 MIDI 音高，层决定的是**音色**不是音区，做移调会破坏本批被判定的「逐位一致」。两条路**结构性**汇到同一个 `clipFromNotes`，测试**两条都真跑**并断言 `toEqual`。
+- **③ 片段模板**：`src/midi/cliptemplates.ts` + **工作区 `LayoutState.clipTemplates`**（照 P7.3 图模板：不进音色/分享码；理由是模板属于工作台而非某个作品）；`store.saveClipTemplate/deleteClipTemplate`，套用生成新片段。
+- **逐位一致证据**：`expect(byHand.notes).toEqual(copy.notes)`、`expect(expandClips([byHand]).notes).toEqual(expandClips([copy]).notes)`，且两者都等于源层演奏；另用**带 repeat + 窗口裁切**的素材钉住折叠路（`expandClips([folded]).notes` 与折叠前逐位相同，替换源层编排后 flat 列表也逐位不变）。
+- **不共享状态证据**：`expect(copy.notes).not.toBe(source.notes)` / `copy.notes[0]).not.toBe(source.notes[0])`（不是同一数组、不是同一对象），改副本不动原件、**改原件也不动副本**；模板更用「就地改字段」这种浅拷贝必败的形式断言（改 `first.notes[0].note` 后模板与第二份都不变）。
+- **过程中修掉一个语义 bug**：折叠时把展开结果**多减了一次**源片段起点（`expandClips` 已是相对零、新片段又声明 `start`），音符会整体后移 0.5 s；现在是 `copyClipNotes(expanded, -from)` 并附注释。
+- **撤销步**：片段内批量编辑 = 一步；**跨层复制 = 一个 app 级撤销步**（安排变更本来就走 `store` 历史，会话自己的 `past` 栈是音符编辑的——断言据此改用 `store.undo()`）；`fold()` 现在**也可撤销**（以前清空历史）。
+- 验收结果：`npm run verify` exit 0（**链里已含 `verify:presets:2x`**）；Rust **225**、Vitest **449（57 文件）**、`e2e/clips + roll + takes` **24 passed**、`npm run test:visual` **10 passed**。
+- 体积：dist **1549.6 → 1555.9 KB**（阈值 1550 → **1562**）；`wasm 74.2/75` 与 `CSS 20.2/21` 未动。
+
+**⚠️ 同时修掉我（父代理）在 v1.108.0 发布时犯的一个错（记在案，教训在 `docs/notes/release.md`）**：发布 v1.108.0 时我为重做版本号跑了一次 `git checkout -- package.json`，把 P11.4 子代理**尚未提交**的脚本文案一起回退，于是 **v1.108.0 里 `verify:presets:2x`/`presets:update:2x` 丢失、`verify` 链里也没有 2× 预设立场门禁**——线上下载的包与 CI 里的 `npm run verify:presets:2x` 都对不上（CI 会红），而 `verify:ci` **当时报 PASS**（它只检查工作流文本，不检查脚本是否存在）。本批做了两件事：**(1)** 恢复四个脚本文案与 `verify` 链里的 `verify:presets:2x`；**(2)** 强化 `scripts/verify-ci.mjs`，让它**同时**校验「工作流文本里有这条命令」**且**「`package.json` 的 `scripts` 里真的定义了它」**且**「`verify` 链里点名了每个非 E2E 必需命令」，并做了自证（临时删脚本 → `[ci] FAIL … scripts["verify:presets:2x"] is missing`；临时从链里摘掉 → `[ci] FAIL — the "verify" script runs …`；还原后 `[ci] PASS`）。
 
 **P10.3 录音 take 二期** ✅ **v1.104.0 交付**
 - ① **重命名上 UI**：take 行内按钮/双击进入输入框，**Enter 提交、Esc 取消**，✓/✕ 手机可达；`renameTake` 是**一个撤销步**且写进 localStorage（单测断言 `store.undo()` 一次完整回退、空串/同名返回 false 且不落盘）。
@@ -229,7 +238,7 @@
 | 6 | P9.4 图模式过采样 | P9.3 | 中 | ✅ v1.106.0 |
 | 7 | P10.1 时间线多选 | P5.1 | 中 | ✅ v1.107.0 |
 | 8 | P11.3 视觉回归扩容 + P11.4 指纹二期 | — | 小 | ✅ v1.108.0 |
-| 9 | P10.2 片段二期 | P5.2 | 中 | v1.109.0 |
+| 9 | P10.2 片段二期 | P5.2 | 中 | ✅ v1.109.0 |
 | 10 | P11.2 i18n 拆分 + P11.5 启动门禁 | — | 中 | v1.110.0 |
 | 11 | P9.5 波表带限复核 | P9.1 | 小 | v1.111.0 |
 | 11b | P9.6 滤波器共振 × 新振荡器交互（C7 + res 0.05 的 0.7% 抽签） | P9.1b | 小 | v1.112.0 |

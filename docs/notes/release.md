@@ -32,3 +32,24 @@ npm run release -- --check           # 只做发布前校验（`npm run verify` 
 - **CI 里只查「日期是真实日期且不是未来」**，不查「必须是今天」——CI 什么时候捡到这次提交不由我们决定，本地发布时才要求当天。
 - **不做自动回滚**：部署失败时重新跑一次比猜「该撤销什么」更可靠；tag 只在全部成功后打，所以「有 tag 的提交 = 已上线的那份代码」。
 - **不自动 commit**：改动和更新记录仍随功能批次一起提交，发布脚本只负责校验、打包、部署、打 tag。
+
+## 一次真实的发布事故：`git checkout -- package.json`（v1.108.0）
+
+发布 v1.108.0 时，更新记录的第一版把首屏 JS 顶过了线，于是重做版本号；重做时我跑了
+`git checkout -- src/changelog.ts src/changelog-head.ts package.json package-lock.json` 把它退回再
+`bump`。问题是**那一刻 `package.json` 里还有子代理尚未提交的脚本文案**（P11.4 的
+`verify:presets:2x` / `presets:update:2x` 与 `verify` 链里的那一条），于是它们被一起回退，随后我提交了
+一个「只差版本号」的 `package.json`。后果：
+
+- `npm run verify` **静默跳过了 2× 预设指纹门禁**；
+- `.github/workflows/ci.yml` 里那条 `npm run verify:presets:2x` 在 CI 上会**直接失败**；
+- 而 `scripts/verify-ci.mjs` **仍然报 `[ci] PASS`** —— 它当时只检查「CI 工作流文本里有没有这条命令」，
+  不检查「这条 npm script 是否真的存在」。
+
+两条结论，都已落地：
+
+1. **重做版本号不要用 `git checkout -- <file>`**。要退回的只有版本字段时，直接改那一个字段；要整文件退回
+   时先 `git status` 确认那些文件**没有他人未提交的改动**，或者先把子代理的成果提交再动。
+2. **`verify:ci` 现在同时校验两半**：工作流文本里有这条命令 **∧** `package.json` 的 `scripts` 里真的定义了它
+   （`npm run <name>` / `npm test` / `npm run <name> -- <args>` 都能解析）**∧** `verify` 链里点名了每个非 E2E
+   必需命令。自证方式是把脚本名临时删掉或从链里摘掉，两种都必须让 `[ci]` 变红——见 P10.2（v1.109.0）的报告与提交。
