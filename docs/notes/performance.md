@@ -59,3 +59,22 @@ $ node scripts/release.mjs --skip-verify --skip-deploy --dry-run --skip-git-chec
 
 并行套件下曾读到 playback 单窗 20.0 / graph-edit 17.5，所以窗口数从 best-of-3×1.2 s 改成
 **best-of-5×0.8 s**——**没有动阈值**。改阈值要另开批次并说明原因。
+
+### ⚠️ 已知脆弱点：fps 守卫是在**并行套件里**测的（登记，v1.110.0 发布时观测到）
+
+v1.110.0 的发布跑（`npm run release`，全量 E2E 141 条、多 worker）里读数是这样：
+
+```
+[fps] idle-with-engine best 47.5 of [47.5, 43.8, 43.8, 47.5, 42.5] fps
+[fps] playback        best 22.5 of [16.3, 22.5, 18.8, 18.8, 18.8] fps
+[fps] graph-edit      best 48.8 of [48.8, 26.3, 26.3, 36.3, 45.0] fps
+```
+
+**pass 了，但 playback 的 5 个窗口里有 3 个低于 20**（16.3 / 18.8 / 18.8）——它是靠最好的那一窗过的。
+同一份代码在单跑时是 60.0 fps，所以这不是播放变慢，而是**测量被同套件的并行负载污染**：
+`performance.spec.ts` 是套件里的第 77 条，跑的时候其它 worker 正在压 8 个核。
+
+best-of-N 的选择是有理由的（本机软件渲染 + 共享负载，单窗会被别的进程抢走），但它**不能替代隔离**：
+一个「靠运气窗口通过」的守卫会掩盖真实的性能回退。**下一步（登记为债，见 `docs/NEXT-PLAN-2.md` §一.13）**：
+把 `performance.spec.ts` 放进**独立 project / `--workers=1`**（或让它自己声明串行）再测 fps，
+让这条线的数字有可比性；在那之前，读这条守卫时**要连着窗口明细一起读**，不要只看 best。
