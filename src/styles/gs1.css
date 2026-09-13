@@ -1435,6 +1435,17 @@ input,textarea,[contenteditable='true']{
    a switch. The input keeps the chip's footprint so the row does not jump. */
 .take-btn.on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
 .take-btn.ok{color:var(--accent);min-width:36px}
+/* P10.2: the figure across layers and songs. The row reuses the take chips'
+   footprint (36 px targets, the same border and radius) rather than inventing a
+   second control language for the same strip. */
+.clip-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 16px 0}
+.clip-tools-title{font:700 8.5px/1 var(--mono);letter-spacing:.16em;color:var(--txt-dim);flex:none}
+.clip-tools-sep{width:1px;height:18px;flex:none;background:var(--border)}
+.clip-field{display:flex;align-items:center;gap:6px;flex:none}
+.clip-field-label{font:600 10px/1 var(--grot);color:var(--txt-dim)}
+.clip-select{min-height:36px;max-width:150px;padding:0 8px;border-radius:9px;border:1px solid var(--border);
+  background:var(--bg-inset);color:var(--txt-2);font:600 10.5px/1 var(--grot);cursor:pointer}
+.clip-select:hover{border-color:var(--border-hi);color:var(--txt-1)}
 .take-edit{display:flex;align-items:center;gap:6px;flex:none}
 .take-rename{width:150px;height:36px;padding:0 10px;border-radius:9px;border:1px solid var(--accent-dim);
   background:var(--bg-inset);color:var(--txt-1);font:600 10.5px/1 var(--grot)}

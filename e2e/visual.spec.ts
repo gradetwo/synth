@@ -239,7 +239,16 @@ async function captureSurfaces(page: Page, device: Device, theme: 'dark' | 'ligh
   const banner = page.locator('.update-banner');
   await expect(banner).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
-  await shot(page, '.update-banner', `banner-${suffix}.png`);
+  // `.update-what` is the one line that is *defined* to differ every release:
+  // `App.tsx` renders `v{newest.version} · {headline}` from the build's
+  // `CHANGELOG_HEAD`, so a baseline that includes it goes red on every version
+  // bump — a false alarm, and one that only teaches people to ignore a red
+  // visual suite. It is masked instead, and the *layout* it sits in is pinned by
+  // `e2e/update-banner.spec.ts` on both viewports (banner height <= 64/120 px,
+  // `.update-copy` height <= 36 px, the one-line ellipsis, and both action
+  // buttons exactly 32 px). What this baseline guards is the shell: background,
+  // radius, spacing, the two fixed actions.
+  await shot(page, '.update-banner', `banner-${suffix}.png`, ['.update-what']);
   await tap(banner.locator('.update-x'));
   await expect(banner).toHaveCount(0);
 
@@ -248,8 +257,14 @@ async function captureSurfaces(page: Page, device: Device, theme: 'dark' | 'ligh
   // gate is usually gone by now. The fallback keeps this honest if that ever
   // stops being true, and either way the engine has to be running before the
   // rest of the surfaces exist.
+  //
+  // The fallback asks whether the *button* is clickable, not whether it exists:
+  // between the engine starting and React removing the gate, `.start-btn` is
+  // still in the DOM for a frame or two and already `disabled`, and clicking it
+  // then waits out the whole test timeout (observed, light desktop surfaces).
+  // `toBeEnabled` waits that frame out; the click after it always lands.
   const start = page.locator('.start-btn');
-  if (await start.count()) await startEngine(page, phone);
+  if ((await start.count()) && (await start.isEnabled())) await startEngine(page, phone);
   else {
     await expect(page.locator('.start-overlay')).toHaveCount(0);
     await expect(page.locator('.kbd-dock.open')).toBeVisible();
@@ -398,6 +413,42 @@ test.describe('iPhone 390×844 · P11.3 surfaces', () => {
 test.describe('self-check', () => {
   test.skip(UPDATING, '录制基线时不比较，自证放到普通运行里做');
   test.use({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, serviceWorkers: 'block' });
+
+  /**
+   * The banner baseline has to survive a release, or it is a false alarm every
+   * version. This is the proof of the mechanism rather than a promise: the same
+   * screenshot is taken twice, with two different version lines (a longer one
+   * standing in for the next release's), and both must match the *one* recorded
+   * baseline — because `.update-what` is masked (see `captureSurfaces`).
+   *
+   * The second half reuses the painted-style trick: a change to the banner's
+   * *shell* must still be caught, so the mask is not covering the whole surface.
+   */
+  test('the banner baseline does not depend on the release line', async ({ page }) => {
+    await withWaitingWorker(page);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.goto('/');
+    const banner = page.locator('.update-banner');
+    await expect(banner).toBeVisible();
+    const options = {
+      ...SHOT,
+      mask: [...ANIMATED, '.update-what'].map((selector) => page.locator(selector)),
+    };
+    await expect(banner).toHaveScreenshot('banner-dark-desktop.png', options);
+
+    // A different release: another version number, another headline, and one
+    // long enough to change what the line would draw if it were not masked.
+    await page.locator('.update-what').evaluate((el) => {
+      el.textContent = 'v9.99.9 · a much longer headline than this release has, written to change the line';
+    });
+    await expect(banner).toHaveScreenshot('banner-dark-desktop.png', options);
+
+    // …and the shell is still guarded: a painted banner must be rejected.
+    await page.addStyleTag({ content: '.update-banner{background:#ff00ff !important}' });
+    await expect(async () => {
+      await expect(banner).toHaveScreenshot('banner-dark-desktop.png', { ...options, timeout: 4_000 });
+    }).rejects.toThrow(/screenshot|pixels|diff/i);
+  });
 
   test('a painted style change is reported as a diff', async ({ page }) => {
     await gotoApp(page, 'dark');

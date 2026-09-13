@@ -4,9 +4,12 @@ import {
   CLIP_MAX_REPEAT,
   clipAt,
   clipsOf,
+  clipsOfLayer,
   clipWithNotes,
+  copyClipToLayer,
   duplicateClip,
   expandClips,
+  foldClipsInto,
   foldLayer,
   makeClip,
   moveClip,
@@ -15,7 +18,6 @@ import {
   renameClip,
   repeatClip,
   resizeClip,
-  clipsOfLayer,
   withClips,
 } from './clips';
 
@@ -266,5 +268,128 @@ describe('clips and layers', () => {
     expect(arranged.tracks?.[0].notes.map((n) => n.start)).toEqual([0, 1]);
     expect(arranged.tracks?.[1].notes.map((n) => n.start)).toEqual([0.5]);
     expect(arranged.notes.map((n) => n.start)).toEqual([0, 0.5, 1]);
+  });
+});
+
+/**
+ * P10.2: the figure is portable across layers.
+ *
+ * The hard acceptance criterion of this batch is an equality, so these tests
+ * assert equality of whole arrays rather than field by field: "copy the clip to
+ * the other layer" and "copy every note across and fold that layer" have to
+ * produce the *same* expansion — the same pitches, starts, durations and
+ * velocities, in the same stable order — and the copy has to be independent of
+ * whatever it was made from.
+ */
+describe('copying a clip to another layer', () => {
+  /** Two layers, the lead arranged with one clip. */
+  const twoLayerArrangement = (): { song: MidiSong; clipId: string } => {
+    const base: MidiSong = {
+      name: 'two',
+      bpm: 120,
+      duration: 4,
+      notes: [],
+      tracks: [
+        { name: 'Lead', notes: [note(60, 0, 0.5), note(64, 1, 0.5)] },
+        { name: 'Bass', notes: [] },
+      ],
+    };
+    base.notes = [...base.tracks![0].notes];
+    const folded = foldLayer(base, 0, { name: 'Lead', bpm: 120 });
+    return { song: folded.song, clipId: folded.clip.id };
+  };
+
+  it('expands to the same notes whether the clip is copied or its notes are', () => {
+    const { song, clipId } = twoLayerArrangement();
+    const clips = clipsOf(song);
+
+    // Path A: copy the clip itself onto the bass layer.
+    const copied = copyClipToLayer(clips, clipId, 1)!;
+    const copy = copied.clip;
+    expect(copy.layer).toBe(1);
+    expect(copy.id).not.toBe(clipId);
+    expect(copied.clips).toHaveLength(clips.length + 1);
+
+    // Path B: copy every note of the expansion across by hand and fold the
+    // bass layer — the long way round, which has to agree to the bit.
+    const otherCopy = copyClipToLayer(clips, clipId, 1)!.clip;
+    const byHand = foldLayer(
+      { ...song, tracks: [{ ...song.tracks![0] }, { name: 'Bass', notes: expandClips([copy]).notes }] },
+      1,
+      { name: copy.name, bpm: song.bpm },
+    ).clip;
+
+    expect(byHand.notes).toEqual(copy.notes);
+    expect(expandClips([byHand]).notes).toEqual(expandClips([copy]).notes);
+    // …and both are the source's performance, note for note.
+    expect(expandClips([copy]).notes).toEqual(expandClips(clipsOfLayer(clips, 0)).notes);
+    // Two copies of the same source are the same figure.
+    expect(otherCopy.notes).toEqual(copy.notes);
+    expect(otherCopy.id).not.toBe(copy.id);
+  });
+
+  it('folds an arrangement back into one clip with the same expansion', () => {
+    // Repeated and trimmed material on purpose: the fold has to read the
+    // *timeline*, not the notes as written.
+    const clip = makeClip('loop', [note(60, 0, 0.5), note(62, 0.75, 0.75)], {
+      start: 0.5,
+      length: 1,
+      repeat: 3,
+      layer: 0,
+    });
+    const before = expandClips([clip]).notes;
+    const folded = foldClipsInto([clip], { sourceLayer: 0, layer: 0, name: 'whole', bpm: 120 });
+    expect(expandClips([folded]).notes).toEqual(before);
+    // The flat list is the same performance in both readings, too: replacing
+    // the source layer's arrangement with the collapsed block changes nothing.
+    const twoLayers = {
+      name: 'two',
+      bpm: 120,
+      duration: 4,
+      notes: [],
+      tracks: [{ name: 'Lead', notes: [] }, { name: 'Bass', notes: [] }],
+    };
+    const ordered = withClips(twoLayers, [clip]);
+    const whole = withClips(ordered, [folded]);
+    expect(whole.notes).toEqual(ordered.notes);
+    expect(whole.tracks?.[0].notes).toEqual(ordered.tracks?.[0].notes);
+    // Folding onto another layer keeps the source's notes playing as written,
+    // and adds the same figure there — the cross-layer reading.
+    const across = withClips(ordered, [clip, foldClipsInto([clip], { sourceLayer: 0, layer: 1, bpm: 120 })]);
+    expect(across.notes).toHaveLength(12);
+    expect(across.tracks?.[1].notes).toEqual(ordered.tracks?.[0].notes);
+    // An explicit start moves the block without changing its internal timing:
+    // `before` starts at 0.5, so a block placed at 2 sits 1.5 s later.
+    const moved = foldClipsInto([clip], { sourceLayer: 0, layer: 1, start: 2, name: 'whole', bpm: 120 });
+    expect(expandClips([moved]).notes.map((n) => [n.note, n.start, n.duration])).toEqual(
+      before.map((n) => [n.note, n.start + 1.5, n.duration]),
+    );
+  });
+
+  it('gives the copy its own note objects, so editing one cannot move the other', () => {
+    const { song, clipId } = twoLayerArrangement();
+    const clips = clipsOf(song);
+    const copied = copyClipToLayer(clips, clipId, 1)!;
+    const source = copied.clips.find((clip) => clip.id === clipId)!;
+    const copy = copied.clip;
+
+    // The deep-copy evidence: not the array, not the note objects.
+    expect(copy.notes).not.toBe(source.notes);
+    expect(copy.notes[0]).not.toBe(source.notes[0]);
+    // Both are separate objects with the same bits.
+    expect(copy.notes.map((n) => [n.note, n.start, n.duration, n.velocity])).toEqual(
+      source.notes.map((n) => [n.note, n.start, n.duration, n.velocity]),
+    );
+
+    // Rewriting the copy leaves the original's fields untouched…
+    const bits = source.notes.map((n) => ({ ...n }));
+    const edited = clipWithNotes(copied.clips, copy.id, [note(36, 0, 2)]);
+    const afterSource = edited.find((clip) => clip.id === clipId)!;
+    expect(afterSource.notes).toEqual(bits);
+    expect(edited.find((clip) => clip.id === copy.id)!.notes.map((n) => n.note)).toEqual([36]);
+
+    // …and rewriting the original leaves the copy untouched.
+    const backEdited = clipWithNotes(copied.clips, clipId, [note(72, 0, 0.25)]);
+    expect(backEdited.find((clip) => clip.id === copy.id)!.notes).toEqual(copy.notes);
   });
 });

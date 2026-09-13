@@ -27,6 +27,7 @@ import {
   clipWithNotes,
   clipsOf,
   clipsOfLayer,
+  copyClipToLayer,
   duplicateClip,
   foldLayer,
   moveClip,
@@ -36,6 +37,7 @@ import {
   withClips,
   type MidiClip,
 } from '@/midi/clips';
+import { clipFromTemplate, type ClipTemplate } from '@/midi/cliptemplates';
 import { midiLibrary } from '@/midi/library';
 import { midiPlayer } from '@/midi/player';
 import { syncTakeFromLayer } from '@/midi/take-edit';
@@ -207,9 +209,20 @@ class RollSession {
     return songLayerToRoll(this.base, this.layerIndex);
   }
 
-  /** Switch to another clip of the current layer (the strip and the roll both do). */
-  setClip(clipId: string | null): void {
-    if (clipId === this.clipId) return;
+  /**
+   * Switch to another clip (the strip and the roll both do).
+   *
+   * `layerIndex` names the layer the clip belongs to, and a caller that knows it
+   * has to say so: the arrangement lanes of *every* layer are on screen at once,
+   * so clicking a block on another layer means "edit that layer's clip", and a
+   * session that switched the clip but stayed on the old layer would draw the
+   * new clip's notes against the old layer's rows. It defaults to the current
+   * layer, which is what the roll's own picker wants.
+   */
+  setClip(clipId: string | null, layerIndex = this.layerIndex): void {
+    const layer = Math.max(0, Math.min(layerIndex, this.layerCount(this.base) - 1));
+    if (clipId === this.clipId && layer === this.layerIndex) return;
+    this.layerIndex = layer;
     this.clipId = clipId;
     this.doc = this.documentFor();
     // The document changed wholesale, so the history starts over, exactly as it
@@ -450,13 +463,29 @@ class RollSession {
    * The clip list is part of the song, so a change goes through the same path a
    * note edit does: persisted at once, one store history entry, the player
    * reloaded with the listener's place kept.
+   *
+   * `mutate` may return an `edit` directive instead of a clip list: it names the
+   * clip that should become the document (a fresh copy or an applied template)
+   * and the layer to point at. The *document* then changes with the
+   * arrangement — a clip switch on its own normally starts a fresh history, but
+   * "copy this clip and carry on in the copy" is one user action, so its undo
+   * step is the one this change already records.
    */
-  arrange(mutate: (clips: MidiClip[]) => MidiClip[]): void {
+  arrange(
+    mutate: (clips: MidiClip[]) => MidiClip[] | { clips: MidiClip[]; edit: { clipId: string; layer: number } },
+  ): void {
     if (!this.base) return;
-    const next = mutate(clipsOf(this.base));
+    const result = mutate(clipsOf(this.base));
+    const next = Array.isArray(result) ? result : result.clips;
     this.base = withClips(this.base, next);
-    // A clip that is gone takes the document with it.
-    if (this.clipId && !next.some((clip) => clip.id === this.clipId)) {
+    if (!Array.isArray(result)) {
+      this.layerIndex = Math.max(0, Math.min(result.edit.layer, this.layerCount(this.base) - 1));
+      this.clipId = result.edit.clipId;
+      this.doc = this.documentFor();
+    } else if (this.clipId && !next.some((clip) => clip.id === this.clipId)) {
+      // A clip that is gone takes the document with it, and the history has to
+      // start over: an undo would otherwise restore a document for a clip that
+      // no longer exists.
       this.clipId = next.find((clip) => (clip.layer ?? 0) === this.layerIndex)?.id ?? null;
       this.doc = this.documentFor();
       this.past = [];
@@ -467,19 +496,23 @@ class RollSession {
     this.emit();
   }
 
-  /** Fold one layer into a clip: its notes become the arrangement. */
+  /**
+   * Fold one layer into a clip: its notes become the arrangement.
+   *
+   * The directive form makes this one history step with the document switch
+   * that accompanies it, so folding is undoable like every other arrangement
+   * change rather than resetting the stack the way a bare clip switch does.
+   */
   fold(layerIndex: number, name?: string): string | null {
     if (!this.base) return null;
     const { song, clip } = foldLayer(this.base, layerIndex, { name });
-    this.base = song;
-    this.layerIndex = Math.max(0, Math.min(layerIndex, this.layerCount(song) - 1));
-    this.clipId = clip.id;
-    this.doc = this.documentFor();
-    this.past = [];
-    this.future = [];
-    this.persist();
-    this.syncNow();
-    this.emit();
+    const layer = Math.max(0, Math.min(layerIndex, this.layerCount(song) - 1));
+    this.arrange(() => ({
+      // `foldLayer` already wrote the clip into the song it returned, so the
+      // list to keep is that song's — the arrangement the user now has.
+      clips: clipsOf(song),
+      edit: { clipId: clip.id, layer },
+    }));
     return clip.id;
   }
 
@@ -514,6 +547,43 @@ class RollSession {
 
   remove(id: string): void {
     this.arrange((clips) => removeClip(clips, id));
+  }
+
+  /**
+   * Copy a clip onto another layer (P10.2). One arrangement change, so one undo
+   * step and one library write, exactly like moving or repeating a clip; the
+   * copy becomes the edited clip, because that is the one the user just made.
+   *
+   * The copy carries the source's `start`/`length`/`repeat` and its notes as
+   * written — the layer decides the timbre, not the register — and it owns its
+   * notes outright (`midi/clips`), so editing it cannot touch the original.
+   */
+  copyToLayer(id: string, layer: number): string | null {
+    if (!this.base) return null;
+    if (!this.clip(id)) return null;
+    if (layer < 0 || layer >= this.layerCount(this.base)) return null;
+    const copied = copyClipToLayer(clipsOf(this.base), id, layer);
+    if (!copied) return null;
+    this.arrange(() => ({ clips: copied.clips, edit: { clipId: copied.clip.id, layer } }));
+    return copied.clip.id;
+  }
+
+  /**
+   * Apply a clip template to a layer (P10.2): a *new* clip with a new id whose
+   * notes are a deep copy of the template's, so editing it — or editing another
+   * clip made from the same template — never reaches back. One arrangement
+   * change, so one undo step and one library write.
+   *
+   * The template's figure decides the window (`clipFromNotes`), not the layer's
+   * tempo or the clip it was captured from, so the same figure lands intact
+   * wherever it is applied.
+   */
+  applyTemplate(template: ClipTemplate, layer = this.layerIndex): string | null {
+    if (!this.base) return null;
+    if (layer < 0 || layer >= this.layerCount(this.base)) return null;
+    const clip = clipFromTemplate(template, { layer, name: template.name, bpm: this.base.bpm });
+    this.arrange((clips) => ({ clips: [...clips, clip], edit: { clipId: clip.id, layer } }));
+    return clip.id;
   }
 
   rename(id: string, name: string): void {

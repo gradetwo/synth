@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.108.0',
+    version: '1.109.0',
     date: '2026-09-14',
-    kind: 'fix',
+    kind: 'feature',
     items: [
       [
-        '**回归门禁补强**：视觉基线 20 → **48 张**（更新横幅、take 行、滤波串联/并联、过采样指示灯、图模板、路由图调制线；深浅 × 手机/桌面），并暴露一个真相——**这批基线此前已经过期、套件本来就是红的**（10 张补录）。预设指纹现在同时覆盖 **1× 与 2×**（81 × 2）。应用未变：wasm 与上一版**逐字节相同**。',
-        '**Regression gates widened.** Visual baselines 20 -> **48** (banner, take row, serial/parallel filter, oversampling LED, template picker, modulation wire; dark/light x desktop/phone), which also surfaced that they had gone stale and the suite was **already red** (ten re-recorded). Preset fingerprints now cover **1x and 2x** (81 x 2). The app is unchanged: the wasm is **byte-for-byte** the previous build.',
+        '**片段编排更好用**：片段里能**直接改音符**（含新的多选批量编辑，每次编辑一个撤销步），可以把片段**复制到另一层**，还能把片段存成**模板**再套用到任意层（放在工作区，不进音色/分享码）。跨层复制与「逐个音符复制再折叠」的结果**逐位一致**，副本与模板都**不共享状态**。另修好上一版里被误删的 2× 预设指纹门禁（内部）。',
+        '**Clip arrangement got easier.** Notes can be edited **inside** a clip (including the new multi-select batch edits, one undo step each), a clip can be **copied onto another layer**, and a clip can be saved as a **template** and applied to any layer (kept in the workspace, not in the patch or the share code). The copy is **bit-for-bit** what copying the notes by hand produces, and neither copies nor templates share state. Also restored the 2x preset-fingerprint gate the previous release dropped (internal).',
       ],
     ],
   };

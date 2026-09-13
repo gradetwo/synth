@@ -214,12 +214,74 @@ const BUDGETS = {
   // place: 1548.7 KB, so this is "measured + ~1.3 KB" -- and the entry itself was
   // trimmed once on the way here rather than the line simply moved.
   // `wasm` deliberately stays at 75 KB: this batch does not touch the engine.
-  total: 1550 * 1024,
+  //
+  // P10.2 (clip arrangement II: editing inside a clip, copying a clip to another
+  // layer, and clip templates in the workspace) is the seventh UI batch and the
+  // third to spend this budget. Measured on this tree with the v1.108.0 release
+  // entry already in place: clean tree 1549.6 KB -> this batch **1555.9 KB**,
+  // i.e. **+6.3 KB**, and `npm run verify`'s rebuild lands on the same figure.
+  // The wasm cores are byte-identical (this batch touches no Rust; `test:dsp`
+  // 0.030735, 81 preset fingerprints - ABI 8 and `verify:dsp:2x` 0.030852 all
+  // reproduce verbatim), so this is a payload trade, not a sound one. Where the
+  // 6.3 KB goes:
+  //   * +2937 B `index-*.js` raw (gzip 91 940 -> 92 194, +254 B): ~0.9 KB of new
+  //     zh/en strings (two trim passes down from ~1.9 KB) and ~2 KB of
+  //     `midi/clips.ts` + `state/store.ts` + `state/layout.ts` code that the
+  //     *boot* path needs, because a stored song has to be able to read its
+  //     templates. The new arrangement primitives themselves are not here (see
+  //     the `initialJs` note below).
+  //   * +2222 B `PlayerPanel-*.js` raw (+469 B gzip): the second strip row
+  //     (copy-to-layer picker, template picker/save/delete, and the `store`
+  //     subscription that redraws them), and the clip-lane click now naming the
+  //     block's layer.
+  //   * +653 B `index-*.css` raw (gzip 20 134 -> 20 432 B): the `.clip-tools`
+  //     row, its field/select and separator, all reusing the take chips' 36 px
+  //     footprint rather than adding a second control language.
+  //   * +442 B `roll-*.js` + 24 B `recording-*.js`: `state/roll.ts` grew by the
+  //     two new arrangement operations (`copyToLayer`, `applyTemplate`) and the
+  //     `setClip` layer argument; both lazy chunks that inline it carry the
+  //     delta.
+  //   * the remainder is the hashed-name and service-worker churn every build
+  //     carries.
+  // 1562 is the ceiling this batch was authorised to, and it is "measured +
+  // ~6.1 KB": the whole point of the authorisation was to cover a feature that
+  // adds a UI row, a model module and ten bilingual strings, and the release
+  // entry that follows this batch has to fit inside it too. The previous
+  // "measured + ~1.3 KB" shape is deliberately *not* kept here -- there was not
+  // 6.3 KB of headroom to do it in, and the honest version is to name the number
+  // the feature actually cost.
+  total: 1562 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
-  // Measured 131.2 KB gzip. +2.8 KB (+2.1 %); the P8.5 plan target was 140 KB,
-  // so this is the tight version of an already-reached goal.
-  initialJs: 134 * 1024,
-  // Measured 19.7 KB gzip. +1.3 KB.
+  //
+  // **This line moved 134 -> 136 in P10.2, and that is a debt with an owner:
+  // P11.2 (i18n split by language, projected 8-12 KB).** It is written down
+  // here rather than left as a silent bump. Measured 131.2 KB gzip at P8.5,
+  // 133.9 KB after P10.1, and **134.6 KB now (137 834 B exactly, 618 B past the
+  // 134 line)**. Where those 618 bytes are, measured rather than guessed:
+  //   * ~340 B: the ten new zh/en string pairs for the strip's second row
+  //     (picker labels, the two explanations, the three confirmations). The copy
+  //     was already trimmed twice on the way here -- the first draft named the
+  //     full rule in each sentence and cost ~1.1 KB gzip; what is left states
+  //     the same facts in one clause each. The `clip.tplDefaultName` key was
+  //     dropped outright (nothing read it).
+  //   * ~255 B: the parts of `midi/clips.ts`, `state/store.ts` and
+  //     `state/layout.ts` that the *boot* path needs -- the stored-template
+  //     field, its normalizer, and the two store operations. The new arrangement
+  //     primitives themselves (`copyClipToLayer`, `foldClipsInto`,
+  //     `clipFromNotes`, `clipTemplates`) are **not** in this chunk: the entry
+  //     has no copy of them (checked by name), so the lazy `roll`/`PlayerPanel`
+  //     chunks pay for the feature and the first screen pays only for what a
+  //     stored song has to be able to read.
+  // Cutting the rest was possible and rejected: it would mean either deleting
+  // the two sentences that make "the copy does not share state" and "a layer
+  // decides the timbre, not the register" visible at the point of use, or
+  // dropping the non-finite-note guard from the shared note copier (the one that
+  // keeps a corrupt stored figure from becoming a NaN velocity on every path
+  // that builds a clip). Neither is worth 618 bytes, and 136 is what the line
+  // costs with them. `initialCss` and `wasm` are untouched by this batch.
+  initialJs: 136 * 1024,
+  // Measured 19.7 KB gzip, 20.1 KB after P10.1, **20.2 KB** now: the new strip
+  // row. Inside the line either way.
   initialCss: 21 * 1024,
   // The larger of the two cores. Measured 73.1 KB gzip after P9.3, 72.4 KB after
   // P11.1, 73.6 KB with the P9.4 PDC landed and 74.2 KB once the graph's 2x was

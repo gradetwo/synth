@@ -8,6 +8,16 @@
  * reader is enough for the shape GitHub Actions uses) and asserts that the gates
  * we promise — Rust, unit, lint, build, wasm, dist, budget, audio, DSP, E2E on
  * all three engines — are still wired up.
+ *
+ * It checks both halves of that promise. A command named in the workflow is only
+ * real if `package.json` still defines it: a script can vanish (a bad merge, a
+ * `git checkout -- package.json`, a rename) while the workflow text keeps
+ * mentioning it, and then the gate is not merely missing — it fails in CI on a
+ * command that does not exist, or worse, is skipped locally by a `verify` chain
+ * that no longer names it. That exact hole existed: `verify:presets:2x` was
+ * listed here and in `ci.yml`, `scripts/verify-presets.mjs` supported the flag,
+ * and the `scripts` entry was gone, so this gate reported PASS. Every required
+ * `npm run <name>` is now resolved against `package.json`'s `scripts`.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -18,10 +28,26 @@ const path = resolve(root, '.github/workflows/ci.yml');
 const text = readFileSync(path, 'utf8');
 const lines = text.split('\n');
 
+const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+const scripts = pkg.scripts ?? {};
+
 const failures = [];
 const check = (name, ok, detail = '') => {
   if (!ok) failures.push(name);
   console.log(`  ${ok ? '✓' : '✗'} ${name}${detail ? ` — ${detail}` : ''}`);
+};
+
+/**
+ * The npm script a command line invokes, or null for anything that is not an
+ * `npm` invocation (`node script.mjs`, a bare `npx`, …). `npm test` and
+ * `npm run <name>`, with or without a `-- <args>` tail, are the shapes the
+ * workflow uses.
+ */
+const scriptOf = (command) => {
+  const m = /^npm\s+(?:run\s+)?(?<name>[^\s-][^\s]*)(?:\s+--.*)?$/.exec(command);
+  if (!m) return null;
+  const name = m.groups.name;
+  return name === 'run' ? null : name;
 };
 
 /** Job name -> the text of its steps, plus the whole job body. */
@@ -72,8 +98,35 @@ const required = [
   ['2x oversampling DSP baseline', 'npm run verify:dsp:2x'],
   ['Chromium E2E', 'npm run test:e2e'],
 ];
+/** Commands this file treats as required, so the scripts check cannot drift from it. */
+const requiredCommands = new Set(required.map(([, needle]) => needle));
 for (const [name, needle] of required) {
   check(`verify job runs ${name}`, verify.includes(needle));
+}
+
+// The other half: a step in the workflow is only a gate if the script it names
+// still exists. Checked for every `npm run` this file requires, wherever it
+// appears in the workflow (the nightly job runs `bench:long`, the E2E job runs
+// `build`, …), not just in the verify job.
+for (const needle of requiredCommands) {
+  const name = scriptOf(needle);
+  if (!name) continue;
+  check(`package.json defines "${name}"`, Object.prototype.hasOwnProperty.call(scripts, name),
+    Object.prototype.hasOwnProperty.call(scripts, name) ? '' : `${needle} is required but scripts["${name}"] is missing`);
+}
+// Two gates the nightly job owns; they are not in the verify job's list, so they
+// are named here rather than folded into it.
+for (const name of ['bench:long']) {
+  check(`package.json defines "${name}"`, Object.prototype.hasOwnProperty.call(scripts, name));
+}
+// `verify` is the local entry point for all of it, so every gate it *can* run
+// has to stay in the chain: dropping `npm run verify:presets:2x` from it made a
+// real gate silently unreachable locally while CI still ran it.
+const verifyChain = scripts.verify ?? '';
+for (const name of [...requiredCommands] .map(scriptOf).filter((n) => n && n !== 'test:e2e')) {
+  // `test:e2e` is deliberately not in `verify` (the browser suite is its own
+  // run), so it is the one command exempt from the chain check.
+  check(`the "verify" script runs "${name}"`, verifyChain.includes(`npm run ${name}`));
 }
 check('the scalar core is gated too', verify.includes('synth_core_scalar.wasm'));
 check('dist is uploaded for inspection', verify.includes('upload-artifact'));

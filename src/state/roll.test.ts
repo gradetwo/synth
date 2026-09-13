@@ -10,9 +10,10 @@ import {
   removeSelection,
   scaleSelection,
 } from '@/midi/selection';
-import { foldLayer, makeClip, withClips } from '@/midi/clips';
+import { clipsOf, foldLayer, makeClip, withClips } from '@/midi/clips';
 import type { MidiSong } from '@/midi/smf';
 import { rollSession } from './roll';
+import { store } from './store';
 
 /**
  * The editing session is the piece that makes the layer strip and the piano roll
@@ -367,5 +368,138 @@ describe('editing a clip', () => {
     expect(rollSession.getState().clipId).toBe(folded.clip.id);
     // The bass layer has no clips, so its note is still the layer's own.
     expect(storedLayer(1).map((n) => n.note)).toEqual([67]);
+  });
+});
+
+/**
+ * P10.2: the arrangement is portable, and editing inside a clip stays a *plan*
+ * edit.
+ *
+ * The model-level equalities are in `midi/clips.test.ts`; what these cases pin
+ * down is the session: one user action is one undo step, the copy is written to
+ * the library and played, and a clip edit never rewrites the take it was folded
+ * from (P10.3's rule — the clip is the plan, the take is the material).
+ */
+describe('clips across layers and templates', () => {
+  const arranged = (): { song: MidiSong; clipId: string } => {
+    const base = twoLayerSong();
+    base.takes = [{ id: 'takeA', name: 'Take A', layer: 0, notes: base.tracks![0].notes.map((n) => ({ ...n })) }];
+    base.takeId = 'takeA';
+    const folded = foldLayer(base, 0, { name: 'Lead', bpm: 120 });
+    return { song: folded.song, clipId: folded.clip.id };
+  };
+
+  it('copies a clip to another layer, keeps both, and undoes in one store step', () => {
+    const { song, clipId } = arranged();
+    putUserTrack(song);
+    rollSession.open(0);
+    const laid = rollSession.copyToLayer(clipId, 1);
+    expect(laid).not.toBeNull();
+    // The copy is the document now, and the copy landed on layer 1.
+    expect(rollSession.getLayerIndex()).toBe(1);
+    expect(rollSession.getState().clipId).toBe(laid);
+    expect(rollSession.clip(laid!)?.layer).toBe(1);
+
+    const stored = midiLibrary.getCurrent()!.song;
+    expect(clipsOf(stored)).toHaveLength(2);
+    // Both layers now play the figure — the same notes, twice.
+    expect(stored.tracks![0].notes.map((n) => n.note)).toEqual([60]);
+    expect(stored.tracks![1].notes.map((n) => n.note)).toEqual([60]);
+
+    // An arrangement change is one *app-wide* undo step (`store`), which is the
+    // history the strip and the roll both live in; the session's own stack is
+    // for note edits, exactly as it was for move/repeat/resize before this.
+    // Exactly one step: one undo removes the copy and leaves the source layer
+    // playing exactly as it did.
+    expect(store.undo()).toBe(true);
+    expect(clipsOf(midiLibrary.getCurrent()!.song)).toHaveLength(1);
+    expect(midiLibrary.getCurrent()!.song.tracks![1].notes).toEqual(song.tracks![1].notes);
+    store.redo();
+    expect(clipsOf(midiLibrary.getCurrent()!.song)).toHaveLength(2);
+  });
+
+  it('applies a template as a new clip without touching the clip it came from', () => {
+    const { song, clipId } = arranged();
+    putUserTrack(song);
+    rollSession.open(0);
+    const source = rollSession.clip(clipId)!;
+    const template = store.saveClipTemplate(source, 'Figure');
+    expect(template.notes).toEqual(source.notes);
+    expect(template.notes).not.toBe(source.notes);
+
+    const applied = rollSession.applyTemplate(template, 1);
+    expect(applied).not.toBeNull();
+    expect(rollSession.getLayerIndex()).toBe(1);
+    const stored = midiLibrary.getCurrent()!.song;
+    expect(clipsOf(stored)).toHaveLength(2);
+    // The applied clip is the document; editing every note of it must leave the
+    // template — and the clip it was captured from — exactly as they were.
+    const doc = rollSession.getDoc();
+    rollSession.commit(
+      { ...doc, notes: doc.notes.map((note) => ({ ...note, note: 36 })) },
+      { sync: true },
+    );
+    const after = midiLibrary.getCurrent()!.song;
+    expect(clipsOf(after).find((clip) => clip.id === clipId)!.notes.map((n) => n.note)).toEqual([60]);
+    expect(clipsOf(after).find((clip) => clip.id === applied)!.notes.map((n) => n.note)).toEqual([36]);
+    expect(store.getSnapshot().layout.clipTemplates[0].notes.map((n) => n.note)).toEqual([60]);
+  });
+
+  it('follows a clip onto its own layer when the strip selects it', () => {
+    // The strip draws every layer's lanes at once, so a block on another layer
+    // has to take the session to that layer as well as to the clip: otherwise
+    // the new clip's notes would be drawn against the old layer's rows (P10.2).
+    const { song, clipId } = arranged();
+    putUserTrack(song);
+    rollSession.open(0);
+    const applied = rollSession.applyTemplate(
+      store.saveClipTemplate(rollSession.clip(clipId)!, 'Figure'),
+      1,
+    )!;
+    expect(rollSession.getLayerIndex()).toBe(1);
+    // Selecting the original's block by hand returns the session to layer 0…
+    rollSession.setClip(clipId, rollSession.clip(clipId)!.layer);
+    expect(rollSession.getLayerIndex()).toBe(0);
+    expect(rollSession.getDoc().notes.map((n) => n.note)).toEqual([60]);
+    // …and back to the applied one, without inventing a second document.
+    rollSession.setClip(applied, 1);
+    expect(rollSession.getLayerIndex()).toBe(1);
+    expect(rollSession.getState().clipId).toBe(applied);
+  });
+
+  it('edits inside a clip as exactly one undo step, and never rewrites the take', () => {
+    const { song, clipId } = arranged();
+    putUserTrack(song);
+    rollSession.open(0);
+    const before = rollSession.getDoc();
+    const note = before.notes[0];
+    // A batch move of the whole selection, applied through the session the way
+    // P10.1's marquee drag does: one commit, one document replacement.
+    rollSession.commit(
+      moveSelection(before, [note.id], 1, 2),
+      { sync: true },
+    );
+    expect(rollSession.getState().canUndo).toBe(true);
+
+    const arrangedSong = midiLibrary.getCurrent()!.song;
+    // The clip's own material moved…
+    const clip = clipsOf(arrangedSong).find((entry) => entry.id === clipId)!;
+    expect(clip.notes[0].start).toBeGreaterThan(note.start);
+    expect(clip.notes[0].note).toBe(note.note + 2);
+    // …and the layer plays the moved figure.
+    expect(arrangedSong.tracks![0].notes.map((n) => n.note)).toEqual([62]);
+    // …while the take it was folded from is untouched: the clip is the plan,
+    // the take is the material (P10.3, `syncTakeFromLayer`).
+    expect(arrangedSong.takes![0].notes.map((n) => n.note)).toEqual([60]);
+    expect(arrangedSong.takes![0].notes[0]).toEqual({ note: 60, velocity: 0.8, start: 0, duration: 0.5 });
+
+    // One edit, one undo step: one undo puts the whole figure back.
+    rollSession.undo();
+    expect(clipsOf(midiLibrary.getCurrent()!.song).find((entry) => entry.id === clipId)!.notes[0].start).toBe(
+      note.start,
+    );
+    expect(rollSession.getState().canUndo).toBe(false);
+    // …and the take is still the performance it always was.
+    expect(midiLibrary.getCurrent()!.song.takes![0].notes[0].start).toBe(0);
   });
 });

@@ -71,6 +71,8 @@ import {
   fxTemplateEntries,
   type FxTemplate,
 } from './fxtemplates';
+import { clipTemplateFromClip, type ClipTemplate } from '@/midi/cliptemplates';
+import type { MidiClip } from '@/midi/clips';
 import { SCHEMA_VERSION, mergeKnown, unwrap, wrap } from './persist';
 
 const STORAGE_KEY = 'gs1:state:v1';
@@ -115,6 +117,10 @@ function cloneLayout(layout: LayoutState): LayoutState {
     // Templates are part of the document history: a saved or deleted one has to
     // survive an undo like any other workspace change.
     fxTemplates: layout.fxTemplates.map((template) => ({ ...template, params: { ...template.params } })),
+    clipTemplates: layout.clipTemplates.map((template) => ({
+      ...template,
+      notes: template.notes.map((note) => ({ ...note })),
+    })),
     flowHidden: [...layout.flowHidden],
   };
 }
@@ -937,6 +943,44 @@ export class SynthStore {
     const next = this.layout.fxTemplates.filter((template) => template.id !== id);
     if (next.length === this.layout.fxTemplates.length) return false;
     this.layout = { ...this.layout, fxTemplates: next };
+    this.mark();
+    this.commit();
+    return true;
+  }
+
+  // ---------------------------------------------------------- clip templates
+
+  /** A saved clip-template id that cannot collide with one already in the list. */
+  private nextClipTemplateId(): string {
+    let id = '';
+    do {
+      id = `clt-${Date.now().toString(36)}-${this.templateSeq++}`;
+    } while (this.layout.clipTemplates.some((template) => template.id === id));
+    return id;
+  }
+
+  /**
+   * Save a clip's figure as a workspace template (P10.2).
+   *
+   * The placement (`start`/`length`/`repeat`/`layer`) is deliberately *not*
+   * stored: the figure is the reusable part, and where it sits belongs to the
+   * song it came from. Applying one builds a fresh clip through
+   * `midi/cliptemplates`, so the template and every clip made from it own their
+   * notes outright.
+   */
+  saveClipTemplate(clip: MidiClip, name?: string): ClipTemplate {
+    const template = clipTemplateFromClip(clip, this.nextClipTemplateId(), name);
+    this.layout = { ...this.layout, clipTemplates: [...this.layout.clipTemplates, template] };
+    this.mark();
+    this.commit();
+    return template;
+  }
+
+  /** Remove a saved clip template. */
+  deleteClipTemplate(id: string): boolean {
+    const next = this.layout.clipTemplates.filter((template) => template.id !== id);
+    if (next.length === this.layout.clipTemplates.length) return false;
+    this.layout = { ...this.layout, clipTemplates: next };
     this.mark();
     this.commit();
     return true;

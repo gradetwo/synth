@@ -11,6 +11,7 @@ import { Param } from '@/audio/params';
 import { normalizeBindings, type CcBinding } from '@/audio/ccmap';
 import { normalizeScale } from '@/audio/scala';
 import { normalizeFxTemplates, type FxTemplate } from './fxtemplates';
+import { normalizeClipTemplates, type ClipTemplate } from '@/midi/cliptemplates';
 
 export type ModuleId = 'osc1' | 'osc2' | 'filter' | 'env' | 'lfo' | 'matrix' | 'fx' | 'fx2';
 
@@ -71,6 +72,13 @@ export interface LayoutState {
    * `state/fxtemplates`, so this list holds only the saved ones.
    */
   fxTemplates: FxTemplate[];
+  /**
+   * Saved clip templates (P10.2). The same kind of thing as `fxTemplates` and
+   * stored in the same place for the same reason: a named figure the player
+   * reuses across songs belongs to their workspace, and a share code carries a
+   * *song*, not the shelf of parts it was built from. See `midi/cliptemplates`.
+   */
+  clipTemplates: ClipTemplate[];
   /** Nodes removed from the signal-flow canvas. */
   flowHidden: string[];
   /** `null` = automatic (collapsed on phones/tablets, expanded on desktop). */
@@ -120,6 +128,7 @@ export function defaultLayout(): LayoutState {
     flowPos: {},
     fxGraphPos: {},
     fxTemplates: [],
+    clipTemplates: [],
     flowHidden: [],
     displayExpanded: null,
     phoneDefaults: false,
@@ -215,6 +224,7 @@ export function normalizeLayout(raw: unknown): LayoutState {
     flowPos,
     fxGraphPos,
     fxTemplates: normalizeFxTemplates(input.fxTemplates),
+    clipTemplates: normalizeClipTemplates(input.clipTemplates),
     flowHidden,
     displayExpanded:
       typeof input.displayExpanded === 'boolean' ? input.displayExpanded : null,

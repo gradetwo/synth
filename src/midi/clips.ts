@@ -188,7 +188,7 @@ export function duplicateClip(clips: MidiClip[], id: string, start?: number): Mi
     {
       ...source,
       id: nextId(),
-      notes: source.notes.map((note) => ({ ...note })),
+      notes: copyClipNotes(source.notes, 0),
       start: tidy(at),
     },
   ];
@@ -203,26 +203,48 @@ export function renameClip(clips: MidiClip[], id: string, name: string): MidiCli
   return clips.map((clip) => (clip.id === id ? { ...clip, name: clean || clip.name } : clip));
 }
 
-/** Replace one clip's notes (the piano roll's write-back). */
-export function clipWithNotes(clips: MidiClip[], id: string, notes: MidiNote[]): MidiClip[] {
-  return clips.map((clip) =>
-    clip.id === id
-      ? {
-          ...clip,
-          notes: notes
-            .map((note) => ({
-              note: Math.max(0, Math.min(127, Math.round(note.note))),
-              velocity: clamp(note.velocity, 0.05, 1),
-              start: tidy(Math.max(0, note.start)),
-              duration: tidy(Math.max(0.01, note.duration)),
-            }))
-            .sort((a, b) => a.start - b.start || a.note - b.note),
-        }
-      : clip,
-  );
+/**
+ * One stored note, repaired the way `clipWithNotes` repairs a whole list.
+ *
+ * Every path that puts notes into a clip goes through this: a copy, a fold, a
+ * template and the piano roll's write-back all store the same shape, so a clip
+ * built two ways cannot differ by a rounding step. A note with a field that is
+ * not a number is dropped rather than clamped into silence — `normalizeClips`
+ * makes the same call for stored data, and this is the same boundary.
+ */
+function cleanNote(note: MidiNote): MidiNote | null {
+  if (
+    !Number.isFinite(note.note) ||
+    !Number.isFinite(note.start) ||
+    !Number.isFinite(note.duration) ||
+    !Number.isFinite(note.velocity)
+  ) {
+    return null;
+  }
+  return {
+    note: Math.max(0, Math.min(127, Math.round(note.note))),
+    velocity: clamp(note.velocity, 0.05, 1),
+    start: tidy(Math.max(0, note.start)),
+    duration: tidy(Math.max(0.01, note.duration)),
+  };
 }
 
-// -------------------------------------------------------------------- folding
+/** A deep copy of a note list, rebased and repaired. Never shares a reference. */
+export function copyClipNotes(notes: readonly MidiNote[], shift = 0): MidiNote[] {
+  const out: MidiNote[] = [];
+  for (const note of notes) {
+    const clean = cleanNote(shift === 0 ? note : { ...note, start: note.start + shift });
+    if (clean) out.push(clean);
+  }
+  return out.sort((a, b) => a.start - b.start || a.note - b.note);
+}
+
+/** Replace one clip's notes (the piano roll's write-back). */
+export function clipWithNotes(clips: MidiClip[], id: string, notes: MidiNote[]): MidiClip[] {
+  return clips.map((clip) => (clip.id === id ? { ...clip, notes: copyClipNotes(notes) } : clip));
+}
+
+// -------------------------------------------------------- clips across layers
 
 /** A clip window long enough for a layer, rounded up to a bar (4 beats). */
 function barLength(notes: MidiNote[], bpm: number, from = 0): number {
@@ -232,6 +254,133 @@ function barLength(notes: MidiNote[], bpm: number, from = 0): number {
   for (const note of notes) end = Math.max(end, note.start + note.duration - from);
   return Math.max(CLIP_MIN_LENGTH, Math.ceil(end / bar) * bar);
 }
+
+/**
+ * Build one clip from a note list that is **already in the clip's own frame**.
+ *
+ * This is the single place a cross-layer copy, a fold and a template all meet,
+ * and that is deliberate: "copy the clip to the other layer" and "copy every
+ * note across and fold that layer" are two names for the same notes placed the
+ * same way, so both hand their notes to this function and the equality of the
+ * two `expandClips` outputs is structural rather than a coincidence a test has
+ * to keep re-proving. `length` is derived from the content (`barLength`, the
+ * same rule `foldLayer` uses) unless the caller asks for a window outright, and
+ * every note goes through `copyClipNotes`, so the new clip never shares a note
+ * array — or a note object — with whatever it was built from.
+ */
+export function clipFromNotes(
+  notes: readonly MidiNote[],
+  options: {
+    layer?: number;
+    name?: string;
+    start?: number;
+    length?: number;
+    repeat?: number;
+    bpm?: number;
+  } = {},
+): MidiClip {
+  const start = tidy(Math.max(0, options.start ?? 0));
+  const inside = copyClipNotes(notes);
+  const length = options.length ?? barLength(inside, options.bpm ?? 120);
+  return {
+    id: nextId(),
+    name: options.name?.trim() || 'Clip',
+    layer: Math.max(0, Math.round(options.layer ?? 0)),
+    start,
+    length: tidy(clamp(length, CLIP_MIN_LENGTH, CLIP_MAX_LENGTH)),
+    repeat: clamp(Math.round(options.repeat ?? 1), 1, CLIP_MAX_REPEAT),
+    notes: inside,
+  };
+}
+
+/**
+ * Copy a clip onto another layer (P10.2).
+ *
+ * `start`, `length` and `repeat` are carried over untouched, and the notes are
+ * copied **as they are**: a `MidiClip` stores absolute MIDI note numbers and
+ * the layer decides the *timbre*, not the register, so "the same figure on the
+ * bass layer" is exactly that and needs no pitch remap. A remap would also
+ * break the one property this batch is judged on — the copy has to expand to
+ * the same notes as copying each note across by hand — so there is deliberately
+ * no transposition option here.
+ *
+ * The result is a fresh clip with a fresh id and its own note objects: editing
+ * either one can never move the other.
+ */
+export function copyClipToLayer(
+  clips: MidiClip[],
+  id: string,
+  layer: number,
+  options: { name?: string } = {},
+): { clips: MidiClip[]; clip: MidiClip } | null {
+  const source = clips.find((clip) => clip.id === id);
+  if (!source) return null;
+  const clip = clipFromNotes(source.notes, {
+    layer,
+    name: options.name ?? source.name,
+    start: source.start,
+    length: source.length,
+    repeat: source.repeat,
+  });
+  return { clips: [...clips, clip], clip };
+}
+
+/**
+ * Fold a whole arrangement of one layer into a single clip, whose expansion is
+ * the same performance (P10.2).
+ *
+ * Unlike `foldLayer`, which reads the layer's written notes, this reads the
+ * *timeline*: the source clips are expanded exactly as they play — repeats,
+ * window trims, note drops and all — and stored as one clip, so the result is
+ * one block that can be dragged, looped or copied as a unit without changing a
+ * single note of what is heard. `start` moves the block as a whole (the internal
+ * timing is kept), which is why the notes are rebased on the earliest source
+ * clip rather than on `start`: the expansion already places its first note at
+ * zero, and rebasing it twice would push the figure out of its own window.
+ *
+ * `sourceLayer` says which arrangement to read and `layer` where the new clip
+ * lands; each defaults to the other, so "collapse this layer's arrangement"
+ * names neither and a cross-layer fold can name both.
+ */
+export function foldClipsInto(
+  clips: MidiClip[],
+  options: {
+    layer?: number;
+    name?: string;
+    start?: number;
+    bpm?: number;
+    sourceClips?: MidiClip[];
+    sourceLayer?: number;
+  } = {},
+): MidiClip {
+  const source = options.sourceClips ?? clips;
+  const sourceLayer = options.sourceLayer ?? options.layer ?? 0;
+  const mine = clipsOfLayer(source, sourceLayer);
+  const expanded = expandClips(mine).notes;
+  // The expansion places its first note at zero, told from the earliest source
+  // clip's start; a clip stores its notes relative to its own start, so the
+  // block's natural home is that earliest start.
+  const origin = mine.reduce((earliest, clip) => Math.min(earliest, clip.start), Number.POSITIVE_INFINITY);
+  const from = Number.isFinite(origin) ? origin : 0;
+  const start = Math.max(0, options.start ?? from);
+  // `expandClips` places the figure at the source's own start times, but a clip
+  // stores its notes relative to its own start — and the new clip declares
+  // `start` too, so the source's origin is subtracted exactly once. Declaring a
+  // different `start` therefore moves the whole block without touching this.
+  const bpm = options.bpm ?? 120;
+  const inside = copyClipNotes(expanded, -from);
+  return clipFromNotes(inside, {
+    layer: options.layer ?? sourceLayer,
+    name: options.name,
+    start,
+    // Derived from the content, exactly as `foldLayer` derives its window, so
+    // "fold what I hear" and "fold the layer's notes" give the same clip.
+    length: barLength(inside, bpm),
+    bpm,
+  });
+}
+
+// -------------------------------------------------------------------- folding
 
 /**
  * Fold a layer into one clip starting at `start` (0 by default).
@@ -251,25 +400,16 @@ export function foldLayer(
   const layer = tracks[index];
   const start = Math.max(0, options.start ?? 0);
   const inside = layer.notes.filter((note) => note.start >= start);
-  const bpm = options.bpm ?? song.bpm;
-  const length = barLength(inside, bpm, start);
-  const clip: MidiClip = {
-    id: nextId(),
-    name: options.name?.trim() || layer.name || 'Clip',
-    layer: index,
-    start: tidy(start),
-    length: tidy(length),
-    repeat: 1,
+  const clip = clipFromNotes(
     // Relative to the clip: the same notes, re-based on the window's start.
-    notes: inside
-      .map((note) => ({
-        note: note.note,
-        velocity: note.velocity,
-        start: tidy(note.start - start),
-        duration: note.duration,
-      }))
-      .sort((a, b) => a.start - b.start || a.note - b.note),
-  };
+    inside.map((note) => ({ ...note, start: note.start - start })),
+    {
+      layer: index,
+      name: options.name?.trim() || layer.name || 'Clip',
+      start,
+      bpm: options.bpm ?? song.bpm,
+    },
+  );
   // The layer's notes become the first clip's content, so a folded layer sounds
   // exactly as it did — the flat list is the expansion from here on.
   const clips = [...clipsOf(song), clip];

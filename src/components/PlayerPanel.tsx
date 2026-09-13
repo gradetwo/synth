@@ -97,6 +97,14 @@ export function PlayerPanel({
    */
   const [editNotes, setEditNotes] = useState(false);
   /**
+   * Arrangement work that names a destination or a saved figure (P10.2): the
+   * layer a clip is copied to, and the clip template picked to apply or delete.
+   * Both are kept as choices so the buttons line up with what the user sees,
+   * exactly like the effect graph's template select (P7.3).
+   */
+  const [copyLayer, setCopyLayer] = useState('');
+  const [template, setTemplate] = useState('');
+  /**
    * The take whose name is being edited inline (P10.3), and the draft. Renaming
    * is one undo step on Enter; Escape and the ✕ put the old name back.
    */
@@ -144,6 +152,9 @@ export function PlayerPanel({
   );
   useEffect(() => midiPlayer.subscribe(setPlayer), []);
   useEffect(() => recorder.subscribe(setRec), []);
+  // Clip templates live in the workspace layout, so saving or deleting one has
+  // to redraw the strip; nothing else about the store is read here.
+  useEffect(() => store.subscribe(() => bump((v) => v + 1)), []);
 
   // An edit to a built-in demo becomes a copy; say so once, because the track
   // list switching under the user's finger is otherwise a mystery.
@@ -237,6 +248,60 @@ export function PlayerPanel({
     };
   }, [current]);
   const selectedClip = roll.clipId ? rollSession.clip(roll.clipId) : undefined;
+  /**
+   * The clip templates saved in the workspace (P10.2). They live in the layout,
+   * next to the effect-graph templates, so the strip has to follow the store as
+   * well as the library: saving one does not touch the song.
+   */
+  const clipTemplates = store.getSnapshot().layout.clipTemplates;
+  const chosenTemplate = clipTemplates.find((entry) => entry.id === template) ?? null;
+  /**
+   * Where a cross-layer copy of the selected clip would land: the layer picked
+   * in the strip, so "copy to another layer" is a two-click move without a
+   * dialog. The picker is only shown when the song actually has one.
+   */
+  const copyTarget = copyLayer === '' ? null : Number(copyLayer);
+  const copyTargetValid =
+    copyTarget !== null &&
+    copyTarget >= 0 &&
+    copyTarget < layers.length &&
+    selectedClip !== undefined &&
+    selectedClip.layer !== copyTarget;
+
+  const applyClipTemplate = (id: string) => {
+    setTemplate(id);
+    const entry = clipTemplates.find((item) => item.id === id);
+    if (!entry) return;
+    haptic(HAPTIC.light);
+    if (rollSession.applyTemplate(entry, roll.layerIndex)) toast(t('clip.tplApplied', { name: entry.name }));
+  };
+
+  const saveClipTemplate = () => {
+    if (!selectedClip) return;
+    haptic();
+    const saved = store.saveClipTemplate(selectedClip, selectedClip.name);
+    setTemplate(saved.id);
+    toast(t('clip.tplSavedToast', { name: saved.name }));
+  };
+
+  const deleteClipTemplate = () => {
+    if (!chosenTemplate) return;
+    haptic(HAPTIC.medium);
+    if (store.deleteClipTemplate(chosenTemplate.id)) {
+      setTemplate('');
+      toast(t('clip.tplDeleted'));
+    }
+  };
+
+  const copyClipToLayer = () => {
+    if (!selectedClip || copyTarget === null || !copyTargetValid) return;
+    haptic();
+    const made = rollSession.copyToLayer(selectedClip.id, copyTarget);
+    if (made) {
+      toast(t('clip.copyLayerDone', { name: selectedClip.name, n: copyTarget + 1 }));
+      setCopyLayer('');
+    }
+  };
 
   /**
    * The takes of the layer a recording would land on (P5.4). Only that layer's
@@ -627,6 +692,81 @@ export function PlayerPanel({
                 {editNotes ? t('layer.modeNote') : t('layer.modeArrange')}
               </button>
             </div>
+            {/* The figure across layers and songs (P10.2): copy the selected
+                clip onto another layer as it is, or keep its notes as a named
+                workspace template and drop them on any layer. Both build a
+                *fresh* clip through the same core the arrangement uses, so a
+                copy never aliases the original. The row only exists once a
+                layer is arranged — a song without clips has no figure to move,
+                and the strip must not grow a control row for it. */}
+            {clipRows.rows[roll.layerIndex]?.length ? (
+              <div className="clip-tools" data-act="clip-tools" role="group" aria-label={t('clip.tpl')}>
+                <span className="clip-tools-title">{t('clip.tpl')}</span>
+                <label className="clip-field" title={t('clip.copyLayerHint')}>
+                  <span className="clip-field-label">{t('clip.copyLayer')}</span>
+                  <select
+                    className="clip-select"
+                    data-act="clip-copy-target"
+                    aria-label={t('clip.copyLayer')}
+                    value={copyLayer}
+                    onChange={(event) => setCopyLayer(event.target.value)}
+                  >
+                    <option value="">—</option>
+                    {layers.map((layer, index) => (
+                      <option key={`${layer.name}-${index}`} value={index}>
+                        {index + 1} · {layer.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="take-btn"
+                  data-act="clip-copy-layer"
+                  disabled={!copyTargetValid}
+                  title={t('clip.copyLayerHint')}
+                  onClick={copyClipToLayer}
+                >
+                  {t('clip.copyLayerShort')}
+                </button>
+                <span className="clip-tools-sep" aria-hidden="true" />
+                <select
+                  className="clip-select"
+                  data-act="clip-template"
+                  aria-label={t('clip.tpl')}
+                  value={template}
+                  onChange={(event) => applyClipTemplate(event.target.value)}
+                >
+                  <option value="">{t('clip.tplPick')}</option>
+                  {clipTemplates.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="take-btn"
+                  data-act="clip-template-save"
+                  disabled={!selectedClip}
+                  title={t('clip.tplSaveHint')}
+                  onClick={saveClipTemplate}
+                >
+                  {t('clip.tplSave')}
+                </button>
+                <button
+                  type="button"
+                  className="take-btn del"
+                  data-act="clip-template-delete"
+                  disabled={!chosenTemplate}
+                  aria-label={t('clip.tplDelete')}
+                  title={t('clip.tplDelete')}
+                  onClick={deleteClipTemplate}
+                >
+                  ✕
+                </button>
+              </div>
+            ) : null}
             {/* Takes (P5.4, P10.3): the performance that is playing, the
                 alternates kept beside it, rename, A/B audition and the two
                 merge trades. A chip is a tap target, not a hover target,
@@ -839,7 +979,13 @@ export function PlayerPanel({
                         title={`${clip.name} · ${clip.repeat}×`}
                         onClick={() => {
                           haptic();
-                          rollSession.setClip(clip.id);
+                          // The lane a block is drawn in is the layer it belongs
+                          // to, so selecting one switches the session to that
+                          // layer as well as to the clip — P10.2 copies a clip
+                          // onto another layer and expects to edit it right
+                          // there, and a session on the wrong layer would draw
+                          // the new clip's notes against the old layer's rows.
+                          rollSession.setClip(clip.id, clip.layer ?? 0);
                           setSelected(null);
                         }}
                       >
