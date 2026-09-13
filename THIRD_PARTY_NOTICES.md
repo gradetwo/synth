@@ -24,6 +24,7 @@ freestanding shim strategy.
 | [Vite](https://vitejs.dev/) | MIT | build tooling (dev dependency) |
 | [TypeScript](https://www.typescriptlang.org/) | Apache-2.0 | type checking (dev dependency) |
 | [Vitest](https://vitest.dev/) | MIT | unit tests (dev dependency) |
+| [Binaryen](https://github.com/WebAssembly/binaryen) (`binaryen` npm build) | 132.0.0 | Apache-2.0 | `wasm-opt -Oz` post-processing of the WASM cores (dev dependency; build-time only, not shipped) |
 | [@fontsource/space-grotesk](https://fontsource.org/fonts/space-grotesk) | OFL-1.1 | self-hosted display font |
 | [@fontsource/ibm-plex-mono](https://fontsource.org/fonts/ibm-plex-mono) | OFL-1.1 | self-hosted monospace font |
 

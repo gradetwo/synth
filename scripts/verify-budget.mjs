@@ -124,8 +124,10 @@ const lame = files.find((file) => /lamejs-.*\.js$/.test(file));
 // dist total sums — but it does **not** buy back the wasm **gzip** line: the
 // measured gzip gain is 71 272 (from 72 197) and 68 244 (from 69 342), i.e.
 // about 1 KB per core. This batch's +1.9 KB of gzip is therefore close to
-// permanent, and the ceiling below is "measured + ~1.5 KB" rather than a
-// round number with room to spare.
+// permanent, and the ceiling was set to "measured + ~1.5 KB" rather than a
+// round number with room to spare. **Settled by the delivered P11.1 measurement
+// below**: the gzip line stayed where it was, and it has now been re-based to
+// "measured + ~0.6 KB" instead.
 //
 // P10.3 (take second pass: rename / A-B audition / merge strategies / the
 // clips x take rule) is the fifth, and it is the first *UI* batch to spend the
@@ -150,22 +152,52 @@ const lame = files.find((file) => /lamejs-.*\.js$/.test(file));
 // add the usual ~0.5-1 KB of first-screen churn, so the real headroom here is
 // ~1.4 KB. P11.1 still has to buy the whole thing back (its ~90 KB of raw wasm
 // is the largest single item in this total).
+//
+// **P11.1 (`wasm-opt -Oz`) is delivered, and this block settles all three
+// commitments above (P9.2, P9.1c, P10.3).** `binaryen` is now a devDependency
+// and `scripts/build-wasm.mjs` runs `-Oz --all-features` on both cores right
+// after cargo. Measured on this v1.104.0 tree, with node zlib level 9 (the
+// same gzip this gate uses):
+//   * SIMD core:   306 098 -> 210 475 B raw (-31.2 %), 74 872 -> 74 172 B gzip (-0.9 %);
+//   * scalar core: 298 206 -> 193 685 B raw (-35.0 %), 71 851 -> 71 172 B gzip (-1.0 %);
+//   * dist total: 1718.6 -> 1523.1 KB (-195.5 KB, -11.4 %).
+// The optimisation is *equivalent*, not merely close: the dsp-baseline patch
+// renders to the same 96 000 float samples in 1x and 2x on both cores, and
+// `test:dsp` (0.030735), `verify:dsp:2x` (0.030852), all 81 preset fingerprints
+// and every `verify:audio` assertion (P9.1b/P9.1c/P9.3 included) reproduce
+// verbatim. It is a raw-byte win, so it pays the **dist** commitment in full and
+// leaves the **wasm gzip** line essentially where it was — exactly what the P9.1b
+// correction above predicted. Two consequences:
+//   1. the P11.1 acceptance criterion in `docs/NEXT-PLAN-2.md` ("both cores gzip
+//      down >=10 %", "abandon if <5 %") was wrong: measured gzip gain is ~1 % per
+//      core, and the batch still earns its place because the dist total is raw;
+//   2. from here on, wasm gzip growth is near-permanent and has to be declared,
+//      which is why the wasm ceiling below is "measured + ~0.6 KB".
+// The pass degrades gracefully: a missing/failing `wasm-opt` only warns and
+// skips (the build never fails). The tightened dist ceiling below is what turns
+// a skipped pass into a red gate — 1718.6 KB unoptimised is far past 1530 KB.
 const BUDGETS = {
-  // Measured 1717.6 KB after P10.3 (1711.4 KB on the clean tree, +6.16 KB).
-  // 1720 KB keeps the P8.5 "measured + small margin" rule; the margin covers
-  // the changelog entry that lands in the first-screen chunk at release time.
-  total: 1720 * 1024,
+  // Measured 1523.1 KB after P11.1 (1718.6 KB on the same tree before it, so
+  // `wasm-opt -Oz` bought back the whole P9.2/P9.1c/P9.1b/P9.3 commitment and
+  // 195.5 KB more). 1530 KB keeps the P8.5 "measured + small margin" rule
+  // (~0.45 %, matching its ~0.5 %): it covers the release changelog entry that
+  // lands in the first-screen chunk and nothing else. The next batch that grows
+  // the payload comes back here and names its trade, as usual.
+  total: 1530 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   // Measured 131.2 KB gzip. +2.8 KB (+2.1 %); the P8.5 plan target was 140 KB,
   // so this is the tight version of an already-reached goal.
   initialJs: 134 * 1024,
   // Measured 19.7 KB gzip. +1.3 KB.
   initialCss: 21 * 1024,
-  // The larger of the two cores. Measured 73.1 KB gzip after P9.3 (71.2 KB on
-  // the clean tree, +1.9 KB). `wasm-opt` will not bring this back — see the
-  // correction above — so it is a deliberate, reviewed bump. P10.3 did not
-  // touch the engine and this line measured 73.1 KB again.
-  wasm: 74 * 1024,
+  // The larger of the two cores. Measured 73.1 KB gzip after P9.3 and 72.4 KB
+  // after P11.1: `wasm-opt -Oz` is a raw-byte win and only moved this gzip line
+  // by ~0.9 % (see the P9.1b correction and the P11.1 block above), so this is a
+  // deliberate, reviewed tightening rather than a real saving — 73 KB is
+  // "measured + ~0.6 KB", keeping the "next gzip growth has to be declared"
+  // property. If `wasm-opt` is ever skipped, this line goes back to 73.1 KB and
+  // fails, which is the intended alarm.
+  wasm: 73 * 1024,
 };
 
 let failures = 0;

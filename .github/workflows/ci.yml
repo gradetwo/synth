@@ -43,8 +43,13 @@ jobs:
       - name: Production build (WASM + SW)
         run: npm run build
 
+      # binaryen (wasm-opt / wasm-dis) is a devDependency, so `npm ci` above
+      # installs it and `npm run build` (the step before this one) already
+      # optimised both cores. Nothing extra to install here; if the binary is
+      # ever unavailable the build degrades to unoptimised cores and
+      # `verify:budget` fails on the dist total instead of the build breaking.
       - name: WASM quality gates (SIMD + scalar)
-        run: node scripts/verify-wasm.mjs && node scripts/verify-wasm.mjs src/generated/synth_core_scalar.wasm
+        run: node scripts/verify-wasm.mjs && node scripts/verify-wasm.mjs src/generated/synth_core_scalar.wasm && node scripts/verify-wasm-features.mjs
 
       - name: Lint
         run: npm run lint
