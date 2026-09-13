@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.109.0',
+    version: '1.110.0',
     date: '2026-09-14',
     kind: 'feature',
     items: [
       [
-        '**片段编排更好用**：片段里能**直接改音符**（含新的多选批量编辑，每次编辑一个撤销步），可以把片段**复制到另一层**，还能把片段存成**模板**再套用到任意层（放在工作区，不进音色/分享码）。跨层复制与「逐个音符复制再折叠」的结果**逐位一致**，副本与模板都**不共享状态**。另修好上一版里被误删的 2× 预设指纹门禁（内部）。',
-        '**Clip arrangement got easier.** Notes can be edited **inside** a clip (including the new multi-select batch edits, one undo step each), a clip can be **copied onto another layer**, and a clip can be saved as a **template** and applied to any layer (kept in the workspace, not in the patch or the share code). The copy is **bit-for-bit** what copying the notes by hand produces, and neither copies nor templates share state. Also restored the 2x preset-fingerprint gate the previous release dropped (internal).',
+        '**启动更快**：首屏要下载的 JavaScript 少了约 **11 KB**（面板文案改为打开面板时才加载），第一次打开和弱网下最明显。面板文案没到之前不会闪出占位键名，切换语言也不会先显示另一种语言再纠正。声音引擎与上一版**逐字节相同**。发布流程另加一道门禁：首屏可交互时间超标会直接中止发布（内部）。',
+        '**Starts faster.** The first screen downloads about **11 KB** less JavaScript (panel copy now loads when its panel opens), which shows up most on the first visit and on slow connections. A panel never flashes placeholder key names before its copy arrives, and switching language never paints one language and then corrects itself. The audio engine is **byte-for-byte** the previous build. Publishing also gained a gate that aborts a release when first-interactive time regresses (internal).',
       ],
     ],
   };

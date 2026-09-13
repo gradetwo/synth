@@ -1,4 +1,4 @@
-# 下一阶段开发 · 完善 · 改进计划（v1.109.0 起）
+# 下一阶段开发 · 完善 · 改进计划（v1.110.0 起）
 
 > 接在 `docs/NEXT-PLAN.md`（v1.79.0–v1.97.0，14 个批次全部交付）之后。本文档规划 **P9–P12 四个方向、23 个批次**
 > （原为 21 个；P9.1a 的实测发现把「硬同步重启对齐」立为新的 **P9.1c**，P9.1b 的实测发现把
@@ -25,7 +25,7 @@
 3. **效果参数按种类、不是按节点**：延迟 time/fb、混响 size/mix 等无法每节点独立，也不能作为图内调制目标。
 4. **自由图 `FX_GRAPH` 模式不过采样**：缺逐节点延迟补偿（PDC），硬开会让干路/节点错 31 样本成梳状。
 5. **波表/采样路径**未单独做带限复核（若第 1 条的根因指向波表插值，则需补）。
-6. **体积**：最大未利用项是 `wasm-opt -Oz`（两核 560 KB raw，本机无该二进制）；`i18n.ts` 双语文案全在首屏（按语言拆分可再省 8–12 KB，但要把同步 `t()` 改异步）。
+6. ~~**体积**：最大未利用项是 `wasm-opt -Oz`；`i18n.ts` 双语文案全在首屏。~~ **两项都已结清**：`wasm-opt -Oz` 见 **v1.105.0（P11.1）**（raw −31/−35%，dist −195.5 KB）；首屏文案见 **v1.110.0（P11.2）**（首屏 JS gzip **134.65 → 123.75 KB，−10.89 KB**，阈值 136 → **125 KB**，且**没有**把同步 `t()` 异步化——按的是键组而不是语言）。**当前首屏 JS 余量只剩 ~1.2 KB**（实测 123.75 / 阈值 125），**dist 余量 ~3.7 KB**（实测 1558.3 / 1562），下一个动 UI 文案的批次要按这两条线记账。
 7. **`songs.ts` 懒加载经实测为负收益**（dist 净 +93 B，首屏 gzip 仅 −3.7 KB，却要异步化 eager 单例）——不要再试；要动只能连初始化语义一起改。
 8. **编辑器/实例显示不一致**（P7.3 交付者记录）：保存/套用跟随 store 的 `activeInstance`，而图编辑器显示实例 1 的 snapshot。
 9. ~~**clips 与 take 的关系**：折叠成片段的层切换 take 对该层听感无效（take 作为素材保留）。~~ **已在 v1.104.0（P10.3）解决**：不再沉默——折叠层明确禁止切换/合并并给出原因（「take 仅作素材」），改名仍允许、录音仍保存。选「禁止」而非「take 作为片段源」，因为 `MidiClip` 没有 per-clip 的 take 链接、且重建会静默丢弃用户对片段的编辑（见 P10.3 条目）。
@@ -192,9 +192,17 @@
 - 代价：`wasm-opt` 每核约 23 s，`build` 与 `test:wasm` 各跑一次 ⇒ 每个 CI job 约 +50 s。
 - 顺带：`THIRD_PARTY_NOTICES.md` 补了 Binaryen（Apache-2.0，dev-only、不随产物分发）的构建期条目；`package-lock.json` 的 root `version` 被 npm 从过期的 1.78.0 同步为 1.104.0（package.json 的 version 未动）。
 
-**P11.2 i18n 按语言拆分**（1 批）
-- 要点：`i18n.ts`（45 KB 源）按语言拆到懒 chunk，切换语言时按需加载；处理首屏首帧的文案（首屏用中最少的内联集）。
-- 验收：首屏 JS 下降 **8–12 KB**；切语言无闪烁；所有文案断言（含 E2E）仍绿。
+**P11.2 i18n 按语言拆分** ✅ **v1.110.0 交付**
+- **做法是按键组的结构性拆分，不是按语言**：`DICT` 是 `key:[zh,en]` 扁平双语表，按语言拆会把另一种语言留在首屏、收益相同却要把同步 `t()`/`getLang()` 异步化。所以 `src/i18n.ts` 只留**首帧真会渲染的 174 键**，其余 **355 键**按面板分表进 `src/i18n-panels.ts`（只被 `import()` 到达：FX 68 / PLAYER 104 / ROLL 51 / DRAWER 18 / SOURCES 27 / SETTINGS 48 / AUDIO+cc 27 / DOCS 8 / FLOW 12）。**判据是逐键的**（每个 core 键的读者都在首帧代码里），移动后再审计一次：**零 audit-only 键**。
+- **首屏最小集的边界（可复核）**：`panels/layout.tsx`（顶栏/示波器行/键盘 dock/卷帘按钮）、`panels/modules.tsx` + `Module.tsx` + `state/layout.ts`（模块网格与标签）、`Keyboard.tsx`、`controls.tsx`（`t(\`wave.${w}\`)`、`knob.fine`）、`EditableValue.tsx`、`canvas.tsx`、`App.tsx`、`engine.ts`+`midi.ts`+`render.ts`（启动期 `err.*` toast）。再往下搬只能搬「首帧就在 DOM 里的 `title`/`aria-label`」或首帧可见文本 ⇒ 会在首屏先画 key 名，正是本批禁止的闪烁。
+- **同步性保住了**：`t()` 字面量调用点 **1342 处 / 57 个非测试文件，全部保持同步，没有一处被异步化**；`getLang()` 的 5 个调用点（录音量化 toast、播放器网格标签、Guide/Changelog 的 `pick()`、`midi/library.ts` 曲名、更新横幅）都在事件/toast 路径。新增的异步面只有三处且都不在首帧：`main.tsx` 的 boot 预载（**不 await**）、`App` 的 idle 预载、懒面板的「先 loadStrings 再 import 组件」。`store.toggleLang()` **仍是同步**，await 放在设置抽屉的按钮里 ⇒ 切换语言先加载完再提交，**不闪烁**。
+- **设置/预设库抽屉的文案搬走了**（我复核时驳回了「测试要它所以留在首屏」这个理由）：两者都不是首帧可见内容；设置抽屉用 `useStringsReady()` 门住（表未到渲染 `null`），`App.test.tsx` 改成先 `await loadAllStrings()`。**测试驱动不是设计理由**。
+- **另外两处真实节省**：①键名清单改为 `Object.keys(table)` 在 `registerStrings()` 内派生（原设计给每张表配 `readonly string[]`，与文案同 chunk ⇒ `dist` 按 raw 求和时**重复约 7 KB 字符串**）；②删 **36 个死键**（`src/`、`e2e/`、`scripts/`、`index.html` 零引用，逐个 grep 证实；沿用 P10.2 删 `clip.tplDefaultName` 的先例）。
+- **实测（同口径，用 v1.109.0 的 release 包里的 `index.html` 对比）**：`index-*.js` raw **299,983 → 271,040 B**、gzip **92,238 → 81,084 B**；**首屏 JS gzip 137,878 → 126,724 B（134.65 → 123.75 KB，−10.89 KB）**，落在计划的 8–12 KB 内；阈值 **136 → 125 KB**（实测 + ~1.2 KB），**P10.2 记在 136 上的那 2 KB 账就此结清**。dist **1556.9 → 1558.3 KB**（+1.4 KB，仍在未动的 1562 KB 内 ⇒ 没有放宽任何阈值；**余量只剩 ~3.7 KB**）。CSS 20.2/21、wasm 74.2/75 未动。
+- **首帧不等懒 chunk 的证据**（防止「用后台请求把字节挪出指标」的读法）：`main.tsx` 的 `void loadAllStrings()` 不 await；`i18n.test.ts` 新增「**首屏 import 图里出现的键必须都在 core**」的断言 + 一条**元测试**证明那个 import 图遍历器真的能找到文件（否则它会在守卫生效时静默变绿）；三个 eager-but-lazy-copy 组件（设置抽屉、两个导入源 picker）在表未到时渲染 `null`；`e2e/i18n.spec.ts` reload 用例断言首帧就是 `Start Audio Engine` + 模块名。
+- **不闪烁的断言**：`e2e/i18n.spec.ts` 用 MutationObserver 记录整段 DOM 文本，断言切换后懒面板变成 `Quantise`、**全程不出现 key 名**、且转录恰好两端（无第三态）。**2 passed**。
+- **一处语义收窄（登记）**：`hasKey()` 现在在表未加载时返回 `false`（原为 `true`）——键名改由 `Object.keys(table)` 派生是省掉 ~7 KB 的代价。生产代码里 `hasKey` **只被 `i18n.test.ts` 使用**（已 grep 证实）；守卫（字面量有键、两表不重复、首屏 import 图只用 core、gated 文件必须调 `useStringsReady()`、两表都加载后覆盖全字典）全部保留。要恢复「未加载也能答」需把键名清单放回懒 chunk（首屏 JS 不受影响，dist +~0.2 KB，可由余量吸收）。
+- 体积取舍（注释里留了数字）：单 chunk vs 每面板一 chunk 都实测过，**每面板一 chunk 在 dist 上差 1.7 KB**（多 6 个 chunk 头 + 6 个更弱的压缩上下文），首屏数字相同 ⇒ 合成一个模块。
 
 **P11.3 视觉回归扩容** ✅ **v1.108.0 交付**
 - **新增 28 张基线**（6 处界面 × 深/浅 × 手机 390×844 / 桌面 1440×900）：**更新横幅**（伪造 waiting worker）、**播放器 take 行**（真录两条 take）、**滤波双级** 串联/并联各一张、**过采样 LED**、**图模板 select**、**路由图调制线**；**总量 20 + 28 = 48 张**（目录 2.9 → 3.6 MB）。阈值沿用 **0.05 色距 + 0.01 占比**；mask 补了 `.spec-body` / `.strip-scope` / `.strip-spec`（`.spec-body` 是频谱画布，漏在 mask 外时浅色启动页有 0.45% 的 rAF 竞态漂移）。清单/总量/mask 约定已写进 `docs/notes/visual-regression.md`。
@@ -208,9 +216,10 @@
 - **自证②**：把 pluck 的 `FILTER_CUTOFF` 5200 → 4680（−10%）→ 1× 红（`7943Hz -133.012 -> -128.641 dB`）、**2× 也红**（`7943Hz -128.084 -> -126.861 dB`，且提示语是 `presets:update:2x`）；还原后两个模式都 `81 presets unchanged · ABI 8`。
 - **本批未触碰 `dist`/wasm**：dist 聚合 sha256 与两个 wasm sha256 前后逐字节相同（`src/`、`crates/` 零改动）。
 
-**P11.5 启动/运行时预算进发布门禁 + 性能守卫扩展**（1 批）
-- 要点：把首屏可交互时间纳入 `release`；`e2e/performance.spec.ts` 的 >20 fps 守卫扩到「播放中」与「图编辑中」两种负载。
-- 验收：release 因启动超阈值而失败（演练一次）；两种负载下守卫绿。
+**P11.5 启动/运行时预算进发布门禁 + 性能守卫扩展** ✅ **v1.110.0 交付**
+- `scripts/release.mjs` 把 `e2e/performance.spec.ts` 的 `[boot-budget]` 行做成**具名、可覆盖**的发布步骤（`[release] ▸ first-interactive budget (3200 ms)`，`GS1_BOOT_BUDGET_MS` 可覆盖）。**正常路径不重跑 E2E**：它捕获同一套件的输出并解析复核（否则 `--skip-e2e` 会把门禁一起关掉）；只有 `--skip-e2e` 时才单独跑这一个 spec 文件。新增 `--skip-git-check` 仅供演练。
+- **失败路径已演练（自证）**：`GS1_BOOT_BUDGET_MS=1` → spec 红（`interactive best 883 ms of [3118,1493,883]`，budget 1 ms）+ **`[release] FAIL … exited 1`（EXIT=1）**；还原后 `interactive 509 ms ≤ 3200 ms` → `[release] PASS`。原始输出见提交信息与 `docs/notes/performance.md`。
+- **fps 守卫扩到三种负载**（阈值仍是 **>20**，best-of-5 × 800 ms，理由与 boot 预算/bench 的机器探针同源）：`idle-with-engine` / **`playback`（真播放）** / **`graph-edit`（真拖节点）**。实测：单跑 61.3 / **60.0** / **61.3** fps；全量并行套件下 50.0 / **28.8** / **31.3** fps（并行下曾出现 20.0/17.5 的单窗 ⇒ 因此把 best-of-3×1.2 s 改成 best-of-5×0.8 s，**没有**动阈值）。
 
 **P11.6 平台矩阵常规化**（1 批）
 - 要点：nightly 的 WebKit/Firefox 覆盖率提升（核心子集 + 视觉/音频子集）、iOS 真机手测清单固化在 `docs/DEVICE-TESTING.md`。
@@ -239,7 +248,7 @@
 | 7 | P10.1 时间线多选 | P5.1 | 中 | ✅ v1.107.0 |
 | 8 | P11.3 视觉回归扩容 + P11.4 指纹二期 | — | 小 | ✅ v1.108.0 |
 | 9 | P10.2 片段二期 | P5.2 | 中 | ✅ v1.109.0 |
-| 10 | P11.2 i18n 拆分 + P11.5 启动门禁 | — | 中 | v1.110.0 |
+| 10 | P11.2 i18n 拆分 + P11.5 启动门禁 ✅ 首屏 JS −10.89 KB | — | 中 | ✅ v1.110.0 |
 | 11 | P9.5 波表带限复核 | P9.1 | 小 | v1.111.0 |
 | 11b | P9.6 滤波器共振 × 新振荡器交互（C7 + res 0.05 的 0.7% 抽签） | P9.1b | 小 | v1.112.0 |
 | 12 | P10.4 工程管理 | — | 中 | v1.113.0 |
@@ -273,7 +282,7 @@
 
 1. **实现**（含注释说明「为什么」）+ **单元测试**（音频批次还要真 wasm 门禁）+ **E2E**（用户可见改动必须有）。
 2. `npm run verify` **全绿**（clippy → Rust → Vitest → lint → build → wasm → ci → release → dist → budget → audio → presets → bench → dsp → dsp:2x）。
-3. **相容红线**：`test:dsp` 0.030806、81 个预设指纹、2× 指纹，除非本批有意改变并显式重录（附理由）。
+3. **相容红线**：`test:dsp` **0.030735**、81 个预设指纹（`verify:presets`）与 2× 指纹（`verify:presets:2x`，两者都是 `81 presets unchanged · ABI 8`）、`verify:dsp:2x` **0.030852**，除非本批有意改变并显式重录（附理由）。
 4. **小步提交**（功能 / 文档+版本 分开）+ `npm run package` + `npm run release -- <version>`。
 5. **线上核对**：用 `https://synth.wangda.today/` 比对 `assets/index-*.js` 指纹，并在线上 bundle 里查本批文案。
 6. **中文同步**：更新记录（中英成对）、`docs/NEXT-PLAN-2.md` 状态、`docs/ROADMAP.md` 队列行、必要的 `docs/notes/*`（含实测数字与「自证」证据）。
