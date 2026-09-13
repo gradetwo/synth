@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.107.0',
-    date: '2026-09-13',
-    kind: 'feature',
+    version: '1.108.0',
+    date: '2026-09-14',
+    kind: 'fix',
     items: [
       [
-        '**卷帘可以多选了**：框选、Ctrl 点选、Shift 范围选、全选，然后整组批量操作——移动、复制/粘贴、缩放、量化、力度、删除，**每次编辑一个撤销步**。键盘方向键微移（Shift 一个八度），手机多了「多选」开关与批量按钮。跨层拖拽会明确提示「暂不支持」而不是静默丢音。',
-        '**Multi-select in the roll.** Marquee, Ctrl-click, Shift-range and select-all, then act on the group: move, copy/paste, scale, quantise, velocity, delete — **each edit is one undo step**. Arrow keys nudge (Shift for an octave), and phones get a multi-select toggle plus batch buttons. Dragging across layers says so instead of silently losing the notes.',
+        '**回归门禁补强**：视觉基线 20 → **48 张**（更新横幅、take 行、滤波串联/并联、过采样指示灯、图模板、路由图调制线；深浅 × 手机/桌面），并暴露一个真相——**这批基线此前已经过期、套件本来就是红的**（10 张补录）。预设指纹现在同时覆盖 **1× 与 2×**（81 × 2）。应用未变：wasm 与上一版**逐字节相同**。',
+        '**Regression gates widened.** Visual baselines 20 -> **48** (banner, take row, serial/parallel filter, oversampling LED, template picker, modulation wire; dark/light x desktop/phone), which also surfaced that they had gone stale and the suite was **already red** (ten re-recorded). Preset fingerprints now cover **1x and 2x** (81 x 2). The app is unchanged: the wasm is **byte-for-byte** the previous build.',
       ],
     ],
   };
