@@ -56,6 +56,22 @@ extern "C" {
         out: *mut f32,
         frames: u32,
     );
+    /// P9.1b: the saw/square/triangle path, band-limited the way the sync pair
+    /// is (naive shape + BLEP/BLAMP at 2x, shared 95-tap decimator).
+    fn gs_voice_osc_bandlimit_block(
+        v: i32,
+        which: i32,
+        sub: i32,
+        modulator: *const f32,
+        depth: f32,
+        out: *mut f32,
+        frames: u32,
+    );
+    /// Fixed latency of the band-limited path, in base-rate samples.
+    fn gs_osc_bandlimit_latency() -> f32;
+    /// Delay a block by that latency, so an undelayed DaisySP oscillator can be
+    /// mixed with a band-limited one without combing.
+    fn gs_voice_osc_delay_block(v: i32, which: i32, sub: i32, io: *mut f32, frames: u32);
     fn gs_voice_filter_set(v: i32, side: i32, kind: i32, freq: f32, res: f32, drive: f32);
     fn gs_voice_filter_block(
         v: i32,
@@ -3366,9 +3382,24 @@ fn render_wave(
     match params.wave.daisy_id() {
         Some(daisy_wave) => unsafe {
             let unison = (params.unison.max(1) as usize).min(MAX_UNISON as usize);
+            // P9.1b: the shapes with steps (saw, square/pulse) or slope kinks
+            // (triangle) take the dedicated band-limited oscillator; the sine
+            // keeps DaisySP's own output, which the P9.1a ruler measures at
+            // -119 dB. Which path ran decides whether the latency compensator
+            // below has anything to do.
+            let bandlimited = is_bandlimited_wave(params.wave);
             if unison == 1 {
                 gs_voice_osc_set(slot as i32, which as i32, 0, daisy_wave, freq, 1.0, pw);
                 match pm {
+                    Some((modulator, cycles)) if bandlimited => gs_voice_osc_bandlimit_block(
+                        slot as i32,
+                        which as i32,
+                        0,
+                        modulator.as_ptr(),
+                        cycles,
+                        out.as_mut_ptr(),
+                        frames as u32,
+                    ),
                     Some((modulator, cycles)) => gs_voice_osc_pm_block(
                         slot as i32,
                         which as i32,
@@ -3378,9 +3409,28 @@ fn render_wave(
                         out.as_mut_ptr(),
                         frames as u32,
                     ),
+                    None if bandlimited => gs_voice_osc_bandlimit_block(
+                        slot as i32,
+                        which as i32,
+                        0,
+                        core::ptr::null(),
+                        0.0,
+                        out.as_mut_ptr(),
+                        frames as u32,
+                    ),
                     None => {
                         gs_voice_osc_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32)
                     }
+                }
+                // Every path but the band-limited one is 23.5 samples early now.
+                if !bandlimited {
+                    gs_voice_osc_delay_block(
+                        slot as i32,
+                        which as i32,
+                        0,
+                        out.as_mut_ptr(),
+                        frames as u32,
+                    );
                 }
                 return;
             }
@@ -3409,12 +3459,30 @@ fn render_wave(
                     pw,
                 );
                 match pm {
+                    Some((modulator, cycles)) if bandlimited => gs_voice_osc_bandlimit_block(
+                        slot as i32,
+                        which as i32,
+                        sub as i32,
+                        modulator.as_ptr(),
+                        cycles,
+                        scratch.as_mut_ptr(),
+                        frames as u32,
+                    ),
                     Some((modulator, cycles)) => gs_voice_osc_pm_block(
                         slot as i32,
                         which as i32,
                         sub as i32,
                         modulator.as_ptr(),
                         cycles,
+                        scratch.as_mut_ptr(),
+                        frames as u32,
+                    ),
+                    None if bandlimited => gs_voice_osc_bandlimit_block(
+                        slot as i32,
+                        which as i32,
+                        sub as i32,
+                        core::ptr::null(),
+                        0.0,
                         scratch.as_mut_ptr(),
                         frames as u32,
                     ),
@@ -3429,6 +3497,11 @@ fn render_wave(
                 for i in 0..frames {
                     out[i] += scratch[i] * gain;
                 }
+            }
+            // The stack is a sum, so delaying it once is the same as delaying
+            // every sub-voice: the compensation is one call, not one per voice.
+            if !bandlimited {
+                gs_voice_osc_delay_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32);
             }
         },
         None => {
@@ -3465,6 +3538,11 @@ fn render_wave(
                     }
                 }
                 *wt_phase = phase;
+                // A wavetable can be OSC 2 against a band-limited OSC 1, so it
+                // takes the same latency compensation as the sine does.
+                unsafe {
+                    gs_voice_osc_delay_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32)
+                };
                 return;
             }
             if params.wave == crate::params::Wave::Sample {
@@ -3480,6 +3558,9 @@ fn render_wave(
                 let level = sample.level_for(rate);
                 let step = rate / (1usize << level) as f32;
                 sample.render(level, out, step, &sampler, sample_state);
+                unsafe {
+                    gs_voice_osc_delay_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32)
+                };
                 return;
             }
             let colour = match params.wave {
@@ -3492,8 +3573,34 @@ fn render_wave(
                 let white = rng.next_bipolar() * 0.5;
                 *sample = noise.process(white, sample_rate);
             }
+            // Noise is uncorrelated, so the alignment does not change its sound;
+            // it is delayed only so that an FM/ring pairing with a band-limited
+            // oscillator stays sample-aligned with the old engine.
+            unsafe {
+                gs_voice_osc_delay_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32)
+            };
         }
     }
+}
+
+/// Does this waveform take the P9.1b band-limited oscillator?
+///
+/// The report's section 4.2 pins the two-point polyBLEP's folding floor on the
+/// shapes with a discontinuity or a slope kink: saw/ramp, square/pulse and
+/// triangle. A sine has no harmonics to fold (its apparent floor is the ruler,
+/// section 4.1), and the wavetable, sample and noise paths are not generated by
+/// DaisySP's oscillator at all — they keep the old path, and `render_wave`
+/// delays them by the band-limited path's latency so the two can still be
+/// mixed. Keep in sync with the ids `Wave::daisy_id` returns.
+fn is_bandlimited_wave(wave: crate::params::Wave) -> bool {
+    use crate::params::Wave;
+    matches!(wave, Wave::Saw | Wave::Square | Wave::Pulse | Wave::Triangle)
+}
+
+/// Fixed latency of the band-limited oscillator, in base-rate samples (23.5 at
+/// 48 kHz), read from the bridge so there is one definition rather than two.
+pub fn bandlimit_latency() -> f32 {
+    unsafe { gs_osc_bandlimit_latency() }
 }
 
 impl Default for Engine {
@@ -7453,45 +7560,122 @@ mod tests {
         e.set_param(id::ENV_SUSTAIN, 1.0);
         e.set_param(id::FX_REVERB_ON, 0.0);
         e.set_param(id::MASTER_VOLUME, 0.5);
-        // 375 blocks = 48000 samples = one second = 440 whole periods of A4.
-        let rendered = steady_note_note(&mut e, 69.0, 375);
-
-        // Total power from the samples, line power from the exact-bin DFT: with
-        // a rectangular window over whole periods every harmonic lands on a bin
-        // and contributes no leakage at all, so what is left over is genuinely
-        // off the grid.
-        let n = rendered.len();
-        let total: f64 = rendered.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / n as f64;
-        let mut lines = 0.0f64;
-        let mut k = 1;
-        while 440.0 * (k as f32) < 23_900.0 {
-            let w = core::f64::consts::TAU * (440.0 * k as f32) as f64 / 48_000.0;
-            let (mut re, mut im) = (0.0f64, 0.0f64);
-            for (i, v) in rendered.iter().enumerate() {
-                let ph = w * i as f64;
-                re += *v as f64 * ph.cos();
-                im -= *v as f64 * ph.sin();
-            }
-            let amp = 2.0 * (re * re + im * im).sqrt() / n as f64;
-            lines += amp * amp / 2.0;
-            k += 1;
-        }
-        let off_grid = 10.0 * ((total - lines).max(1e-30) / total).log10();
+        // 750 blocks = 96000 samples = two seconds, and the last second of that
+        // is one whole second of a fully settled note.
+        let rendered = steady_note_note(&mut e, 69.0, 750);
+        let off_grid = off_grid_floor(&rendered[48_000..], 440.0);
         assert!(
-            off_grid < -80.0,
+            off_grid < -100.0,
             "a steady sine should have no non-periodic energy: {off_grid:.1} dB"
         );
     }
 
-
-    /// Off-grid energy measured on a **settled** note, exactly one second of it
-    /// (440 whole periods), with a rectangular window and the exact-bin DFT.
+    /// P9.1b's acceptance: the band-limited saw/square/triangle's off-grid floor
+    /// across the keyboard, measured with the same BH-7 Goertzel ruler the wasm
+    /// gate uses (`off_grid_floor`).
     ///
-    /// Two things had to be right before this number meant anything: the phase
-    /// accumulator had to be double precision (P6.2b step one) and the note had
-    /// to be settled — 20 ms after the attack the limiter's peak detector is
-    /// still recovering from it, and that recovery is a slow gain change, i.e.
-    /// exactly the modulation an off-grid metric picks up.
+    /// Before the batch the two-point polyBLEP measured -37...-58 dB (recorded in
+    /// `scripts/verify-audio.mjs`'s P9.1a section and in
+    /// `.tmp/noise-floor-report.md` §2); after it the worst note is better than
+    /// -100 dB for the saw and square and -72 dB for the triangle. The bounds
+    /// below sit just inside the measured values — this is a long-form regression
+    /// test, while the wasm gate is the short scan that has to run in every
+    /// `verify`.
+    /// P9.1b's own guard for the ruler: a windowed Goertzel probe must return a
+    /// known sine's power, and the off-grid floor must be able to see an ideal
+    /// band-limited saw as clean. Without this the ruler silently read every note
+    /// as 0 dB (or as its 1e-30 clamp) while the DSP underneath was fine.
+    #[test]
+    fn ruler_calibration() {
+        let n = 48_000usize;
+        let sine: Vec<f32> = (0..n)
+            .map(|i| 0.5 * (core::f64::consts::TAU * 440.0 * i as f64 / 48_000.0).sin() as f32)
+            .collect();
+        let p = goertzel_power(&sine, 440.0, 48_000.0);
+        assert!(
+            (p - 0.125).abs() < 1e-6,
+            "a 0.5-amplitude sine must probe as 0.125 of power, got {p:.6}"
+        );
+        // An ideal periodic saw is exactly on its own grid, so it must measure
+        // as clean; a naive one must not.
+        let mut ideal = vec![0.0f32; n];
+        let mut h = 1usize;
+        while 440.0 * h as f64 <= 20_000.0 {
+            let a = (2.0 / core::f64::consts::PI) / h as f64;
+            for (i, v) in ideal.iter_mut().enumerate() {
+                *v += (a * (core::f64::consts::TAU * 440.0 * h as f64 * i as f64 / 48_000.0).sin())
+                    as f32;
+            }
+            h += 1;
+        }
+        let ideal_floor = off_grid_floor(&ideal, 440.0);
+        assert!(
+            ideal_floor < -120.0,
+            "an ideal band-limited saw must read as clean, got {ideal_floor:.1} dB"
+        );
+        let naive: Vec<f32> = (0..n)
+            .map(|i| ((440.0 * i as f64 / 48_000.0).fract() * 2.0 - 1.0) as f32)
+            .collect();
+        let naive_floor = off_grid_floor(&naive, 440.0);
+        assert!(
+            naive_floor > -40.0,
+            "a naive saw must read as aliased, got {naive_floor:.1} dB"
+        );
+    }
+
+    #[test]
+    fn the_band_limited_oscillators_have_no_off_grid_floor() {
+        let _guard = lock_engine();
+        let notes = [33u8, 45, 57, 69, 81, 91, 96, 105];
+        for (wave, bound) in [
+            (crate::params::Wave::Saw, -95.0f64),
+            (crate::params::Wave::Square, -105.0),
+            (crate::params::Wave::Triangle, -68.0),
+        ] {
+            for note in notes {
+                let mut e = new_engine(8);
+                e.set_param(id::OSC1_WAVE, wave as u32 as f32);
+                e.set_param(id::OSC2_ON, 0.0);
+                e.set_param(id::OSC1_LEVEL, 0.9);
+                e.set_param(id::FILTER_TYPE, 0.0);
+                e.set_param(id::FILTER_CUTOFF, 18_000.0);
+                e.set_param(id::FILTER_RES, 0.05);
+                e.set_param(id::FILTER_DRIVE, 0.0);
+                e.set_param(id::FILTER_ENV_AMT, 0.0);
+                e.set_param(id::ENV_ATTACK, 0.01);
+                e.set_param(id::ENV_SUSTAIN, 1.0);
+                e.set_param(id::LFO_ON, 0.0);
+                e.set_param(id::FX_REVERB_ON, 0.0);
+                e.set_param(id::MASTER_VOLUME, 1.0);
+                for i in 0..crate::params::MOD_ROUTES {
+                    e.set_route(i, 0, 0, 0.0, false);
+                }
+                // 750 blocks: 400 to settle (the P6.2b report's figure) plus a
+                // whole second to measure.
+                let rendered = steady_note_note(&mut e, note as f32, 750);
+                let f0 = 440.0 * 2f64.powf((note as f64 - 69.0) / 12.0);
+                let floor = off_grid_floor(&rendered[48_000..], f0);
+                assert!(
+                    floor < bound,
+                    "{wave:?} at note {note} ({f0:.1} Hz): off-grid floor {floor:.1} dB is above {bound}"
+                );
+            }
+        }
+    }
+
+
+    /// Off-grid energy measured on a **settled** note, exactly one second of it,
+    /// with a rectangular window and the exact-bin DFT on the *nominal* master
+    /// frequency.
+    ///
+    /// **Superseded (P9.1b).** This is the ruler P9.1a showed is a difference of
+    /// two nearly equal large numbers: it is only readable when the tone sits on
+    /// a whole number of analysis periods, and the oscillator's increment is
+    /// f32 (`f * (1/sr)`), so "220 Hz" is really 219.9999. P9.1b re-recorded
+    /// against the tie-break-free tester next door (`goertzel_power` /
+    /// `off_grid_floor`), and left this here only because it is still the shape
+    /// `docs/notes/hard-sync-aliasing.md` quotes historically. Do not add new
+    /// callers.
     fn settled_off_grid(e: &mut Engine, master: f32) -> (Vec<f32>, f64) {
         for _ in 0..200 {
             e.process(128);
@@ -7519,6 +7703,158 @@ mod tests {
         }
         let off = 10.0 * ((total - lines).max(1e-30) / total).log10();
         (out, off)
+    }
+
+    /// Power of a signal at one frequency, through the same 7-term
+    /// Blackman-Harris window the wasm gate uses for its off-grid ruler.
+    ///
+    /// This is the P9.1b replacement for exact-bin subtraction. A Goertzel
+    /// evaluation at every frequency of interest costs O(N) each and needs no
+    /// FFT or zero padding, and — the point of the batch — it never subtracts
+    /// two nearly equal large numbers: the off-grid figure below is a ratio of
+    /// two independently accumulated sums. The window is re-evaluated on the fly
+    /// (seven cosines per sample) rather than stored, because these tests are the
+    /// only caller and a 1.3 MB table in the DSP core would be absurd.
+    fn goertzel_power(samples: &[f32], freq: f64, sample_rate: f64) -> f64 {
+        const BH7: [f64; 7] = [
+            0.27105140069342,
+            0.43329793923448,
+            0.21812299954311,
+            0.06592544638803,
+            0.01081174209837,
+            0.00077658482522,
+            0.00001388721735,
+        ];
+        let n = samples.len();
+        let w = core::f64::consts::TAU * freq / sample_rate;
+        let (mut re, mut im, mut wsum) = (0.0f64, 0.0f64, 0.0f64);
+        for (i, v) in samples.iter().enumerate() {
+            let t = core::f64::consts::TAU * i as f64 / (n - 1) as f64;
+            let mut win = BH7[0];
+            for (k, c) in BH7.iter().enumerate().skip(1) {
+                win += if k % 2 == 1 { -1.0 } else { 1.0 } * c * (k as f64 * t).cos();
+            }
+            wsum += win;
+            let ph = w * i as f64;
+            re += *v as f64 * win * ph.cos();
+            im -= *v as f64 * win * ph.sin();
+        }
+        // A full-scale sine reads |X| = A * wsum / 2 on this probe, so one line's
+        // power is `2 (|X| / wsum)^2`: the factor of n cancels between the DFT
+        // sum and the window's coherent gain. (The first two attempts here each
+        // missed a factor -- one pinned the ruler at its 1e-30 clamp, the next
+        // read every note as 0 dB. `ruler_calibration` below is the guard.)
+        if wsum <= 0.0 {
+            return 0.0;
+        }
+        2.0 * (re * re + im * im) / (wsum * wsum)
+    }
+
+    /// The share of a settled render's power that is *not* on `f0`'s harmonic
+    /// grid, in dB — the Rust twin of the wasm gate's `offGridFloor`, and the
+    /// P9.1b replacement for exact-bin subtraction.
+    ///
+    /// Same algorithm as `scripts/verify-audio.mjs`: a 7-term Blackman-Harris
+    /// window over the whole render, zero-padded to the next power of two, and
+    /// every bin within eight analysis bins (`8 sr / n` Hz) of a harmonic
+    /// excluded. At the four-second window the gate uses that band is +-2 Hz;
+    /// here, with the one-second window `cargo test` can afford, it widens to
+    /// +-8 Hz, which is what keeps the oscillator's f32 detuning from being read
+    /// as off-grid energy (the P9.1a artefact). The Rust and wasm figures agree
+    /// within a couple of dB on every waveform, which is what makes this a
+    /// regression test rather than a second opinion.
+    fn off_grid_floor(samples: &[f32], f0: f64) -> f64 {
+        const BH7: [f64; 7] = [
+            0.27105140069342,
+            0.43329793923448,
+            0.21812299954311,
+            0.06592544638803,
+            0.01081174209837,
+            0.00077658482522,
+            0.00001388721735,
+        ];
+        let n = samples.len();
+        let mut nfft = 1usize;
+        while nfft < n {
+            nfft <<= 1;
+        }
+        let mut re = vec![0.0f64; nfft];
+        let mut im = vec![0.0f64; nfft];
+        for (i, v) in samples.iter().enumerate() {
+            let t = core::f64::consts::TAU * i as f64 / (n - 1) as f64;
+            let mut win = BH7[0];
+            for (k, c) in BH7.iter().enumerate().skip(1) {
+                win += if k % 2 == 1 { -1.0 } else { 1.0 } * c * (k as f64 * t).cos();
+            }
+            re[i] = *v as f64 * win;
+        }
+        fft_in_place(&mut re, &mut im);
+        let half = nfft >> 1;
+        let df = 48_000.0 / nfft as f64;
+        let ex_hz = 8.0 * 48_000.0 / n as f64;
+        let mut excluded = vec![false; half];
+        let mut k = 1usize;
+        while f0 * (k as f64) < 24_000.0 + ex_hz {
+            let centre = f0 * (k as f64);
+            let lo = (((centre - ex_hz) / df).ceil().max(0.0)) as usize;
+            let hi = ((((centre + ex_hz) / df).floor()) as usize).min(half - 1);
+            for b in lo..=hi {
+                excluded[b] = true;
+            }
+            k += 1;
+        }
+        let (mut off, mut total) = (0.0f64, 0.0f64);
+        for b in 0..half {
+            let p = re[b] * re[b] + im[b] * im[b];
+            total += p;
+            if !excluded[b] {
+                off += p;
+            }
+        }
+        10.0 * (off.max(1e-300) / total.max(1e-300)).log10()
+    }
+
+    /// In-place iterative radix-2 FFT, the same shape as the gate's.
+    fn fft_in_place(re: &mut [f64], im: &mut [f64]) {
+        let n = re.len();
+        let mut j = 0usize;
+        for i in 1..n {
+            let mut bit = n >> 1;
+            while j & bit != 0 {
+                j ^= bit;
+                bit >>= 1;
+            }
+            j ^= bit;
+            if i < j {
+                re.swap(i, j);
+                im.swap(i, j);
+            }
+        }
+        let mut len = 2usize;
+        while len <= n {
+            let ang = -core::f64::consts::TAU / len as f64;
+            let (wr, wi) = (ang.cos(), ang.sin());
+            let half = len >> 1;
+            let mut i = 0usize;
+            while i < n {
+                let (mut cr, mut ci) = (1.0f64, 0.0f64);
+                for k in 0..half {
+                    let ur = re[i + k];
+                    let ui = im[i + k];
+                    let vr = re[i + k + half] * cr - im[i + k + half] * ci;
+                    let vi = re[i + k + half] * ci + im[i + k + half] * cr;
+                    re[i + k] = ur + vr;
+                    im[i + k] = ui + vi;
+                    re[i + k + half] = ur - vr;
+                    im[i + k + half] = ui - vi;
+                    let ncr = cr * wr - ci * wi;
+                    ci = cr * wi + ci * wr;
+                    cr = ncr;
+                }
+                i += len;
+            }
+            len <<= 1;
+        }
     }
 
     /// The sync's aliasing figure, and the calibration that makes it readable:

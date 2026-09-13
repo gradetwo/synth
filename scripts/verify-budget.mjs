@@ -63,8 +63,13 @@ const lame = files.find((file) => /lamejs-.*\.js$/.test(file));
 // the reason the total moved 1672 -> 1676 KB: +2.5 KB of wasm on the SIMD core,
 // +2.3 on the scalar one and +1.4 KB of JS for an effect that is off by default.
 // The clean tree had 4.1 KB of headroom, so the feature spent essentially all of
-// it. P11.1 (`wasm-opt -Oz`, a projected >=10 % off both cores) is the batch
-// that has to buy it back; if it does not, the next feature pays.
+// it. P11.1 (`wasm-opt -Oz`) is the batch that has to buy it back; if it does
+// not, the next feature pays. **Corrected by P9.1b** (measured with binaryen
+// 132 on this machine): `wasm-opt -Oz --all-features` takes both cores from
+// 297737/291595 to 201662/188535 bytes raw (-32.3 % / -35.3 %) but only
+// 72197/69342 to 71272/68244 gzip (-1.3 % / -1.6 %). So P11.1 buys back the
+// *dist* total handily and barely moves the wasm gzip line -- the old note's
+// "a projected >=10 % off both cores" was about raw bytes only.
 //
 // P9.1c (hard-sync restart alignment) is the second, and it moved the total
 // 1676 -> 1678 KB. The clean tree measured 1675.9 KB, so it had 0.1 KB of
@@ -80,19 +85,36 @@ const lame = files.find((file) => /lamejs-.*\.js$/.test(file));
 // every four-second window of every waveform and ratio measures -88 dB or
 // better (12 scenes x 36 windows, real wasm). P11.1 still has to buy the whole
 // thing back, P9.2 included — that commitment is unchanged.
+//
+// P9.1b (band-limited ordinary oscillators) is the third and the largest: the
+// total moves 1678 -> 1684 KB, and this one is a *sound* change, not an effect
+// that can be switched off. Measured: clean tree 1677.6 KB / largest wasm gzip
+// 69.4 KB, this batch 1683.0 KB / 71.2 KB. The +5.4 KB is +4.1 KB of wasm on
+// the SIMD core and +1.4 KB on the scalar one (the rest is the hashed-name and
+// service-worker churn that any build carries). What the code buys: saw,
+// square, pulse and triangle stop using DaisySP's two-point polyBLEP and emit
+// the naive shape with BLEP/BLAMP corrections at 2x through the existing 95-tap
+// Kaiser decimator, which is what drops the keyboard's off-grid floor from
+// -37/-39/-49 dB to -100/-111/-73 dB (BH-7 ruler, 4 s windows, real wasm).
+// The 64 KB of BLEP/BLAMP tables that path needs are built at start-up into
+// BSS, so they cost no wasm bytes at all — only the ~5 KB of code does.
+// This is the batch that re-recorded `tests/dsp-baseline{,-2x}.json` and all 81
+// preset fingerprints on purpose.
 const BUDGETS = {
-  // Measured 1676.3 KB after P9.1c (1675.9 KB on the clean tree, +0.4 KB of
-  // wasm). The 1678 KB ceiling keeps the P8.5 "measured + small margin" rule.
-  total: 1678 * 1024,
+  // Measured 1683.0 KB after P9.1b (1677.6 KB on the clean tree, +5.4 KB, of
+  // which +5.5 KB is wasm raw). 1684 KB keeps the P8.5 "measured + small
+  // margin" rule at ~1 KB.
+  total: 1684 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   // Measured 131.2 KB gzip. +2.8 KB (+2.1 %); the P8.5 plan target was 140 KB,
   // so this is the tight version of an already-reached goal.
   initialJs: 134 * 1024,
   // Measured 19.7 KB gzip. +1.3 KB.
   initialCss: 21 * 1024,
-  // The larger of the two cores. Measured 67.9 KB gzip. +2.1 KB: any change to
-  // the DSP core should be a deliberate, reviewed bump.
-  wasm: 70 * 1024,
+  // The larger of the two cores. Measured 71.2 KB gzip after P9.1b (69.4 KB on
+  // the clean tree, +1.8 KB): any change to the DSP core should be a deliberate,
+  // reviewed bump. P11.1's `wasm-opt` will not help here — see above.
+  wasm: 72 * 1024,
 };
 
 let failures = 0;

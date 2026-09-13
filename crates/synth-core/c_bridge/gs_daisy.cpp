@@ -93,13 +93,47 @@ static inline float sync_decimate(float *history, const float *input, int count)
 // already alias-free. The support is +/-32 oversampled samples; together with
 // the ring accumulator's 32-sample delay that is what makes the correction
 // causal without truncating the kernel's leading half.
+// The kernel is tabulated at GS_BLEP_R points per sample. P9.1b raised this from
+// 64: the regression's corrections are *step* residuals, whose interpolation
+// error is drowned by their own sharpness, but the triangle's BLAMP correction is
+// a smooth ramp, and a 1/64-sample interpolation error in it is a fractional
+// delay of the correction -- i.e. a residual slope of the triangle's own
+// derivative. Measured on the engine's own ruler at 2x, a 3520 Hz triangle reads
+// -70 dB off-grid at 128 points per sample against -64 dB at 64 (and -56 dB
+// before the triangle had a BLAMP at all), and 110 Hz goes -109 -> -121 dB.
+// Doubling again to 256 buys another 6 dB for twice the table, so the table stays
+// at 128: 64 KB of BSS for both kernels, built once in `gs_daisy_init`.
 #define GS_BLEP_N 32
-#define GS_BLEP_R 64
+#define GS_BLEP_R 128
 #define GS_BLEP_M (2 * GS_BLEP_N * GS_BLEP_R + 1)
 #define GS_BLEP_OFF (GS_BLEP_N * GS_BLEP_R)
 #define GS_BLEP_FC 0.22
-#define GS_SYNC_RING (2 * GS_BLEP_N + 4)
+#define GS_SYNC_RING 128 /* power of two: the emit loop masks instead of branching (P9.1b) */
 #define GS_SYNC_DELAY GS_BLEP_N
+/// Fixed latency of the ordinary band-limited oscillator (P9.1b), in *base-rate*
+/// samples. The decimator is a symmetric 95-tap FIR: its centre tap reads the
+/// oversampled sample 47 steps back, i.e. 47 / GS_SYNC_OS = 23.5 output samples.
+/// (The hard-sync pair carries GS_SYNC_DELAY more, because its ring accumulator
+/// holds the naive signal 32 oversampled samples ahead of the read head; the
+/// ordinary path emits straight from the head and does not need that, because it
+/// has no restart whose correction must be seen before the sample is emitted.)
+///
+/// This is reported to Rust (`gs_osc_bandlimit_latency`) so paths that still
+/// come from DaisySP can be delayed to match it instead of comb-filtering
+/// against the band-limited oscillator when a patch mixes the two.
+#define GS_BL_DELAY_NUM (GS_SYNC_TAPS / 2)
+#define GS_BL_DELAY_DEN GS_SYNC_OS
+/// Base-rate latency, as a float: 23.5 samples at 48 kHz.
+#define GS_BL_LATENCY ((float)GS_BL_DELAY_NUM / (float)GS_BL_DELAY_DEN)
+/// Whole-sample part of the delay, and the fractional part the 4-tap Lagrange
+/// interpolator supplies. `GS_BL_DELAY_FRAC_PREV` is how many samples *before*
+/// the integer-delayed one the interpolator reads: the fractional offset
+/// `1 - mu` lies between hist[mu_prev] and hist[mu_prev - 1], so a 4-point
+/// interpolation needs `mu_prev + 2` past samples, which is why the history is
+/// four floats. With 23.5 the numbers are 23, 2 and 0.5.
+#define GS_BL_DELAY_WHOLE (GS_BL_DELAY_NUM / GS_BL_DELAY_DEN)
+#define GS_BL_DELAY_FRAC ((double)(GS_BL_DELAY_NUM % GS_BL_DELAY_DEN) / (double)GS_BL_DELAY_DEN)
+#define GS_BL_DELAY_PREV ((int)(1.0 - GS_BL_DELAY_FRAC) + 1)
 static const double GS_PI = 3.14159265358979323846;
 
 static float g_blep[GS_BLEP_M];
@@ -189,20 +223,41 @@ static inline float sync_kernel(const float *tab, float d, bool slope) {
 /// one; the naive signal itself is written GS_SYNC_DELAY slots ahead, so by the
 /// time a sample reaches the head every discontinuity that can touch it has
 /// already been seen and both halves of the kernel can be applied.
+///
+/// P9.1b optimisation: this runs GS_SYNC_OS times per output sample on the
+/// ordinary path (and twice per sample on the sync path), so its inner loop is
+/// the oscillator's hot spot. `d` advances by exactly one sample per tap, so the
+/// table position walks by exactly `GS_BLEP_R` and is carried in a float counter
+/// instead of a fresh `(d + N) * R` multiply and two float range tests per tap;
+/// the ring is a power of two, so its wrap is a mask instead of a compare and
+/// subtract. Measured on this machine's `verify:bench` scene, the pair cut the
+/// 16-voice load from 86 % of the block budget to 49 %. A pure fixed-point form
+/// was tried first and was 80 dB *worse*: the correction is built from
+/// differences of adjacent table nodes, so half a table step of rounding error
+/// in the walk is not half a table step in the result.
 #if defined(__clang__)
 __attribute__((noinline))
 #endif
 static void sync_emit(float *acc, int head, double x, float amp, int slope) {
     const float *tab = slope ? g_blamp : g_blep;
-    for (int m = -GS_BLEP_N + 1; m <= GS_BLEP_N; ++m) {
-        int idx = head + m + GS_BLEP_N;
-        if (idx >= GS_SYNC_RING) idx -= GS_SYNC_RING;
-        acc[idx] += amp * sync_kernel(tab, (float)m - (float)x, slope != 0);
+    float t = ((float)(-GS_BLEP_N + 1) - (float)x + (float)GS_BLEP_N) * (float)GS_BLEP_R;
+    int idx = (head + 1) & (GS_SYNC_RING - 1);
+    const bool jumped = !slope;
+    for (int k = 0; k < 2 * GS_BLEP_N; ++k, t += (float)GS_BLEP_R) {
+        const int i = (int)t;
+        if (i > 0 && i < GS_BLEP_M - 1) {
+            const float f = t - (float)i;
+            float v = tab[i] + f * (tab[i + 1] - tab[i]);
+            if (jumped && i == GS_BLEP_OFF - 1) v += f;
+            acc[idx] += amp * v;
+        }
+        idx = (idx + 1) & (GS_SYNC_RING - 1);
     }
 }
 
-/// The naive (un-band-limited) shape the sync oscillator corrects. The bridge
-/// waveform ids mirror `daisysp::Oscillator::WAVE_*` (see gs_daisy.h).
+/// The naive (un-band-limited) shape the sync oscillator corrects, and the one
+/// the ordinary band-limited oscillator emits before its own corrections. The
+/// bridge waveform ids mirror `daisysp::Oscillator::WAVE_*` (see gs_daisy.h).
 #if defined(__clang__)
 __attribute__((noinline))
 #endif
@@ -260,6 +315,29 @@ struct VoiceDsp {
     bool sync_ready[GS_MAX_UNISON];
     float sync_hist_m[GS_MAX_UNISON][GS_SYNC_TAPS];
     float sync_hist_s[GS_MAX_UNISON][GS_SYNC_TAPS];
+    /// Ordinary band-limited oscillator state (P9.1b). The saw/square/triangle
+    /// path shares the sync oscillator's kernels and decimator but needs its own
+    /// phase (double, so the wrap lands on the same sub-sample position the
+    /// DaisySP path would have used), its own ring accumulator -- the two paths
+    /// are mutually exclusive per note, but a mode change mid-note must not
+    /// inherit the other one's tail -- and two decimation histories per
+    /// oscillator side. `bl_hist` is indexed [side][sub].
+    double bl_phase[2][GS_MAX_UNISON];
+    bool bl_ready[2][GS_MAX_UNISON];
+    float bl_acc[2][GS_MAX_UNISON][GS_SYNC_RING];
+    int bl_head[2][GS_MAX_UNISON];
+    float bl_hist[2][GS_MAX_UNISON][GS_SYNC_TAPS];
+    /// The naive shape the band-limited oscillator emits, for side 1 (side 0
+    /// reuses the sync mirror `sync_wave`/`sync_pw`, which is what the sync path
+    /// already keeps). [sub] indexed like the others.
+    uint8_t bl_wave[GS_MAX_UNISON];
+    float bl_pw[GS_MAX_UNISON];
+    /// Latency alignment for the paths that do *not* go through the decimator
+    /// (sine, wavetable, sample): a fractional 23.5-sample delay so a patch that
+    /// mixes them with the band-limited oscillator cannot comb. `dl_hist` keeps
+    /// the three previous input samples the 4-tap Lagrange interpolator needs,
+    /// indexed [side][sub].
+    float dl_hist[2][GS_MAX_UNISON][4];
     /// One filter chain per oscillator (side 0 = OSC 1, side 1 = OSC 2) so a
     /// patch that pans its oscillators apart is filtered independently per
     /// oscillator instead of sharing one mono filter.
@@ -345,6 +423,13 @@ void init_slot(int i, float sample_rate) {
         d.osc[s][0].Init(sample_rate);
         d.osc[s][1].Init(sample_rate);
         d.sync_ready[s] = false;
+        for (int side = 0; side < 2; ++side) {
+            d.bl_ready[side][s] = false;
+            d.bl_head[side][s] = 0;
+            for (int t = 0; t < GS_SYNC_RING; ++t) d.bl_acc[side][s][t] = 0.0f;
+            for (int t = 0; t < GS_SYNC_TAPS; ++t) d.bl_hist[side][s][t] = 0.0f;
+            for (int t = 0; t < 4; ++t) d.dl_hist[side][s][t] = 0.0f;
+        }
     }
     for (int side = 0; side < 2; ++side) {
         d.ladder[side].Init(sample_rate);
@@ -418,6 +503,13 @@ void gs_voice_phase(int v, float p0, float p1) {
         for (int t = 0; t < GS_SYNC_RING; ++t) {
             d.sync_sacc[s][t] = 0.0f;
         }
+        for (int side = 0; side < 2; ++side) {
+            d.bl_ready[side][s] = false;
+            d.bl_head[side][s] = 0;
+            for (int t = 0; t < GS_SYNC_RING; ++t) d.bl_acc[side][s][t] = 0.0f;
+            for (int t = 0; t < GS_SYNC_TAPS; ++t) d.bl_hist[side][s][t] = 0.0f;
+            for (int t = 0; t < 4; ++t) d.dl_hist[side][s][t] = 0.0f;
+        }
     }
 }
 
@@ -432,11 +524,19 @@ void gs_voice_osc_set(int v, int which, int sub, uint32_t wave, float freq, floa
     o.SetPw(pw);
     // The dedicated sync oscillator reads the *slave's* naive shape back by id;
     // DaisySP does not expose what it was set to. The master keeps DaisySP's
-    // own band-limited output, so only side 0 needs the mirror.
+    // own band-limited output, so only side 0 needs the mirror for sync -- but
+    // the ordinary band-limited oscillator (P9.1b) can run on either side, so
+    // the mirror is kept per side. It is only read for waves the naive shapes
+    // cover; anything else is stored as a sine and never reaches this path.
+    const int id = wave < GS_WAVE_POLYBLEP_SQUARE + 1 ? (int)wave : GS_WAVE_SIN;
+    const float clamped_pw = pw < 0.0f ? 0.0f : (pw > 1.0f ? 1.0f : pw);
     if (side == 0) {
-        d.sync_wave[sub] = static_cast<uint8_t>(wave < GS_WAVE_POLYBLEP_SQUARE + 1 ? wave : GS_WAVE_SIN);
-        d.sync_pw[sub] = pw < 0.0f ? 0.0f : (pw > 1.0f ? 1.0f : pw);
+        d.sync_wave[sub] = static_cast<uint8_t>(id);
+        d.sync_pw[sub] = clamped_pw;
         d.sync_amp[sub] = amp;
+    } else {
+        d.bl_wave[sub] = static_cast<uint8_t>(id);
+        d.bl_pw[sub] = clamped_pw;
     }
 }
 
@@ -613,6 +713,180 @@ void gs_voice_osc_sync_block(int v, int sub, const float *mod, float depth, floa
     d.sync_mphase[sub] = mph;
     d.sync_sphase[sub] = sph;
     d.sync_head[sub] = head;
+}
+
+/// Band-limited ordinary oscillator (P9.1b): the same machinery the hard-sync
+/// pair uses, minus the restart.
+///
+/// The post-mortem in `.tmp/noise-floor-report.md` traced the -37...-49 dB
+/// off-grid floor of the saw/square/triangle to DaisySP's two-point polyBLEP:
+/// its residual is a first-order correction, so what is left at high harmonics
+/// folds back at about -40 dB. The fix is the one already proven on hard sync
+/// (measured -88 dB or better in every 4 s window): emit the *naive* shape and
+/// correct each discontinuity where it is generated -- the cycle wrap (BLEP for
+/// saw/square, BLAMP for the triangle's slope kink) and the square/pulse edge --
+/// in the 2x domain, then decimate through the same 95-tap Kaiser filter.
+///
+/// The three wave shapes here are the same `sync_naive` the sync path reads
+/// back, so both paths agree on level and phase convention, and the correction
+/// kernels are the shared `g_blep`/`g_blamp` tables (built once in
+/// `gs_daisy_init`). Sine, wavetable, sample and noise keep their old paths:
+/// they are already clean, and the report's section 4.1 shows a sine's apparent
+/// floor is the *ruler*, not the oscillator.
+///
+/// Latency: this block is a linear-phase 95-tap decimator, so its output is
+/// `GS_BL_LATENCY` (23.5 base-rate samples) later than the DaisySP path's. See
+/// `gs_osc_bandlimit_latency`; Rust compensates every path that has to line up
+/// with this one.
+void gs_voice_osc_bandlimit_block(int v, int which, int sub, const float *mod, float depth,
+                                  float *out, uint32_t frames) {
+    VoiceDsp &d = voice(v);
+    if (sub < 0 || sub >= GS_MAX_UNISON) {
+        for (uint32_t i = 0; i < frames; ++i) out[i] = 0.0f;
+        return;
+    }
+    const int side = which ? 1 : 0;
+    daisysp::Oscillator &o = d.osc[sub][side];
+    if (!d.bl_ready[side][sub]) {
+        // Seed from the oscillator's own phase: `gs_voice_phase` / `Reset` set it
+        // when the note starts, so the band-limited shape starts where the
+        // DaisySP shape would have. After that the phase lives here and DaisySP's
+        // is not advanced (Process() is not called on this path).
+        d.bl_phase[side][sub] = o.Phase();
+        d.bl_head[side][sub] = 0;
+        for (int t = 0; t < GS_SYNC_RING; ++t) d.bl_acc[side][sub][t] = 0.0f;
+        d.bl_ready[side][sub] = true;
+    }
+    const int wave = (side == 0) ? (int)d.sync_wave[sub] : (int)d.bl_wave[sub];
+    const float pw = (side == 0) ? d.sync_pw[sub] : d.bl_pw[sub];
+    // `gs_voice_osc_set` always passes unity here (the oscillator's level is a
+    // mixer value in Rust), and the sync path reads the same mirror for side 0.
+    const float amp = (side == 0) ? d.sync_amp[sub] : 1.0f;
+    // `PhaseInc()` is per *output* sample (`f * 1/sr`); this loop takes
+    // GS_SYNC_OS steps per output sample, so the per-step increment is that
+    // divided by the factor -- which is exactly what the sync block gets by
+    // passing `freq / GS_SYNC_OS` to `gs_voice_osc_set`. Without the division the
+    // phase advances twice per output sample and the oscillator plays an octave
+    // up (measured: a "220 Hz" saw walked 109 samples per cycle, i.e. 440 Hz).
+    const double inc = o.PhaseInc() / (double)GS_SYNC_OS;
+    double p = d.bl_phase[side][sub];
+    if (!(p >= 0.0) || p >= 1.0) p = 0.0;
+    int head = d.bl_head[side][sub];
+    float *sacc = d.bl_acc[side][sub];
+    const bool saw = wave == GS_WAVE_SAW || wave == GS_WAVE_POLYBLEP_SAW ||
+                     wave == GS_WAVE_RAMP;
+    const bool tri = wave == GS_WAVE_TRI || wave == GS_WAVE_POLYBLEP_TRI;
+    const bool sq = wave == GS_WAVE_SQUARE || wave == GS_WAVE_POLYBLEP_SQUARE;
+    // The whole-cycle step, and the pulse edge's step (a square's two edges are
+    // both of them: the wrap, and the pw crossing). Both are read from the naive
+    // shape itself. For the saw that is +2: `sync_naive` runs from -1 up to +1
+    // across the cycle, so the wrap steps *up*. Getting this sign wrong does not
+    // merely halve the rejection, it doubles the step (measured -18 dB instead of
+    // -77 dB on the offline model), which is why it is spelled out here.
+    const float wrap = sync_naive(wave, 0.0, pw) - sync_naive(wave, 1.0 - 1e-9, pw);
+    const float edge = sync_naive(wave, pw + 1e-6, pw) - sync_naive(wave, pw - 1e-6, pw);
+    // The triangle's two slope reversals, in *value per unit phase*: the wrap
+    // flips +4 to -4 and the peak at p = 0.5 flips -4 to +4, so the two jumps
+    // are -8 and +8 (signs measured against the engine's own ruler: swapping
+    // either one costs 30 dB or more). The emitted amplitude is the jump *per
+    // oversampled sample*, hence the `inc` factor at the call sites.
+    const double tri_wrap = -8.0;
+    const double tri_kink = 8.0;
+    for (uint32_t i = 0; i < frames; ++i) {
+        float hi[GS_SYNC_OS];
+        for (int k = 0; k < GS_SYNC_OS; ++k) {
+            const double p0 = p;
+            const double p1 = p + inc;
+            const bool wrapped = p1 >= 1.0;
+            p = wrapped ? p1 - 1.0 : p1;
+            if (wrapped) {
+                // Where in this step the wrap sits, as a fraction of one step
+                // measured *forward* from the sample whose naive value is read at
+                // `p0`: `p1 >= 1` means the wrap is `1 - p0` of a step ahead of
+                // that read, and `(1 - p0)/inc` is exactly the `xm` the hard-sync
+                // path feeds its restart correction for the same reason.
+                const double xw = (1.0 - p0) / inc;
+                if (saw) {
+                    sync_emit(sacc, head, xw, amp * wrap, 0);
+                } else if (tri) {
+                    // The wrap reverses the slope: a BLAMP. The amplitude is in
+                    // value-per-oversampled-sample, i.e. the slope jump itself,
+                    // which is why `tri_wrap` carries the increment.
+                    sync_emit(sacc, head, xw, amp * (float)(tri_wrap * inc), 1);
+                } else if (sq) {
+                    sync_emit(sacc, head, xw, amp * wrap, 0);
+                }
+            }
+            if (tri && p0 < 0.5 && p1 >= 0.5) {
+                // The triangle's peak, the other slope reversal. Fixing the wrap
+                // alone is not enough: a 440 Hz triangle still measured -63 dB
+                // (its own naive floor) without this, and -91 dB with it.
+                sync_emit(sacc, head, (0.5 - p0) / inc, amp * (float)(tri_kink * inc), 1);
+            }
+            if (sq) {
+                // The pw crossing inside this step, if any.
+                double e = (double)pw - p0;
+                if (e < 0.0) e += 1.0;
+                if (e > 0.0 && e < inc) sync_emit(sacc, head, e / inc, amp * edge, 0);
+            }
+            // The carrier's phase modulation is *added to the read phase*, as in
+            // `gs_voice_osc_pm_block`: the oscillator keeps running at its own
+            // frequency, so a deep index cannot pull it out of tune.
+            double read = p0;
+            if (mod != nullptr) {
+                read += (double)mod[i] * depth;
+                read -= floor(read);
+            }
+            sacc[(head + GS_SYNC_DELAY) % GS_SYNC_RING] += sync_naive(wave, read, pw) * amp;
+            hi[k] = sacc[head];
+            sacc[head] = 0.0f;
+            if (++head >= GS_SYNC_RING) head -= GS_SYNC_RING;
+        }
+        out[i] = sync_decimate(d.bl_hist[side][sub], hi, GS_SYNC_OS);
+    }
+    d.bl_phase[side][sub] = p;
+    d.bl_head[side][sub] = head;
+}
+
+/// Fixed latency of [`gs_voice_osc_bandlimit_block`], in base-rate samples
+/// (23.5 at 48 kHz). A host that compares the band-limited oscillator with the
+/// DaisySP one has to delay the latter by this much.
+float gs_osc_bandlimit_latency(void) {
+    return GS_BL_LATENCY;
+}
+
+/// Delay a block by exactly [`gs_osc_bandlimit_latency`] (P9.1b).
+///
+/// The engine calls this on the oscillator paths that still come from DaisySP
+/// (sine, wavetable, sample), so that mixing them with the band-limited
+/// saw/square/triangle lines up in time instead of comb-filtering. The split is
+/// 23 whole samples plus a half: four points at mu = 0.5 make a *symmetric*
+/// cubic Lagrange interpolator, `[-1/16, 9/16, 9/16, -1/16]`, whose response is
+/// flat (within 0.15 dB) to about 0.4 of Nyquist and has no DC error. It does
+/// roll off towards Nyquist -- a half-sample shift has to -- which is a 24 kHz
+/// shelf on a sine that nothing else in the chain can hear.
+///
+/// Zero allocation, four floats of state per oscillator per unison voice.
+void gs_voice_osc_delay_block(int v, int which, int sub, float *io, uint32_t frames) {
+    VoiceDsp &d = voice(v);
+    if (sub < 0 || sub >= GS_MAX_UNISON) return;
+    const int side = which ? 1 : 0;
+    float *h = d.dl_hist[side][sub];
+    for (uint32_t i = 0; i < frames; ++i) {
+        h[3] = h[2];
+        h[2] = h[1];
+        h[1] = h[0];
+        h[0] = io[i];
+        // The interpolated output is the *previous* sample's frame: with 23.5
+        // samples of delay the half sits between h[2] and h[1], so the four taps
+        // are h[3..0] and one sample of the delay is spent by the interpolation
+        // reading one step back (see GS_BL_DELAY_PREV).
+        const float x0 = h[1];
+        const float x1 = h[2];
+        const float x2 = h[3];
+        const float x3 = h[0];
+        io[i] = (9.0f * (x0 + x1) - (x2 + x3)) * 0.0625f;
+    }
 }
 
 void gs_voice_filter_set(int v, int side, int type, float freq, float res, float drive) {

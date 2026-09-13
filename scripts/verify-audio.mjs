@@ -1945,36 +1945,62 @@ function blockSteps(frames) {
     `worst ${Math.max(...sines).toFixed(1)} dB over ${NOTES.length} notes (${at(sines)})`,
   );
 
-  // The harmonic-rich waves. Their floor is real — P6.2b traced it to the
-  // two-point polyBLEP in DaisySP, at the fixed offset `48000 mod f0` below each
-  // harmonic — and P9.1b is the batch that band-limits it. So this records the
-  // "before" table and holds it with a loose bound; the -60 dB acceptance is
-  // P9.1b's to tighten once the oscillators are fixed.
+  // The harmonic-rich waves. P9.1b replaced DaisySP's two-point polyBLEP with
+  // the band-limited oscillator the hard-sync path already used (naive shape,
+  // BLEP/BLAMP at 2x, the shared 95-tap decimator), and these are the new
+  // floors. The bounds sit just inside the measured worst case per wave
+  // (saw -100.2, square -111.2, triangle -73.1 dB at 3520 Hz): this is the
+  // acceptance line "the whole keyboard is under -60 dB" with the margin the
+  // batch actually earned, not the -60 itself.
   for (const [name, wave, bound] of [
-    ['triangle', WAVE.triangle, -40],
-    ['saw', WAVE.saw, -30],
-    ['square', WAVE.square, -30],
+    ['triangle', WAVE.triangle, -68],
+    ['saw', WAVE.saw, -95],
+    ['square', WAVE.square, -105],
   ]) {
     const floors = NOTES.map((n) => floor(wave, n));
     check(
-      `the ${name}'s off-grid floor is recorded for P9.1b`,
+      `the ${name} is on its harmonic grid across the keyboard`,
       floors.every((v) => Number.isFinite(v) && v < bound),
-      `${at(floors)} (worst ${Math.max(...floors).toFixed(1)} dB)`,
+      `${at(floors)} (worst ${Math.max(...floors).toFixed(1)} dB, bound ${bound})`,
     );
   }
 
-  // Repeatability. `gs_init` keeps the voice phases and the allocator rotates
-  // the slot, so the P6.2b post-mortem watched one scenario move 30 dB between
-  // repetitions; this is the assertion that would have caught it, and it is the
-  // one the hard-sync restart fails today (it is off this scene's path). The
-  // plain oscillator is state-free: eight fresh scenes agree to the last bit.
-  const repeats = Array.from({ length: 8 }, () => floor(WAVE.saw, 81));
-  const spread = Math.max(...repeats) - Math.min(...repeats);
-  check(
-    'the same scenario measures the same eight times',
-    spread < 1,
-    `saw at C7: ${Math.min(...repeats).toFixed(2)}...${Math.max(...repeats).toFixed(2)} dB, spread ${spread.toFixed(2)} dB`,
-  );
+  // Phase-spread audit (P9.1b). P9.1a's original form of this assertion was
+  // "eight fresh scenes agree to the last bit", and it passed because the
+  // two-point polyBLEP the plain oscillator used was phase-*invariant*:
+  // `gs_init` does not reset `phase_seed` (only `Engine::new` does), so each
+  // scene starts on the next seed and every seed measured the same. P9.1b's
+  // band-limited path anchors its correction to the phase grid, so the start
+  // phase now *is* a parameter and the floor moves with it. The assertion that
+  // replaced it bounds that movement: the floor may vary from scene to scene,
+  // but only inside one bound.
+  //
+  // It is deliberately *not* "every one of the eight clears -60 dB": that is the
+  // floor table above, and repeating it per phase would make this a 5 %-per-run
+  // lottery on a known 0.7 % outlier (2093 Hz through the factory filter's
+  // 18 kHz / res 0.05 resonance — 1/150 fresh scenes read about -54 dB, `res=0`
+  // measures 0/150, and the pre-P9.1b core measured 150/150 *over* -60 on the
+  // same probe; it is tracked as its own batch in `docs/NEXT-PLAN-2.md`). What
+  // this bound is for is the P9.1c failure mode: an 86 dB swing between windows.
+  //
+  // The exactness claim (same seed, same number, to the last bit) is not made
+  // here either: `phase_seed` is bumped once per note-on and `gs_init` does not
+  // reset it, so two fresh scenes are only the same phase if the counter and the
+  // allocator line up — measured, the ninth scene in this file read -108.2 dB
+  // against the first scene's -113.1. It lives in `cargo test`'s
+  // `the_band_limited_oscillators_have_no_off_grid_floor`, which renders every
+  // note from a fresh engine, and the stationarity of one held note is measured
+  // there and in the P9.1c window scans.
+  for (const [name, wave] of [['saw', WAVE.saw], ['square', WAVE.square], ['triangle', WAVE.triangle]]) {
+    const phases = Array.from({ length: 8 }, () => floor(wave, 81));
+    const hi = Math.max(...phases);
+    const lo = Math.min(...phases);
+    check(
+      `eight fresh ${name} scenes stay within 20 dB of each other`,
+      hi - lo < 20,
+      `${lo.toFixed(1)}...${hi.toFixed(1)} dB at C7, spread ${(hi - lo).toFixed(2)} dB (was 0.00 dB before P9.1b)`,
+    );
+  }
 }
 
 console.log('[audio] quality gate');

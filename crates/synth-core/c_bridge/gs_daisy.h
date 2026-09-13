@@ -96,6 +96,28 @@ void gs_voice_osc_pm_block(int v, int which, int sub, const float *mod, float de
 void gs_voice_osc_sync_block(int v, int sub, const float *mod, float depth, float *master_out,
                              float *slave_out, uint32_t frames);
 
+/// Render one oscillator as a band-limited naive saw/square/triangle (P9.1b).
+///
+/// Same machinery as the sync pair -- the naive shape plus a BLEP at every step
+/// (the cycle wrap, the square/pulse edge) and a BLAMP at the triangle's slope
+/// kinks, 2x oversampled and decimated through the shared 95-tap Kaiser filter
+/// -- but with no restart, so a plain saw/square/triangle loses the two-point
+/// polyBLEP's -40 dB folding floor. `mod`/`depth` are the same carrier phase
+/// modulation as `gs_voice_osc_pm_block`; pass NULL for none. Only saw, ramp,
+/// square/pulse and triangle are meaningful; the engine keeps sine, wavetable,
+/// sample and noise on their old paths.
+///
+/// Latency: `gs_osc_bandlimit_latency()` base-rate samples (23.5 at 48 kHz).
+void gs_voice_osc_bandlimit_block(int v, int which, int sub, const float *mod, float depth,
+                                  float *out, uint32_t frames);
+/// Fixed latency of `gs_voice_osc_bandlimit_block`, in base-rate samples.
+float gs_osc_bandlimit_latency(void);
+/// Delay `io` in place by exactly that latency (23.5 samples), for the paths
+/// that still come from DaisySP: a 23-sample integer delay plus a 4-tap cubic
+/// Lagrange half-sample interpolator. Mixing an undelayed sine with a delayed
+/// band-limited saw would comb; this is what keeps them aligned.
+void gs_voice_osc_delay_block(int v, int which, int sub, float *io, uint32_t frames);
+
 /* --- per-voice filter ------------------------------------------------------ */
 /* `morph` (0..1) is only read for GS_FILTER_SEM: it walks four canonical
  * points — 0 low-pass, 1/3 band-pass, 2/3 notch (low + high), 1 high-pass —
