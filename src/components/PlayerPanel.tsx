@@ -22,12 +22,14 @@ import { barBeatAt, secondsToBeats, tempoMapOf, withTempoMap, type TempoSegment 
 import { rollSession, useRollSession } from '@/state/roll';
 import { midiLibrary, trackTitle, type TrackGroup } from '@/midi/library';
 
-import { activeTakeOfLayer, takesOf, takesOfLayer } from '@/midi/take-edit';
+import { activeTakeOfLayer, layerFoldedIntoClips, takesOf, takesOfLayer } from '@/midi/take-edit';
+import type { MidiTake } from '@/midi/takes';
 import {
   deleteTake,
   finishRecording,
   mergeLayerTakes,
   recordingLayer,
+  renameTake,
   selectTake,
 } from '@/state/recording';
 import { store } from '@/state/store';
@@ -94,6 +96,19 @@ export function PlayerPanel({
    * away, with the nudge bar as the touch-friendly half of it.
    */
   const [editNotes, setEditNotes] = useState(false);
+  /**
+   * The take whose name is being edited inline (P10.3), and the draft. Renaming
+   * is one undo step on Enter; Escape and the ✕ put the old name back.
+   */
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  /**
+   * A/B audition (P10.3): the two takes being compared, or null. `a` is the
+   * take the user was on when the comparison started — every exit puts the
+   * layer back on it, so "I auditioned one" cannot be mistaken for "I switched
+   * take". The pair is dropped when either take is deleted or selected away.
+   */
+  const [ab, setAb] = useState<{ a: string; b: string } | null>(null);
   /** In-flight drag on a layer's mini timeline (the layer itself). */
   const drag = useRef<{ x: number; offset: number; width: number; duration: number; moved: boolean } | null>(
     null,
@@ -139,13 +154,27 @@ export function PlayerPanel({
   }, [roll.justCopied, roll.copiedName]);
 
   // Keyboard transport while the panel is open: Space toggles, Esc closes.
+  // While an A/B comparison is running, A and B jump between the two takes and
+  // Esc ends the comparison instead of closing the panel (P10.3).
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
-      if (event.key === 'Escape') {
-        onClose();
+      const pair = abApi.current.ab;
+      if (pair && (event.key === 'a' || event.key === 'A')) {
+        event.preventDefault();
+        abApi.current.audition('a');
+      } else if (pair && (event.key === 'b' || event.key === 'B')) {
+        event.preventDefault();
+        abApi.current.audition('b');
+      } else if (event.key === 'Escape') {
+        if (pair) {
+          event.preventDefault();
+          abApi.current.stopAb();
+        } else {
+          onClose();
+        }
       } else if (event.key === ' ') {
         event.preventDefault();
         if (player.playing) midiPlayer.pause();
@@ -218,6 +247,81 @@ export function PlayerPanel({
   const takeLayer = recordingLayer();
   const layerTakes = current ? takesOfLayer(takesOf(current.song), takeLayer) : [];
   const takeId = current ? activeTakeOfLayer(current.song, takeLayer)?.id : undefined;
+  /**
+   * A folded layer plays its clips, not its take (P10.3): `withTakes` expands
+   * the clips last, so selecting a take there would be silently inaudible. The
+   * row says so and the switch/merge controls refuse, instead of pretending.
+   */
+  const layerArranged = current ? layerFoldedIntoClips(current.song, takeLayer) : false;
+  const takeName = (id: string | undefined): string =>
+    layerTakes.find((take) => take.id === id)?.name ?? '—';
+
+  const startRename = (take: MidiTake) => {
+    haptic();
+    setRenaming(take.id);
+    setRenameDraft(take.name);
+  };
+
+  const commitRename = () => {
+    if (renaming) renameTake(renaming, renameDraft);
+    setRenaming(null);
+    setAb(null);
+  };
+
+  /**
+   * Audition a take without moving the playhead: `selectTake` reloads the
+   * transport keeping the listener's place, so A and B are heard from the same
+   * point — which is the only way two passes can actually be compared.
+   */
+  const audition = (which: 'a' | 'b') => {
+    const take = ab ? (which === 'a' ? ab.a : ab.b) : null;
+    if (!take || !layerTakes.some((entry) => entry.id === take)) {
+      setAb(null);
+      return;
+    }
+    haptic();
+    selectTake(take);
+  };
+
+  const startAb = () => {
+    if (layerArranged || layerTakes.length < 2) return;
+    haptic();
+    const first = takeId && layerTakes.some((take) => take.id === takeId)
+      ? takeId
+      : layerTakes[layerTakes.length - 1].id;
+    const second = layerTakes.find((take) => take.id !== first)?.id;
+    if (!second) return;
+    setAb({ a: first, b: second });
+    selectTake(second);
+    if (!midiPlayer.getState().playing) midiPlayer.play();
+  };
+
+  /**
+   * End the comparison and put the layer back on A, with the reason on screen.
+   * Stopping the transport counts as ending it, so the user is never left on
+   * the alternate take wondering whether they changed the song.
+   */
+  const stopAb = () => {
+    const pair = abApi.current.ab;
+    if (!pair) return;
+    setAb(null);
+    const back = layerTakes.find((take) => take.id === pair.a);
+    if (back && selectTake(pair.a)) toast(t('take.abBack', { name: back.name }));
+  };
+
+  // The keyboard handler and the transport-stop effect live outside the render
+  // that owns the pair; both read the newest closure through this ref, so the
+  // key bindings cannot go stale between renders.
+  const abApi = useRef({ ab, audition, stopAb });
+  abApi.current = { ab, audition, stopAb };
+  /** False until the comparison has actually been playing once. */
+  const abArmed = useRef(false);
+  abArmed.current = ab ? abArmed.current : false;
+
+  useEffect(() => {
+    if (ab && player.playing) abArmed.current = true;
+    else if (ab && abArmed.current && !player.playing) abApi.current.stopAb();
+  }, [ab, player.playing]);
 
   /** Width of the resize handle in bar-percent units, from the pixel width. */
   const edgePercent = (width: number): number => Math.min(12, (EDGE_PX / Math.max(1, width)) * 100);
@@ -523,22 +627,73 @@ export function PlayerPanel({
                 {editNotes ? t('layer.modeNote') : t('layer.modeArrange')}
               </button>
             </div>
-            {/* Takes (P5.4): the performance that is playing, the alternates
-                kept beside it, and merge/delete. A chip is a tap target, not a
-                hover target, because recording is what a phone is good at. */}
+            {/* Takes (P5.4, P10.3): the performance that is playing, the
+                alternates kept beside it, rename, A/B audition and the two
+                merge trades. A chip is a tap target, not a hover target,
+                because recording is what a phone is good at. */}
             <div className="take-tools" data-act="take-tools" role="group" aria-label={t('take.title')}>
               <span className="take-title">{t('take.title')}</span>
-              {layerTakes.map((take) => (
+              {layerTakes.map((take) =>
+                renaming === take.id ? (
+                  <span className="take-edit" key={take.id}>
+                    <input
+                      className="take-rename"
+                      data-act="take-rename-input"
+                      value={renameDraft}
+                      autoFocus
+                      maxLength={60}
+                      aria-label={t('take.rename')}
+                      onChange={(event) => setRenameDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          commitRename();
+                        } else if (event.key === 'Escape') {
+                          event.preventDefault();
+                          setRenaming(null);
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="take-btn ok"
+                      data-act="take-rename-save"
+                      aria-label={t('take.rename')}
+                      title={t('take.renameHint')}
+                      onClick={commitRename}
+                    >
+                      ✓
+                    </button>
+                    <button
+                      type="button"
+                      className="take-btn del"
+                      data-act="take-rename-cancel"
+                      aria-label={t('take.renameCancel')}
+                      title={t('take.renameCancel')}
+                      onClick={() => setRenaming(null)}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ) : (
                   <button
                     key={take.id}
                     type="button"
                     className={`take-chip${take.id === takeId ? ' on' : ''}`}
                     data-act="take"
                     data-take={take.id}
+                    data-blocked={layerArranged ? 'true' : undefined}
                     aria-pressed={take.id === takeId}
                     title={`${take.name} · ${take.notes.length} ${t('player.notes')}`}
                     onClick={() => {
                       haptic();
+                      // A folded layer plays its clips; a take switch there is
+                      // refused with the reason rather than performed silently.
+                      if (layerArranged) {
+                        toast(t('take.foldedHint'));
+                        return;
+                      }
+                      setAb(null);
                       // Selecting *is* auditioning: the take is loaded and plays
                       // from the top, which is the only way to hear a difference
                       // between two passes without reading note counts.
@@ -546,24 +701,94 @@ export function PlayerPanel({
                       midiPlayer.seek(0);
                       midiPlayer.play();
                     }}
+                    onDoubleClick={() => startRename(take)}
                   >
                     <span className="take-name">{take.name}</span>
                     <span className="take-notes">{take.notes.length}</span>
                   </button>
-                ))}
+                ),
+              )}
+              {!renaming && layerTakes.length ? (
+                <button
+                  type="button"
+                  className="take-btn"
+                  data-act="take-rename"
+                  aria-label={t('take.rename')}
+                  title={t('take.renameHint')}
+                  onClick={() => {
+                    const target = layerTakes.find((take) => take.id === takeId) ?? layerTakes[layerTakes.length - 1];
+                    if (target) startRename(target);
+                  }}
+                >
+                  {t('take.rename')}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className={`take-btn${ab ? ' on' : ''}`}
+                data-act="take-ab"
+                disabled={layerArranged || layerTakes.length < 2}
+                aria-pressed={Boolean(ab)}
+                aria-label={t('take.ab')}
+                title={layerArranged ? t('take.foldedHint') : t('take.abHint')}
+                onClick={() => (ab ? stopAb() : startAb())}
+              >
+                {t('take.ab')}
+              </button>
+              {ab ? (
+                <span className="take-ab" data-act="take-ab-pair" role="group" aria-label={t('take.abHint')}>
+                  <span className="take-ab-label" data-act="take-ab-label">
+                    {t('take.abOn', { a: takeName(ab.a), b: takeName(ab.b) })}
+                  </span>
+                  <button
+                    type="button"
+                    className={`take-btn${takeId === ab.a ? ' on' : ''}`}
+                    data-act="take-ab-a"
+                    aria-pressed={takeId === ab.a}
+                    title={t('take.abHint')}
+                    onClick={() => audition('a')}
+                  >
+                    A
+                  </button>
+                  <button
+                    type="button"
+                    className={`take-btn${takeId === ab.b ? ' on' : ''}`}
+                    data-act="take-ab-b"
+                    aria-pressed={takeId === ab.b}
+                    title={t('take.abHint')}
+                    onClick={() => audition('b')}
+                  >
+                    B
+                  </button>
+                </span>
+              ) : null}
               <button
                 type="button"
                 className="take-btn"
                 data-act="take-merge"
-                disabled={layerTakes.length < 2}
-                aria-label={t('take.merge')}
-                title={t('take.merge')}
+                disabled={layerArranged || layerTakes.length < 2}
+                aria-label={t('take.mergeUnion')}
+                title={layerArranged ? t('take.foldedHint') : t('take.mergeUnionHint')}
                 onClick={() => {
                   haptic();
-                  mergeLayerTakes();
+                  mergeLayerTakes('union');
                 }}
               >
-                {t('take.merge')}
+                {t('take.mergeUnion')}
+              </button>
+              <button
+                type="button"
+                className="take-btn"
+                data-act="take-merge-overwrite"
+                disabled={layerArranged || layerTakes.length < 2}
+                aria-label={t('take.mergeOverwrite')}
+                title={layerArranged ? t('take.foldedHint') : t('take.mergeOverwriteHint')}
+                onClick={() => {
+                  haptic();
+                  mergeLayerTakes('overwrite');
+                }}
+              >
+                {t('take.mergeOverwrite')}
               </button>
               <button
                 type="button"
@@ -574,12 +799,23 @@ export function PlayerPanel({
                 title={t('layer.delete')}
                 onClick={() => {
                   haptic(HAPTIC.medium);
+                  setAb(null);
                   if (takeId) deleteTake(takeId);
                 }}
               >
                 ✕
               </button>
             </div>
+            {layerArranged ? (
+              <div className="take-note" data-act="take-folded-hint" role="status">
+                {t('take.foldedHint')}
+              </div>
+            ) : null}
+            {ab ? (
+              <div className="take-note" data-act="take-ab-hint" role="status">
+                {t('take.abHint')}
+              </div>
+            ) : null}
             <div className="layer-strip" data-layers={layers.length} data-mode={editNotes ? 'notes' : 'arrange'}>
               {layers.map((layer, index) => (
               <div className="layer-row" key={`${layer.name}-${index}`} data-layer={index}>

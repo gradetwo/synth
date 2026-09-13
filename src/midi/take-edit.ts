@@ -142,6 +142,22 @@ export function layerTakeNotes(song: MidiSong, layer: number): MidiNote[] {
   return take ? cloneNotes(take.notes) : layerNotes(song, layer);
 }
 
+/**
+ * Is this layer arranged with clips?
+ *
+ * A folded layer is the one case where a take is *not* the layer's content: the
+ * clips are the plan and the take stays material. `withTakes` re-expands the
+ * clips last for exactly that reason, which also means selecting a take there
+ * would change nothing anyone can hear. The callers use this to say so instead
+ * of performing a switch that is silently inaudible (P10.3).
+ */
+export function layerFoldedIntoClips(song: MidiSong | null | undefined, layer: number): boolean {
+  return !song ? false : clipsOfLayer(clipsOf(song), layer).length > 0;
+}
+
+/** How a merge combines the layer's alternates. */
+export type MergeStrategy = 'union' | 'overwrite';
+
 /** Lay `incoming` over `base` with the same-pitch rule above. */
 export function mergeNotes(base: MidiNote[], incoming: MidiNote[]): MidiNote[] {
   const out = cloneNotes(base);
@@ -153,6 +169,34 @@ export function mergeNotes(base: MidiNote[], incoming: MidiNote[]): MidiNote[] {
     else out.push({ ...note });
   }
   return sortNotes(out);
+}
+
+/**
+ * Does a note of `base` sound at the same time as any note of `incoming`?
+ *
+ * Two windows overlap when each starts before the other ends. Touching edges
+ * count as clear: a note that ends exactly where the next begins is a repeat,
+ * not a clash, so the earlier one is not overwritten.
+ */
+function overlapsAny(base: MidiNote, incoming: MidiNote[]): boolean {
+  return incoming.some(
+    (fresh) => base.start < fresh.start + fresh.duration && fresh.start < base.start + base.duration,
+  );
+}
+
+/**
+ * Lay `incoming` over `base` so the newer material wins: every older note that
+ * sounds at the same time as any note of `incoming` is dropped, and the rest of
+ * the older material stays. This is the "comp a line out of two passes" rule —
+ * the opposite trade from `mergeNotes`, which keeps both.
+ *
+ * Overlap is judged on the notes themselves, not on pitch: a C at 1.0 s is
+ * replaced by an E at 1.0 s, because at that moment the newer pass is the one
+ * that is meant to sound.
+ */
+export function mergeNotesOverwrite(base: MidiNote[], incoming: MidiNote[]): MidiNote[] {
+  const kept = base.filter((old) => !overlapsAny(old, incoming));
+  return sortNotes([...kept, ...incoming].map((note) => ({ ...note })));
 }
 
 /**
@@ -189,19 +233,32 @@ export function overdubTake(
 }
 
 /**
- * Merge every take of one layer into a single take, oldest material first, so
- * the result plays everything any of them played. Fewer than two takes is a
- * no-op: there is nothing to merge.
+ * Merge every take of one layer into a single take, oldest material first.
+ *
+ * `union` (the default, and the only strategy P5.4 had) overlays every pass, so
+ * the result plays everything any of them played. `overwrite` lets each newer
+ * pass replace the older material that sounds at the same time, which is how a
+ * player comps one line out of two tries without keeping both strikes. The two
+ * differ exactly when an older take holds a note the newer one plays over; with
+ * straight-line overdubs, where each take already contains the one before it,
+ * they agree — which is why the chooser explains the difference instead of
+ * pretending it is always audible.
+ *
+ * Fewer than two takes is a no-op: there is nothing to merge.
  */
 export function mergeTakes(
   takes: MidiTake[],
   layer: number,
-  options: { name?: string; at?: number } = {},
+  options: { name?: string; at?: number; strategy?: MergeStrategy } = {},
 ): { takes: MidiTake[]; take: MidiTake | null } {
   const mine = takesOfLayer(takes, layer);
   if (mine.length < 2) return { takes, take: null };
+  const strategy = options.strategy ?? 'union';
   let notes: MidiNote[] = [];
-  for (const take of mine) notes = mergeNotes(notes, take.notes);
+  for (const take of mine) {
+    notes =
+      strategy === 'overwrite' ? mergeNotesOverwrite(notes, take.notes) : mergeNotes(notes, take.notes);
+  }
   const merged: MidiTake = {
     id: nextId(),
     name: options.name?.trim().slice(0, 60) || 'Merged',

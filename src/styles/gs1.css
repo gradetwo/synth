@@ -1431,10 +1431,21 @@ input,textarea,[contenteditable='true']{
 .take-btn:disabled{opacity:.4;cursor:default}
 .take-btn.del{color:var(--txt-dim);min-width:36px}
 .take-btn.del:hover:not(:disabled){border-color:var(--danger,#e2554f);color:var(--danger,#e2554f)}
+/* P10.3: rename in place, A/B audition, and the reason a folded layer refuses
+   a switch. The input keeps the chip's footprint so the row does not jump. */
+.take-btn.on{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-tint)}
+.take-btn.ok{color:var(--accent);min-width:36px}
+.take-edit{display:flex;align-items:center;gap:6px;flex:none}
+.take-rename{width:150px;height:36px;padding:0 10px;border-radius:9px;border:1px solid var(--accent-dim);
+  background:var(--bg-inset);color:var(--txt-1);font:600 10.5px/1 var(--grot)}
+.take-ab{display:flex;align-items:center;gap:6px;flex:none}
+.take-ab-label{font:600 9px/1 var(--mono);color:var(--accent)}
+.take-note{font:600 10px/1.45 var(--grot);color:var(--txt-dim);padding:6px 16px 0}
 /* A finger needs the full target, not the 36 px a mouse is happy with. */
 @media (pointer: coarse){
   .take-chip,.take-btn{min-height:44px;padding:0 13px}
   .take-btn.del{min-width:44px}
+  .take-rename{height:44px;width:170px}
 }
 .layer-strip{display:flex;flex-direction:column;gap:4px;padding:6px 16px 0}
 /* Wraps rather than crushes: a long track name or an extra control moves to a

@@ -126,13 +126,35 @@ const lame = files.find((file) => /lamejs-.*\.js$/.test(file));
 // about 1 KB per core. This batch's +1.9 KB of gzip is therefore close to
 // permanent, and the ceiling below is "measured + ~1.5 KB" rather than a
 // round number with room to spare.
+//
+// P10.3 (take second pass: rename / A-B audition / merge strategies / the
+// clips x take rule) is the fifth, and it is the first *UI* batch to spend the
+// budget. Measured with a same-tree A/B build (stash the batch, rebuild, diff
+// per chunk): clean tree 1711.4 KB, this batch 1717.6 KB, **+6.16 KB**. The
+// whole increase is JS/CSS and the wasm cores are byte-identical, so this is a
+// payload trade, not a sound one:
+//   * +3521 B `PlayerPanel-*.js`: the inline rename field, the A/B pair of
+//     buttons and their hint, the second merge button and the folded-layer
+//     notice;
+//   * +1262 B `index-*.js` (first screen): the nine new zh/en string pairs in
+//     `i18n.ts`. Measured first-screen JS gzip 133.0 -> 133.5 KB, still inside
+//     the unchanged 134 KB line;
+//   * +624 B `index-*.css`: the rename field, the A/B row, `.take-btn.on/.ok`
+//     and the two note lines. Measured CSS gzip 19.9 -> 20.1 KB, inside 21;
+//   * +513 B `recording-*.js` and +392 B `roll-*.js`: `take-edit.ts` is bundled
+//     into each lazy chunk that imports it, so the new guards cost their bytes
+//     twice. A shared chunk would be the way to claw that back if it is ever
+//     worth it; trimming the copy that makes the folded-layer refusal explicit
+//     would not be.
+// The batch was authorised to 1720 KB on these numbers. The release entry will
+// add the usual ~0.5-1 KB of first-screen churn, so the real headroom here is
+// ~1.4 KB. P11.1 still has to buy the whole thing back (its ~90 KB of raw wasm
+// is the largest single item in this total).
 const BUDGETS = {
-  // Measured 1709.8 KB after P9.3 (1683.9 KB on the clean tree, +25.9 KB).
-  // 1712 KB keeps the P8.5 "measured + small margin" rule: the release entry for
-  // this batch lives in the first-screen chunk and measured 1711.4 KB once it
-  // was written, so the margin is ~0.6 KB. P11.1 is expected to claw the wasm
-  // raw share back (~90 KB); until then this is the ceiling.
-  total: 1712 * 1024,
+  // Measured 1717.6 KB after P10.3 (1711.4 KB on the clean tree, +6.16 KB).
+  // 1720 KB keeps the P8.5 "measured + small margin" rule; the margin covers
+  // the changelog entry that lands in the first-screen chunk at release time.
+  total: 1720 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   // Measured 131.2 KB gzip. +2.8 KB (+2.1 %); the P8.5 plan target was 140 KB,
   // so this is the tight version of an already-reached goal.
@@ -141,7 +163,8 @@ const BUDGETS = {
   initialCss: 21 * 1024,
   // The larger of the two cores. Measured 73.1 KB gzip after P9.3 (71.2 KB on
   // the clean tree, +1.9 KB). `wasm-opt` will not bring this back — see the
-  // correction above — so it is a deliberate, reviewed bump.
+  // correction above — so it is a deliberate, reviewed bump. P10.3 did not
+  // touch the engine and this line measured 73.1 KB again.
   wasm: 74 * 1024,
 };
 

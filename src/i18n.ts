@@ -295,10 +295,33 @@ const DICT: Record<string, [string, string]> = {
     'Classical and folk pieces are public domain and fully arranged; modern film/game themes are short demonstrations and remain the property of their owners.',
   ],
 
-  // --- recorded takes (P5.4) ----------------------------------------------
+  // --- recorded takes (P5.4, P10.3) ----------------------------------------
   'take.title': ['录音分层', 'Takes'],
   'take.defaultName': ['第 {n} 遍', 'Take {n}'],
-  'take.merge': ['合并', 'Merge'],
+  'take.rename': ['重命名', 'Rename'],
+  'take.renameHint': ['重命名这条录音（回车提交，Esc 取消）', 'Rename this take (Enter to save, Esc to cancel)'],
+  'take.renameCancel': ['取消重命名', 'Cancel rename'],
+  'take.ab': ['A/B 试听', 'A/B'],
+  'take.abHint': [
+    '在同一点来回试听两条录音（键盘 A / B）；停止或按 Esc 回到 A',
+    'Compare two takes from the same point (keys A / B); stop or press Esc to return to A',
+  ],
+  'take.abOn': ['A {a} · B {b}', 'A {a} · B {b}'],
+  'take.abBack': ['试听结束 · 已回到 <b>{name}</b>', 'Audition over — back on <b>{name}</b>'],
+  'take.mergeUnion': ['并集合并', 'Merge (union)'],
+  'take.mergeUnionHint': [
+    '合并后播放每一条 take 的全部音符（现有的合并方式）',
+    'Merged take plays every note of every take (the existing merge)',
+  ],
+  'take.mergeOverwrite': ['覆盖合并', 'Merge (overwrite)'],
+  'take.mergeOverwriteHint': [
+    '新 take 覆盖同一时间上旧 take 的音符，只保留旧 take 没被盖住的部分',
+    'A newer take replaces the older notes it plays over; only the uncovered older material stays',
+  ],
+  'take.foldedHint': [
+    '该层已折叠为片段：take 仅作素材，切换/合并都不会改变听感',
+    'This layer is folded into clips — takes are material only, so switching or merging will not change what plays',
+  ],
 
   // --- piano roll ----------------------------------------------------------
   'roll.title': ['钢琴卷帘', 'Piano roll'],

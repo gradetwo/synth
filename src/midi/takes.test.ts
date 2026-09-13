@@ -8,12 +8,14 @@
  * same-pitch rule the model has to pick a side on.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TAKE_MAX_PER_LAYER, normalizeTakes } from './takes';
+import { TAKE_MAX_PER_LAYER, normalizeTakes, type MidiTake } from './takes';
 import {
   TAKE_RESTRIKE,
   activeTake,
   activeTakeOfLayer,
+  layerFoldedIntoClips,
   mergeNotes,
+  mergeNotesOverwrite,
   mergeTakes,
   overdubTake,
   removeTake,
@@ -23,6 +25,7 @@ import {
   takesOfLayer,
   withTakes,
 } from './take-edit';
+import { foldLayer } from './clips';
 import { writeMidi, type MidiNote, type MidiSong } from './smf';
 
 const note = (n: number, start: number, duration = 0.5, velocity = 0.8): MidiNote => ({
@@ -173,6 +176,41 @@ describe('the selected take drives the song', () => {
   });
 });
 
+describe('a layer folded into clips (P10.3)', () => {
+  it('is detected, and switching take there does not change what plays', () => {
+    const grown = overdubTake(song([note(60, 0)]), 0, [note(64, 1)], { name: 'A' });
+    const folded = foldLayer(grown.song, 0, { bpm: 120 });
+    expect(layerFoldedIntoClips(folded.song, 0)).toBe(true);
+    expect(layerFoldedIntoClips(folded.song, 1)).toBe(false);
+    expect(layerFoldedIntoClips(song([note(60, 0)]), 0)).toBe(false);
+
+    // The clips expand last, so a take selected on that layer is discarded in
+    // the same call: this is the silent no-op P10.3 refuses to keep.
+    const other: MidiTake = { id: 't2', name: 'B', layer: 0, notes: [note(72, 0)] };
+    const switched = withTakes({ ...folded.song, takes: [other], takeId: 't2' }, [other], 't2');
+    expect(switched.takeId).toBe('t2');
+    expect(switched.notes.map((n) => n.note)).toEqual([60, 64]);
+    expect(switched.tracks?.[0].notes.map((n) => n.note)).toEqual([60, 64]);
+  });
+
+  it('keeps a clip the user built by hand out of the take rebuild', () => {
+    // A clip's window is the user's plan: folding rounds it up to a bar and the
+    // expansion trims at the window edge. Rebuilding from a take would have to
+    // guess which clip to rewrite and would silently drop that edit — the
+    // second reason the take stays material instead of becoming a source.
+    const folded = foldLayer(song([note(60, 0, 3)]), 0, { bpm: 120 });
+    const clip = folded.clip;
+    expect(clip.length).toBeGreaterThan(2.5);
+    expect(folded.song.notes[0].duration).toBe(3);
+    const cut = { ...folded.song, clips: [{ ...clip, length: 1 }] };
+    const trimmed = withTakes(cut, [{ id: 't2', name: 'B', layer: 0, notes: [note(72, 0)] }], 't2');
+    // The window still decides: the 3 s note is trimmed to the 1 s window and
+    // the take's 72 is nowhere.
+    expect(trimmed.notes.map((n) => n.note)).toEqual([60]);
+    expect(trimmed.notes[0].duration).toBeCloseTo(1, 6);
+  });
+});
+
 describe('merging and deleting', () => {
   it('merges the layer into one take that plays everything', () => {
     const first = overdubTake(song([note(60, 0)]), 0, [], { name: 'A' });
@@ -192,6 +230,35 @@ describe('merging and deleting', () => {
     const before = takesOf(one.song);
     expect(mergeTakes(before, 0, {}).take).toBeNull();
     expect(mergeTakes(before, 0, {}).takes).toBe(before);
+  });
+
+  it('overwrite lets a newer take replace the older material it plays over (P10.3)', () => {
+    // Two alternates of the same bars, built by hand so the clash is explicit:
+    // A plays a C and then an E; B plays a D at the same moment as the C.
+    const takes: MidiTake[] = [
+      { id: 'a', name: 'A', layer: 0, notes: [note(60, 0), note(64, 1)] },
+      { id: 'b', name: 'B', layer: 0, notes: [note(62, 0)] },
+    ];
+    const union = mergeTakes(takes, 0, { strategy: 'union' });
+    expect(union.take!.notes.map(key)).toEqual([
+      '60@0.0000/0.5000',
+      '62@0.0000/0.5000',
+      '64@1.0000/0.5000',
+    ]);
+    const overwritten = mergeTakes(takes, 0, { strategy: 'overwrite' });
+    // B sounds at 0.0, so A's C there is replaced; A's E at 1.0 is untouched.
+    expect(overwritten.take!.notes.map(key)).toEqual(['62@0.0000/0.5000', '64@1.0000/0.5000']);
+    // Both strategies consume the alternates into exactly one take.
+    expect(union.takes).toHaveLength(1);
+    expect(overwritten.takes).toHaveLength(1);
+    // Union is the default, so a caller that does not choose keeps the old rule.
+    expect(mergeTakes(takes, 0, {}).take!.notes.map(key)).toEqual(union.take!.notes.map(key));
+  });
+
+  it('overwrite counts a touching edge as clear, not as a clash', () => {
+    // A ends exactly where B begins: that is a repeat, so both survive.
+    const merged = mergeNotesOverwrite([note(60, 0, 0.5)], [note(64, 0.5, 0.5)]);
+    expect(merged.map(key)).toEqual(['60@0.0000/0.5000', '64@0.5000/0.5000']);
   });
 
   it('falls back to the newest take left, and keeps the notes when none is', () => {

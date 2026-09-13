@@ -7,11 +7,18 @@
  * write the same document the app-level undo already restores.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
+import { foldLayer } from '@/midi/clips';
 import { midiLibrary } from '@/midi/library';
 import type { MidiNote } from '@/midi/smf';
-import { takesOf } from '@/midi/take-edit';
+import { layerFoldedIntoClips, takesOf } from '@/midi/take-edit';
 import { store } from '@/state/store';
-import { deleteTake, mergeLayerTakes, saveRecordingTake, selectTake } from './recording';
+import {
+  deleteTake,
+  mergeLayerTakes,
+  renameTake,
+  saveRecordingTake,
+  selectTake,
+} from './recording';
 
 const LIBRARY_KEY = 'gs1:library:v1';
 
@@ -23,10 +30,12 @@ const note = (n: number, start: number, duration = 0.5, velocity = 0.8): MidiNot
 });
 
 /** The takes as they were written to storage, not just as they sit in memory. */
-const storedTakes = () => {
+const storedTakes = (): { id: string; name: string }[] => {
   const raw = localStorage.getItem(LIBRARY_KEY);
   if (!raw) return [];
-  const data = JSON.parse(raw) as { data: { tracks: { id: string; song: { takes?: unknown[] } }[] } };
+  const data = JSON.parse(raw) as {
+    data: { tracks: { id: string; song: { takes?: { id: string; name: string }[] } }[] };
+  };
   return data.data.tracks.flatMap((track) => track.song.takes ?? []);
 };
 
@@ -109,5 +118,75 @@ describe('recording into takes', () => {
   it('records nothing when there is nothing to save', () => {
     expect(saveRecordingTake([], { grid: 'off' })).toBeNull();
     expect(takesOf(midiLibrary.getCurrent()!.song)).toHaveLength(0);
+  });
+});
+
+describe('takes on the take row (P10.3)', () => {
+  it('renames in one undo step, on disk, without touching the notes', () => {
+    const take = saveRecordingTake([note(64, 1)], { grid: 'off' })!;
+    const before = takesOf(midiLibrary.getCurrent()!.song)[0];
+    expect(renameTake(take.id, '  verse  ')).toBe(true);
+    const renamed = takesOf(midiLibrary.getCurrent()!.song)[0];
+    expect(renamed.name).toBe('verse');
+    expect(renamed.notes.map((n) => n.note)).toEqual(before.notes.map((n) => n.note));
+    expect(storedTakes()[0].name).toBe('verse');
+
+    // One undo takes it back, including the id and the notes.
+    expect(store.undo()).toBe(true);
+    const back = takesOf(midiLibrary.getCurrent()!.song)[0];
+    expect(back.name).toBe(before.name);
+    expect(back.notes.map((n) => n.note)).toEqual(before.notes.map((n) => n.note));
+
+    // An empty or unchanged name is not an edit at all.
+    expect(renameTake(take.id, '   ')).toBe(false);
+    expect(renameTake(take.id, before.name)).toBe(false);
+    expect(storedTakes()[0].name).toBe(before.name);
+  });
+
+  it('merges with either strategy, and the two produce different takes', () => {
+    // A branched history, the only shape where the two merges differ: take 2
+    // grows from take 1, then take 3 grows from take 1 again, so each holds a
+    // note the other does not, played at the same moment.
+    const first = saveRecordingTake([note(64, 0.01, 0.12)], { grid: 'off' })!;
+    saveRecordingTake([note(67, 0.01, 0.12)], { grid: 'off' });
+    selectTake(first.id);
+    saveRecordingTake([note(71, 0.01, 0.12)], { grid: 'off' });
+
+    mergeLayerTakes('union');
+    expect(takesOf(midiLibrary.getCurrent()!.song)).toHaveLength(1);
+    expect(midiLibrary.getCurrent()!.song.notes.map((n) => n.note)).toEqual([60, 64, 67, 71]);
+    store.undo();
+
+    mergeLayerTakes('overwrite');
+    expect(takesOf(midiLibrary.getCurrent()!.song)).toHaveLength(1);
+    // The newest pass plays at ~0.01 s, so the older 64 and 67 there are gone.
+    expect(midiLibrary.getCurrent()!.song.notes.map((n) => n.note)).toEqual([60, 64, 71]);
+    store.undo();
+    expect(takesOf(midiLibrary.getCurrent()!.song)).toHaveLength(3);
+  });
+
+  it('refuses to switch or merge on a folded layer, and changes nothing', () => {
+    const first = saveRecordingTake([note(64, 1)], { grid: 'off' })!;
+    const second = saveRecordingTake([note(67, 2)], { grid: 'off' })!;
+    const before = midiLibrary.getCurrent()!;
+    midiLibrary.put({ ...before, song: foldLayer(before.song, 0, { bpm: 120 }).song });
+    const folded = midiLibrary.getCurrent()!;
+    expect(layerFoldedIntoClips(folded.song, 0)).toBe(true);
+    const playing = folded.song.notes.map((n) => n.note);
+
+    // The switch is refused, not performed silently: the selection, the clips
+    // expansion and the take list all stay exactly as they were.
+    expect(selectTake(first.id)).toBe(false);
+    expect(midiLibrary.getCurrent()!.song.takeId).toBe(second.id);
+    expect(midiLibrary.getCurrent()!.song.notes.map((n) => n.note)).toEqual(playing);
+
+    mergeLayerTakes('union');
+    expect(takesOf(midiLibrary.getCurrent()!.song)).toHaveLength(2);
+    expect(midiLibrary.getCurrent()!.song.notes.map((n) => n.note)).toEqual(playing);
+
+    // Renaming is material, not arrangement, so it is still allowed there.
+    expect(renameTake(second.id, 'material')).toBe(true);
+    expect(takesOf(midiLibrary.getCurrent()!.song).map((t) => t.name)).toContain('material');
+    expect(midiLibrary.getCurrent()!.song.notes.map((n) => n.note)).toEqual(playing);
   });
 });

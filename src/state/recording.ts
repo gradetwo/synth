@@ -24,13 +24,16 @@ import { midiPlayer } from '@/midi/player';
 import { quantiseLabel, quantiseNotes, type QuantiseGrid } from '@/midi/quantise';
 import type { MidiNote, MidiSong } from '@/midi/smf';
 import {
+  layerFoldedIntoClips,
   mergeTakes,
   overdubTake,
   removeTake,
+  renameTake as renameTakeInList,
   syncTakeFromLayer,
   takesOf,
   takesOfLayer,
   withTakes,
+  type MergeStrategy,
 } from '@/midi/take-edit';
 import type { MidiTake } from '@/midi/takes';
 import { store } from '@/state/store';
@@ -99,36 +102,83 @@ export function saveRecordingTake(notes: MidiNote[], options: { grid: QuantiseGr
  */
 export function finishRecording(clip: MidiSong): MidiTake | null {
   const grid = store.getSnapshot().layout.recordQuantise as QuantiseGrid;
+  const layer = recordingLayer();
   const take = saveRecordingTake(clip.notes, { grid });
   if (!take) return null;
   // The saved-take message is the one the recorder has always shown, with the
   // already-localised grid label appended: a second string that says the same
-  // thing would be one more thing to keep in step in two languages.
+  // thing would be one more thing to keep in step in two languages. A folded
+  // layer gets the folded note appended for the same reason: the pass is kept
+  // as material (losing a performance is the one thing the model refuses), but
+  // it is not what the layer plays, and saying nothing would make the recording
+  // look like it vanished (P10.3).
   const gridLabel = grid === 'off' ? '' : ` · ${quantiseLabel(grid, getLang())}`;
-  toast(`${t('player.clipSaved', { n: String(take.notes.length) })}${gridLabel}`);
+  const folded = midiLibrary.getCurrent();
+  const arranged = folded && layerFoldedIntoClips(folded.song, layer) ? ` · ${t('take.foldedHint')}` : '';
+  toast(`${t('player.clipSaved', { n: String(take.notes.length) })}${gridLabel}${arranged}`);
   return take;
 }
 
-/** Select a take: its layer plays it from here on, and every export follows. */
-export function selectTake(takeId: string): void {
+/**
+ * Select a take: its layer plays it from here on, and every export follows.
+ *
+ * A folded layer is the one place that promise cannot be kept: its clips are
+ * the plan and re-expansion runs last, so writing the take into the layer would
+ * be undone in the same call and the user would have switched take with nothing
+ * to hear. Say that instead, and change nothing (P10.3). Returns whether the
+ * selection was applied, so a caller can keep its own idea of "current" in step.
+ */
+export function selectTake(takeId: string): boolean {
   const current = midiLibrary.getCurrent();
-  if (!current) return;
+  if (!current) return false;
   const takes = takesOf(current.song);
-  if (!takes.some((take) => take.id === takeId)) return;
+  const take = takes.find((entry) => entry.id === takeId);
+  if (!take) return false;
+  if (layerFoldedIntoClips(current.song, take.layer)) {
+    toast(t('take.foldedHint'));
+    return false;
+  }
   commitSong(withTakes(current.song, takes, takeId));
+  return true;
 }
 
 /**
- * Merge the current layer's takes into one, oldest material first. This is how
- * a pile of passes becomes a single performance without anything being lost.
+ * Merge the current layer's takes into one. `union` lays every pass on top of
+ * the others; `overwrite` lets each newer pass replace the older notes it plays
+ * over. A folded layer is refused with the same reason a take switch is: the
+ * merged take would be stored material the layer does not play, and the user
+ * would have merged "successfully" and heard nothing.
  */
-export function mergeLayerTakes(): void {
+export function mergeLayerTakes(strategy: MergeStrategy = 'union'): void {
   const current = midiLibrary.getCurrent();
   if (!current) return;
   const layer = recordingLayer();
-  const { takes, take } = mergeTakes(takesOf(current.song), layer, { name: t('take.merge') });
+  if (layerFoldedIntoClips(current.song, layer)) {
+    toast(t('take.foldedHint'));
+    return;
+  }
+  const name = strategy === 'overwrite' ? t('take.mergeOverwrite') : t('take.mergeUnion');
+  const { takes, take } = mergeTakes(takesOf(current.song), layer, { name, strategy });
   if (!take) return;
   commitSong(withTakes(current.song, takes, take.id));
+}
+
+/**
+ * Rename one take. Naming is material, not arrangement, so it is allowed on a
+ * folded layer too — it changes nothing anyone hears, and the name is exactly
+ * what identifies the take as material. One call is one undo step, and an empty
+ * or unchanged name records nothing at all.
+ */
+export function renameTake(takeId: string, name: string): boolean {
+  const current = midiLibrary.getCurrent();
+  if (!current) return false;
+  const takes = takesOf(current.song);
+  const before = takes.find((take) => take.id === takeId);
+  if (!before) return false;
+  const clean = name.trim().slice(0, 60);
+  if (!clean || clean === before.name) return false;
+  commitSong({ ...current.song, takes: renameTakeInList(takes, takeId, clean) });
+  return true;
 }
 
 /**

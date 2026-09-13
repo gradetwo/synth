@@ -40,6 +40,13 @@ const play = async (page: Page, midi: number, hold = 120) => {
 const recordButton = (page: Page) => page.locator('.player .player-transport button[aria-label="录制"]');
 const stopRecordButton = (page: Page) =>
   page.locator('.player .player-transport button[aria-label="停止录制"]');
+const stopButton = (page: Page) => page.locator('.player .player-transport button[aria-label="停止"]');
+
+/** Place the playhead, so "the position was kept" can be read back as a number. */
+const seekTo = async (page: Page, value: number) => {
+  await page.locator('.player-seek').fill(String(value));
+  return Number(await page.locator('.player-seek').inputValue());
+};
 
 test.describe('recorded takes', () => {
   test.use({ viewport: { width: 1440, height: 900 } });
@@ -121,5 +128,167 @@ test.describe('recorded takes', () => {
     // spec is not competing with a running player.
     const playButton = page.locator('.player .player-play');
     if (await playButton.evaluate((el) => el.classList.contains('on'))) await playButton.click();
+  });
+
+  test('renames a take, and A/B auditions both from the same point (P10.3)', async ({ page }) => {
+    test.setTimeout(120_000);
+    await boot(page);
+    await page.locator('.player-open').click();
+    await page.locator('.player input[type=file]').setInputFiles({
+      name: 'one-note.mid',
+      mimeType: 'audio/midi',
+      buffer: oneNoteFile(),
+    });
+    const chips = page.locator('.take-tools [data-act="take"]');
+    const notes = page.locator('.layer-strip [data-layer="0"] .layer-note');
+
+    // Two long-ish passes, so there is room to move the playhead between them.
+    await recordButton(page).click();
+    await play(page, 64, 2500);
+    await stopRecordButton(page).click();
+    await recordButton(page).click();
+    await play(page, 67, 2500);
+    await stopRecordButton(page).click();
+    await expect(chips).toHaveCount(2);
+    await expect(notes).toHaveCount(3);
+
+    // Rename the first take through the row's button: Enter commits.
+    await chips.first().click();
+    await page.locator('[data-act="take-rename"]').click();
+    const input = page.locator('[data-act="take-rename-input"]');
+    await expect(input).toBeVisible();
+    await input.fill('verse');
+    await input.press('Enter');
+    await expect(input).toHaveCount(0);
+    await expect(chips.first()).toContainText('verse');
+
+    // Escape cancels: the draft never lands.
+    await page.locator('[data-act="take-rename"]').click();
+    await page.locator('[data-act="take-rename-input"]').fill('nope');
+    await page.locator('[data-act="take-rename-input"]').press('Escape');
+    await expect(chips.first()).toContainText('verse');
+
+    // The name is part of the song, so it comes back after a reload.
+    await page.reload();
+    await boot(page);
+    await page.locator('.player-open').click();
+    await expect(chips).toHaveCount(2);
+    await expect(chips.first()).toContainText('verse');
+    await expect(chips.first()).toHaveAttribute('aria-pressed', 'true');
+
+    // A/B: compare the two takes from a point the user chose, not from the top.
+    await chips.first().click();
+    await expect(notes).toHaveCount(2);
+    const placed = await seekTo(page, 0.5);
+    expect(placed).toBeGreaterThan(0.25);
+    await page.locator('[data-act="take-ab"]').click();
+    await expect(page.locator('[data-act="take-ab-pair"]')).toBeVisible();
+    await expect(page.locator('[data-act="take-ab-hint"]')).toBeVisible();
+    // The comparison starts on B — and it really is B's performance playing.
+    await expect(notes).toHaveCount(3);
+    await expect(page.locator('[data-act="take-ab-b"]')).toHaveAttribute('aria-pressed', 'true');
+    const atB = Number(await page.locator('.player-seek').inputValue());
+    expect(atB).toBeGreaterThan(0.25); // the playhead did not jump back to 0
+    // Keyboard A / B jumps between the two at the same position.
+    await page.keyboard.press('a');
+    await expect(notes).toHaveCount(2);
+    await expect(page.locator('[data-act="take-ab-a"]')).toHaveAttribute('aria-pressed', 'true');
+    expect(Number(await page.locator('.player-seek').inputValue())).toBeGreaterThan(0.25);
+    await page.keyboard.press('b');
+    await expect(notes).toHaveCount(3);
+
+    // Stopping ends the comparison and puts the layer back on A, with a word.
+    await stopButton(page).click();
+    await expect(notes).toHaveCount(2);
+    await expect(page.locator('[data-act="take-ab-pair"]')).toHaveCount(0);
+    await expect(page.locator('.toast')).toContainText('verse');
+  });
+
+  test('merges with union or overwrite, and the two differ (P10.3)', async ({ page }) => {
+    test.setTimeout(120_000);
+    await boot(page);
+    await page.locator('.player-open').click();
+    await page.locator('.player input[type=file]').setInputFiles({
+      name: 'one-note.mid',
+      mimeType: 'audio/midi',
+      buffer: oneNoteFile(),
+    });
+    const chips = page.locator('.take-tools [data-act="take"]');
+    const notes = page.locator('.layer-strip [data-layer="0"] .layer-note');
+
+    // A branched history, the only shape where the two trades differ: take 2
+    // grows out of take 1, then take 3 grows out of take 1 again, so each holds
+    // a note the other does not have, played at the same moment. (The on-screen
+    // keyboard spans MIDI 48-72, so the three extra notes stay inside it.)
+    await recordButton(page).click();
+    await play(page, 62);
+    await stopRecordButton(page).click();
+    await expect(notes).toHaveCount(2);
+    await recordButton(page).click();
+    await play(page, 65);
+    await stopRecordButton(page).click();
+    await expect(notes).toHaveCount(3);
+    await chips.first().click();
+    await expect(notes).toHaveCount(2);
+    await recordButton(page).click();
+    await play(page, 69);
+    await stopRecordButton(page).click();
+    await expect(chips).toHaveCount(3);
+    await expect(notes).toHaveCount(3);
+    await stopButton(page).click();
+
+    // Union: the merged take plays everything any pass played.
+    await page.locator('[data-act="take-merge"]').click();
+    await expect(chips).toHaveCount(1);
+    await expect(chips.first().locator('.take-notes')).toHaveText('4');
+    await expect(notes).toHaveCount(4);
+    await expect(chips.first()).toContainText('并集');
+
+    // Undo brings the alternates back, and the other trade is offered there.
+    await page.keyboard.press('Control+z');
+    await expect(chips).toHaveCount(3);
+    await page.locator('[data-act="take-merge-overwrite"]').click();
+    await expect(chips).toHaveCount(1);
+    await expect(chips.first().locator('.take-notes')).toHaveText('3');
+    await expect(notes).toHaveCount(3);
+    await expect(chips.first()).toContainText('覆盖');
+  });
+
+  test('a folded layer says takes are material, and refuses the switch (P10.3)', async ({ page }) => {
+    test.setTimeout(120_000);
+    await boot(page);
+    await page.locator('.player-open').click();
+    await page.locator('.player input[type=file]').setInputFiles({
+      name: 'one-note.mid',
+      mimeType: 'audio/midi',
+      buffer: oneNoteFile(),
+    });
+    const chips = page.locator('.take-tools [data-act="take"]');
+    const notes = page.locator('.layer-strip [data-layer="0"] .layer-note');
+    await recordButton(page).click();
+    await play(page, 64);
+    await stopRecordButton(page).click();
+    await recordButton(page).click();
+    await play(page, 67);
+    await stopRecordButton(page).click();
+    await expect(chips).toHaveCount(2);
+    await expect(notes).toHaveCount(3);
+
+    // Fold the layer: the clip is the plan, the takes are what it was built
+    // from, and the row says so instead of switching silently.
+    await page.locator('[data-act="clip-fold"]').click();
+    await expect(page.locator('.layer-strip [data-act="clip"]')).toHaveCount(1);
+    await expect(page.locator('[data-act="take-folded-hint"]')).toBeVisible();
+    await expect(chips.first()).toHaveAttribute('data-blocked', 'true');
+    await expect(page.locator('[data-act="take-merge"]')).toBeDisabled();
+    await expect(page.locator('[data-act="take-merge-overwrite"]')).toBeDisabled();
+    await expect(page.locator('[data-act="take-ab"]')).toBeDisabled();
+
+    // Tapping a take gives the reason, and changes nothing.
+    const playing = await notes.count();
+    await chips.first().click();
+    await expect(page.locator('.toast')).toContainText('仅作素材');
+    await expect(chips.first()).toHaveAttribute('aria-pressed', 'false');
+    await expect(notes).toHaveCount(playing);
   });
 });
