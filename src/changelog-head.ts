@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.106.0',
+    version: '1.107.0',
     date: '2026-09-13',
     kind: 'feature',
     items: [
       [
-        '**图模式的失真节点也能开 2× 过采样了**：以前只有链模式的 DRIVE 会过采样，路由图刻意不参与——因为并联支路没有逐节点延迟补偿会错相。现在图里的 DRIVE 节点在 2× 下跑，并由逐节点补偿把并联支路与干路重新对齐：离格混叠从 −33.4 dB 降到 **−59.5 dB（−26 dB）**，延迟如实上报为 **62 样本 / 1.29 ms**；开着时图输出与链模式**逐位一致**，关掉时逐字节不变。',
-        '**Graph-mode distortion nodes can run at 2x too.** Only the chain\'s DRIVE used to oversample; the routing graph deliberately sat it out, because without per-node delay compensation its parallel branches would drift out of phase. The graph\'s DRIVE node now runs at 2x with per-node compensation realigning every branch and the dry path: its off-grid aliasing drops from -33.4 dB to **-59.5 dB (-26 dB)**, the latency is reported honestly as **62 samples / 1.29 ms**, and with the switch off the graph renders byte-for-byte what it did before.',
+        '**卷帘可以多选了**：框选、Ctrl 点选、Shift 范围选、全选，然后整组批量操作——移动、复制/粘贴、缩放、量化、力度、删除，**每次编辑一个撤销步**。键盘方向键微移（Shift 一个八度），手机多了「多选」开关与批量按钮。跨层拖拽会明确提示「暂不支持」而不是静默丢音。',
+        '**Multi-select in the roll.** Marquee, Ctrl-click, Shift-range and select-all, then act on the group: move, copy/paste, scale, quantise, velocity, delete — **each edit is one undo step**. Arrow keys nudge (Shift for an octave), and phones get a multi-select toggle plus batch buttons. Dragging across layers says so instead of silently losing the notes.',
       ],
     ],
   };
