@@ -17,8 +17,12 @@ test('a redirected shell does not break the second visit', async ({ page }) => {
   // one the host redirects.
   await page.reload();
   await expect(page.getByRole('button', { name: /启动音频引擎/ })).toBeVisible();
-  // Nothing was served from the browser's error page.
-  expect(page.url()).toContain('127.0.0.1:4173');
+  // Nothing was served from the browser's error page. Derived from the
+  // configured origin rather than a literal port: the suite's port is a
+  // per-machine detail (see `playwright.config.ts`), and a hard-coded one
+  // stopped meaning anything the moment it moved.
+  const origin = new URL(test.info().project.use.baseURL as string).origin;
+  expect(new URL(page.url()).origin).toBe(origin);
 });
 
 /** The app must boot and make sound while controlled by its service worker. */

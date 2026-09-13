@@ -1,5 +1,21 @@
 import { defineConfig, devices } from '@playwright/test';
 
+/**
+ * The port this suite serves itself on.
+ *
+ * It used to be 4173 with `reuseExistingServer: true`, which is the common
+ * convenience setting and a trap on a shared development box: this machine also
+ * runs an unrelated app whose dev server had taken 4173, so Playwright reused
+ * *that* server and the whole suite tested the wrong application. Every test
+ * failed, all of them for reasons that had nothing to do with this repository,
+ * and the failures read like an app regression (a start overlay that never
+ * appeared) rather than like a port collision. Two changes fix it: the port is
+ * one nothing else on this box uses, and a server that is already there is an
+ * error instead of something to reuse -- `--strictPort` then makes the failure
+ * loud and immediate. `GS1_E2E_PORT` overrides it when a CI box needs to.
+ */
+const PORT = Number(process.env.GS1_E2E_PORT ?? 4783);
+
 export default defineConfig({
   testDir: './e2e',
   // 45 s was tight on a machine that is doing something else: this box runs at
@@ -11,14 +27,14 @@ export default defineConfig({
   fullyParallel: false,
   reporter: [['list']],
   use: {
-    baseURL: 'http://127.0.0.1:4173',
+    baseURL: `http://127.0.0.1:${PORT}`,
     trace: 'off',
     video: 'off',
   },
   webServer: {
-    command: 'npx vite preview --port 4173 --strictPort',
-    port: 4173,
-    reuseExistingServer: true,
+    command: `npx vite preview --port ${PORT} --strictPort`,
+    port: PORT,
+    reuseExistingServer: false,
     timeout: 60_000,
   },
   // All three engines can be run with `--project=<name>`; the default suite is
