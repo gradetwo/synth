@@ -107,6 +107,261 @@
 
 这一层单独一个进程/子命令，因为浏览器比 wasm 重得多，而且它需要 `dist`——不该让「只想要个 patch」的 agent 付这个代价。
 
+**已经实现**（`npm run mcp:ui`，入口 `mcp/ui/server.mjs`；工具在 `mcp/ui/tools/`，和离线层一样**扫目录**注册：
+
+| 工具 | 输入 | 输出（要点） |
+| :--- | :--- | :--- |
+| `gs1.ui.open` | `{ path?, url?, viewport?{width,height}, waitForMs? }` | `{ url, title, status, viewport, mounted, gateCleared, ready, consoleErrors, consoleMessages, navigationMs, bootMs, distDir, previewPort, baseline }`。默认 `1440x900`（视觉基线桌面尺寸）；**只接受本站**预览的 URL，外部 origin 一律 `E_UI_URL` |
+| `gs1.ui.click` | `{ selector, force?, timeoutMs?, position? }` | `{ ok, force, hitTested, clicked:{x,y}, box, element, elapsedMs, implementation }`；`force:true` 跳过可操作性检查（Playwright 语义） |
+| `gs1.ui.text` | `{ selector?, all?, attribute?, maxLength? }` | `{ ok, selector, count, text }` 或 `all:true` 的 `{ values }`；**空匹配不是错误**（`count:0`） |
+| `gs1.ui.screenshot` | `{ name?, fullPage?, selector?, animations? }` | `{ screenshotPath, width, height, bytes, sha256, viewport, consoleErrors, baseline:{device,width,height,matches,count,names} }`；只写 `.tmp/mcp/`，宽高从 PNG 头**读回** |
+| `gs1.ui.gate` | `{ spec:'visual'\|'performance'\|'param-range', project?:'chromium', timeoutMs? }` | `{ ok, spec, specFile, command, port, exitCode, passed, failed, skipped, tests[], logPath, reportPath, logTail }`；**白名单**，不接受 spec 路径/其它 project |
+
+**单一实现**：`gs1.ui.click` 调用的就是 `e2e/interact.mjs`——从 `e2e/fixtures.ts` 抽出来的那份帧无关交互（`fixtures.ts` 仍然在 WebKit 上把它装到 Playwright 的动词上）。`mcp/ui/` 里**没有**第二份命中/滚动逻辑。抽取时修掉了 `e2e/fixtures.ts` 里的一个真缺陷：`ClickOptions.force` 从来没被读，`click({force:true})` 会死循环到超时。
+
+边界与冒烟跑法见 `docs/notes/mcp.md` §九；**下面这节是这套工具真跑过一次的范例**。
+
+### 4.5 实战范例：把 `crushlead` 的 ≥1 kHz 非谐波地板降 60.86 dB（真跑，2026-09-15）
+
+这一节里的每个数字都是一次真实的 `tools/call` 结果（Node 里的 wasm 核，不是浏览器；浏览器只用于最后一步的「页面里也真的生效」）。**完整调用序列在 §4.5.5**，父代理可以照着重跑。
+
+#### 4.5.1 先测量：91 条工厂预设，谁的高频非谐波地板最差
+
+用 `gs1.presets.list` 拿到 91 条工厂预设，然后**逐条** `gs1.gate`（`ruler:'both'`、`thresholdDb:-60`、`probes:[9000,9200,9500]`——门禁自己的三个 C7 探针，都在 1 kHz 以上）。全部 91 条都测了（每条约 0.3–0.7 s，整轮约 50 s），没有抽样：
+
+```
+note 96 (C7, f0 2093.0 Hz), probes [9000,9200,9500] — 91 presets
+worst 15 by the Hann >=1 kHz floor:
+  hann    30.2  bh7    -0.0  whiteriser      FX/TRANSITION w=noise
+  hann    27.6  bh7     0.0  sub             BASS/TECHNO w=pulse
+  hann    27.1  bh7    -0.0  reesegrowl      BASS/DnB w=saw
+  hann    26.8  bh7    -0.0  sync            LEAD/ELECTRO w=pulse
+  hann    22.9  bh7    -0.0  gate            LEAD/TRANCE w=saw
+  hann    22.5  bh7    -0.0  hoover          LEAD/HARDCORE w=saw
+  hann    19.4  bh7    -0.0  driftpad        PAD/AMBIENT w=noise
+  hann    11.5  bh7    -0.0  wind            FX/SFX w=noise
+  hann     6.3  bh7    -0.0  semnotch        FX/EXPERIMENTAL w=saw
+  hann     5.8  bh7    -0.0  riser           FX/TRANSITION w=noise
+  hann     5.3  bh7    -0.0  drift           PAD/AMBIENT w=noise
+  hann     5.1  bh7    -0.0  semparabass     BASS/EXPERIMENTAL w=saw
+  hann     1.2  bh7    -0.0  fmbite          BASS/DUBSTEP w=saw
+  hann     1.0  bh7     0.0  sub808          BASS/TRAP w=sine
+  hann     1.0  bh7     0.0  phonk           FX/PHONK w=square
+cleanest: init -168.8, neon -181.9 dB
+passed (-60 dB, both rulers): 1/91
+```
+
+**为什么不用这张表直接选「最差的那条」**：表里 `hann ≥ 0 dB` 的那些**不是混叠**，是「探针频率上比 `f0` 处的能量还高」——`whiteriser`/`wind`/`driftpad` 是噪声源（宽带，本来就该是 0 dB），`sub`/`reesegrowl`/`sync`/`hoover`/`gate` 是**失谐/分层**音色：OSC2 打开 + OSC1 detune 非零时实际基频不在 2093 Hz（实测 2101.5 Hz，+7 ct），Hann 比值拿一个几乎空的 bin 当分母，于是每个探针都读到 0 dB 以上。
+
+同一批预设的第二种测法（`bh7` 全带地板，谐波栅格取**渲染信号自己的基频**）也说明这一点：91 条里 64 条的基频峰在 25 ct 以内，其余 27 条（`acid`/`sub`/`hardbass`/`hoover`/`reese`/`mono-` 系…）的「基频」峰出现在**低一个八度**（-1193 ct，OSC2 在 -12 st）或其它位置。**结论：`gs1.gate` 的尺子对「单振荡器、与音符同调」的 patch 才有意义**，对分层/失谐的预设，`bh7` 与 Hann 分母都会失真——这是这套尺子的适用边界，不是预设的缺陷。
+
+所以范例挑的是**那种仍能被尺子正确测量、且非谐波地板真差**的一类：位压碎（bit-crusher）的宽带混叠。`crushlead`（LEAD/EXPERIMENTAL）就是这一类，它进不了上面那张表是因为它的失谐同样把分母打偏了——**同一份测量换成宽探针（3000/5000/7000/9000/11000/13000/15000 Hz）后，它的地板是 -4.0 dB**，比表里所有「真混叠」候选都高：
+
+```json
+{"tool":"gs1.gate","args":{"presetId":"crushlead","notes":[{"note":96}],"ruler":"both","thresholdDb":-60,
+  "probes":[3000,5000,7000,9000,11000,13000,15000]}}
+```
+```json
+{"ok":true,"ruler":"both","bins":8,"thresholdDb":-60,"isGateRuler":true,
+ "perNote":[{"note":96,"f0":2093.004522404789,
+   "bh7":{"ruler":"bh7","window":"blackman-harris-7","bins":8,"floorDb":-0.002458965753592448,"passed":false},
+   "hann":{"ruler":"hann-goertzel","window":"hann",
+     "probes":[{"frequency":3000,"db":-4.017016537500746},{"frequency":5000,"db":-21.25112498151106},
+               {"frequency":7000,"db":-23.977221780786515},{"frequency":9000,"db":-13.058905960073073},
+               {"frequency":11000,"db":-27.399125450148347},{"frequency":13000,"db":-28.528260328869777},
+               {"frequency":15000,"db":-16.52632304259008}],
+     "worstDb":-4.017016537500746,"passed":false},
+   "passed":false}],
+ "worstBh7Db":-0.002458965753592448,"worstHannDb":-4.017016537500746,"passed":false,
+ "nonFinite":0,"allocViolations":0}
+```
+
+> 为什么取宽探针作判据：题目要的是「**≥1 kHz** 的非谐波地板」，门禁默认的三个探针（9.0/9.2/9.5 kHz）只采样三个点，而位压碎的混叠是**宽带**的——`crushlead` 在 3 kHz 处最差（-4.0 dB），默认三探针只看到 -13.1 dB。两个数下面都给。
+
+#### 4.5.2 改进前：`analyze` 的结构化 JSON
+
+`gs1.analyze` 的 Hann 尺子是**相对 `f0` 处的 bin 幅度**；`crushlead` 的 OSC1 detune 是 +8 ct（OSC2 在 -12 st），所以判据用的 `f0` 必须是 `2093.0045 × 2^(8/1200) = 2102.6986 Hz`（用音符的 2093.0 Hz 去量，分母几乎为零，整份结果会退化成 0 dB——这一点写进 `docs/notes/mcp.md` 的已知取舍）。
+
+```
+gs1.patch.set { presetId: "crushlead" }        → 会话当前 patch
+gs1.patch.get {}                                → 下面前后两份分享码的「前」
+gs1.render  { patch: <前>, notes:[{note:96,velocity:1}], seconds:4, seed:0 }
+gs1.analyze { render: { patch:<前>, notes:[{note:96,velocity:1}], seconds:4, seed:0 }, f0: 2102.6986 }
+```
+
+```json
+{"ok":true,"source":"render","sampleRate":48000,"seconds":4,"blocks":1500,"frames":192000,
+ "time":{"ruler":"time-domain-float","peak":0.025701463222503662,"rms":0.010487039148856495,
+         "maxStep":0.037557341158390045},
+ "aliasing":{"ruler":"bh7","window":"blackman-harris-7","bins":8,
+   "perNote":[{"note":96,"f0":2093.004522404789,"floorDb":-0.01449481805041423}],
+   "worstDb":-0.01449481805041423},
+ "secondRuler":{"ruler":"hann-goertzel","window":"hann","f0":2102.6986397112883,
+   "fundamental":0.008355436333385384,
+   "probes":[{"frequency":9000,"db":-57.77160455161302},{"frequency":9200,"db":-57.89927343128503},
+             {"frequency":9500,"db":-66.17767929308687}],
+   "worstDb":-57.77160455161302},
+ "thd":{"ruler":"hann-goertzel","window":"hann","maxHarmonic":12,"percent":26.70803398334714},
+ "interHarmonic":{"ruler":"hann-goertzel","window":"hann","limitHz":20000,"db":-59.949273363726405},
+ "nonFinite":0,"allocViolations":0}
+```
+
+#### 4.5.3 改了什么：一个参数
+
+```json
+{"tool":"gs1.patch.set","args":{"params":{"fxCrushBits":4},"partial":true}}
+```
+
+`fxCrushBits`（id 153，比特压碎的量化位数）从 **6 → 4**，`partial:true` 叠在会话当前 patch 上，其余 223 个参数与 4 条调制路由**逐位不变**（两份分享码解码后 `v[153]` 是唯一差异：`6 → 4`；`routes` 数组全等）。
+
+为什么是它：位压碎的混叠来自「量化步进的跳变」——跳变越密（位数越高）越接近硬削波，宽带谱越丰富，折叠进 1 kHz 以上的能量越多；降低量化位数把跳变间隔拉大，宽带混叠随之减少（代价是量化噪声本身变大，见 §4.5.6）。
+
+#### 4.5.4 改进后：`analyze` JSON 与 `gate` 的对照
+
+```
+gs1.patch.set { params: { fxCrushBits: 4 }, partial: true }
+gs1.patch.get {}                                → 「后」分享码（v[153]=4）
+gs1.render  { patch: <后>, notes:[{note:96,velocity:1}], seconds:4, seed:0 }
+gs1.analyze { render: { patch:<后>, notes:[{note:96,velocity:1}], seconds:4, seed:0 }, f0: 2102.6986 }
+```
+
+```json
+{"ok":true,"source":"render","sampleRate":48000,"seconds":4,"blocks":1500,"frames":192000,
+ "time":{"ruler":"time-domain-float","peak":0.011860109865665436,"rms":0.003954380684900505,
+         "maxStep":0.01118595851585269},
+ "aliasing":{"ruler":"bh7","window":"blackman-harris-7","bins":8,
+   "perNote":[{"note":96,"f0":2093.004522404789,"floorDb":-0.025913230657841894}],
+   "worstDb":-0.025913230657841894},
+ "secondRuler":{"ruler":"hann-goertzel","window":"hann","f0":2102.6986397112883,
+   "fundamental":0.003786203937873979,
+   "probes":[{"frequency":9000,"db":-92.35695531375703},{"frequency":9200,"db":-75.2323443428793},
+             {"frequency":9500,"db":-83.46309457524893}],
+   "worstDb":-75.2323443428793},
+ "thd":{"ruler":"hann-goertzel","window":"hann","maxHarmonic":12,"percent":60.36185091590972},
+ "interHarmonic":{"ruler":"hann-goertzel","window":"hann","limitHz":20000,"db":-66.02000361857839},
+ "nonFinite":0,"allocViolations":0}
+```
+
+| 量 | 改进前 | 改进后 | 变化 |
+| :--- | ---: | ---: | ---: |
+| `gate` Hann 地板，宽探针（≥1 kHz，worst） | **-4.0170 dB** | **-64.8761 dB** | **-60.859 dB** |
+| `gate` Hann 地板，默认三探针（9.0/9.2/9.5 kHz） | -13.0589 dB | -67.7049 dB | -54.646 dB |
+| `analyze.secondRuler.worstDb`（9.0/9.2/9.5 kHz，对 2102.70 Hz） | -57.7716 dB | -75.2323 dB | -17.461 dB |
+| `analyze.interHarmonic` | -59.9493 dB | -66.0199 dB | -6.071 dB |
+| `analyze.time.rms` | 0.010487 | 0.003954 | -8.47 dB |
+| `nonFinite` / `allocViolations` | 0 / 0 | 0 / 0 | — |
+
+> 上表按 4 位小数取整（`gate` 的两行可与上面 JSON 里的完整数字逐位对上）。`analyze` 的两行在
+> 重放时会落在第 5–6 位小数上（例如 `secondRuler.worstDb` = -57.771610 / -75.232346），
+> 因为判据 `f0` 在调用里是写成 `2102.6986` 的六位小数——把完整值 `2102.6986397112883` 传进去
+> 就逐位一致。
+
+`gate` 的两把尺子里只有 Hann 动了：`bh7` 从 -0.0025 到 -0.0006 dB——这条 patch 有两台相差 12 个半音的振荡器，**任何**单一谐波栅格都漏掉另一台，所以全带 `bh7` 地板在这个 patch 上是「不适用」，不是「证明没问题」。真正能读的判据是 Hann 探针（它只问「这些频率上的能量相对基频有多高」）。
+
+改进后 `gate` 的 `hann.passed` 从 `false` 变 `true`（-64.88 < -60），而整条 `passed` 仍是 `false`——因为 `bh7` 那一半是上面说的不适用。
+
+#### 4.5.5 完整调用序列（可照着重跑）
+
+下面两份分享码就是「前 / 后」的完整 patch（`{params(224), routes(4)}`，`gs1.patch.get` 给的格式）。
+**唯一差异是 `v[153]`（`fxCrushBits`）：`6 → 4`**；可以直接把它们当 `patch` 传给 `gs1.render` /
+`gs1.gate`，不必先 `patch.set`。
+
+```jsonc
+// 1. 会话里装上工厂预设（这一段只是为了拿到「前」的分享码）
+{ "tool": "gs1.patch.set", "args": { "presetId": "crushlead" } }
+{ "tool": "gs1.patch.get", "args": {} }                     // shareCode = <前>（见下）
+
+// 2. 改前测量（宽探针）
+{ "tool": "gs1.gate", "args": { "notes": [{"note": 96}], "ruler": "both", "thresholdDb": -60,
+  "probes": [3000,5000,7000,9000,11000,13000,15000] } }      // worstHannDb = -4.017016537500746
+
+// 3. 改前 analyze（把 <前> 原样交给 render.patch）
+{ "tool": "gs1.render", "args": { "patch": "<前>", "notes": [{"note":96,"velocity":1}],
+  "seconds": 4, "seed": 0 } }                                // wavPath = .tmp/mcp/<sha>.wav
+{ "tool": "gs1.analyze", "args": { "render": { "patch": "<前>",
+  "notes": [{"note":96,"velocity":1}], "seconds": 4, "seed": 0 }, "f0": 2102.6986 } }
+                                                             // secondRuler.worstDb = -57.77160455161302
+
+// 4. 只改一个参数（partial:true 叠在会话当前 patch 上；clamped 为空）
+{ "tool": "gs1.patch.set", "args": { "params": { "fxCrushBits": 4 }, "partial": true } }
+{ "tool": "gs1.patch.get", "args": {} }                     // shareCode = <后>（v[153]=4）
+
+// 5. 改后测量 + analyze
+{ "tool": "gs1.gate", "args": { "notes": [{"note": 96}], "ruler": "both", "thresholdDb": -60,
+  "probes": [3000,5000,7000,9000,11000,13000,15000] } }      // worstHannDb = -64.87613597834282
+{ "tool": "gs1.analyze", "args": { "render": { "patch": "<后>",
+  "notes": [{"note":96,"velocity":1}], "seconds": 4, "seed": 0 }, "f0": 2102.6986 } }
+                                                             // secondRuler.worstDb = -75.2323443428793
+```
+
+`<前>`（`gs1.patch.set {presetId:"crushlead"}` 之后 `gs1.patch.get {}` 的 `shareCode`，916 字符）：
+
+```
+gs1.1.eyJzIjo0LCJ2IjpbMC43NSwxLDIsMCw4LDAuNywwLjUsMSwzLDAsLTksMC4zNSwwLjUsMCw2NTAwLDAuMywwLjMsMC41LDEsMC4wMDMsMC4yMiwwLjcsMC4yNSwxLDAsNC42LDAuMzIsMCwwLDAsMC40NSwwLjI1LDEsMiwwLjM1LDAuMiwwLDEyMCwyLDAsMCwwLDAsMCwwLjUsMC42LDAuNCwwLDAuMywwLjUsMC40LDAsMC40LDAuNiwwLjUsMCwwLjQsMC42LDAuMDEsMC4zLDAuNSwwLjMsMCwxLDAuNSwwLjMsMCwwLjM1LDAuOCwwLjAxMiwxLDAuMzUsMSwwLjM1LDAsMCwwLDAsMC41MjksMCwwLjM1LDAsMSwyLDMsNCw1LDcsMCwwLDAsMCwwLDAsMCwxLDYwLDAsMCwxLDAsMSwyLDMsNCw1LDYsMSwxLDEsMSwxLDEsMCwwLDAsMCwwLDAsMSwxLDEsMSwxLDEsMCwwLDAsMCwwLDEsMSwxLDEsMSwxLDEsMCwwLDAsMCwwLjQsMCwwLjQsMCwwLDAsMCw5MDAwLDAuMjUsMC4xNSwwLjUsMSw2LDgsMC4yNSwwLjc1LDAsMCwyMDAsMCwxMDAwLDAuOSwwLDQwMDAsMSwwLDAsMCwwLDAsMCwwLDAsMCwwLDAsMCwwLDAsMCwwLDEsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsLTIsMCwwLDAsMCwwLDAsMCwwLDAsMCwwLDAsMCwwLDAsMCwwXSwiciI6W1swLDAsMC44LDFdLFsyLDAsMC41NSwxXSxbMCwxLDAuMTgsMF0sWzMsMCwwLjQsMF1dfQ
+```
+
+`<后>`（`gs1.patch.set {params:{fxCrushBits:4}, partial:true}` 之后 `gs1.patch.get {}` 的 `shareCode`）：
+与 `<前>` 长度相同（916 字符）、共有前 597 与后 318 个字符，**只有中间一个编码字符不同**——
+`…MCwwLjE1LDAuNSwxLDYsOCwwLjI1…`（`…0,0.15,0.5,1,6,8,0.25…`）变成
+`…MCwwLjE1LDAuNSwxLDQsOCwwLjI1…`（`…1,4,8,0.25…`），即
+`fxCrushOn=1, fxCrushBits=4, fxCrushDown=8, fxCrushAA=0.25`。
+
+`gs1.gate` 不读会话当前 patch 之外的任何状态，`gs1.analyze` 只读它拿到的 buffer：上面每一次调用都自带全部输入，可以任意顺序重放。
+（会话那一路也实测过：`patch.set{presetId}` → `gate{}` → `patch.set{params,partial}` → `gate{}` 与直接传分享码的两次数值逐位一致。）
+
+#### 4.5.6 浏览器层证明「页面里也真的生效」
+
+离线数字说完，还要证明**同一个 patch 在真页面里也生效**。用 §4.4 的工具：
+
+```jsonc
+{ "tool": "gs1.ui.open",       "args": { "path": "/" } }              // 1440x900, dist/, port 4796
+{ "tool": "gs1.ui.click",      "args": { "selector": ".start-btn" } } // 引擎启动（真正的 AudioContext）
+{ "tool": "gs1.ui.click",      "args": { "selector": ".tbtn.primary" } }        // 预设库
+{ "tool": "gs1.ui.text",       "args": { "selector": ".preset-drawer.open .pcard", "all": true } }  // 91 张卡
+{ "tool": "gs1.ui.click",      "args": { "selector": ".preset-drawer.open .pcard >> nth=84" } }     // Crushed Lead
+{ "tool": "gs1.ui.text",       "args": { "selector": ".preset-drawer.open .pcard.current" } }
+{ "tool": "gs1.ui.text",       "args": { "selector": "[data-module-id=filter]", "maxLength": 400 } }
+{ "tool": "gs1.ui.click",      "args": { "selector": ".preset-drawer.open .d-close" } }
+{ "tool": "gs1.ui.screenshot", "args": { "name": "ui-smoke.png" } }
+```
+
+真跑输出（`npm run ui:smoke`，同一份序列）：
+
+```
+  ✓ gs1.ui.open mounted the app — bootMs 4973
+  ✓ gs1.ui.open reported console errors — 0 error(s)
+  ✓ gs1.ui.open used its own port, never 4783 — port 4796
+  ✓ gs1.ui.open is at the visual baseline size — 1440x900 = splash-*-desktop-chromium-linux.png
+  ✓ gs1.ui.click clicked the app's start gate
+  ✓ the shared implementation is named in the click result
+  ✓ the preset drawer opened — Crystal Pluck · 晶体拨弦 FUTURE BASS · PLUCK
+  ✓ every factory preset is in the drawer list — 91 cards
+  ✓ the factory preset loaded (DOM read-back) — Crushed Lead · 位粉碎主音 EXPERIMENTAL · LEAD
+  ✓ the filter readout changed with the patch —
+      CUTOFF 9.00 kHz RES 25 % DRIVE 15 %  ->  CUTOFF 6.50 kHz RES 30 % DRIVE 30 %
+  ✓ gs1.ui.screenshot wrote a real PNG — .tmp/mcp/ui-smoke.png
+  ✓ the screenshot is 1440x900
+  ✓ the screenshot is the baseline size — 24 baselines
+```
+
+**截图尺寸对照**：`gs1.ui.screenshot` 写出的 PNG 宽高是**从 PNG 头读回来**的（不是请求值）：
+
+| | 宽 × 高 | bytes | sha256 |
+| :--- | :--- | ---: | :--- |
+| `gs1.ui.screenshot {name:"ui-smoke.png"}` | **1440 × 900** | 273660 | `1647bd0217651bc12306fd2893b2dbb2d6179ab7c5bd8b6252eac5f1fb3e3f2e` |
+| `e2e/visual.spec.ts-snapshots/splash-dark-desktop-chromium-linux.png`（基线） | **1440 × 900** | — | — |
+| `e2e/visual.spec.ts-snapshots/splash-dark-phone-chromium-linux.png`（手机基线） | 390 × 844 | — | — |
+
+`gs1.ui.open` 的默认视口就是 `e2e/visual.spec.ts` 的 desktop `test.use({viewport:{width:1440,height:900}})`、`deviceScaleFactor:1`，截图用 `scale:'css'`（与视觉基线同一个 `SHOT` 配置），所以**默认全视口截图与 20 张 desktop 基线同尺寸**；结果里的 `baseline.matches === true` 就是这个断言，`ui:smoke` 里也有一条 check。
+
+> 诚实说明：尺寸一致，**像素不保证一致**。视觉基线是**启动门出现时**的截图，`ui.open` 拿到的是「外壳已挂载、启动门还在」的同一状态（`gateCleared:false`），但基线本身的容差（1 % 像素、5 % 颜色距离）和字体光栅是 `e2e/visual.spec.ts` 自己的事；`gs1.ui.gate {spec:"visual"}` 才是跑那套比对的地方。
+
+#### 4.5.7 这个范例没做到的部分
+
+- `bh7` 全带地板（跨谐波栅格的「总」非谐波能量）**没有**改善：-0.0025 → -0.0006 dB。原因是 `crushlead` 的 OSC2 在 -12 st、OSC1 detune +8 ct，两台振荡器的谐波不在同一栅格上，`bh7` 在这个 patch 上量的是「分层」而不是「混叠」。要一个 `bh7` 也干净的范例，得挑单振荡器、与音符同调的 patch——那类的 `bh7` 地板本来就在 -100 dB 上下，没有 20 dB 可改。
+- 这个改动**换来了量化噪声**：`analyze.thd` 从 26.7 % 升到 60.4 %（4 bit 的量化台阶）。任务是「把 ≥1 kHz 非谐波地板降 20 dB」，做到了；但这不是一个可以无脑套用的音色修改，`docs/notes/mcp.md` 的取舍一节也这么写。
+- 低音区（note 72/84）这条改动**不稳定**：宽探针下 note 72 变差 3.7 dB、note 84 变好 7.4 dB（探针与基频的相对位置随音高变），稳定的大幅改善只出现在 C7 以上。这条结论也是真跑出来的，没有藏。
+
 ## 五、安全、确定性与资源边界
 
 - **确定性**：所有随机入口必须吃 `seed`；渲染不使用挂钟；同一输入两次调用**逐字节相同**（输出里带 `sha256` 让调用者自己验）。
@@ -122,7 +377,7 @@
 | **P13.1 抽尺子** | 把 `verify-audio.mjs` 的渲染引导与测量抽成 `scripts/lib/render-core.mjs` + `scripts/lib/audio-ruler.mjs`；门禁改为调用它们 | **门禁输出逐字节不变**（`verify:audio` 的每条读数、`test:dsp` **0.061470**、`verify:dsp:2x` **0.061703**、两侧 `91 presets unchanged · ABI 8` 一字不动）；`verify` 绿。**这是纯重构，不接受任何数字变化** |
 | **P13.2 只读 + 渲染 + 测量** ✅ 2026-09-14（v2.1.1）| `mcp/server.mjs` + `mcp/tools/*.mjs`（**目录驱动**：新增工具＝加一个文件，不动共享清单）+ `gs1.describe`/`params.list`/`presets.list`/`patch.get`/`render`/`analyze`/`gate` + `npm run mcp`（stdio / `--http` 回环 / `--self-test`） | ✅ 工具级单测 **54 条**：schema、参数校验、20 条拒绝路径、手写 JSON-RPC 的 `initialize`/`tools/list`/`tools/call`（含 `-32700`/`-32601`/`-32602` 错误帧）、黄金会话、共用实现、依赖自证。**黄金会话**：7 次调用（覆盖全部 7 个工具）跑两遍 `sha256` 相同、WAV 字节相同。**与门禁共用**：`gs1.gate` 的地板与 `offGridFloor(renderFloor(...))`（`verify-audio.mjs` P9.1a 的原调用）`toBe` 全等，四个波形逐一比对。**依赖**：`dependencies` 与 v2.1.0 清单一字不差——本仓库该字段本来就不是空对象（6 条：lamejs、两个 fontsource、playwright、react、react-dom），本批**没有新增任何条目**，尤其没有 `@modelcontextprotocol/sdk`（协议手写，esbuild 读取 app TS 但它是既有 devDependency）。`npm run mcp -- --self-test` 已同步进 `.github/workflows/ci.yml`、`scripts/verify-ci.mjs` 与 `verify` 链。实现说明见 `docs/notes/mcp.md` |
 | **P13.3 操作类** ✅ 2026-09-15 | `mcp/tools/` 七个新文件（**只加文件，不动共享清单**）：`patch-set.mjs`/`patch-random.mjs`/`sample-import.mjs`/`wavetable-import.mjs`/`songs.mjs`/`preset-apply.mjs`/`preset-save.mjs`；`mcp/lib/session.mjs`（会话状态）、`mcp/lib/random.mjs`（带种子的 RANDOM 配方）、`mcp/lib/import.mjs`（解码与结构化拒绝） | ✅ 工具级单测 34 条 + P13.2 的 54 条（共 88 条绿）：schema、每条拒绝路径、**夹取报告**（`filterCutoff: 99999 → 20000`，`clamped:[{key,asked,got,reason}]`，`partial:true` 叠加）、`noRoom` 结构化拒绝、**patch 往返**（`patch.get`→`patch.set`→`patch.get` 的 `shareCode` 与 224 个参数逐字节相同，含手工分层 `params2`）、**会话状态**（无 patch 的 `render` 播放当前 patch；导入的采样/波表被重放进每次 `initCore()` 的全新引擎）、**黄金会话**扩展到 21 次调用（含全部变异工具）跑两遍 `sha256` 相同。**`dependencies` 仍未变**：6 条，与 v2.1.0 清单一字不差。**名字说明**：`gs1.songs.list` 在本文 §4.1 被列在只读类、P13.2 未交付，本批补上；`gs1.preset.apply`/`gs1.preset.save` 本文 §4.2 未列，名字取自 P13.3 任务书。实现与状态规则见 `docs/notes/mcp.md` |
-| **P13.4 浏览器层 + 范例** | `gs1.ui.*`（Playwright 驱动，复用帧无关交互）+ `docs/LLM-INTERFACE.md` 补「实战范例」一节 | 范例必须是**真跑过**的：让一个 agent 用这套工具把某个 patch 的 ≥1 kHz 非谐波地板改进 ≥20 dB，并贴出前后 `analyze` 的 JSON；`ui.screenshot` 能出图且与视觉基线同尺寸 |
+| **P13.4 浏览器层 + 范例** ✅ 2026-09-15 | `gs1.ui.*`（Playwright 驱动，复用帧无关交互）+ `docs/LLM-INTERFACE.md` 补「实战范例」一节 | ✅ 见 §4.4 与 §4.5：五个工具（`mcp/ui/tools/*.mjs`，独立入口 `npm run mcp:ui`，`npm run mcp` 不加载它们）；`gs1.ui.click` 与 `e2e/fixtures.ts` 共用 `e2e/interact.mjs`（抽取时修掉 `force` 不生效的真缺陷，Chromium 套件不回归，5 条单测在自己进程里证明去掉 `force` 分支即红）；白名单 `gs1.ui.gate`；截图 1440×900 与视觉基线同尺寸；§4.5 是**真跑过**的范例——`crushlead` 的 ≥1 kHz 非谐波地板（Hann 宽探针）**-4.0170 → -64.8761 dB，改善 60.86 dB**（默认三探针 -13.0589 → -67.7049 dB），改动只有 `fxCrushBits: 6 → 4`，前后 JSON、完整调用序列、以及没做到的部分（`bh7` 在这条分层 patch 上不适用、THD 26.7 % → 60.4 %、低音区不稳定）都在那一节里 |
 
 **顺序理由**：P13.1 必须先做（否则工具与门禁会各量各的）；P13.2 是「能用」的最小集（认知 + 听 + 量）；
 P13.3 才能「改」；P13.4 是给需要看界面的 agent 的，最重、最可延后。

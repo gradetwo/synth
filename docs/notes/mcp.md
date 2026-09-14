@@ -289,7 +289,7 @@ P9.8 的数字在 `error.importCode`。
 worktree**里各加各的文件而零冲突。以 `_` 开头的文件（如 `mcp/tools/_schemas.mjs`）是共享 schema
 片段，不注册。
 
-## 八、限制与已知取舍
+## 八、限制与已知取舍（P13.2 + P13.3 离线层）
 
 - **层**：所有数字都是 **Node 里的 wasm 核**测出来的，没有 AudioWorklet、没有 AudioParam
   自动化、没有 Web Audio 图。浏览器层的问题（v2.0.7 那种 AudioParam 量程 clamp）在这里
@@ -305,3 +305,102 @@ worktree**里各加各的文件而零冲突。以 `_` 开头的文件（如 `mcp
   id 集合变了测试会红，分布变了则需要人工同步——这是本批已知的唯一「两处配方」。
 - **`noRoom` 是防御路径**（12 MiB arena 到不了），见第三节。
 - 8 MiB 以上的 HTTP body 会被服务端直接断开；服务只绑 `127.0.0.1`。
+
+## 九、浏览器层（P13.4）：`gs1.ui.*`
+
+浏览器比 wasm 重得多，而且需要 `dist/`——一个只想要 patch 的 agent 不该付这个代价。所以
+**`gs1.ui.*` 是独立入口**，`npm run mcp` 里**没有**它们。
+
+```bash
+npm run mcp:ui                        # MCP over stdio：14 个离线工具 + 5 个浏览器工具
+npm run mcp:ui -- --http --port 3939  # 同一套 registry，只绑 127.0.0.1
+npm run ui:smoke                      # 端到端冒烟：开页 → 启动引擎 → 装预设 → 读 DOM → 截图
+```
+
+| 工具 | 输入 | 输出（要点） |
+| :--- | :--- | :--- |
+| `gs1.ui.open` | `{ path?, url?, viewport?{width,height}, waitForMs? }` | `{ url, title, status, viewport, mounted, gateCleared, ready, consoleErrors, consoleMessages, navigationMs, bootMs, distDir, previewPort, baseline }` |
+| `gs1.ui.click` | `{ selector, force?, timeoutMs?, position? }` | `{ ok, force, hitTested, clicked:{x,y}, box, element, elapsedMs, implementation }` |
+| `gs1.ui.text` | `{ selector?, all?, attribute?, maxLength? }` | `{ ok, selector, count, text, length, truncated }`；`all:true` 给 `{ values:[] }` |
+| `gs1.ui.screenshot` | `{ name?, fullPage?, selector?, animations? }` | `{ screenshotPath, width, height, bytes, sha256, viewport, consoleErrors, baseline }` |
+| `gs1.ui.gate` | `{ spec:'visual'\|'performance'\|'param-range', project?:'chromium', timeoutMs? }` | `{ ok, spec, specFile, command, port, exitCode, passed, failed, skipped, tests[], logPath, reportPath, logTail }` |
+
+新增一个 UI 工具＝在 `mcp/ui/tools/` 加一个 `.mjs`（`_` 前缀是辅助模块，不注册），和 P13.2/P13.3
+一样**扫目录**，不动任何共享清单。
+
+### 9.1 单一实现：`e2e/interact.mjs`
+
+`e2e/fixtures.ts` 的帧无关交互（定时器版可见性 + `isEnabled` + DOM 滚动 + `locator.evaluate`
+读盒子 + `elementFromPoint` 命中重试 + 真 `page.mouse.click`/`touchscreen.tap`）**原来只长在
+fixtures 里**，Playwright 测试之外用不到。P13.4 把它抽成普通模块 `e2e/interact.mjs`：
+
+- `e2e/fixtures.ts` 仍然在 WebKit 上把这些函数装到 Playwright 的动词上（`interact.click` 等），
+  **行为逐条不变**；
+- `mcp/ui/tools/click.mjs` 直接调 `interact.frameFreePoint` / `interact.click`——
+  `mcp/` 里**没有**第二份命中/滚动/派发逻辑（`mcp/ui/ui.test.mjs` 有一条断言：`click.mjs` 里
+  不出现 `elementFromPoint(` 与 `.evaluate(`，且 import 的是那份模块；fixtures 里也能看到
+  `interact.click`）。
+
+**抽取时修掉的真缺陷**：`ClickOptions.force` 在 fixtures 里**从来没被读过**，命中测试循环无条件
+执行，于是 `click({force:true})` 在被遮挡的元素上会一直重试到超时。Playwright 的 `force` 就是
+「跳过可操作性检查」，`frameFreePoint` 现在在 `force` 下**只读一次盒子**就派发（跳过可见性
+等待、`isEnabled`、命中测试）。`mcp/ui/interact.test.mjs` 的 5 条测试盯住这件事——把那 5 行
+`if (options.force)` 分支删掉，它们**在自己进程里重跑时长直接变成 30 s 超时并失败**（实测）。
+
+### 9.2 边界与安全（本层的承诺）
+
+- **只连本站**。`gs1.ui.open` 只给 `path`（本站预览上的路径）或 `url`（必须是**本进程自己**那个
+  `http://127.0.0.1:4796` origin）；外部 origin、`//host/path`、非字符串一律 `E_UI_URL`，而且
+  **在起 server / 起浏览器之前**就拒绝（测试断言拒绝后 `session.server === null`）。
+- **只写 `.tmp/mcp/`**。`gs1.ui.screenshot` 的文件名解析后必须仍是 `.tmp/mcp/` 下的普通文件名
+  （`../x`、`sub/x`、`.x` 都是 `E_PATH`）；`gs1.ui.gate` 的 JSON 报告与日志同样走 P13.2 的
+  `resolveOutputPath`。
+- **只用自己的端口**。预览默认 `4796`（`GS1_MCP_UI_PORT` 可改），**`4783` 直接拒绝**——那是
+  `playwright.config.ts` 的 E2E 端口，`previewPort()` 会在启动时抛结构化错误；`gs1.ui.gate`
+  跑的 Playwright 也把 `GS1_E2E_PORT` 强制成这个端口，所以两层不会互相抢。
+- **不留残留进程**。预览是 `node:http`（不是 child process），浏览器/上下文/页面在
+  `stdin` 结束与 `SIGINT`/`SIGTERM` 时按序关闭；`ui:smoke` 跑完后 4796/4797 上没有 listener、
+  没有 chromium 进程（实测）。
+- **白名单地跑门禁**。`gs1.ui.gate` 只认 `visual`/`performance`/`param-range` 三个 spec 与
+  `chromium` 一个 project；spec 路径、额外 flag 都是 `E_UI_SPEC`，不可能变成任意命令执行。
+  `performance` 走 `--project=perf --workers=1`（和 `npm run test:perf` 一样），
+  `visual` 自己带上 `GS1_VISUAL=1`。
+- **读**。服务静态文件只从 `dist/` 里取，路径逃出去就是回退 `index.html`，不会读到仓库别处；
+  `GS1_MCP_UI_DIST` 可以指向另一份构建产物（测试用的 fixture 目录就是这样）。
+- **不进 CI 必需门禁**。`scripts/verify-ci.mjs` 里**没有** `mcp:ui`/`ui:smoke`：它们需要
+  Chromium 和 `dist`，这正是这一层独立存在的原因（和 `test:e2e`/`test:perf` 同类）。
+  `npm run verify` 也**不**包含它们。
+
+### 9.3 测试与冒烟
+
+| 文件 | 内容 | 需要浏览器？ |
+| :--- | :--- | :--- |
+| `mcp/ui/interact.test.mjs` | 12 条：正常路径（wait/check/scroll/box/hit → 真 click）、命中失败重试到 deadline 后抛超时、禁用元素等待、`force` 跳过可操作性检查 | 否（假 locator） |
+| `mcp/ui/ui.test.mjs` | 29 条：五个工具的 schema 与拒绝路径（外部 URL / 其它 origin / `//` 路径 / 无页面 `E_UI_SESSION` / 找不到元素 `E_UI_TIMEOUT` / 文件名逃逸 `E_PATH` / 非白名单 spec 与 project `E_UI_SPEC`）、预览只绑回环与拒绝 4783、gate 用自己的端口并解析 JSON 报告、离线 registry 里没有 `gs1.ui.*`、`click.mjs` 不含第二份命中逻辑 | 否（假 ctx + 真 socket） |
+| `scripts/ui-smoke.mjs`（`npm run ui:smoke`） | 端到端：真 MCP stdio → 开页 → 启动引擎 → 预设库 → 装 `crushlead` → 读回 DOM（滤波读数 9.00 kHz→6.50 kHz）→ 截图 1440×900 对齐基线 | **是**（Chromium + `dist/`） |
+
+**冒烟不删除 `.tmp/mcp/ui-smoke.png`？** 默认删；`--keep` 保留（`docs/LLM-INTERFACE.md` §4.5.6
+里的尺寸/sha256 对照就是 `--keep` 那次的结果）。
+
+### 9.4 已知取舍
+
+- **`ui.open` 的 `ready` 不等于「引擎已启动」**。`mounted` 是 `#root` 有子节点且工具栏（`.tbtn.primary`）
+  已挂载；`gateCleared` 才是「启动门已经不在了」。启动门要一个真 `AudioContext`，那需要点击
+  `.start-btn`（`e2e/boot.spec.ts` 也这么做）——这是应用的业务，工具不去替它点。实测：点完
+  `.start-btn` 后 `正在启动…` 会停留一会儿，此时启动门是**模态**，它盖住工具栏，所以
+  `gs1.ui.click` 在它消失前点别的控件会得到 `E_UI_TIMEOUT`（这是对的行为：命中测试如实说不通）。
+- **`gs1.ui.text` 读的是渲染文本**（`innerText`，空了退回 `textContent`）。`display:none` 的内容
+  读不到——这正是「agent 看得见界面」的意思；要读隐藏值请用 `attribute`。工具在
+  `mcp/ui/tools/_common.mjs` 里把读取函数当**函数值**传给 `locator.evaluate`：传模板字符串会被
+  Playwright 当成表达式，静默拿到空结果（本批踩过一次）。
+- **`gs1.ui.gate` 的视觉门禁依赖本机基线**。`visual.spec.ts` 的 20 张基线是同主机同 Chromium 录的
+  （README 与 `docs/notes/visual-regression.md` 的既定立场）；换机器/换 freetype，`visual`
+  门禁本来就会红，这不是本层引入的。
+- **浏览器层仍然看不到音频**。它证明的是「页面起来、控件响应、DOM 反映出 patch、截图对得上尺寸」；
+  「浏览器里的声音对不对」要真声卡，不在本层（`gs1.describe.layer` 与本文 §一都写着这件事）。
+- **`gs1.analyze` 的 Hann 比值以 `f0` 处的 bin 为分母**：patch 的振荡器若偏离音符（detune 或 OSC2 在
+  别的音程），必须把**实际基频**传进 `f0`，否则分母近乎为零、整份结果退化成 0 dB 附近
+  （`docs/LLM-INTERFACE.md` §4.5.2 就是这么做的：`crushlead` 的 `f0` 是 2102.6986 而不是 2093.0）。
+- **`gs1.gate` 的 `bh7` 全带地板对分层/失谐 patch 不适用**（两台振荡器的谐波不在同一栅格上，
+  读数是「分层」不是「混叠」）；这类 patch 要读 Hann 探针。§4.5 的范例同时给了两个数，并写清了
+  哪一个能读。
