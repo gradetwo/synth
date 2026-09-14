@@ -37,11 +37,17 @@ jobs:
       - name: Rust DSP tests
         run: npm run test:rust
 
-      - name: Front-end unit + worklet integration tests
-        run: npm test
-
+      # The build comes *before* the tests on purpose: `src/generated/*.wasm`
+      # is a build artefact and is gitignored, so on a fresh runner the unit
+      # tests cannot resolve `@/generated/synth_core.wasm?url` until the cores
+      # exist. Running them first failed sixteen files with "Failed to resolve
+      # import" on a clean checkout (found by the second full sweep), and
+      # `npm run verify` had the same ordering bug.
       - name: Production build (WASM + SW)
         run: npm run build
+
+      - name: Front-end unit + worklet integration tests
+        run: npm test
 
       # binaryen (wasm-opt / wasm-dis) is a devDependency, so `npm ci` above
       # installs it and `npm run build` (the step before this one) already

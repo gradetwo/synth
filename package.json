@@ -26,7 +26,7 @@
     "presets:update": "node scripts/verify-presets.mjs --update",
     "presets:update:2x": "node scripts/verify-presets.mjs --update --oversampled",
     "verify:clippy": "cargo clippy --manifest-path crates/synth-core/Cargo.toml --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::perf -A clippy::not_unsafe_ptr_arg_deref",
-    "verify": "npm run verify:clippy && npm run test:rust && npm run test && npm run lint && npm run build && npm run test:wasm && npm run verify:ci && npm run verify:release && npm run verify:dist && npm run verify:budget && npm run verify:audio && npm run verify:presets && npm run verify:presets:2x && npm run verify:bench && npm run test:dsp && npm run verify:dsp:2x",
+    "verify": "npm run verify:clippy && npm run test:rust && npm run build && npm run test && npm run lint && npm run test:wasm && npm run verify:ci && npm run verify:release && npm run verify:dist && npm run verify:budget && npm run verify:audio && npm run verify:presets && npm run verify:presets:2x && npm run verify:bench && npm run test:dsp && npm run verify:dsp:2x",
     "test:dsp": "node scripts/dsp-baseline.mjs",
     "verify:dsp:2x": "node scripts/dsp-baseline.mjs --oversampled",
     "test:e2e:webkit": "playwright test --project=webkit --workers=1",
