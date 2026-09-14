@@ -4837,13 +4837,16 @@ mod tests {
     //
     // P9.4's job was to let the routing graph run its nonlinear nodes at 2x with
     // per-edge delay compensation, the way P6.5's chain does. The compensation
-    // is implemented and tested here, but the graph's 2x node path is held
-    // *off*: measured through the real wasm it degrades rather than improves the
-    // driven node's alias floor (see the note on `node_oversampled`), so the
-    // graph still renders at 1x. The tests below pin both halves of that
-    // decision — the infrastructure, and the bit-exact 1x render — and the first
-    // test is the one that fails loudly if someone flips the predicate back on
-    // without fixing the underlying problem.
+    // is implemented and tested here, and the graph's 2x node path is **on**: a
+    // graph node whose kind reports `node_oversampled` (today, `Drive`) runs its
+    // whole block through the up/process/down round trip when `OVERSAMPLE` is
+    // set, with its dry side delayed by `OS_LATENCY` so the blend crossfades two
+    // aligned copies. The tests below pin both halves of that: the 2x render
+    // lowers the driven node's alias floor by ≥12 dB and lands exactly where the
+    // chain's own 2x insert does, and the switch *off* is the pre-P9.4 render
+    // sample for sample. (This block used to claim the path was "held off" and
+    // that the graph still rendered at 1x — stale since the predicate was
+    // flipped on; see docs/DSP-GUIDE.md §32.)
 
     /// The scenario the graph's 2x was written for: a quiet, unmodulated, fully
     /// driven sine, with the drive in node 1 instead of chain position 1. Same

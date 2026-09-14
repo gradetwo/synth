@@ -81,8 +81,10 @@ describe.skipIf(!existsSync(wasmPath))('preset loudness', () => {
         JSON.stringify(levels, null, 1),
       );
     }
-    // Achieved 6.0 dB (was 47); the gate allows a little slack so ordinary
-    // patch edits do not fail the build, while still catching a jump.
+    // Achieved 8.1 dB after the +6 dB pass (docs/notes/loudness.md); the 6.0 dB
+    // this comment used to quote was an earlier snapshot, and before the pass the
+    // spread was 47 dB. The gate allows a little slack so ordinary patch edits do
+    // not fail the build, while still catching a jump.
     expect(spread).toBeLessThan(9.0);
   });
 });

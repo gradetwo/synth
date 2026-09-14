@@ -42,8 +42,9 @@ fn soft_clip(x: f32) -> f32 {
 
 /// Output trim. The vendored ladder this replaces ran with a 0.5 passband
 /// gain, so every existing preset was balanced against a low-pass that sat
-/// about 4 dB below unity. Matching that keeps patch levels, headroom and the
-/// audio gates where they were.
+/// 6.02 dB below unity (`20 * log10(0.5)`; the older wording said "about 4 dB",
+/// which did not match the 0.5 it described). Matching that keeps patch levels,
+/// headroom and the audio gates where they were.
 const PASSBAND_TRIM: f32 = 1.0;
 
 #[derive(Clone, Copy)]
