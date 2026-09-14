@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.111.0',
+    version: '1.112.0',
     date: '2026-09-14',
     kind: 'fix',
     items: [
       [
-        '**内部维护版：声音与界面没有任何变化。** 新增了波表/采样音源在高音区的回归门禁，并如实登记一个**已知边界**：这类音色在高音区的非谐波能量高于普通振荡器路径（要修就得改变它们的音色，所以留到单独一批再动）。引擎与上一版**逐字节相同**。',
-        '**Internal maintenance release: nothing changed in the sound or the interface.** Added a regression gate for the wavetable and sampler sources in the high register, and recorded a **known boundary**: up there those sources carry more non-harmonic energy than the ordinary oscillator path does (fixing it means changing how they sound, so it is left to a batch of its own). The engine is **byte-for-byte** the previous build.',
+        '**修掉一声很罕见的爆音。** 高音区某些音符在起音的瞬间会有一次整级错误的修正，听起来是一声短促的爆音（实测约每 150 次新起音出现 1 次）。除此之外整段波形**逐字节不变**，工厂预设与音量都没有改动。',
+        '**Fixed a crackle that only showed up rarely.** In the high register, a few notes got one full-scale correction error the moment they started, which sounds like a short crackle (measured: about one fresh note in 150). Every other phase is **byte-for-byte** unchanged, and no factory preset or level moved.',
       ],
     ],
   };
