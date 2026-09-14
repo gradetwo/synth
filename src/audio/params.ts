@@ -1117,6 +1117,22 @@ export function clamp01(v: number): number {
   return clamp(v, 0, 1);
 }
 
+/**
+ * Parameters that are stepped, not ramped: switches and enumeration ids.
+ *
+ * `engine.setParam` writes these with `setValueAtTime` rather than a smoothing
+ * ramp, so a value is never caught half-way through an enumeration. The list
+ * lives here, beside the ids and the AudioParam names, because it is parameter
+ * metadata — and because `src/audio/param-range.test.ts` has to enumerate the
+ * same set to prove that every stepped parameter's AudioParam range covers the
+ * values its Rust decoder accepts.
+ */
+export const DISCRETE_PARAMS = new Set<number>([
+  1, 2, 7, 8, 13, 18, 23, 24, 27, 28, 29, 32, 33, 42, 43, 47, 51, 55, 62, 63, 66, 79, 81,
+  // The effect chain is a permutation of stepped positions, not a ramp.
+  82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 96, 97,
+]);
+
 /** Default patch, mirroring the reference prototype's "Future Saw Lead". */
 export const DEFAULT_PARAMS: Record<number, number> = {
   [Param.MASTER_VOLUME]: 0.75,

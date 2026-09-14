@@ -22,6 +22,7 @@ import { recoverFromStaleBuild } from '@/pwa/register';
 import { fetchCoreBytes } from './wasmFetch';
 import { t } from '@/i18n';
 import {
+  DISCRETE_PARAMS,
   MAX_ROUTES,
   PARAM_NAMES,
   type ModRoute,
@@ -47,13 +48,6 @@ export interface AnalysisFrame {
 }
 
 type AnalysisListener = (frame: AnalysisFrame) => void;
-
-/** Parameters that are stepped, not ramped (enums / switches). */
-const DISCRETE = new Set<number>([
-  1, 2, 7, 8, 13, 18, 23, 24, 27, 28, 29, 32, 33, 42, 43, 47, 51, 55, 62, 63, 66, 79, 81,
-  // The effect chain is a permutation of stepped positions, not a ramp.
-  82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 96, 97,
-]);
 
 /** Verdict from the DSP on an imported single-cycle waveform. */
 /** Layer / split routing between the two instances. */
@@ -502,7 +496,7 @@ export class AudioEngine {
     if (!param) return;
     const t = this.ctx.currentTime;
     const v = clamp(value, param.minValue, param.maxValue);
-    if (immediate || DISCRETE.has(id)) {
+    if (immediate || DISCRETE_PARAMS.has(id)) {
       param.setValueAtTime(v, t);
     } else {
       // Browser-side smoothing: no DSP-internal ramp needed (prd.md §5.1).
