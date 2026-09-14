@@ -176,9 +176,12 @@ npm run rollback -- <version> --check-only
 - 更新横幅不是服务器推的。它是 **Service Worker 的 waiting 状态**触发的
   （`src/pwa/register.ts`：`updatefound` → `installed` 且已有 `controller` → `announce()` → 横幅出现）。
   没有 waiting worker，就没有横幅。
-- 横幅里的**版本号与标题来自正在运行的那份 bundle** 的 `CHANGELOG_HEAD`，**不是** waiting worker 的版本。
-  客户端 API 拿不到 waiting worker 的版本（`registration.waiting.scriptURL` 永远是同一个 `sw.js`，
-  而 `sw.js` 里只有内容哈希拼的缓存名 `gs1-<hash>`，没有版本号）。
+- 横幅里的**版本号来自 waiting worker 自己**（P12.6 版本握手）：`scripts/gen-sw.mjs` 把 `package.json`
+  的版本写进生成的 `sw.js`（`const VERSION`），页面发现 waiting worker 后经 `MessageChannel` 发
+  `GET_VERSION`、收 `VERSION`（超时 1.5 s，失败就不显示版本号）。`registration.waiting.scriptURL`
+  永远是同一个 `sw.js`、客户端 API 读不到版本，所以只有 worker 能回答「将要安装的是哪一版」。
+- 横幅里的**更新标题仍来自正在运行的那份 bundle** 的 `CHANGELOG_HEAD`：worker 只带版本号、不带说明
+  文本，所以回滚时标题描述的仍是 vW（版本号已经是 vX）。这是已知的、写在下面的一半限制。
 
 于是从坏掉的 vW 回滚到 vX 之后，客户端分三种状态，**关键在于那份页面是什么时候打开的**：
 
@@ -189,24 +192,27 @@ npm run rollback -- <version> --check-only
 | 已装 PWA，**页面还开着（自回滚后没重新加载）** | 页面仍然是 vW。它要等 `registration.update()`（切回标签页、或最长 30 分钟一次）发现 `sw.js` 变了 → 装成 waiting → 横幅出现 → 用户点「立即更新」→ 激活 vX 的 worker 并 reload 一次，这时才落到 vX。 |
 | 离线中的 PWA | 一直跑它自己那份，直到联网并走完上面任一条。服务器上做什么都够不着它。 |
 
-**矛盾点（本批要求写清的那一条）**只出在最后一种"页面还开着"的情况：横幅里的版本号与标题取自
-**正在运行的那份 bundle** 的 `CHANGELOG_HEAD`（`src/App.tsx`），而此时运行的还是 vW，所以横幅会显示
+**版本错位（P12.6 已修）**只出在最后一种"页面还开着"的情况：横幅此前把**正在运行的那份 bundle** 的
+`CHANGELOG_HEAD` 当版本号用（`src/App.tsx`），而此时运行的还是 vW，所以横幅会显示
 「新版本已就绪 · **vW** · …」——**它报的是我们刚刚回滚掉的那个版本**；点下去实际装上的是 vX 的 worker，
-reload 之后页面才是 vX。也就是说：
+reload 之后页面才是 vX。现在版本号由 waiting worker 的握手回答（见上），横幅写 vX。也就是说：
 
-> 对一个「回滚时页面已经开着 vW」的客户端，**横幅的标签指向被回滚的版本**，但**按钮的结果**是回滚目标。
-> 对「回滚后重新加载过」的客户端不会出现这个错位：它的页面已经是 vX，横幅标签就是 vX。
+> 对一个「回滚时页面已经开着 vW」的客户端，**横幅的版本号现在指向回滚目标 vX**（P12.6 之前指向 vW），
+> **按钮的结果**也是 vX；标题那半行仍是 vW 的更新说明（worker 不带文本）。
+> 对「回滚后重新加载过」的客户端不会出现错位：它的页面已经是 vX。
 
-为什么不能顺手修掉：横幅要报 waiting worker 的版本，SW 必须先把这个版本号告诉页面（现在的 `sw.js` 里只有
-内容哈希拼的缓存名 `gs1-<hash>`，没有版本号），也就是要动 SW 的 message 协议 + 横幅文案 + i18n，
-还会吃首屏 JS 预算。那是一件独立的小批，不属于回滚工具本身——本批**写清交互，并把能断言的那一半断言掉**：
+P12.4 当时没有顺手修掉，原因就是这条：横幅要报 waiting worker 的版本，SW 必须先把这个版本号告诉页面
+（当时的 `sw.js` 里只有内容哈希拼的缓存名 `gs1-<hash>`，没有版本号），也就是要动 SW 的 message 协议 +
+横幅文案，还会吃首屏 JS 预算——那是一件独立的小批，所以拆成了 P12.6。本批**写清交互，并把能断言的那一半断言掉**：
 
 - **断言（`rollback.mjs` 部署后的第 7 步）**：回滚后线上 `/sw.js` 的 cache 名必须等于保留快照里的
   `gs1-<hash>`。这一条同时保证两件事：(a) 这次部署真的把我们要的那份 worker 推上去了（不存在
   「资源换了、worker 没换」的半吊子状态）；(b) 由于每个构建的 `sw.js` 都不同，已装客户端一定会拿到
   waiting worker、**横幅一定会重新出现**——也就是"页面还开着"的那类客户端唯一会被主动通知到的通道。
-- **仍未断言（已知限制）**：横幅上写的版本号对不对。这需要上面那条 SW 协议改造，
-  建议单独立批（本批的 P12.4 报告里已列为未完成项）。
+- **版本号已断言（P12.6）**：`e2e/update-banner.spec.ts` 覆盖前向更新（waiting 更新）、回滚
+  （waiting 比页面旧）与握手失败（**不显示版本号**，而不是显示错的）三种状态；`e2e/pwa.spec.ts`
+  用真实的 `dist/sw.js` 验协议本身；`scripts/verify-dist.mjs` 验生成的 worker 带版本号且应答
+  `GET_VERSION`。仍**未断言**的是标题那半行（worker 不带更新说明，见上）。
 - 另外提醒：横幅**不是**客户端拿到 vX 的唯一途径——重新加载/重新打开就够了（见上表）。横幅解决的是
   「用户不重新加载、我们也不推」的那段时间。
 
