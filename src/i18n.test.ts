@@ -27,6 +27,7 @@ import {
 } from './i18n-panels';
 import type { StringTable } from './i18n';
 import { LIBRARY_STRINGS } from './i18n.library';
+import { TEACH_STRINGS } from './i18n.teach';
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -62,6 +63,7 @@ const MODULES: Array<{ name: string; table: StringTable }> = [
   { name: 'i18n-panels:FLOW_STRINGS', table: FLOW_STRINGS },
   { name: 'i18n-panels:PROJECT_STRINGS', table: PROJECT_STRINGS },
   { name: 'i18n.library:LIBRARY_STRINGS', table: LIBRARY_STRINGS },
+  { name: 'i18n.teach:TEACH_STRINGS', table: TEACH_STRINGS },
 ];
 
 /* ------------------------------------------------------------------ the eager graph */
@@ -196,6 +198,8 @@ describe('i18n', () => {
     expect([...graph].some((file) => file.endsWith('i18n.player.ts'))).toBe(false);
     // The library's table (P10.5) is lazy too: it is reached by `import()`.
     expect([...graph].some((file) => file.endsWith('i18n.library.ts'))).toBe(false);
+    // As is the teaching panel's (P12.1).
+    expect([...graph].some((file) => file.endsWith('i18n.teach.ts'))).toBe(false);
   });
 
   it('every first-screen file only uses core keys', () => {

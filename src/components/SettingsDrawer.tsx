@@ -42,6 +42,13 @@ const SETTINGS_SENTINEL = ['settings.title'];
  */
 const ProjectsRow = lazy(() => import('@/components/Projects'));
 
+/**
+ * The practice panel is a lazy chunk of its own (P12.1), reached from one row
+ * here: its code, its stylesheet and its copy stay out of the first screen. It
+ * too owns its panel, so the shell only knows "there is a row here".
+ */
+const TeachingRow = lazy(() => import('@/components/Teaching'));
+
 
 
 export function SettingsDrawer({
@@ -186,6 +193,10 @@ export function SettingsDrawer({
 
               <Suspense fallback={null}>
                 <ProjectsRow onOpen={onClose} />
+              </Suspense>
+
+              <Suspense fallback={null}>
+                <TeachingRow onOpen={onClose} />
               </Suspense>
             </section>
 
