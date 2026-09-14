@@ -220,6 +220,24 @@ function makeTickClock(tempos: TempoEvent[], division: number) {
   };
 }
 
+/**
+ * Does this buffer begin with a standard MIDI file header?
+ *
+ * A file's name is a hint, not its format: the export button hands the browser
+ * a download, a share sheet can drop the extension, and a temporary path can
+ * have no last segment at all. Import therefore asks the bytes — the same four
+ * bytes `parseMidi` trusts below — instead of dispatching on `File.name`.
+ */
+export function looksLikeMidi(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 4 &&
+    bytes[0] === 0x4d &&
+    bytes[1] === 0x54 &&
+    bytes[2] === 0x68 &&
+    bytes[3] === 0x64
+  );
+}
+
 export function parseMidi(bytes: Uint8Array, name = 'MIDI'): MidiSong {
   const reader = new Reader(bytes);
   if (reader.remaining < 14 || reader.ascii(4) !== 'MThd') throw new Error('not a MIDI file');

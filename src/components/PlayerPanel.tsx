@@ -14,7 +14,7 @@ import { toast } from './Toast';
 import { haptic, HAPTIC } from '@/hooks/useInputMode';
 import { midiPlayer, type PlayerState } from '@/midi/player';
 import { recorder, type RecorderState } from '@/midi/recorder';
-import { parseMidi, songTracks, type MidiNote } from '@/midi/smf';
+import { looksLikeMidi, parseMidi, songTracks, type MidiNote } from '@/midi/smf';
 import {
   EDGE_PX,
   dragSeconds,
@@ -450,17 +450,24 @@ export function PlayerPanel({
   }, [tracks, query]);
 
   /**
-   * Import a track. `.mid`/`.midi` go through the MIDI reader; `.gs1song` (and
-   * a `.gs1.json` the user picked by mistake) through the existing patch-file
-   * reader, because a long arrangement already travels as a share code in a
-   * box. Every refusal names its reason in the toast instead of quietly doing
-   * nothing — that is the visible half of "reject damaged input".
+   * Import a track.
+   *
+   * The bytes decide the format, and the name only breaks ties. A file's name
+   * is not a reliable label: the export button hands the browser a download, a
+   * share sheet can strip the extension, and `setInputFiles(path)` names the
+   * file after a temporary path with none. Dispatching on the extension alone
+   * therefore refused a valid MIDI file as "unrecognised format" — the P10.5
+   * regression — so a stream that starts with `MThd` goes to the MIDI reader
+   * whatever it is called, and a stream that does not is text: a `.gs1song`
+   * share code (or a `.gs1.json` picked by mistake) goes through the existing
+   * patch-file reader. Every refusal still names its reason in the toast.
    */
   const importFile = async (file: File) => {
     const name = file.name;
     try {
-      if (/\.(mid|midi)$/i.test(name)) {
-        const song = parseMidi(new Uint8Array(await file.arrayBuffer()), name.replace(/\.midi?$/i, ''));
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (looksLikeMidi(bytes)) {
+        const song = parseMidi(bytes, name.replace(/\.midi?$/i, ''));
         if (song.notes.length === 0) throw new Error(t('player.emptyFile'));
         const title = song.name || name;
         midiLibrary.put({
@@ -475,8 +482,8 @@ export function PlayerPanel({
         toast(t('player.imported', { name: title, n: song.notes.length }));
         return;
       }
-      if (/\.(gs1song|json)$/i.test(name)) {
-        const text = await file.text();
+      const text = new TextDecoder().decode(bytes);
+      if (/\.(gs1song|json)$/i.test(name) || /^\s*[{[]/.test(text)) {
         const parsed = parsePatchFile(text);
         if (!parsed) {
           let isJson = true;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { notesDuration, parseMidi, songTracks, writeMidi, type MidiNote } from './smf';
+import { looksLikeMidi, notesDuration, parseMidi, songTracks, writeMidi, type MidiNote } from './smf';
 
 function buildMidi(): Uint8Array {
   const track = [
@@ -39,6 +39,20 @@ describe('SMF parser', () => {
 
   it('rejects non-MIDI input', () => {
     expect(() => parseMidi(new Uint8Array([1, 2, 3, 4]))).toThrow();
+  });
+});
+
+/**
+ * The import path decides between the MIDI reader and the text readers by
+ * asking these bytes, not the file name: a download or a temporary path can
+ * arrive with no extension at all (the P10.5 regression).
+ */
+describe('looksLikeMidi', () => {
+  it('accepts a real file and only a real file', () => {
+    expect(looksLikeMidi(writeMidi([], { bpm: 120 }))).toBe(true);
+    expect(looksLikeMidi(new TextEncoder().encode('{"format":"gs1-song"}'))).toBe(false);
+    expect(looksLikeMidi(new Uint8Array([0x4d, 0x54, 0x68]))).toBe(false);
+    expect(looksLikeMidi(new Uint8Array())).toBe(false);
   });
 });
 
