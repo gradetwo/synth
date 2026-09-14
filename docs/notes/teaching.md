@@ -10,7 +10,7 @@
 | :--- | :--- |
 | `src/teaching/theory.ts` | 音阶/和弦的音高集合与练习构建（纯逻辑，无 DOM/React/i18n） |
 | `src/teaching/score.ts` | 评分：目标 + 演奏事件 → 量化结果（纯逻辑） |
-| `src/teaching/theory.test.ts` | 14 条：音程、八度、闭八度、边界钳制、练习形状、i18n 键覆盖 |
+| `src/teaching/theory.test.ts` | 15 条：音程、八度、闭八度、边界钳制、练习形状、i18n 键覆盖 |
 | `src/teaching/score.test.ts` | 21 条：命中/漏音/多音、窗口边界、音准、节奏、权重、边界情形 |
 | `src/components/Teaching.tsx` | 懒 chunk UI（默认导出是设置抽屉里的一行） |
 | `src/components/teaching.css` | 懒 chunk 样式（含目标键高亮） |
@@ -140,3 +140,15 @@ SCORE_WEIGHTS = { accuracy: 0.6, intonation: 0.2, rhythm: 0.2 }
 `noteBus` → 面板记录器这条路）演奏：正确的一遍弹 C 大调（`a s d f g h j k`），错误的一遍弹
 同一个八度的黑键（全部在 C 大调之外）。测试把两个分数 `console.log` 出来，也在
 `docs`/报告里原样贴出。
+
+实测（本树，`GS1_E2E_PORT=4823`，chromium）：
+
+```
+teaching e2e · correct take: {"score":100,"hitRate":1,"missed":0,"extra":0,"meanMs":5.3}
+teaching e2e · wrong take:   {"score":0,  "hitRate":0,"missed":8,"extra":8}
+2 passed (23.8s)
+```
+
+正确一遍平均绝对节奏偏差 5.3 ms（节拍器在页面内锚定到 `data-state="recording"` 后立刻起弹），
+节奏项 ≈0.98，四舍五入后总分 **100**；错误一遍全部是窗口内的错音：命中 0/8、漏音 8、多音 8，
+命中率为 0，所以总分 **0**。
