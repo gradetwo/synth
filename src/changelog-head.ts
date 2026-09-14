@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '2.0.1',
+    version: '2.0.2',
     date: '2026-09-14',
-    kind: 'sound',
+    kind: 'feature',
     items: [
       [
-        '**导入的采样音色更干净了**：高音区的折回杂音从 −33 dB 降到 **−70 dB**——这也是采样器「逐级抽取」那个老问题的真正修复。副作用如实说明：把采样弹得比原音略高时，亮度会比上一版窄一点。另外修好了 **Safari / Firefox 里点不中连线**的问题（虚线描边的命中区在 Gecko/WebKit 上会漏掉一段）。工厂预设与默认音色未变。',
-        '**Imported samples sound cleaner.** The folded-back grit in the high register drops from -33 dB to **-70 dB**, which is the real fix for how the sampler decimated its levels. One honest side effect: playing a sample a little above its root sounds slightly less bright than the last version. Also fixed **wires being unclickable in Safari and Firefox**, where the hit area of a dashed stroke has gaps. No factory preset or default voice moved.',
+        '**新增 10 个工厂音色和 5 首曲子。** 新音色专门展示双滤波、位粉碎、过采样与图内调制这几项能力；曲库扩到 25 首，全部公版并标注来源。顺带修好更新横幅：**它现在报的是「将要安装的版本」**，而不是页面正在跑的那个——回滚之后那条提示曾经指向的就是被回滚掉的版本。',
+        '**Ten new factory patches and five more songs.** The patches exist to show off the dual filter, the bit crusher, oversampling and in-graph modulation; the library grows to 25 tracks, all public domain and each labelled with its source. Also fixed: the update banner now names **the version it is about to install** rather than the one the page is running -- after a rollback that notice used to point at the very version being rolled back.',
       ],
     ],
   };
