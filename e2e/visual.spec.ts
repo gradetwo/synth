@@ -91,6 +91,52 @@ function pngSize(png: Buffer): { width: number; height: number } | null {
   return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
 }
 
+/**
+ * Prime Chromium's raster cache before a comparison of a tall element.
+ *
+ * `.modules-grid` is 1440 px tall in a 900 px viewport, so Playwright serves it
+ * through `Page.captureScreenshot({ captureBeyondViewport: true })`, which
+ * re-rasterises the below-the-fold tiles on every capture. The *first* such
+ * capture can come back before those tiles are painted. Measured on this box at
+ * host load 17-25 (ten busy cores on eight), with the page provably settled
+ * (60 samples over 7.5 s: every module box and `documentElement.scrollHeight`
+ * unchanged) and the masks in place:
+ *
+ *   capture #1: 3595 ms, `0.1694` of pixels away from the baseline
+ *   capture #2: 3250 ms, `0.0000` away (pixel-identical)
+ *
+ * and the missing pixels were the unpainted OSC / FILTER / ENV / MOD MATRIX /
+ * REVERB / DELAY bodies, not a different state: the magenta mask rectangles sit
+ * at the same coordinates in both, i.e. the layout never moved.
+ *
+ * Playwright cannot tell that apart from a real regression. It reads the
+ * unpainted capture as `274404 pixels (ratio 0.15 of all image pixels) are
+ * different`, needs a second capture to re-establish stability, and on a loaded
+ * host that second capture does not land inside the 15 s expectation -- the run
+ * dies with `Failed to take two consecutive stable screenshots`. That is how
+ * this suite's own self-check went red while all 48 baselines were fine.
+ *
+ * So: take one throwaway capture first and let the real comparison judge the
+ * next one, which is the painted raster. No threshold is touched -- same
+ * baseline, same `maxDiffPixelRatio` / `threshold` -- and a genuinely different
+ * page is still reported, which the self-check at the bottom of this file
+ * proves by painting one in.
+ */
+async function prime(page: Page, locator: string, masks: string[] = []) {
+  const target = page.locator(locator);
+  const viewport = page.viewportSize();
+  const box = await target.boundingBox();
+  // Short elements are captured straight from the viewport, with no
+  // beyond-the-fold tiles to paint late; they never showed this race.
+  if (!box || !viewport || (box.width <= viewport.width && box.height <= viewport.height)) return;
+  await target.screenshot({
+    animations: 'disabled',
+    caret: 'hide',
+    scale: 'css',
+    mask: [...ANIMATED, ...masks].map((selector) => page.locator(selector)),
+  });
+}
+
 async function shot(page: Page, locator: string, name: string, masks: string[] = []) {
   if (SMOKE) {
     // The smoke's verdict is "this surface rasterised on this engine", not
@@ -107,6 +153,7 @@ async function shot(page: Page, locator: string, name: string, masks: string[] =
     expect(size!.height, `${name}: rasterised to ${got}`).toBeGreaterThanOrEqual(8);
     return;
   }
+  await prime(page, locator, masks);
   await expect(page.locator(locator)).toHaveScreenshot(name, {
     ...SHOT,
     mask: [...ANIMATED, ...masks].map((selector) => page.locator(selector)),
@@ -504,12 +551,22 @@ test.describe('self-check', () => {
       mask: ANIMATED.map((selector) => page.locator(selector)),
     };
     // First, the unmodified page has to match — otherwise this test proves
-    // nothing about the perturbation that follows.
+    // nothing about the perturbation that follows. It starts from a primed
+    // raster for the reason `prime()` documents: the red this test reported in
+    // a full-suite run was an unpainted first capture of the 1440 px grid, not
+    // a dirty starting state (the page is box-stable here and the same red came
+    // back when the test ran *alone* on a loaded host).
+    await prime(page, '.modules-grid');
     await expect(grid).toHaveScreenshot(name, options);
 
     await page.addStyleTag({
       content: '.modules-grid .module{background:#ff00ff !important}',
     });
+    // Primed again, for the same reason plus one more: without it the
+    // *rejection* below could be caused by an unpainted capture instead of by
+    // the painted modules, which would make this self-check pass for the wrong
+    // reason.
+    await prime(page, '.modules-grid');
     await expect(async () => {
       await expect(grid).toHaveScreenshot(name, { ...options, timeout: 4_000 });
     }).rejects.toThrow(/screenshot|pixels|diff/i);

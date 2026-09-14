@@ -129,6 +129,47 @@ service worker 已在 spec 里屏蔽，见下节）：
 修法是在视觉套件的三个 `test.use` 里都加 `serviceWorkers: 'block'`——视觉套件要比较的是刚刚构建出来的
 那份 `dist/`，不是浏览器上一次缓存下来的那份。`e2e/pwa.spec.ts` 仍然单独测 service worker 本身。
 
+## 第二个真实的坑：比视口高的元素，第一张截图可能还没画完（2026-09-15 修）
+
+`.modules-grid` 在 1440×900 下是 **1324×1441**，比视口高，所以 Playwright 用
+`Page.captureScreenshot({ captureBeyondViewport: true })` 服务它：**每一张**截图都要把视口外的瓦片重新光栅化，
+而**第一张**可以在瓦片画完之前就返回。实测（宿主 load 17–25，十颗忙核压在八核老 i7 上；同一时刻 DOM 是稳定的——
+7.5 s 内采 60 次，每个模块的 box 与 `documentElement.scrollHeight` 一字未变，mask 照打）：
+
+| 截图 | 耗时 | 与基线 `modules-dark-desktop.png` 的像素差 |
+| :--- | ---: | ---: |
+| 第 1 张 | 3595 ms | **0.1694**（323 223 px） |
+| 第 2 张 | 3250 ms | **0.0000**（逐像素相同） |
+
+缺的像素是**还没画出来**的 OSC / FILTER / ENV / MOD MATRIX / REVERB / DELAY 面板体，不是「状态不同」：
+两张图里洋红 mask 矩形的位置逐像素相同 ⇒ 布局根本没动。所以这条红与「上一个用例污染了状态」无关
+（同一份代码**单跑**这条自证用例、宿主 load 17 时，同样报 `274404 pixels (ratio 0.15)`）。
+
+Playwright 分不出「没画完」和「真改了」。它把第一张读成
+`274404 pixels (ratio 0.15 of all image pixels) are different`，再截一张确认稳定；宿主一忙，第二张落不进
+15 s 的 `expect` 预算，于是报 **`Failed to take two consecutive stable screenshots`**——自证用例就是这样红的，
+而 48 张基线**一直是好的**。它是唯一会跑 `.modules-grid`（= 唯一比视口高的界面）的比对用例，所以只有它中招。
+
+修法是 `visual.spec.ts` 的 `prime()`：对**比视口高**的元素，先白白截一张把光栅推完，再让正常的比对判第二张。
+阈值一个都没动（同一份基线、同一个 `maxDiffPixelRatio` / `threshold`、没有 `--update`、没有 skip）：
+
+- 修前 / 修后（人为加同样负载）：`274404 px` 红 → 单跑 **35.1 s 绿**（load 24.7，比红的那次 17.0 还高）；
+- `npm run test:visual` 整套：**10 passed**（含两条自证）；
+- **自证仍然有效**：临时把 `.modules-grid .module` 刷成品红再走一次「必须匹配」的比对 ⇒
+  `652420 pixels (ratio 0.35 of all image pixels) are different`，用例红（原文见下）。
+
+```
+✘ 1 [chromium] › e2e/visual.spec.ts:542:3 › self-check › a painted style change is reported as a diff (11.3s)
+
+  Error: expect(locator).toHaveScreenshot(expected) failed
+  Locator: locator('.modules-grid')
+    652420 pixels (ratio 0.35 of all image pixels) are different.
+  Snapshot: modules-dark-desktop.png
+```
+
+48 张基线**一张都没有重录**：基线录的就是「已画完」的那一张（Playwright 录的时候也要求连续两张稳定），
+`prime()` 只是让比对也落在那一张上，所以 48 张仍然逐像素通过。
+
 ## P11.3 顺手修的两件事（都是布局改动**之后**没跟上造成的）
 
 1. **10 张旧基线已经过期**。它们在 `a092c6a`（建这套基线的那次提交）录制，之后 SEM 滤波类型、
@@ -178,5 +219,8 @@ service worker 已在 spec 里屏蔽，见下节）：
 - 新增界面时在 `capture()` / `captureSurfaces()` 里加一个 `shot()` 调用即可，文件名沿用
   `<界面>-<主题>-<设备>.png`。
 - 新的画布如果由 rAF 重画，先加进 `ANIMATED`，否则它迟早会以「随机红」的形式找上门。
+- 新增的界面如果**比视口高**（`.modules-grid` 是 1440 px / 900 px 视口），比对前记着走 `prime()`
+  （`shot()` 已经带了）：Chromium 会用 `captureBeyondViewport` 拍它，第一张可能是没画完的光栅，
+  报错读起来像真回归。见上面「第二个真实的坑」。
 - 界面上任何**随发布/时间/数据变化**的文字（版本号、更新标题……）都要么 mask 掉、要么由读数值的
   断言去守，否则它会以「每版必红」的形式找上门，而那比没有基线更糟。

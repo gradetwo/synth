@@ -59,9 +59,34 @@ test.describe('player', () => {
     await countIn.click();
 
     // Mark A and B around the current playhead.
-    await page.waitForTimeout(1200);
+    //
+    // Both points are cut from the transport's *own clock*, so the waits are on
+    // that clock and not on a wall timer. The fixed 1200/1500/4000 ms sleeps
+    // this used to carry were the same requirement with a guess attached, and
+    // on a slow host the guess plus everything around it spends the test's 60 s
+    // budget: measured with the renderer throttled (quiet host, CDP
+    // `Emulation.setCPUThrottlingRate`) this test takes 20.0 s at 1x, 40.8 s at
+    // 4x, and at 8x it dies with `Test timeout of 60000ms exceeded` in the
+    // middle of a step that is not itself special. `expect.poll` returns as
+    // soon as the playhead is where the assertion needs it, so the wall time is
+    // the playback the test is actually about rather than the playback plus
+    // three sleeps that were guessed for a fast machine.
+    const seek = page.locator('.player-seek');
+    const duration = await seek.evaluate((el) => Number((el as HTMLInputElement).max));
+    const position = () => seek.evaluate((el) => Number((el as HTMLInputElement).value));
+    // `region.hi > region.lo + 1` below is a *percentage* band, so B has to land
+    // more than 1 % of the song after A; 1.5 % leaves that assertion its margin
+    // without the poll overshooting by a whole extra sleep.
+    const apart = Math.max(0.5, duration * 0.015);
+
+    await expect
+      .poll(position, { timeout: 30_000, intervals: [100] })
+      .toBeGreaterThan(apart);
     await page.locator('.player-transport .player-btn[aria-label^="把 A 点"]').click();
-    await page.waitForTimeout(1500);
+    const aAt = await position();
+    await expect
+      .poll(position, { timeout: 30_000, intervals: [100] })
+      .toBeGreaterThan(aAt + apart);
     await page.locator('.player-transport .player-btn[aria-label^="把 B 点"]').click();
 
     const region = await page.locator('.player-seek').evaluate((el) => {
@@ -78,19 +103,36 @@ test.describe('player', () => {
       'true',
     );
 
-    // Playback must stay inside the region instead of running past it.
-    const readTime = async () => {
-      const text = (await page.locator('.player-time').textContent()) ?? '';
-      const [mm, ss] = (text.split('/')[0] ?? '0:00').trim().split(':').map(Number);
-      return mm * 60 + ss;
-    };
-    await page.waitForTimeout(4000);
-    const now = await readTime();
-    const duration = await page.locator('.player-seek').evaluate((el) => Number((el as HTMLInputElement).max));
+    // Playback must stay inside the region instead of running past it. The old
+    // shape of this assertion was a single reading taken after a fixed 4 s
+    // sleep; sampling the transport's own clock keeps the claim *and* its
+    // evidence -- every reading has to be inside the band, and the playhead has
+    // to wrap, which is what "loops the region" means and what a playhead that
+    // ran past `hi` would never do. It also stops as soon as it has seen the
+    // wrap instead of sleeping to a wall-clock deadline.
+    //
+    // The samples are `player.time` itself (the input's value, the same state
+    // the CSS band is drawn from) rather than the `m:ss` readout: a region a
+    // second or two wide cannot be told apart from a stalled one at that
+    // resolution, and the wrap is the whole point here. The ±1 s slack is the
+    // one the readout used to need.
     const lo = (region.lo / 100) * duration;
     const hi = (region.hi / 100) * duration;
-    expect(now).toBeGreaterThanOrEqual(Math.floor(lo) - 1);
-    expect(now).toBeLessThanOrEqual(Math.ceil(hi) + 1);
+    const samples: number[] = [];
+    await expect
+      .poll(
+        async () => {
+          samples.push(await position());
+          const wrapped = samples.some((t, i) => i > 0 && t < samples[i - 1]);
+          return wrapped && samples.length >= 3;
+        },
+        { timeout: 30_000, intervals: [400] },
+      )
+      .toBe(true);
+    for (const t of samples) {
+      expect(t).toBeGreaterThanOrEqual(lo - 1);
+      expect(t).toBeLessThanOrEqual(hi + 1);
+    }
 
     // Clearing the region drops the band.
     await page.locator('.player-transport .player-btn[aria-label^="清除"]').click();
