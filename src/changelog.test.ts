@@ -1,7 +1,5 @@
-import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { CHANGELOG, CURRENT_VERSION, SHIPPED_CHANGELOG_LIMIT, releaseDateLabel, type Release } from './changelog';
 import { CHANGELOG_ARCHIVE } from './changelog-archive';
@@ -13,104 +11,40 @@ import { CHANGELOG_ARCHIVE } from './changelog-archive';
  */
 
 /**
- * Reading release notes out of a source file, or out of a git revision.
+ * The frozen reference: the complete history as it was *before* the 30-entry
+ * cap, in `src/changelog-history.fixture.ts`.
  *
- * The file is parsed with the TypeScript compiler instead of a regex so a note
- * that contains `version:` or a `'` cannot confuse the reader.
+ * It is a fixture rather than something read out of git on purpose, and that
+ * has now been learned twice. P141's first version compared against
+ * `git show HEAD:...`, which is the file the release commit changes, so its own
+ * losslessness check went red the moment it was committed. The follow-up
+ * compared against `git describe --tags`, which is exact -- and fails in CI,
+ * because `actions/checkout` fetches one commit and no tags, so the suite would
+ * have died on `git describe` rather than on a release note.
+ *
+ * The invariant that needs no git and survives the rotation: the frozen history
+ * must be a **suffix** of the shipped list plus the archive. Prepending the
+ * outgoing head (which is what a release does) leaves the tail alone, while
+ * dropping, reordering, rewording or inserting anything anywhere else shifts
+ * the window and fails.
  */
-function initializerOf(source: string, name: string): ts.Expression {
-  const file = ts.createSourceFile('changelog.ts', source, ts.ScriptTarget.Latest, true);
-  for (const statement of file.statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    const declaration = statement.declarationList.declarations.find((d) => d.name.getText(file) === name);
-    if (declaration?.initializer) return declaration.initializer;
-  }
-  throw new Error(`could not find ${name} in the source`);
+import { CHANGELOG_HISTORY } from './changelog-history.fixture';
+
+/** Newest first, so `compareVersions(b, a)` sorts descending. */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
 }
 
-const literalOf = (node: ts.Node): ts.ArrayLiteralExpression => {
-  if (ts.isArrayLiteralExpression(node)) return node;
-  if (ts.isAsExpression(node) && ts.isArrayLiteralExpression(node.expression)) return node.expression;
-  throw new Error(`not an array literal: ${ts.SyntaxKind[node.kind]}`);
-};
-
 /**
- * The *value* of a string literal, not its source text: notes contain escaped
- * apostrophes (`file\'s`), and comparing the raw token against the runtime
- * string would fail on a difference that does not exist.
+ * The versions newer than the frozen history: what has been rotated in since
+ * the cap landed. Newest first, unique, and older than the fixture's head.
  */
-const stringOf = (node: ts.Expression): string => {
-  if (!ts.isStringLiteral(node)) throw new Error(`not a string literal: ${ts.SyntaxKind[node.kind]}`);
-  return node.text;
-};
-
-const property = (object: ts.ObjectLiteralExpression, name: string): ts.Expression => {
-  const found = object.properties.find(
-    (p): p is ts.PropertyAssignment => ts.isPropertyAssignment(p) && p.name.getText() === name,
-  );
-  if (!found) throw new Error(`missing property ${name} at ${object.pos}`);
-  return found.initializer;
-};
-
-const releaseOf = (element: ts.Expression): Release => {
-  if (!ts.isObjectLiteralExpression(element)) throw new Error('changelog element is not an object literal');
-  const items = literalOf(property(element, 'items'));
-  return {
-    version: stringOf(property(element, 'version')),
-    date: stringOf(property(element, 'date')),
-    kind: stringOf(property(element, 'kind')) as Release['kind'],
-    items: items.elements.map((pair) => {
-      const [zh, en] = literalOf(pair).elements.map((part) => stringOf(part));
-      return [zh, en] as [string, string];
-    }),
-  };
-};
-
-/**
- * The full history as the **previous release tag** carried it.
- *
- * The anchor has to be something that does not move while the release notes are
- * being written, and `HEAD` is exactly the wrong one: the release commit *is*
- * the commit that adds the new entry, so a `HEAD`-based reference makes this
- * file's own losslessness check fail the moment it is committed. P141's first
- * version did that — the tests passed in the tree they were written in and went
- * red on the commit that shipped them.
- *
- * A tag is a fixed point instead: while a release is being prepared the latest
- * tag is the release before it, which is precisely the history the new notes
- * have to extend. The check is stronger than "nothing was dropped": the working
- * history must be the tag's history, entry for entry and field for field, with
- * the new head prepended — a reworded note, a reordered release or a
- * half-copied entry fails, not just a missing one.
- */
-function taggedHistory(): Release[] {
-  const tag = execFileSync('git', ['describe', '--tags', '--abbrev=0'], { encoding: 'utf8' }).trim();
-  const at = (file: string): string | null => {
-    try {
-      return execFileSync('git', ['show', `${tag}:${file}`], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
-    } catch {
-      // The archive exists only from the split onwards; older tags have no file.
-      return null;
-    }
-  };
-  const head = at('src/changelog-head.ts');
-  const shipped = at('src/changelog.ts');
-  if (!head || !shipped) throw new Error(`could not read the release history at ${tag}`);
-  const archive = at('src/changelog-archive.ts');
-  return [
-    releaseOf(initializerOf(head, 'CHANGELOG_HEAD')),
-    // The head is the first element and a reference, not an object literal.
-    ...literalOf(initializerOf(shipped, 'CHANGELOG')).elements.slice(1).map(releaseOf),
-    ...(archive ? literalOf(initializerOf(archive, 'CHANGELOG_ARCHIVE')).elements.map(releaseOf) : []),
-  ];
+function rotatedIn(): Release[] {
+  const working = [...CHANGELOG.slice(1), ...CHANGELOG_ARCHIVE];
+  return working.slice(0, working.length - CHANGELOG_HISTORY.length);
 }
-
-const PREVIOUS = taggedHistory();
-/** Newest first, so the previous release's head is the first entry. */
-const PREVIOUS_HEAD = PREVIOUS[0].version;
 
 
 /** Source files that run in the app: tests are allowed to import the archive. */
@@ -127,11 +61,7 @@ describe('changelog data', () => {
   it('lists releases newest first, without duplicates', () => {
     const versions = CHANGELOG.map((r) => r.version);
     expect(new Set(versions).size).toBe(versions.length);
-    const sorted = [...versions].sort((a, b) => {
-      const pa = a.split('.').map(Number);
-      const pb = b.split('.').map(Number);
-      return pb[0] - pa[0] || pb[1] - pa[1] || pb[2] - pa[2];
-    });
+    const sorted = [...versions].sort((a, b) => compareVersions(b, a));
     expect(versions).toEqual(sorted);
   });
 
@@ -173,22 +103,39 @@ describe('changelog data', () => {
   });
 
   /**
-   * The losslessness proof: the shipped releases and the archive, entry for
-   * entry and field for field, are the previous tag's history with the new head
-   * prepended. `taggedHistory()` explains why the reference is a tag and not
-   * `HEAD`.
+   * The losslessness proof: the frozen pre-cap history is a suffix of the
+   * shipped list plus the archive, entry for entry and field for field.
    *
-   * The previous release's own entry is allowed to be in either place -- still
-   * only a head (the notes are written before the cap is applied) or already
-   * rotated in at the top of the shipped list -- but where it appears it has to
-   * be verbatim, so a hand-copied entry is compared too.
+   * A release prepends the outgoing head to that list and takes the oldest
+   * entry into the archive, which leaves the tail untouched -- so this survives
+   * the rotation without needing to be re-pinned, while a dropped entry, a
+   * reworded note, a reordered release or an insertion anywhere still shifts
+   * the window.
    */
-  it('shipped + archived is the previous tag\'s history, with the new head in front', () => {
+  it('shipped + archived still ends with the frozen pre-cap history', () => {
     const working = [...CHANGELOG.slice(1), ...CHANGELOG_ARCHIVE];
-    for (const entry of working.filter((release) => release.version === PREVIOUS_HEAD)) {
-      expect(entry).toEqual(PREVIOUS[0]);
+    expect(working.length).toBeGreaterThanOrEqual(CHANGELOG_HISTORY.length);
+    expect(working.slice(working.length - CHANGELOG_HISTORY.length)).toEqual(CHANGELOG_HISTORY);
+  });
+
+  /**
+   * ...and the part in front of it -- everything rotated in since the cap
+   * landed -- is newest-first, has no duplicates, and joins onto the fixture
+   * without a gap.
+   */
+  it('what has been rotated in since the cap is newest-first and contiguous', () => {
+    const added = rotatedIn();
+    const versions = added.map((release) => release.version);
+    expect(new Set(versions).size).toBe(versions.length);
+    const sorted = [...versions].sort((a, b) => compareVersions(b, a));
+    expect(versions).toEqual(sorted);
+    if (added.length > 0) {
+      const oldest = added[added.length - 1].version;
+      expect(
+        compareVersions(oldest, CHANGELOG_HISTORY[0].version),
+        `${oldest} should be newer than the frozen head ${CHANGELOG_HISTORY[0].version}`,
+      ).toBeGreaterThan(0);
     }
-    expect(working.filter((release) => release.version !== PREVIOUS_HEAD)).toEqual(PREVIOUS.slice(1));
   });
 
   /**
@@ -211,14 +158,16 @@ describe('changelog data', () => {
   });
 
   /**
-   * The archive must stay out of the bundle, so no runtime module may import it
-   * — least of all the lazily loaded changelog panel, which would put the whole
-   * history back into a shipped chunk. Only the test file above may reach it.
+   * The archive and the frozen fixture must stay out of the bundle, so no
+   * runtime module may import either — least of all the lazily loaded changelog
+   * panel, which would put the whole history back into a shipped chunk. Only
+   * the test file above may reach them.
    */
   it('is imported by nothing that runs', () => {
+    const guarded = ['changelog-archive', 'changelog-history.fixture'];
     const importers = runtimeSources('src').filter((file) => {
-      if (file.endsWith('changelog-archive.ts')) return false;
-      return /from\s+'[^']*changelog-archive'/.test(readFileSync(file, 'utf8'));
+      if (guarded.some((name) => file.endsWith(`${name}.ts`))) return false;
+      return new RegExp(`from\\s+'[^']*(${guarded.join('|')})'`).test(readFileSync(file, 'utf8'));
     });
     expect(importers).toEqual([]);
   });
