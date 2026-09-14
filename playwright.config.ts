@@ -37,8 +37,9 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 60_000,
   },
-  // All three engines can be run with `--project=<name>`; the default suite is
-  // Chromium so a normal `npm run e2e` stays fast.
+  // All engines can be run with `--project=<name>`. `npm run test:e2e` is the
+  // Chromium app suite (`--project=chromium`, what CI and release run), and
+  // `npm run test:perf` is the isolated single-worker `perf` project.
   projects: [
     {
       name: 'chromium',
@@ -46,6 +47,23 @@ export default defineConfig({
       // `e2e/boot.spec.ts` needs Chrome's real autoplay policy: it is the case
       // where a context comes back already running but with no graph. WebKit
       // refuses the flag, so it lives here rather than in the spec.
+      launchOptions: { args: ['--autoplay-policy=user-gesture-required'] },
+      // `e2e/performance.spec.ts` measures the app's frame cost, and a number
+      // measured while the other spec files boot Chromium workers on every core
+      // measures the host, not the app: on this machine the same build read
+      // 13.8-20.0 fps inside the parallel suite and 60.0 fps run alone, and that
+      // gap blocked a release (v1.111.0). It is the isolated `perf` project
+      // below instead, so the app suite never contends with it.
+      testIgnore: /performance\.spec\.ts/,
+    },
+    {
+      // The performance suite: the same browser and the same flags as
+      // `chromium`, in a project of its own so it can be run alone and single
+      // worker (`npm run test:perf` -> `--project=perf --workers=1`). Every
+      // threshold is unchanged -- this is isolation, not a relaxed gate.
+      name: 'perf',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /performance\.spec\.ts/,
       launchOptions: { args: ['--autoplay-policy=user-gesture-required'] },
     },
     {

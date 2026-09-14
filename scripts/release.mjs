@@ -137,12 +137,25 @@ async function liveIndexHash() {
  * line — `[boot-budget] interactive N ms of [...] · FCP ... · budget M ms` —
  * which is parsed here.
  *
- * Normal path: the Chromium suite runs once and its output is scanned, so the
- * gate costs nothing extra and cannot be skipped by accident (`npm run test:e2e`
- * is also what CI runs). `--skip-e2e` is the exception: then the suite is not
- * running at all, so this runs the one spec file to keep the gate honest.
+ * Normal path: the browser run is two invocations of the same config -- the app
+ * suite (`npm run test:e2e`, the `chromium` project) and then the performance
+ * suite on its own (`npm run test:perf`, the `perf` project, `--workers=1`).
+ * The frame-rate guards live in the second one because measuring them while the
+ * first suite boots workers on every core measures the host, not the app: the
+ * same build read 13.8-20.0 fps in the parallel run against 60.0 alone, and
+ * that blocked the v1.111.0 release. Both captured outputs are scanned, so a
+ * `[boot-budget]` line from either invocation still fails the release if it is
+ * over budget. `--skip-e2e` is the exception: then neither suite runs, so this
+ * runs the one spec file (perf project, single worker) to keep the gate honest.
  */
 const BOOT_LINE = /\[boot-budget\] interactive (\d+) ms .*? budget (\d+) ms/;
+/**
+ * The three frame-rate guards in `e2e/performance.spec.ts`. They are echoed in
+ * the release log together with their window detail, because "best of five"
+ * alone hides whether the windows agree -- the whole point of running them
+ * isolated is that they do.
+ */
+const FPS_LINE = /\[fps\] ([\w-]+) best ([\d.]+) of \[([^\]]*)\] fps/g;
 
 /** Scan a captured run for the boot line and check it. */
 function checkBootFrom(output, what) {
@@ -153,6 +166,22 @@ function checkBootFrom(output, what) {
     fail(`boot budget: interactive ${interactive} ms > ${BOOT_BUDGET_MS} ms`);
   }
   log(`[release]   ✓ first interactive ${interactive} ms ≤ ${BOOT_BUDGET_MS} ms (${what})`);
+}
+
+/**
+ * Echo the `[fps]` lines of the isolated performance run.
+ *
+ * The threshold itself is asserted by the spec (and the release stops on a
+ * non-zero exit before this ever runs), so this does not re-check it; it puts
+ * the best *and* the five windows into the release log so the next release
+ * report carries the dispersion, not just the lucky window.
+ */
+function reportFpsFrom(output, what) {
+  const lines = [...output.matchAll(FPS_LINE)];
+  if (!lines.length) fail(`fps guards: ${what} printed no [fps] line`);
+  for (const line of lines) {
+    log(`[release]   · ${line[1]} best ${line[2]} fps of [${line[3]}] (${what})`);
+  }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -244,21 +273,47 @@ async function main() {
   }
 
   if (!flags.skipE2E) {
-    step(`Chromium end-to-end suite (first-interactive budget ${BOOT_BUDGET_MS} ms)`);
-    const output = run('npm', ['run', 'test:e2e', '--', '--project=chromium'], {
+    // Stage 1: the app suite. `npm run test:e2e` is exactly what CI runs
+    // (`playwright test --project=chromium`); the performance spec is not in it
+    // any more (the chromium project ignores that file).
+    step('Chromium end-to-end suite (app)');
+    const appOutput = run('npm', ['run', 'test:e2e'], {
       capture: true,
       echo: true,
       env: { GS1_BOOT_BUDGET_MS: String(BOOT_BUDGET_MS) },
     });
-    checkBootFrom(output, 'from the suite run');
+
+    // Stage 2: the performance suite, alone on the machine, one worker. This is
+    // where `[boot-budget]` and the three `[fps]` lines come from.
+    step(`performance suite (isolated, --workers=1; first-interactive budget ${BOOT_BUDGET_MS} ms)`);
+    const perfOutput = run('npm', ['run', 'test:perf'], {
+      capture: true,
+      echo: true,
+      env: { GS1_BOOT_BUDGET_MS: String(BOOT_BUDGET_MS) },
+    });
+
+    // Both captured outputs are scanned for the boot line: the performance run
+    // is the one that prints it today, but reading the app suite too means a
+    // config drift shows up as a report rather than as a silently skipped gate.
+    const bootFrom = [perfOutput, appOutput].find((output) => BOOT_LINE.test(output));
+    if (!bootFrom) {
+      fail('boot budget: neither the app suite nor the performance suite printed a [boot-budget] line');
+    }
+    checkBootFrom(
+      bootFrom,
+      bootFrom === perfOutput ? 'from the isolated performance suite' : 'from the app suite run',
+    );
+    reportFpsFrom(perfOutput, 'from the isolated performance suite');
   } else {
-    // `--skip-e2e` skips the browser suite, so the boot gate has to stand on its
-    // own or it would silently disappear from exactly the release that opted out
-    // of the suite. One spec file, not the suite.
+    // `--skip-e2e` skips both browser suites, so the boot gate has to stand on
+    // its own or it would silently disappear from exactly the release that opted
+    // out of the suite. One spec file, not the suite, and run the way
+    // `test:perf` runs it (perf project, single worker) so the number it prints
+    // is comparable to the one the normal path parses.
     step(`first-interactive budget only (${BOOT_BUDGET_MS} ms; --skip-e2e)`);
     const output = run(
       'npx',
-      ['playwright', 'test', 'e2e/performance.spec.ts', '--project=chromium', '--reporter=list'],
+      ['playwright', 'test', 'e2e/performance.spec.ts', '--project=perf', '--workers=1', '--reporter=list'],
       { capture: true, echo: true, env: { GS1_BOOT_BUDGET_MS: String(BOOT_BUDGET_MS) } },
     );
     checkBootFrom(output, 'from e2e/performance.spec.ts');

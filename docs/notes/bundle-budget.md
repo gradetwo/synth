@@ -154,7 +154,9 @@ npm run build          # 产出 dist/（含 PNG8 图标）
 npm run verify:budget  # 四条阈值 + lamejs 懒 chunk 断言
 npm run verify:dist    # 引用/预缓存/manifest 断言
 npm run icons          # 重新栅格化 + PNG8（需要 rsvg-convert 或 magick；magick 缺失时保留现有 PNG）
-PLAYWRIGHT_BROWSERS_PATH=$PWD/.pw-browsers npx playwright test e2e/performance.spec.ts --project=chromium
+PLAYWRIGHT_BROWSERS_PATH=$PWD/.pw-browsers npx playwright test e2e/performance.spec.ts --project=perf --workers=1
+# 或 npm run test:perf。性能 spec 不在 chromium project 里（v1.111.0 起隔离单跑），
+# 用 --project=chromium 跑它会匹配 0 条。
 ```
 
 `songs.ts` 的懒加载账用临时 `manualChunks` 测（把 `src/midi/songs.ts` 指到 `probe-songs`），

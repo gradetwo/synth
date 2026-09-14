@@ -87,6 +87,14 @@ jobs:
       - name: Browser E2E (Chromium)
         run: npm run test:e2e
 
+      # The performance spec is not in the Chromium suite: the chromium project
+      # ignores it and it runs here on its own, single worker, so its frame-rate
+      # windows measure the app instead of the other workers (v1.111.0: the same
+      # build read 13.8-20.0 fps inside the parallel suite against 60.0 alone).
+      # `npm run release` runs these two commands in the same order.
+      - name: Performance E2E (Chromium, isolated single worker)
+        run: npm run test:perf
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:

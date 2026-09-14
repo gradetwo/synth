@@ -106,14 +106,23 @@ test.describe('envelope handle dragging on touch', () => {
  * extra round trip, a chunk that stopped being lazy, a blocking main-thread
  * task) without policing a busy host by a frame. `npm run verify` does not run
  * E2E; `npm run test:e2e` does.
+ *
+ * Since v1.111.0 this file is not in the parallel suite any more: the `perf`
+ * project runs it alone with `--workers=1`, where boot measures roughly 0.6-1.4 s
+ * rather than 2.4 s, so the 3200 ms line now has far more headroom than it was
+ * set for. It is deliberately **not** tightened to the isolated number: the
+ * budget's job is to catch a regression, and a machine with its own recorded
+ * baseline can pin it with `GS1_BOOT_BUDGET_MS`.
  */
 const BOOT_BUDGET_MS = Number(process.env.GS1_BOOT_BUDGET_MS ?? 3200);
 /**
  * Attempts, not one sample.
  *
- * This measurement is taken while the whole parallel suite is booting several
- * Chromium workers, so one navigation can land behind a scheduler stall and
- * read hundreds of milliseconds high. The fastest of a few attempts is the
+ * This measurement used to be taken while the whole parallel suite booted several
+ * Chromium workers, so one navigation could land behind a scheduler stall and
+ * read hundreds of milliseconds high. The project is isolated now (v1.111.0),
+ * but the host can still be busy for reasons that are none of the app's
+ * business. The fastest of a few attempts is the
  * closest thing to the app's own boot cost, because host load can only ever
  * make a run slower — the same rule `scripts/bench.mjs` uses for its machine
  * probe. It was measured that this is contention and not the app: with the host
@@ -249,15 +258,17 @@ test.describe('interface frame cost', () => {
 
   /**
    * Best of a few windows, not one sample — the same rule the boot budget uses
-   * above and `scripts/bench.mjs` uses for its machine probe. These tests share
-   * the machine with the rest of the suite: a single window landing behind a
-   * scheduler stall reads low, and host load can only ever make a window slower,
-   * never faster, so the best window is the closest thing to the app's own cost.
-   * Measured while the parallel suite was booting: playback read 20.0 fps on one
-   * window and 40+ on the next, on the same build. Five short windows rather
-   * than three longer ones: a stall is a whole-window event, so more windows is
-   * what finds a clean one, and five 800 ms windows cost less than three of
-   * 1 200 ms.
+   * above and `scripts/bench.mjs` uses for its machine probe. Until v1.111.0
+   * these tests shared the machine with the rest of the suite, and one window
+   * landing behind another worker's boot read 20.0 fps on one window and 40+ on
+   * the next; the `perf` project now runs the file alone with one worker, which
+   * is what made the windows agree (measured: 37.5-52.5 fps, all above the
+   * floor, against 13.8-20.0 inside the parallel run). Best-of-N stays because
+   * host load can only ever make a window slower, never faster, so the best
+   * window is still the closest thing to the app's own cost. Five short windows
+   * rather than three longer ones: a stall is a whole-window event, so more
+   * windows is what finds a clean one, and five 800 ms windows cost less than
+   * three of 1 200 ms.
    */
   const bestFps = async (page: Page, windowMs: number, tries: number) => {
     const samples: number[] = [];

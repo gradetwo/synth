@@ -97,6 +97,7 @@ const required = [
   ['DSP regression baseline', 'npm run test:dsp'],
   ['2x oversampling DSP baseline', 'npm run verify:dsp:2x'],
   ['Chromium E2E', 'npm run test:e2e'],
+  ['performance E2E (isolated single worker)', 'npm run test:perf'],
 ];
 /** Commands this file treats as required, so the scripts check cannot drift from it. */
 const requiredCommands = new Set(required.map(([, needle]) => needle));
@@ -123,9 +124,10 @@ for (const name of ['bench:long']) {
 // has to stay in the chain: dropping `npm run verify:presets:2x` from it made a
 // real gate silently unreachable locally while CI still ran it.
 const verifyChain = scripts.verify ?? '';
-for (const name of [...requiredCommands] .map(scriptOf).filter((n) => n && n !== 'test:e2e')) {
-  // `test:e2e` is deliberately not in `verify` (the browser suite is its own
-  // run), so it is the one command exempt from the chain check.
+for (const name of [...requiredCommands] .map(scriptOf).filter((n) => n && n !== 'test:e2e' && n !== 'test:perf')) {
+  // `test:e2e` and `test:perf` are the browser suites and deliberately not in
+  // `verify` (they need a built dist and a browser; `verify` stays
+  // browser-free), so they are the two commands exempt from the chain check.
   check(`the "verify" script runs "${name}"`, verifyChain.includes(`npm run ${name}`));
 }
 check('the scalar core is gated too', verify.includes('synth_core_scalar.wasm'));

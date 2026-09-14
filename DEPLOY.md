@@ -180,8 +180,8 @@ CMD ["nginx", "-g", "daemon off;"]
 
 | 作业 | 内容 |
 | --- | --- |
-| `verify` | Rust 测试、前端/Worklet 测试、lint、生产构建、**SIMD 与标量两套 WASM 门禁**、dist 完整性、体积预算、音频质量门禁（时域+频域）、DSP 指纹基线、Chromium 端到端；`dist/` 作为产物上传 |
+| `verify` | Rust 测试、前端/Worklet 测试、lint、生产构建、**SIMD 与标量两套 WASM 门禁**、dist 完整性、体积预算、音频质量门禁（时域+频域）、DSP 指纹基线、Chromium 端到端（`npm run test:e2e`）与**隔离单跑的性能套件**（`npm run test:perf`，1 worker；fps 守卫在并行套件里测的是主机争用，v1.111.0 起单独跑）；`dist/` 作为产物上传 |
 | `e2e-engines` | 在 **WebKit 与 Firefox** 上跑同一套端到端（P0.5）；这些引擎涉及 AudioWorklet、WebAudio 手势、文件导入、Service Worker 与触屏，Chromium 跑得再绿也代表不了它们 |
 
-本地只需 `npm run verify` + `npx playwright test --project=chromium`：`npm run verify` 里含 `verify:ci`，
+本地只需 `npm run verify` + `npm run test:e2e` + `npm run test:perf`：`npm run verify` 里含 `verify:ci`，
 它会检查上面的门禁没有被误删。WebKit/Firefox 的浏览器二进制需要系统库，本机没有安装，因此以 CI 为准。

@@ -60,9 +60,12 @@ $ node scripts/release.mjs --skip-verify --skip-deploy --dry-run --skip-git-chec
 并行套件下曾读到 playback 单窗 20.0 / graph-edit 17.5，所以窗口数从 best-of-3×1.2 s 改成
 **best-of-5×0.8 s**——**没有动阈值**。改阈值要另开批次并说明原因。
 
-### ⚠️ 已知脆弱点：fps 守卫是在**并行套件里**测的（登记，v1.110.0 发布时观测到）
+> 表中「全量并行套件下」那一列是**历史**：v1.111.0 起该 spec 已不在 app 套件里（见下节），
+> 那一列不再由 `npm run test:e2e` 产生。
 
-v1.110.0 的发布跑（`npm run release`，全量 E2E 141 条、多 worker）里读数是这样：
+### ✅ 已隔离修复：fps 守卫不再和并行套件抢核（v1.111.0）
+
+**v1.110.0 发布时的原始观测（历史，保留不改）**：该次发布跑（`npm run release`，全量 E2E、多 worker）里读数是这样：
 
 ```
 [fps] idle-with-engine best 47.5 of [47.5, 43.8, 43.8, 47.5, 42.5] fps
@@ -73,8 +76,46 @@ v1.110.0 的发布跑（`npm run release`，全量 E2E 141 条、多 worker）�
 **pass 了，但 playback 的 5 个窗口里有 3 个低于 20**（16.3 / 18.8 / 18.8）——它是靠最好的那一窗过的。
 同一份代码在单跑时是 60.0 fps，所以这不是播放变慢，而是**测量被同套件的并行负载污染**：
 `performance.spec.ts` 是套件里的第 77 条，跑的时候其它 worker 正在压 8 个核。
-
 best-of-N 的选择是有理由的（本机软件渲染 + 共享负载，单窗会被别的进程抢走），但它**不能替代隔离**：
-一个「靠运气窗口通过」的守卫会掩盖真实的性能回退。**下一步（登记为债，见 `docs/NEXT-PLAN-2.md` §一.13）**：
-把 `performance.spec.ts` 放进**独立 project / `--workers=1`**（或让它自己声明串行）再测 fps，
-让这条线的数字有可比性；在那之前，读这条守卫时**要连着窗口明细一起读**，不要只看 best。
+一个「靠运气窗口通过」的守卫会掩盖真实的性能回退。v1.111.0 的发布就因此被 playback 的
+「20.0 fps of [17.5, 16.3, 20.0, 15.0, 13.8]」挡下（同一份代码单跑是 60.0），所以本批修的是**门禁的测量方式**。
+
+**修复做法（隔离；一个阈值都没动）**：
+
+- `playwright.config.ts`：新增 **`perf` project**（`testMatch: /performance\.spec\.ts/`，与 chromium 相同的
+  `devices['Desktop Chrome']` 和 `--autoplay-policy=user-gesture-required`）；**chromium project 加
+  `testIgnore: /performance\.spec\.ts/`**（webkit/firefox 早已 ignore 它，未动）。
+- `package.json`：`test:e2e` 明确为 `playwright test --project=chromium`（**只跑 app 套件**），
+  新增 `test:perf` = `playwright test --project=perf --workers=1`（**只跑性能**）。
+- `scripts/release.mjs`：E2E 步骤改成**两段**——先 `npm run test:e2e`，再 `npm run test:perf`；
+  启动预算仍从捕获输出解析 `[boot-budget]`（两段输出都扫，解析能力不变），并把三条 `[fps]`
+  **连窗口明细**一起打进发布日志。`--dry-run` / `--skip-e2e` 语义不变（后者单独跑 perf project）。
+- `.github/workflows/ci.yml`：Chromium E2E 之后新增一条 `npm run test:perf`，与 release 调用同一对命令；
+  `scripts/verify-ci.mjs` 把 `test:perf` 列入必需命令（和 `test:e2e` 一样豁免 `verify` 链检查——
+  浏览器套件本来就不在 `verify` 里）。
+
+**阈值与纪律**：fps 仍是 **>20**、启动预算仍是 **3200 ms**、体积三线未动；**没有** retries，
+**没有**「负载高就跳过断言」。
+
+**隔离后实测（v1.111.0，同机，`npm run test:perf`，1 worker，6 passed / 34.0 s）**：
+
+```
+[boot-budget] interactive 907 ms of [1101, 907, 1225] · FCP 808 ms · budget 3200 ms
+[fps] idle-with-engine best 61.3 of [61.3, 53.8, 61.3, 61.3, 60.0] fps
+[fps] playback         best 52.5 of [42.5, 52.5, 50.0, 37.5, 48.8] fps
+[fps] graph-edit       best 61.3 of [53.8, 56.3, 61.3, 58.8, 58.8] fps
+```
+
+playback 的 5 个窗口从并行时的 13.8…20.0 收敛到 **37.5…52.5**，**每一窗都在 20 之上**——这是隔离
+带来的真实测量，而不是挑一窗过关。同一次验证里 app 套件（`npm run test:e2e`）是
+**135 passed / 10 skipped（6.1m）**，两个套件都绿。
+
+**门禁仍然有效（自证）**：临时把 `FPS_FLOOR` 改成 `999` → 三条 fps 守卫**全部红**
+（`Expected: > 999` / `Received: 61.25`、`60`、`61.25`），EXIT=1；还原成 20 后三条绿。
+
+**发布链两段式已实跑验证**：`node scripts/release.mjs --skip-verify --skip-deploy --dry-run --skip-git-check`
+→ app 套件 **135 passed**，性能套件 **6 passed（35.3 s）**；release 从性能套件输出解析到
+`[boot-budget] interactive 653 ms ≤ 3200 ms`，并把三条 `[fps]` 连窗口打进发布日志
+（`idle 61.3 [61.3, 60.0, 61.3, 61.3, 61.3]`、`playback 61.3 [58.8, 46.3, 51.3, 48.8, 61.3]`、
+`graph-edit 56.3 [50.0, 47.5, 42.5, 53.8, 56.3]`），最后 `[release] PASS`（EXIT=0）。
+CI 与 release 现在调用同一对命令（`npm run test:e2e` + `npm run test:perf`）。
