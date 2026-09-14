@@ -17,6 +17,7 @@ import { readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadData, parameterTable, packageVersion } from './lib/data.mjs';
+import { createSession } from './lib/session.mjs';
 import { initCore, ex, SR } from '../scripts/lib/render-core.mjs';
 
 export const TOOLS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), 'tools');
@@ -50,7 +51,8 @@ export async function loadTools() {
 
 /**
  * The context every handler receives: the app's data, the ABI the engine
- * reports, and whether calls go to the audit log.
+ * reports, whether calls go to the audit log, and the **session state** P13.3's
+ * mutating tools write (see `lib/session.mjs`).
  */
 export async function loadContext({ log = true } = {}) {
   const data = await loadData();
@@ -62,5 +64,6 @@ export async function loadContext({ log = true } = {}) {
     version: packageVersion(),
     paramCount: parameterTable(data).length,
     logEnabled: log,
+    session: createSession(),
   };
 }

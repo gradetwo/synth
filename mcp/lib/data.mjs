@@ -78,7 +78,10 @@ export async function loadData() {
         `mcp: esbuild is required to read the app's TypeScript (vite ships it) — run "npm install": ${error?.message ?? error}`,
       );
     }
-    const outfile = resolve(TMP_DIR, 'app-data.mjs');
+    // One bundle per process: vitest runs test files in parallel workers, and
+    // two `loadData()` calls writing the same `.tmp/mcp/app-data.mjs` would race
+    // on the one file. The name stays inside `.tmp/mcp/` and is content-stable.
+    const outfile = resolve(TMP_DIR, `app-data.${process.pid}.mjs`);
     mkdirSync(TMP_DIR, { recursive: true });
     await build({
       stdin: {
@@ -93,7 +96,12 @@ export async function loadData() {
           } from '@/audio/params';
           export { encodePatch, decodePatch, decodePatchAsync, PREFIX_FOR_TEST } from '@/state/share';
           export { encodeWavBuffer } from '@/audio/render';
-          export { parseWav } from '@/audio/wavefile';
+          export { parseWav, WaveImportError } from '@/audio/wavefile';
+          // P13.3: the file-backed importers and the preset-file reader — the
+          // same functions the pickers and the store call, not a second parser.
+          export { decodeSampleFile, decodeCycle, extractCycle, CYCLE_LENGTH } from '@/audio/wavefile';
+          export { parsePatchFile } from '@/state/patchfile';
+          export { DEMO_SONGS } from '@/midi/songs';
         `,
         resolveDir: ROOT,
         sourcefile: 'mcp-app-data-entry.ts',
