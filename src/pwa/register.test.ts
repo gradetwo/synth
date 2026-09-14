@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 type Listener = (event: Event) => void;
 
 interface FakeRegistration {
-  waiting: { state: string; postMessage: (message: unknown) => void } | null;
+  waiting: { state: string; postMessage: (message: unknown, transfer?: unknown[]) => void } | null;
   update: () => Promise<void>;
   addEventListener: (type: string, fn: Listener) => void;
   unregister: () => Promise<boolean>;
@@ -24,20 +24,26 @@ function setup(options: {
   prod?: boolean;
   waitingState?: string | null;
   updateMovesToWaiting?: string | null;
+  /** What the fake waiting worker answers the version handshake with; null = silent. */
+  answerVersion?: string | null;
 }) {
   const posted: unknown[] = [];
   const controllerListeners: Listener[] = [];
+  const makeWaiting = (state: string) => ({
+    state,
+    postMessage: (message: unknown, transfer?: unknown[]) => {
+      posted.push(message);
+      const port = transfer?.[0] as { postMessage?: (value: unknown) => void } | undefined;
+      if ((message as { type?: string } | null)?.type === 'GET_VERSION' && options.answerVersion && port?.postMessage) {
+        port.postMessage({ type: 'VERSION', version: options.answerVersion });
+      }
+    },
+  });
   const registration: FakeRegistration = {
-    waiting:
-      options.waitingState == null
-        ? null
-        : { state: options.waitingState, postMessage: (message) => posted.push(message) },
+    waiting: options.waitingState == null ? null : makeWaiting(options.waitingState),
     update: vi.fn(async () => {
       if (options.updateMovesToWaiting != null) {
-        registration.waiting = {
-          state: options.updateMovesToWaiting,
-          postMessage: (message) => posted.push(message),
-        };
+        registration.waiting = makeWaiting(options.updateMovesToWaiting);
       }
     }),
     addEventListener: vi.fn(),
@@ -118,6 +124,25 @@ describe('service worker updates', () => {
     env.controllerListeners.forEach((fn) => fn(new Event('controllerchange')));
     env.controllerListeners.forEach((fn) => fn(new Event('controllerchange')));
     expect(env.reloads).toEqual(['reload']);
+  });
+
+  it('asks the waiting worker for its version, and never guesses from the page', async () => {
+    const answered = setup({ prod: true, waitingState: 'installed', answerVersion: '9.9.9' });
+    const withAnswer = await load();
+    await withAnswer.registerServiceWorker();
+    await expect(withAnswer.waitingVersion()).resolves.toBe('9.9.9');
+    expect(answered.posted).toContainEqual({ type: 'GET_VERSION' });
+
+    // A worker that never answers — an older build with no handler, or a lost
+    // message — is "no version", never the running bundle's own version.
+    setup({ prod: true, waitingState: 'installed' });
+    const silent = await load();
+    await silent.registerServiceWorker();
+    await expect(silent.waitingVersion()).resolves.toBeNull();
+
+    // Nothing waiting: there is no one to ask.
+    const idle = await load();
+    await expect(idle.waitingVersion()).resolves.toBeNull();
   });
 
   it('finds a fresh build and reports it, or reports that nothing changed', async () => {

@@ -1,4 +1,8 @@
 import { test, expect } from './fixtures';
+import { readFileSync } from 'node:fs';
+
+const APP_VERSION = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string })
+  .version;
 
 /**
  * The host redirects `/index.html` to `/` (see the preview plugin in
@@ -45,6 +49,41 @@ test('boots with a service worker controlling the page', async ({ page }) => {
   await page.mouse.down();
   await expect.poll(async () => meter.textContent(), { timeout: 8000 }).not.toMatch(/^— · —/);
   await page.mouse.up();
+});
+
+/**
+ * The generated worker has to answer the update banner's version handshake.
+ *
+ * `e2e/update-banner.spec.ts` fakes the service-worker container, so it pins the
+ * *page* side of the protocol; this exercises the real `dist/sw.js` that
+ * `scripts/gen-sw.mjs` emitted, in a real browser. Only the worker itself can
+ * name the build it carries — the running page's own `CHANGELOG_HEAD` is the
+ * version being replaced after a rollback, which is the bug the handshake is
+ * for (P12.6).
+ */
+test('the generated worker answers the version handshake', async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/');
+  await page.waitForFunction(() => navigator.serviceWorker?.controller != null, null, { timeout: 30_000 });
+  await page.reload();
+
+  // The same message shape `src/pwa/register.ts` sends: `GET_VERSION` with a
+  // transferred port, `VERSION` back over it. A silent worker resolves to null
+  // and fails the assertion below instead of hanging.
+  const version = await page.evaluate(
+    () =>
+      new Promise<string | null>((resolve) => {
+        const channel = new MessageChannel();
+        const timer = setTimeout(() => resolve(null), 3000);
+        channel.port1.onmessage = (event: MessageEvent) => {
+          clearTimeout(timer);
+          resolve((event.data as { version?: string } | null)?.version ?? null);
+        };
+        navigator.serviceWorker.controller?.postMessage({ type: 'GET_VERSION' }, [channel.port2]);
+      }),
+  );
+  expect(version).toBe(APP_VERSION);
 });
 
 /**

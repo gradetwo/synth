@@ -83,7 +83,7 @@ const AudioSettings = lazy(() =>
 // theme-name strings it shares with nothing else moved out (P11.2).
 import { SettingsDrawer } from '@/components/SettingsDrawer';
 import { ToastHost } from '@/components/Toast';
-import { applyUpdate, onUpdateAvailable, registerServiceWorker } from '@/pwa/register';
+import { applyUpdate, onUpdateAvailable, registerServiceWorker, waitingVersion } from '@/pwa/register';
 import { setHapticsEnabled } from '@/hooks/useInputMode';
 import { readShareCode } from '@/state/share';
 import { APP_VERSION } from '@/version';
@@ -148,24 +148,33 @@ function StartOverlay({
 
 function UpdateBanner() {
   const [available, setAvailable] = useState(false);
+  // The version the waiting worker will install, or null while the handshake is
+  // in flight and if it never answers. Deliberately *not* `CHANGELOG_HEAD`:
+  // that is the running build's own version, which after a rollback is the
+  // release being replaced — the banner used to advertise exactly that.
+  const [incoming, setIncoming] = useState<string | null>(null);
   const lang = getLang();
   useEffect(() => {
-    onUpdateAvailable(() => setAvailable(true));
+    onUpdateAvailable(() => {
+      setAvailable(true);
+      void waitingVersion().then(setIncoming);
+    });
   }, []);
   if (!available) return null;
-  // Say what arrived, not just that something did: the newest release's first
-  // line is what a returning player wants to know before reloading.
+  // The headline is still the newest entry this bundle knows about — the worker
+  // carries only its version — while the version beside it is the incoming one.
   const newest = CHANGELOG_HEAD;
   const headline = newest?.items[0]?.[lang === 'zh' ? 0 : 1].replace(/\*\*/g, '') ?? '';
+  const line = incoming ? `v${incoming}${headline ? ` · ${headline}` : ''}` : headline;
   return (
     <div className="update-banner" role="status">
       {/* Two lines that can shrink, then two fixed-size actions: the version
           and the headline on top, the buttons in their own column. */}
       <div className="update-copy">
         <span className="update-title">{t('app.updateReady')}</span>
-        {headline ? (
+        {line ? (
           <span className="update-what" data-act="update-what">
-            v{newest.version} · {headline}
+            {line}
           </span>
         ) : null}
       </div>
