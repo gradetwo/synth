@@ -99,6 +99,9 @@ export function Changelog({ open, onClose }: { open: boolean; onClose: () => voi
                 </section>
               );
             })}
+            {/* P141: the shipped list is capped, so say where the rest lives
+                instead of leaving a list that silently stops in 1.8.x. */}
+            <p className="release-archive-note">{t('changelog.archive')}</p>
             <footer className="guide-foot">{t('changelog.footer')}</footer>
           </article>
         </div>

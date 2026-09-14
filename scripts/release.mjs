@@ -184,9 +184,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
 const version = (positional[0] ?? pkg.version).replace(/^v/, '');
 // The newest entry lives in its own module (the update banner is on the first
-// screen and must not pull the whole history into the initial bundle), so the
-// checks read both files as one text.
-const changelogText = ['src/changelog-head.ts', 'src/changelog.ts']
+// screen and must not pull the whole history into the initial bundle), and the
+// history itself is split between what ships and the archive (P141: only the
+// newest 30 releases are in the bundle). The checks read all three as one text
+// so "unique and newest-first" still covers every release in the repository,
+// including the ones the app no longer shows.
+const changelogText = ['src/changelog-head.ts', 'src/changelog.ts', 'src/changelog-archive.ts']
   .map((file) => readFileSync(resolve(root, file), 'utf8'))
   .join('\n');
 /** Local calendar date — the changelog dates are local, not UTC. */
