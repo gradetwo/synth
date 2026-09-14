@@ -395,7 +395,13 @@ export async function loadAllStrings(): Promise<void> {
   // between parallel UI tracks, so a new batch registers its copy separately
   // rather than editing `i18n-panels.ts`.
   const { loadLibraryStrings } = await import('./i18n.library');
-  await Promise.all([...STRING_LOADERS.map((load) => load()), loadLibraryStrings()]);
+  // Same arrangement for the teaching panel (P12.1).
+  const { loadTeachStrings } = await import('./i18n.teach');
+  await Promise.all([
+    ...STRING_LOADERS.map((load) => load()),
+    loadLibraryStrings(),
+    loadTeachStrings(),
+  ]);
 }
 
 /** True once every declared key has copy (used by the i18n tests). */
