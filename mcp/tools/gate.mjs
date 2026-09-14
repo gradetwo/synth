@@ -48,7 +48,7 @@ export default {
   },
   handler: async (args, ctx) => {
     const spec = validateRenderSpec({ seconds: 2, ...args });
-    const payload = await resolvePatch(ctx.data, args);
+    const payload = await resolvePatch(ctx.data, args, ctx.session);
     const ruler = args.ruler ?? 'bh7';
     const bins = args.harmonics ?? 8;
     const thresholdDb = args.thresholdDb ?? DEFAULT_THRESHOLD_DB;
@@ -58,7 +58,7 @@ export default {
 
     let nonFinite = 0;
     const perNote = distinctNotes(spec.notes).map((note) => {
-      const settled = settledFloor(payload, note, bins, spec.oversample);
+      const settled = settledFloor(payload, note, bins, spec.oversample, ctx.session);
       for (let i = 0; i < settled.samples.length; i++) {
         if (!Number.isFinite(settled.samples[i])) nonFinite += 1;
       }

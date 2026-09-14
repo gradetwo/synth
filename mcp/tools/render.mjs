@@ -27,8 +27,8 @@ export default {
     // Check the write boundary *before* spending seconds in the DSP: a rejected
     // path should be cheap.
     const requested = args.outPath === undefined ? null : resolveOutputPath(args.outPath);
-    const payload = await resolvePatch(ctx.data, args);
-    const channels = renderChannels(ctx.data, spec, payload);
+    const payload = await resolvePatch(ctx.data, args, ctx.session);
+    const channels = renderChannels(ctx.data, spec, payload, ctx.session);
     const { bytes, sha256, byteLength } = wavSha256(ctx.data, channels, spec.sampleRate);
     const absolute = requested ?? resolveOutputPath(null, `${sha256.slice(0, 16)}.wav`);
     writeFileSync(absolute, bytes);

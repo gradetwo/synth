@@ -33,6 +33,7 @@ import {
 } from '../../scripts/lib/render-core.mjs';
 import { ERRORS, fail } from './errors.mjs';
 import { paramPairs, applyRoutes } from './patch.mjs';
+import { installInstrument } from './session.mjs';
 import { encodeWavPair, sha256Hex } from './wav.mjs';
 
 export const MAX_SECONDS = 30;
@@ -169,12 +170,15 @@ function primeSeed(seed) {
  *            peak: number, rms: number, maxStep: number, nonFinite: number,
  *            allocViolations: number}}
  */
-export function renderChannels(data, spec, payload) {
+export function renderChannels(data, spec, payload, session = null) {
   const { seconds, seed, oversample, notes } = spec;
   const blocks = Math.max(1, Math.ceil((seconds * SR) / BLOCK));
 
   // A brand-new wasm instance: a brand-new engine, phase_seed = 0.
   initCore();
+  // P13.3: a fresh instance has no imported sample or cycle, so the session's
+  // instrument is replayed before the first block (see `lib/session.mjs`).
+  installInstrument(session);
   primeSeed(seed);
 
   const pairs = paramPairs(payload.params).filter(([id]) => id !== P.OVERSAMPLE);

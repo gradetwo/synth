@@ -73,8 +73,8 @@ export default {
 
     if (hasRender) {
       spec = validateRenderSpec(args.render);
-      const payload = await resolvePatch(ctx.data, args.render);
-      const channels = renderChannels(ctx.data, spec, payload);
+      const payload = await resolvePatch(ctx.data, args.render, ctx.session);
+      const channels = renderChannels(ctx.data, spec, payload, ctx.session);
       samples = channels.left;
       source = 'render';
       blocks = channels.blocks;

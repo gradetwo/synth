@@ -15,6 +15,7 @@ import {
 import { renderFloor, initCore, P, SR } from '../../scripts/lib/render-core.mjs';
 import { noteHz } from './render.mjs';
 import { paramPairs } from './patch.mjs';
+import { installInstrument } from './session.mjs';
 
 /** What produced an off-grid number: the whole-spectrum Blackman-Harris ruler. */
 export const BH7 = { ruler: 'bh7', window: 'blackman-harris-7' };
@@ -71,13 +72,15 @@ export { binMag, binMagRect };
  * makes the fixture measure *this* patch with the gate's exact timing and
  * settling. That is why `gs1.gate` and `verify:audio` cannot disagree.
  */
-export function settledFloor(payload, note, bins = FLOOR_BINS, oversample = 0) {
+export function settledFloor(payload, note, bins = FLOOR_BINS, oversample = 0, session = null) {
   const pairs = paramPairs(payload.params).filter(([id]) => id !== P.OVERSAMPLE);
   pairs.push([P.OVERSAMPLE, oversample ? 1 : 0]);
   // A fresh core per note: the gate's phase sequence depends on how many
   // note-ons came before, and a tool called twice must not inherit the first
   // call's counter. `initCore()` gives a new engine with phase_seed = 0.
   initCore();
+  // P13.3: the session's imported instrument, replayed into the new instance.
+  installInstrument(session);
   const samples = renderFloor(pairs, note);
   return { samples, f0: noteHz(note), ...bh7Floor(samples, noteHz(note), bins) };
 }

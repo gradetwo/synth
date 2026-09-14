@@ -19,7 +19,9 @@ export default {
     additionalProperties: false,
   },
   handler: async (args, ctx) => {
-    const payload = await resolvePatch(ctx.data, args);
+    // With no `patch`/`presetId`, this reads the session's current patch (the
+    // default patch until `gs1.patch.set` runs) — P13.3's state rule.
+    const payload = await resolvePatch(ctx.data, args, ctx.session);
     const preset = args?.presetId
       ? ctx.data.FACTORY_PRESETS.find((entry) => entry.id === args.presetId) ?? null
       : null;
