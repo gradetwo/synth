@@ -125,7 +125,10 @@ project 会退回原生实现。
   媒体查询，而这一页永远不产生帧。独立探针（完全不点任何东西）复现的形态是
   `emulateMedia(dark)` 之后 `data-theme` 先变 `dark`、1.5 s 后又退回 `light` —— 应用侧这套
   「跟随系统」的逻辑在媒体查询不会重新求值时会来回摆。慢路径之所以通过，只是因为它的点击慢到
-  足以等到那几次稀有的真实帧。这两条**需要在有合成器的环境（Weston/Xvfb）上跑**。
+  足以等到那几次稀有的真实帧。这两条**需要在有合成器的环境（Weston/Xvfb）上跑**：已在
+  Weston headless + 本 fixtures 下实测通过（`./scripts/e2e-webkit-wayland.sh e2e/theme.spec.ts
+  --retries=0 -g "…"`，2 passed / 3.0 min）——说明它们纯粹是「headless 没有帧钟」，
+  不是帧无关交互的语义问题，而且帧无关交互在有合成器的环境里同样正常。
 - 另外 `theme.spec.ts:137` 与 `:192` 的失败都落在**同一条**「媒体查询不会重新求值」上，不是两条
   独立的缺陷。
 
