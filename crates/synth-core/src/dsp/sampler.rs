@@ -719,7 +719,7 @@ fn low_pass_decimate_into(input: &[f32], cutoff: f32, taps: usize, out: &mut [f3
 /// additions happen in the same sequence and the result is bit-identical to the
 /// clamped loop — not an approximation.** That is the property the
 /// `hoisted_edge_clamp` test below pins with `to_bits`.
-#[inline]
+#[inline(never)]
 fn low_pass_at(input: &[f32], weights: &[f32], base: isize) -> f32 {
     let count = weights.len();
     let last = input.len() as isize - 1;
