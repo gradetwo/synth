@@ -81,24 +81,53 @@ WebKit / Firefox 两个项目显式设了 `reducedMotion: 'reduce'`：应用本�
 写入 → 一个动作触发几十轮重绘，WebKit 下尤其慢。现在 `store.setParams([...])` 把一批参数作为**一次变更**提交，
 重绘与存储各一次。
 
-实践建议：本地用 `npm run nightly`（默认 WebKit 核心子集，`xvfb-run -a … --headed`，见
-`docs/notes/nightly.md`）；`npm run nightly -- --all` 跑全量；整包的判据仍然放在 CI。
+实践建议：本地用 `npm run nightly`（默认 WebKit，子集是核心 + 视觉冒烟 + 音频，Weston 有头，见
+`docs/notes/nightly.md`）；`--core` 只跑核心子集，`--all` 跑全量；整包的判据仍然放在 CI。
 
-## 4. 夜间跑（C1 的落地形态）
+## 4. 夜间跑（C1 的落地形态，P11.6 扩了覆盖率与记录）
 
-- **CI**：`.github/workflows/ci.yml` 新增 `nightly` 作业，`on.schedule: cron '0 19 * * *'`（UTC，约北京时间 03:00），
-  只在 `github.event_name == 'schedule'` 时跑：WebKit（`--all`，Xvfb 有头）+ Firefox + `npm run bench:long`，
-  产物（`.tmp/nightly`、`test-results`）保留 14 天。`scripts/verify-ci.mjs` 把这个作业也纳入门禁，
-  防止它被静默删掉。
-- **本机**：`npm run nightly`（脚本 `scripts/nightly-e2e.mjs`）= 锁文件防并发 + 每个内核一份日志（保留 14 份）
-  + 结果行写入 `docs/notes/nightly.md`；WebKit 默认只跑**核心子集**（iPhone/iPad 六视口、触屏、排版、启动、
-  路由图、分享、抽屉、主题），`--all` 跑全量。
+- **子集（P11.6）**：`scripts/nightly-e2e.mjs` 现在有三块，默认全跑；`--core` 只跑第一块，`--all` 是不带文件列表的全量：
+  - **核心**：iPhone/iPad 六视口、触屏、排版、启动、路由图、分享、抽屉、主题（8 个 spec）；
+  - **视觉**：`e2e/visual.spec.ts`。**WebKit/Firefox 上只渲染、不比基线**（下一条说原因），Chromium 上照常比；
+  - **音频**：`smoke`/`audio`/`filter`/`delay`/`fm`/`oversample`/`wavetable`/`sample`/`meter`（9 个 spec）——
+    引擎起不起得来、改音色的控件可不可达、补丁带不带着走。
+  清单只在脚本的常量里维护一处，本笔记不复述文件名（复述就会漂）。
+- **视觉基线为什么在 WebKit/Firefox 上不比**：Playwright 找基线的模板是
+  `{snapshotDir}/{testFileDir}/{testFileName}-snapshots/{arg}{-projectName}{-snapshotSuffix}{ext}`（`playwright.config.ts`
+  没有覆盖 `snapshotPathTemplate`），`snapshotSuffix` 是平台（`linux`）⇒ WebKit 找 `*-webkit-linux.png`、Firefox 找
+  `*-firefox-linux.png`，而仓库里只有 48 张 `*-chromium-linux.png`。缺基线**也不是跳过**：默认
+  `updateSnapshots: "missing"` 会把它**写下来并把用例判失败**（Playwright 1.63 里这个默认值与 CI 无关，
+  见 `playwright/lib/common/index.js` 的 `updateSnapshots: ... "missing"`），本地跑一次就会
+  往 `e2e/visual.spec.ts-snapshots/` 丢一批本机软件渲染出来的假基线。何况这两个内核上的像素带着本机的字体栈与
+  软件渲染，放宽 `maxDiffPixelRatio`/`threshold` 只会把真差异一起放过——那是别处的门禁，这里不碰。
+  所以 nightly 对 `e2e/visual.spec.ts` 传 `GS1_VISUAL=1 GS1_VISUAL_SMOKE=1`：每个面都截一张、断言拿到的是尺寸
+  合理的 PNG，不读也不写基线；证明「比对机制本身能红」的两个 self-check 在这个模式下跳过。
+- **记录（P11.6）**：`--update` 写 `docs/notes/nightly.md`，列是
+  `日期 | 内核 | 显示 | 结果 | 通过 | 失败 | 通过率 | 用时`。`显示` 是这次真正走的那条路
+  （`weston` / `xvfb` / `desktop` / `headless`；本机 `auto` = Weston 优先，CI 上没装 weston ⇒ `xvfb`）。行、通过率、
+  以及表下的「通过率趋势」小节都由 `scripts/nightly-report.mjs` 从表本身重算，不留手写结论；
+  `node scripts/nightly-report.mjs --self-test` 会校验**磁盘上的 `nightly.md` 正是脚本会写出的样子**，手改过的
+  （因而会过期的）趋势过不了自测。写在这两列存在之前的旧行，`显示` 记 `—`：不回填、不猜。
+- **CI**：`.github/workflows/ci.yml` 的 `nightly` 作业，`on.schedule: cron '0 19 * * *'`（UTC，约北京时间 03:00），
+  只在 `github.event_name == 'schedule'` 时跑：WebKit（`--all` 全量，Xvfb 有头）+ Firefox（`--subset=nightly`，
+  即核心 + 视觉冒烟 + 音频；全量 Firefox 已由同一 schedule 上的 `e2e-engines` 作业跑）+ `npm run bench:long`，
+  产物（`.tmp/nightly`、`test-results`）保留 14 天。CI 不写记录（工作区一次性的），记录由本机 / systemd 那次写。
+  `scripts/verify-ci.mjs` 把这个作业也纳入门禁，防止它被静默删掉。
+- **本机**：`npm run nightly`（脚本 `scripts/nightly-e2e.mjs`）= 锁文件防并发（中途抛错也会释放）+ 每个内核一份日志
+  （保留 14 份）+ `--update` 写记录。默认子集比 P11.6 之前大得多（核心 + 视觉冒烟 + 音频，约 50 个用例），而本机
+  WebKit 约 1 fps，所以整轮以小时计；只想快速看一眼用 `--core`。`--display=desktop` 走自己的会话，
+  `--display=xvfb` 强制旧路径；**明确要求**的显示路径不可用时脚本报错退出，不静默回退——否则记录会写一条没走过的路。
+  `--dry-run` 只打印内核/显示/子集/命令行，不起浏览器、不写记录。
 - **定时**：`scripts/install-nightly.sh` 安装 `scripts/systemd/gs1-nightly.{service,timer}`（用户定时器，
-  每天 03:00，`Persistent=true`）；本机当前 session 没有 user bus，安装脚本会给出提示（`systemctl --user` 需在登录会话里跑）。
-已有的本地记录：`e2e/fxgraph.spec.ts`、`e2e/smoke.spec.ts` 单独跑通过（引擎启动 11 s），
+  每天 03:00，`Persistent=true`，`TimeoutStartSec=3h`）；本机当前 session 没有 user bus，安装脚本会给出提示
+  （`systemctl --user` 需在登录会话里跑）。unit 跑的是 `--engines=webkit,firefox --update`，所以两个内核都会进记录。
+已有的本地记录（P11.6 之前的子集）：`e2e/fxgraph.spec.ts`、`e2e/smoke.spec.ts` 单独跑通过（引擎启动 11 s），
 `share.spec.ts`/`fxgraph` 在 WebKit 下也能跑完。
 
 ## 5. Firefox 仍未追平的用例（待查，非启动阻塞）
+
+P11.6 起，下面这些里的 `meter.spec.ts` 与 `audio.spec.ts` 属于 nightly 的**音频子集**，所以它们的已知不稳定
+会如实进入记录与通过率趋势。不为了「看起来全绿」把它们移出子集——要移出，先按本节的办法定位并写清结论。
 
 - `roll.spec.ts`「拖动右边缘改音符长度」：Firefox 下拖拽没有改变宽度（指针事件差异，待查）。
 - `meter.spec.ts` 空闲电平、`flow.spec.ts` 连线动画、`audio.spec.ts` MPE、`pwa.spec.ts` 的 SW 控制：
@@ -139,8 +168,9 @@ Chromium 空闲 7.5 → 28–33 fps，音频运行中 → 60.8 fps，本机全�
 **约定（2026-09-12 起）**：开发与测试中 **本地 WebKit 一律走 Weston**——
 `npm run test:e2e:webkit:wayland`（headless Weston；传 spec 文件即只跑该文件，`--all` 跑全量），
 桌面里则用 `npm run test:e2e:webkit:desktop`；`npm run nightly` 会自动优先 Weston，其次 Xvfb，
-最后才 headless，并在 `docs/notes/nightly.md` 的记录里注明用的哪种显示。Xvfb（`test:e2e:webkit:headed`）
-只在 Weston 不可用时作为回退。
+最后才 headless，并把**实际走的那条路**（`weston` / `xvfb` / `desktop` / `headless`）写进
+`docs/notes/nightly.md` 的 `显示` 列（P11.6 起；明确用 `--display=` 要求的那条路不可用时直接报错，不静默回退）。
+Xvfb（`test:e2e:webkit:headed`）只在 Weston 不可用时作为回退。
 注意：本轮为验证 Docker 拉取了 3.56 GB 的镜像，`docker rmi mcr.microsoft.com/playwright:v1.63.0-noble` 可删除。
 
 ## 8. 忙碌宿主上的 E2E 判据补充

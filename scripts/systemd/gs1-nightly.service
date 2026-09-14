@@ -1,16 +1,19 @@
 # Nightly browser E2E for this checkout.
 #
 # Install as a user unit (see scripts/install-nightly.sh): the run needs no
-# root, only a session bus so that Xvfb and the browsers can start.
+# root, only a session bus so that a display server and the browsers can start.
 [Unit]
 Description=GROOVE SYNTH GS-1 nightly browser E2E
 
 [Service]
 Type=oneshot
 WorkingDirectory=%h/music/synth
-# `xvfb-run` is what makes WebKit usable: headless WebKit never fires
-# requestAnimationFrame, so Playwright's click stability check waits for ever.
+# The script picks the display path itself -- Weston first, then Xvfb, then
+# headless -- and writes the one it actually used into the `显示` column of
+# docs/notes/nightly.md. WebKit needs a compositor: headless WebKit never fires
+# requestAnimationFrame, so every click would wait for ever.
 ExecStart=/usr/bin/env npm run nightly -- --engines=webkit,firefox --update
-# The suite is long; give it room but do not let a stuck run hold the timer.
+# The default subset (core + visual smoke + audio, both engines) is long on this
+# machine; give it room but do not let a stuck run hold the timer.
 TimeoutStartSec=3h
 Nice=10
