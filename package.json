@@ -42,6 +42,7 @@
     "verify:ci": "node scripts/verify-ci.mjs",
     "verify:release": "node scripts/release.mjs --check",
     "release": "node scripts/release.mjs",
+    "release:fast": "node scripts/release.mjs --skip-verify --skip-e2e",
     "bench": "node scripts/bench.mjs --update",
     "verify:bench": "node scripts/bench.mjs",
     "bench:long": "node scripts/bench.mjs --long"

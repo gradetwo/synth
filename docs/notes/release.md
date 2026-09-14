@@ -53,3 +53,23 @@ npm run release -- --check           # 只做发布前校验（`npm run verify` 
 2. **`verify:ci` 现在同时校验两半**：工作流文本里有这条命令 **∧** `package.json` 的 `scripts` 里真的定义了它
    （`npm run <name>` / `npm test` / `npm run <name> -- <args>` 都能解析）**∧** `verify` 链里点名了每个非 E2E
    必需命令。自证方式是把脚本名临时删掉或从链里摘掉，两种都必须让 `[ci]` 变红——见 P10.2（v1.109.0）的报告与提交。
+
+## 快轨 / 慢轨：不要把全面测试塞进每一次迭代（2026-09-14 起）
+
+每批都跑一遍完整 `npm run verify` + 全量 E2E 会把迭代周期拖到几十分钟，而其中绝大部分与本次改动无关
+（而且本机 8 核在负载下会让 `src/fuzz.test.ts` 的时间预算和 `bench` 的 over-budget 判定**假红**，
+见 `docs/NEXT-PLAN-2.md` §一.15 —— 花了大量时间去追一个不存在的回归）。
+
+**快轨（每批）**：只跑与本批相关的定向门禁 —— 相关测试文件、相关音频/体积门禁脚本、`lint` / `typecheck` /
+`build`；改了 UI 才跑 `test:visual`，改了 E2E 才跑那个 spec 文件。**不跑** `fuzz` / `bench` / 全量 E2E /
+整链 `verify`。
+
+**发布（快轨）**：`npm run release:fast -- <version>`（即 `release.mjs --skip-verify --skip-e2e`）——
+preflight → package → deploy → 线上哈希核对 → tag，几分钟内完成。前提是快轨已绿、工作树干净。
+
+**慢轨（每 3–4 个版本一次）**：另开一个 agent 在**安静主机**上做全面回归 —— 完整 `npm run verify`、
+全量 E2E（app 套件 + 隔离的 perf 套件）、视觉基线、nightly 引擎、以及一段时间的连续观察；
+它**只报告**，发现的问题回头**单独立批**修。慢轨与开发**解耦**：它慢它的，迭代继续。
+
+这样分工的前提是**快轨必须真的跑**：慢轨是补网，不是替代品。任何一批如果连定向门禁都没跑就发布，
+那就不是快轨而是没有轨。
