@@ -89,7 +89,6 @@ const isFrameFree = () => frameFreeActive;
  * per-test value it is pointed at.
  */
 let frameFreeTimeout = 120_000;
-const defaultTimeout = () => frameFreeTimeout;
 
 type ClickOptions = {
   button?: 'left' | 'right' | 'middle';

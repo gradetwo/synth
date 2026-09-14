@@ -47,8 +47,6 @@ export function defaultTimeout() {
   return defaultTimeoutMs;
 }
 
-const remaining = (deadline, timeout) => Math.max(0, Math.min(timeout, deadline - Date.now()));
-
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The marker `boxOf` passes to `locator.evaluate`, so a caller can tell the two reads apart. */
