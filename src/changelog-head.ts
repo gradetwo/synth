@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '2.0.4',
+    version: '2.0.5',
     date: '2026-09-14',
-    kind: 'sound',
+    kind: 'fix',
     items: [
       [
-        '**导入的采样再干净一档。** 高音区的折回杂音从 −70 dB 降到 **−86 dB**，而且把上一版为压杂音牺牲掉的**高音亮度也拿回来了**——采样弹到原音以上一个八度时不再发闷。顺带修掉一个偶发、还随调用顺序变化的插值错位（相位表少了最后一行，约每 1024 个样本错用一次核）。导入速度没有变慢，反而略快。',
-        '**Imported samples got cleaner again.** The folded-back grit in the high register drops from -70 dB to **-86 dB**, and the **brightness the last version traded away comes back** -- a sample played an octave above its root is no longer dull. Also fixed an intermittent interpolation slip that changed with call order: the phase table was missing its last row, so roughly one sample in 1024 used the wrong kernel. Importing is not slower; it is slightly faster.',
+        '**修好两个「看着没问题、用起来不对」的毛病。** ①**Crushed Sub** 这个音色其实几乎没声音——它的位粉碎步长比信号本身还大，每一个采样都被量化成零，只剩 10% 的干声漏出来；现在是真正的 6 bit 粉碎，低频回来了。②导入曲目现在**按文件内容判断格式**，不再只看扩展名：文件名里没有 `.mid` 的 MIDI 以前会被直接拒掉（提示「无法识别的文件格式」），现在能正常导入。',
+        '**Two things that looked fine until you used them.** (1) The **Crushed Sub** patch was effectively silent: its bit-crusher step was larger than the signal itself, so every sample quantized to zero and only 10% of the dry path leaked through. It is a real 6-bit crush now and the low end is back. (2) Importing a track now decides the format from the **file\'s content** instead of its name -- a MIDI file whose name lacks `.mid` used to be refused outright ("unrecognised file format") and now imports normally.',
       ],
     ],
   };
