@@ -27,7 +27,7 @@ Chromium 下同一个上下文往往自己就变成 `running`，所以本地 Chr
 | 引擎 | 状态 |
 | :--- | :--- |
 | Chromium（Playwright 自带） | ✅ 全量 91 项 |
-| Firefox（Playwright 自带） | ✅ 可跑；比 Chromium 慢，滚动/拖拽类用例偶有差异 |
+| Firefox（Playwright 自带） | ✅ 可跑；比 Chromium 慢，滚动/拖拽类用例偶有差异。**但本会话沙箱里没有音频后端，Firefox 起不来实时 `AudioContext`；音频观测类用例会显式 skip，见 §11** |
 | WebKit | ✅ 系统库装好后可本地运行（`npm run test:e2e:webkit`，单 worker）；比 Firefox 更慢：单个用例常 30–45 s，整包连跑会有大量用例在「点击后卡住」处超时 |
 
 ## 3. WebKit（Safari 内核）本机现状
@@ -353,3 +353,103 @@ WebKit 功能上 2/2 绿（600 s 诊断预算下），但**仓库现有 120 s/�
 **A/B 暴露了我自己补丁里的两个真 bug**（只在非 GL 路径出现，所以不做 A/B 就会带病上线）：
 ① `"${arr[@]}"` 在 `set -u` 下遇到**空数组**会直接报 unbound variable ⇒ **任何没有 `/dev/dri` 的机器上整条通道会在 0.3 s 内退出**；
 ② `grep` 没匹配 + `set -e`+`pipefail` ⇒ 软件路径直接中止。两处都已修，并加了 `GS1_WESTON_NO_GL=1` 以便随时 A/B。
+
+## 11. ⚠️ 沙箱里没有音频后端 ⇒ Firefox 起不来任何实时 `AudioContext`（2026-09-15，ffx 轨道实测）
+
+**一句话**：本会话的沙箱把 tmpfs 挂在 `/dev` 上（没有 `/dev/snd`）且没有 PulseAudio/PipeWire 守护进程，
+Firefox 因此拿不到 cubeb 后端，**任何**实时 `AudioContext` 都停在 `suspended`——`resume()` 永不 settle。
+Chromium 有 **null sink** 兜底，照常 `running`。所以 Firefox 上「引擎状态 suspended、电平表恒 `— · —`」
+是**宿主限制，不是产品回归**；产品零改动，E2E 侧改成显式 skip（见本节末）。
+
+### 11.1 宿主事实（原始输出）
+
+```
+$ ls /dev/snd
+ls: cannot access '/dev/snd': No such file or directory
+$ ls /dev
+core  fd  full  null  ptmx  pts  random  shm  stderr  stdin  stdout  tty  urandom  zero
+$ pactl info
+Failed to create secure directory (/run/user/1000/pulse): Read-only file system
+Connection failure: Connection refused
+$ aplay -l
+aplay: device_list:279: no soundcards found...
+$ ps aux | grep -E 'pipewire|pulse|wireplumber' | grep -v grep
+（无输出：/run/user/1000/pipewire-0 socket 在，但守护进程没跑）
+```
+
+Firefox 自己的 stderr（`DEBUG=pw:browser`，一次探针运行里重复 18 次）：
+
+```
+[pid=15][err] Failed to create secure directory (/run/user/1000/pulse): Read-only file system
+```
+
+（`/proc/asound` 里能看到 `card0/card1`，那是宿主内核的账本；沙箱的 `/dev` 里没有对应节点，打不开。）
+
+### 11.2 决定性探针：Firefox（rv:155，同一份 v2.1.1 dist）
+
+全部在**受信任点击**里创建/恢复（Firefox 会拒绝它认为「没有手势」的上下文，所以这是最严格的问法）：
+
+```
+A 预手势建的 ctx，在点击里 resume        : resume TIMEOUT_after_6s, state suspended, 44100 Hz
+B 点击里新建 ctx 并 resume                : resume TIMEOUT_after_6s, state suspended, 44100 Hz
+C 点击里 new AudioContext({sampleRate:48000}): resume TIMEOUT_after_6s, state suspended, 48000 Hz
+D OfflineAudioContext 渲染                : peak 1（离线渲染正常 ⇒ Web Audio 本身没坏，坏的是输出设备）
+navigator.userActivation.hasBeenActive     : true（⇒ 不是自动播放策略拦的）
+navigator.mediaDevices.enumerateDevices()  : []（连一个 audiooutput 都没有）
+audioWorklet.addModule(真 worklet-processor): ok（1109 ms，二次 27 ms 缓存）
+new AudioWorkletNode('gs1-synth-processor') : ok
+设置面板                                   : 引擎状态 suspended · 采样率 44.1 kHz · DSP 内核 simd · 流式编译 · 输出峰值 —
+电平表                                     : — · —
+```
+
+### 11.3 Chromium 对照（同一台机器、同一份 dist）
+
+```
+A/B/C（含 --autoplay-policy=user-gesture-required）: resume resolved, state running
+设置面板                                            : 引擎状态 running · 采样率 44.1 kHz · 输出延迟 42 ms · DSP 负载 1%
+```
+
+**「Firefox 44.1 / Chromium 48」这条线索在本轮不成立**：两侧默认都是 **44.1 kHz**，Firefox 也接受
+`{sampleRate: 48000}`（C 读出 48000）却照样不跑。采样率不是原因；差别只在「有没有 null sink」，
+44.1 kHz 是无声卡时的回退默认值（`verify-audio` 里的 48 kHz 是 wasm/预算常量，不是浏览器上下文）。
+
+### 11.4 不是 v2.0.3 之后的产品回归
+
+用同一探针跑 `.tmp/sweep-v2.0.3/dist`（v2.0.3 worktree 的既存构建），读数与 v2.1.1 **逐项相同**：
+`引擎状态 suspended`、电平表 `— · —`、`addModule ok`、裸 ctx 永远 suspended、44.1 kHz。
+`e2e/boot.spec.ts` 与 `src/audio/engine.ts` 自 v2.0.3 起也没有变化（`git diff v2.0.3..HEAD` 为空/仅
+v2.0.7 的量程改动）。⇒ v2.0.3 那一轮 Firefox 这两个用例「绿」与本轮的差异在**宿主/当时读数**，不在代码。
+
+**产品侧线索也排除了**：v2.0.7 放宽过 `worklet-processor.js` 的 `parameterDescriptors` 量程，本轮直接证伪——
+Firefox 上 `addModule` 与 `new AudioWorkletNode` 都成功，描述符不是启动失败点。
+
+### 11.5 E2E 处置：`e2e/audio-host.ts`
+
+`hostAudioUnavailableReason(page)`：**一个全新 `AudioContext`、零应用代码，在受信任点击里创建并 `resume()`**，
+用它自己是否 `running` 作判据：
+
+- 返回 `null`（宿主能跑声音）⇒ 用例照常断言，**产品回归不会被跳过掩盖**；
+- 返回带读数的原因 ⇒ `boot.spec.ts` / `meter.spec.ts` / `preset-audition.spec.ts` / `pwa.spec.ts`
+  这 4 条音频观测用例 `test.skip` 并在终端打印原因（`[audio-host] firefox: skip audio assertions -- …`）。
+
+Chromium（含 `--autoplay-policy=user-gesture-required`）下该判据返回 `null`，**Chromium 覆盖不变**。
+本机想手动复核，最短路径就是在目标浏览器开应用，`new AudioContext()` 后点一次真实的手势再 `resume()`，
+读 `state`：本沙箱里 Firefox 永远 `suspended`、Chromium 立刻 `running`。
+
+### 11.6 同一个根因的另一副面孔：启动遮罩在 Firefox 上要 ~5 s 才抬起（`fm:33` / `i18n:83`）
+
+`engine.start()` 在上下文起不来时会**等两次** `settleWithin(resume, RESUME_GRACE_MS)`（先 resume、再
+`resumeIfSuspended`），每次 2500 ms，所以 `.start-overlay` 要 **~5 s** 才消失；Chromium 上 `resume()` 立刻
+resolve，遮罩几乎马上抬起。探针实测（Firefox，点击启动到 `.start-overlay` 消失）：**gateMs = 5033 ms**。
+
+在那之前 `.start-overlay` 铺满整页，`document.elementFromPoint()` 在 FM 旋钮中心返回的是
+`class="start-overlay"`；遮罩一抬起，同一个点返回 `class="knob-dial" / aria-label="FM"`，同一个 60 px
+拖拽把值从 0 变成 **0.3158**（与 Chromium 逐位相同）。
+
+- `e2e/fm.spec.ts::boot()` 原来只 `waitForTimeout(300)`，于是第一次拖拽落在遮罩上，`fmValue` 读回 0；
+- `e2e/i18n.spec.ts::boot()` 原来只等 `.kbd-dock.open` **可见**（它在遮罩后面也算可见），随后
+  `{ force: true }` 的点击被遮罩接走，播放器/设置面板根本没打开 ⇒ `.player-transport` 找不到。
+
+**修法（测试基建，未放宽任何断言）**：两个 `boot()` 在点击启动后显式等
+`expect(page.locator('.start-overlay')).toHaveCount(0, { timeout: 15_000 })`——这正是产品承诺的行为
+（`boot.spec.ts` 第一条用例就在断言它），再继续交互。正常机器上这条等待是毫秒级。

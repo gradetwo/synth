@@ -22,6 +22,12 @@ import { expect, test, type Page } from './fixtures';
 async function boot(page: Page) {
   await page.goto('/');
   await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  // The gate, not the keyboard behind it, is what the tests below have to get
+  // past: while `.start-overlay` is up it eats the pointer, so the forced clicks
+  // in `openSettings`/the player never reach their target. On a host that cannot
+  // run audio the gate stays for the full two grace waits (~5 s, see
+  // `e2e/audio-host.ts`); Chromium lifts it almost immediately.
+  await expect(page.locator('.start-overlay')).toHaveCount(0, { timeout: 15_000 });
   await expect(page.locator('.kbd-dock.open')).toBeVisible();
 }
 

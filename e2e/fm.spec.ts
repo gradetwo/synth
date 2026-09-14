@@ -12,6 +12,13 @@ import { expect, test, type Page } from './fixtures';
 async function boot(page: Page) {
   await page.goto('/');
   await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  // Wait for the start gate to lift, not just for the click to land. Until it
+  // does, `.start-overlay` covers the whole page and eats the pointer: the knob
+  // below never sees the drag. On a host where the engine cannot run, the gate
+  // is the full two grace waits (~5 s, see `settleWithin` / `e2e/audio-host.ts`);
+  // Chromium lifts it in well under the old 300 ms, which is why the race only
+  // ever bit Firefox.
+  await expect(page.locator('.start-overlay')).toHaveCount(0, { timeout: 15_000 });
   await page.waitForTimeout(300);
 }
 
