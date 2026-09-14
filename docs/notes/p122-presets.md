@@ -81,8 +81,16 @@ bass patches.
 (`dsp::fx_shaping::quantise`). At 4 bits that step is **0.125**, and this patch's
 pre-effect peak is about **0.044**: every capture rounded to zero, so the wet leg
 of the crossfade was *silence* and the only sound was the `1 - mix = 10 %` dry
-leak. Measured proof: at `FX_CRUSH_MIX 1.0` the patch renders exactly `0.00000`,
-and at `0.9` it renders exactly `0.1 x` the dry level.
+leak. Measured proof — one middle C over the guard's own 0.652 s window, peak,
+with the mix swept to show which leg is producing the sound:
+
+| voicing | `MIX 0` (dry) | `MIX 1.0` (wet) | `MIX 0.9` (the preset) |
+| :--- | ---: | ---: | ---: |
+| original (4 bit, gain 0.442) | 0.01950 | **0.00000** | 0.00195 (= 0.1 x dry) |
+| fixed (6 bit, gain 0.36) | 0.01588 | 0.02344 | 0.02258 |
+
+The original's wet leg is *exactly* zero, and its output is exactly the 10 % dry
+leak; the fixed one's wet leg is alive and is now the sound you hear.
 
 **Fix.** `FX_CRUSH_BITS 4 -> 6` puts the step at 0.03125, below the signal, so
 the crusher actually quantises; `PATCH_GAIN 0.442 -> 0.36` brings the now-working
