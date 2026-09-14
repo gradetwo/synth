@@ -391,7 +391,11 @@ export function hasCopy(key: string): boolean {
  */
 export async function loadAllStrings(): Promise<void> {
   const { STRING_LOADERS } = await import('./i18n-panels');
-  await Promise.all(STRING_LOADERS.map((load) => load()));
+  // The library's table is its own module (P10.5): the panel tables are shared
+  // between parallel UI tracks, so a new batch registers its copy separately
+  // rather than editing `i18n-panels.ts`.
+  const { loadLibraryStrings } = await import('./i18n.library');
+  await Promise.all([...STRING_LOADERS.map((load) => load()), loadLibraryStrings()]);
 }
 
 /** True once every declared key has copy (used by the i18n tests). */

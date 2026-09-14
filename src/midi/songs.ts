@@ -4,20 +4,50 @@
  * Every entry is authored with a tiny score helper: a compact note string for
  * the melody (`"e5/0.5 d#5/0.5 r/1 [c4,e4,g4]/2"`) plus chord-symbol
  * accompaniment patterns. Public-domain works (Beethoven, Pachelbel, Mozart,
- * Chinese folk) are arranged in full with intro, repeats, a variation and a
- * coda; the modern film/game themes stay as recognisable demonstration
- * excerpts because the rights remain with their owners.
+ * Bach, Grieg, Tchaikovsky, Offenbach, Brahms, traditional folk) are arranged
+ * in full with intro, repeats and a coda; the pieces written for this project
+ * are marked `original` and never passed off as folk tunes.
+ *
+ * **Licensing (P10.5).** No entry may be a work still in copyright, however
+ * short: an excerpt of a protected work is a derivative of it. Every spec
+ * therefore carries a `source` block naming its licence kind and its
+ * provenance, and the panel shows that label on every row. The nine entries
+ * that were still protected (Mariage d'Amour, River Flows in You, Summer,
+ * Castle in the Sky, Game of Thrones, Butterfly Lovers, A Chinese Ghost Story,
+ * Croatian Rhapsody, Super Mario) were removed and replaced by public-domain
+ * works or originals of comparable difficulty.
  */
 
 import type { MidiNote, MidiSong } from './smf';
+
+/** Why a built-in song may be shipped: a licence class, not a file format. */
+export type SongSourceKind = 'public-domain' | 'original' | 'user';
+
+export interface SongSource {
+  kind: SongSourceKind;
+  /**
+   * Provenance: a catalogue number, the tune's name, or `GS-1 original`.
+   * The UI shows the kind's bilingual label plus this string.
+   */
+  credit: string;
+  /** Optional reference (a score page, a catalogue entry). */
+  url?: string;
+}
 
 export interface SongSpec {
   id: string;
   title: [zh: string, en: string];
   composer: string;
+  source: SongSource;
   bpm: number;
   steps: [string, number, number, number?][];
 }
+
+/** A public-domain work: the credit names the piece, the composer is separate. */
+const pd = (credit: string): SongSource => ({ kind: 'public-domain', credit });
+
+/** Written for this project. Never presented as a folk tune. */
+const original: SongSource = { kind: 'original', credit: 'GS-1' };
 
 const SEMITONES: Record<string, number> = {
   C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11,
@@ -228,19 +258,20 @@ const spec = (
   id: string,
   title: [string, string],
   composer: string,
+  source: SongSource,
   bpm: number,
   build: (s: Score) => void,
 ): SongSpec => {
   const score = new Score(bpm);
   build(score);
-  return { id, title, composer, bpm, steps: score.steps };
+  return { id, title, composer, source, bpm, steps: score.steps };
 };
 
 // ------------------------------------------------------------------ exercises
 
 /** C-major scale up and back down, three octaves with a contrary motion tag. */
 function scaleExercise(): SongSpec {
-  return spec('scale', ['音阶（练习）', 'Scales (practice)'], '—', 100, (s) => {
+  return spec('scale', ['音阶（练习）', 'Scales (practice)'], '—', original, 100, (s) => {
     const progression = ['C', 'G', 'Am', 'F', 'C', 'G', 'F', 'C'];
     let at = 0;
     for (let pass = 0; pass < 3; pass++) {
@@ -271,7 +302,7 @@ function scaleExercise(): SongSpec {
 
 /** Arpeggios through the circle of fifths, both hands. */
 function arpeggioExercise(): SongSpec {
-  return spec('arpeggio', ['琶音（练习）', 'Arpeggios (practice)'], '—', 100, (s) => {
+  return spec('arpeggio', ['琶音（练习）', 'Arpeggios (practice)'], '—', original, 100, (s) => {
     const progression = ['C', 'Am', 'F', 'G', 'Em', 'Am', 'Dm', 'G7', 'C', 'F', 'G7', 'C'];
     s.chords(progression, 0, { per: 4, pattern: 'harp', vel: 0.5 });
     let at = 0;
@@ -295,7 +326,7 @@ function arpeggioExercise(): SongSpec {
  * bridge, and a final statement.
  */
 function elise(): SongSpec {
-  return spec('elise', ['致爱丽丝', 'Für Elise'], 'L. v. Beethoven', 112, (s) => {
+  return spec('elise', ['致爱丽丝', 'Für Elise'], 'L. v. Beethoven', pd('WoO 59'), 112, (s) => {
     const theme =
       'e5/0.5 d#5/0.5 e5/0.5 d#5/0.5 e5/0.5 b4/0.5 d5/0.5 c5/0.5 a4/1 r/0.5 c4/0.5 e4/0.5 a4/0.5 b4/1 r/0.5 e4/0.5 g#4/0.5 b4/0.5 c5/1 r/0.5 e4/0.5 ' +
       'e5/0.5 d#5/0.5 e5/0.5 d#5/0.5 e5/0.5 b4/0.5 d5/0.5 c5/0.5 a4/1 r/0.5 c4/0.5 e4/0.5 a4/0.5 b4/1 r/0.5 e4/0.5 c5/0.5 b4/0.5 a4/2';
@@ -344,7 +375,7 @@ function elise(): SongSpec {
  * way the piece is played at weddings.
  */
 function canon(): SongSpec {
-  return spec('canon', ['卡农', 'Canon in D'], 'J. Pachelbel', 88, (s) => {
+  return spec('canon', ['卡农', 'Canon in D'], 'J. Pachelbel', pd('Canon in D'), 88, (s) => {
     const ground = ['D', 'A', 'B', 'F#m', 'G', 'D', 'G', 'A'];
     const violin1 =
       'f#5/1 e5/1 d5/1 c#5/1 b4/1 a4/1 b4/1 c#5/1 d5/1 c#5/1 b4/1 a4/1 g4/1 f#4/1 g4/1 e4/1 d4/2';
@@ -385,7 +416,7 @@ function canon(): SongSpec {
  * melody on top, following the movement's opening harmony.
  */
 function moonlight(): SongSpec {
-  return spec('moonlight', ['月光奏鸣曲（第一乐章）', 'Moonlight Sonata (I)'], 'L. v. Beethoven', 52, (s) => {
+  return spec('moonlight', ['月光奏鸣曲（第一乐章）', 'Moonlight Sonata (I)'], 'L. v. Beethoven', pd('Op. 27 No. 2'), 52, (s) => {
     // One chord per bar (4 beats), the movement's opening progression.
     const bars = [
       'C#m', 'C#m', 'A', 'A', 'F#m', 'F#m', 'G#7', 'G#7',
@@ -430,7 +461,7 @@ function moonlight(): SongSpec {
 
 /** Turkish March — the rondo theme, a C-major episode and the reprise. */
 function turkish(): SongSpec {
-  return spec('turkish', ['土耳其进行曲', 'Turkish March'], 'W. A. Mozart', 120, (s) => {
+  return spec('turkish', ['土耳其进行曲', 'Turkish March'], 'W. A. Mozart', pd('K. 331'), 120, (s) => {
     const theme =
       'b4/0.5 a4/0.5 g#4/0.5 a4/0.5 c5/0.75 b4/0.25 a4/0.25 g#4/0.25 a4/0.25 e5/0.75 d5/0.25 c5/0.25 b4/0.25 ' +
       'c5/0.25 a4/0.5 c5/0.25 b4/0.25 a4/0.25 g#4/0.25 a4/0.5 c5/0.25 b4/0.25 a4/0.25 g#4/0.25 a4/1';
@@ -471,7 +502,7 @@ function turkish(): SongSpec {
 
 /** Jasmine Flower — the complete folk tune, three verses with variations. */
 function jasmine(): SongSpec {
-  return spec('jasmine', ['茉莉花', 'Jasmine Flower'], 'Chinese folk', 84, (s) => {
+  return spec('jasmine', ['茉莉花', 'Jasmine Flower'], 'Chinese folk', pd('中国民歌'), 84, (s) => {
     const verse1 =
       'e4/0.5 e4/0.5 g4/0.5 a4/0.5 c5/0.5 c5/0.5 a4/0.5 g4/0.5 g4/0.5 a4/0.5 g4/0.5 e4/0.5 d4/0.5 e4/0.5 g4/0.5 a4/1 ' +
       'c5/0.5 a4/0.5 g4/0.5 e4/0.5 g4/0.5 a4/0.5 c5/0.5 a4/0.5 g4/0.5 e4/0.5 d4/0.5 e4/0.5 g4/1 e4/1';
@@ -498,33 +529,36 @@ function jasmine(): SongSpec {
   });
 }
 
-// ------------------------------------------------------- demonstration excerpts
-// The modern film/game themes below are short, recognisable demonstrations; all
-// rights remain with their owners. Each one gets a light accompaniment so it
-// still feels finished, but they are deliberately not full arrangements.
+// ------------------------------------------------------ arranged full pieces
+// Public-domain and original pieces share one helper: a melody string, a chord
+// progression and a handful of statements (plain, an octave up, then fuller) so
+// a piece feels finished without hand-writing every bar. `source` is required,
+// so a new entry cannot be added without naming its licence.
 
 const withAccompaniment = (
   id: string,
   title: [string, string],
   composer: string,
+  source: SongSource,
   bpm: number,
   melody: string,
   chords: string[],
   opts: { per?: number; pattern?: Pattern; octave?: number; vel?: number; passes?: number } = {},
 ): SongSpec =>
-  spec(id, title, composer, bpm, (s) => {
+  spec(id, title, composer, source, bpm, (s) => {
     // The progression is stretched to cover exactly one melody pass, so the
     // harmony never runs past the phrase or starts late.
     const per = opts.per ?? beatsOf(melody) / chords.length;
     let at = 0;
-    // Three statements — plain, an octave up, then with a fuller left hand —
-    // so the excerpt feels finished without becoming a full arrangement.
+    // Six statements at most: plain, an octave up, a fuller left hand, then a
+    // closing pair — enough for a piece, short enough not to loop forever.
     const passes: { octave: number; vel: number; comp: number }[] = [
       { octave: 0, vel: 0.88, comp: 0.42 },
       { octave: opts.octave ?? 1, vel: 0.78, comp: 0.5 },
       { octave: 0, vel: 0.82, comp: 0.54 },
       { octave: 0, vel: 0.84, comp: 0.5 },
       { octave: opts.octave ?? 1, vel: 0.76, comp: 0.56 },
+      { octave: 0, vel: 0.9, comp: 0.6 },
     ].slice(0, opts.passes ?? 3);
     for (const pass of passes) {
       s.chords(chords, at, { per, pattern: opts.pattern ?? 'broken', vel: pass.comp });
@@ -538,129 +572,129 @@ export const DEMO_SONGS: SongSpec[] = [
   canon(),
   moonlight(),
   withAccompaniment(
-    'mariage',
-    ['梦中的婚礼', "Mariage d'Amour"],
-    'P. de Senneville',
-    76,
-    'e4/0.5 g4/0.5 b4/0.5 e5/0.5 d5/0.5 b4/0.5 g4/0.5 e4/0.5 a4/0.5 c5/0.5 e5/0.5 a5/0.5 g5/0.5 e5/0.5 c5/0.5 a4/0.5 ' +
-      'f#4/0.5 a4/0.5 d5/0.5 f#5/0.5 e5/0.5 d5/0.5 b4/0.5 g4/0.5 e4/1 g4/1 b4/1 e5/1' +
-      ' c5/0.5 b4/0.5 a4/0.5 g4/0.5 f#4/0.5 a4/0.5 d5/0.5 f#5/0.5 e5/1 d5/1 b4/0.5 a4/0.5 g4/0.5 b4/0.5 e5/1',
-    ['Em', 'Am', 'D', 'G', 'Em', 'Am', 'B7', 'Em'],
-    { per: 4, pattern: 'broken' },
+    'waltz',
+    ['黄昏圆舞曲（原创）', 'Evening Waltz (original)'],
+    'GS-1 original',
+    original,
+    108,
+    'a4/1 c5/1 e5/1 a5/1.5 g5/0.5 f5/1 e5/1 d5/1 c5/1.5 d5/0.5 e5/1 c5/1 a4/1',
+    ['Am', 'Am', 'Dm', 'E7'],
+    { per: 3, pattern: 'waltz', passes: 6 },
   ),
   turkish(),
   withAccompaniment(
-    'river',
-    ['River Flows in You', 'River Flows in You'],
-    'Yiruma',
-    84,
-    'a4/0.5 b4/0.5 c5/0.5 e5/0.5 d5/0.5 c5/0.5 b4/0.5 a4/0.5 g4/0.5 a4/0.5 b4/0.5 d5/0.5 c5/0.5 b4/0.5 a4/0.5 g4/0.5 ' +
-      'f4/0.5 g4/0.5 a4/0.5 c5/0.5 b4/0.5 a4/0.5 g4/0.5 e4/0.5 a4/1 b4/1 c5/1 e5/1' +
-      ' a4/0.5 c5/0.5 e5/0.5 d5/0.5 c5/0.5 b4/0.5 a4/0.5 g4/0.5 a4/1 c5/0.5 d5/0.5 e5/0.5 d5/0.5 c5/0.5 b4/1 a4/1',
-    ['Am', 'F', 'C', 'G', 'Am', 'F', 'G', 'Am'],
-    { per: 4, pattern: 'broken' },
+    'drift',
+    ['流云（原创）', 'Drifting Clouds (original)'],
+    'GS-1 original',
+    original,
+    76,
+    'e5/2 d5/1 c5/1 g4/1 a4/1 c5/2 d5/1 e5/1 g5/1 e5/1 d5/2 c5/1 a4/1 g4/1 e4/1',
+    ['C', 'Am', 'F', 'G', 'C'],
+    { per: 4, pattern: 'harp', passes: 3 },
   ),
   withAccompaniment(
-    'summer',
-    ['Summer', 'Summer'],
-    'Joe Hisaishi',
-    104,
-    'e5/0.5 g5/0.5 a5/0.5 g5/0.5 e5/0.5 d5/0.5 e5/1 d5/0.5 e5/0.5 g5/0.5 a5/0.5 c6/0.5 b5/0.5 a5/1 ' +
-      'g5/0.5 e5/0.5 d5/0.5 e5/0.5 g5/1 a5/1 g5/1 e5/1' +
-      ' c6/0.5 b5/0.5 a5/0.5 g5/0.5 e5/0.5 g5/0.5 a5/1 g5/0.5 e5/0.5 d5/0.5 c5/0.5 d5/1 e5/1 g5/1 e5/1',
-    ['C', 'G', 'Am', 'F', 'C', 'G', 'F', 'C'],
-    { per: 4, pattern: 'broken', passes: 4 },
+    'can-can',
+    ['康康舞曲', 'Can-Can'],
+    'J. Offenbach',
+    pd('Orpheus'),
+    140,
+    'g4/0.5 g4/0.5 g4/0.5 a4/0.5 b4/0.5 b4/0.5 a4/0.5 g4/0.5 a4/0.5 b4/0.5 c5/0.5 d5/0.5 b4/1 g4/1 ' +
+      'g4/0.5 g4/0.5 g4/0.5 a4/0.5 b4/0.5 b4/0.5 a4/0.5 g4/0.5 a4/0.5 b4/0.5 c5/0.5 d5/0.5 b4/1 g4/1',
+    ['G', 'D7', 'G', 'C'],
+    { per: 4, pattern: 'stride', passes: 6, octave: 1 },
   ),
-  spec('croatian', ['克罗地亚狂想曲', 'Croatian Rhapsody'], 'Tonči Huljić', 138, (s) => {
-    const riff = (root: string, at: number) => {
-      const low = midiOf(`${root}3`);
-      const pattern = [low, low + 7, low + 12, low + 7, low, low + 7, low + 12, low + 19];
-      pattern.forEach((midi, i) => s.note(midi, at + i * 0.25, 0.22, 0.7));
-    };
-    const progression: [string, string][] = [
-      ['E', 'Em'], ['D', 'D'], ['C', 'C'], ['B', 'B7'],
-      ['E', 'Em'], ['D', 'D'], ['C', 'C'], ['B', 'B7'],
-    ];
-    const melody =
-      'b4/0.25 e5/0.25 f#5/0.25 g5/0.25 f#5/0.25 e5/0.25 b4/0.5 a4/0.25 b4/0.25 c#5/0.25 d5/0.25 c#5/0.25 b4/0.25 a4/0.5 g#4/0.25 a4/0.25 b4/0.25 c5/0.25 b4/0.25 a4/0.25 g#4/0.5 f#4/0.25 g#4/0.25 a4/0.25 b4/0.25 a4/0.25 g#4/0.25 f#4/0.5 ' +
-      'e5/0.25 f#5/0.25 g5/0.25 a5/0.25 g5/0.25 f#5/0.25 e5/0.5 d5/0.25 e5/0.25 f#5/0.25 g5/0.25 f#5/0.25 e5/0.25 d5/0.5 c5/0.25 d5/0.25 e5/0.25 f#5/0.25 e5/0.25 d5/0.25 c5/0.5 b4/1';
-    let at = 0;
-    at = s.repeat(2, at, (cursor) => {
-      progression.forEach(([bass, symbol], i) => {
-        riff(bass, cursor + i * 4);
-        s.voice(symbol, cursor + i * 4, 4, 'block', 3, 0.4);
-      });
-      return cursor + progression.length * 4;
-    });
-    s.chords(['Em', 'D', 'C', 'B7', 'Em', 'D', 'C', 'B7'], at, { per: 4, pattern: 'pulse', vel: 0.5 });
-    at = s.line(melody, at, { vel: 0.88 });
-    at = s.repeat(2, at, (cursor) => {
-      progression.forEach(([bass, symbol], i) => {
-        riff(bass, cursor + i * 4);
-        s.voice(symbol, cursor + i * 4, 4, 'block', 4, 0.4);
-      });
-      return cursor + progression.length * 4;
-    });
-    s.chord(chordTones('Em', 3), at, 4, 0.7);
-  }),
-  withAccompaniment(
-    'castle',
-    ['天空之城', 'Castle in the Sky'],
-    'Joe Hisaishi',
-    96,
-    'a4/1 b4/0.5 c5/0.5 e5/0.5 d5/0.5 c5/0.5 b4/0.5 a4/1 e5/0.5 d5/0.5 c5/0.5 b4/0.5 c5/1 ' +
-      'a4/1 c5/0.5 d5/0.5 e5/0.5 f5/0.5 e5/0.5 d5/0.5 c5/1 b4/0.5 c5/0.5 d5/1 c5/1' +
-      ' e5/0.5 d5/0.5 c5/0.5 b4/0.5 a4/0.5 c5/0.5 b4/0.5 a4/0.5 g4/1 e4/1 g4/0.5 a4/0.5 b4/1 a4/1',
-    ['Am', 'Em', 'F', 'C', 'Dm', 'Am', 'E7', 'Am'],
-    { per: 4, pattern: 'broken', passes: 4 },
-  ),
-  spec('mario', ['超级玛丽主题曲', 'Super Mario theme'], 'Koji Kondo', 200, (s) => {
+  spec('mountain-king', ['在山魔王的宫殿里', 'In the Hall of the Mountain King'], 'E. Grieg', pd('Op. 23'), 132, (s) => {
+    // The theme's own crescendo: one statement per pass, each louder and an
+    // octave higher on alternate passes, over a driving staccato bass.
     const theme =
-      'e5/0.25 e5/0.25 r/0.25 e5/0.25 r/0.25 c5/0.25 e5/0.25 r/0.25 g5/0.5 r/0.5 g4/0.5 r/0.5 ' +
-      'c5/0.5 r/0.25 g4/0.25 r/0.25 e4/0.25 r/0.25 a4/0.25 b4/0.25 a#4/0.25 a4/0.25 r/0.25 g4/0.25 e5/0.25 g5/0.25 a5/0.25 r/0.25 f5/0.25 g5/0.25 r/0.25 e5/0.25 c5/0.25 d5/0.25 b4/0.5 r/0.25 ' +
-      'c5/0.25 r/0.25 g4/0.25 r/0.25 e4/0.25 r/0.25 a4/0.25 b4/0.25 a#4/0.25 a4/0.25 r/0.25 g4/0.25 e5/0.25 g5/0.25 a5/0.25 r/0.25 f5/0.25 g5/0.25 r/0.25 e5/0.25 c5/0.25 d5/0.25 b4/0.5 r/0.5 ' +
-      'e5/0.25 e5/0.25 r/0.25 e5/0.25 r/0.25 c5/0.25 e5/0.25 r/0.25 g5/0.5 r/0.5 g4/0.5 r/0.5 c5/0.5 r/0.25 g4/0.25 r/0.25 e4/0.25 r/0.25 a4/0.25 b4/0.25 a#4/0.25 a4/0.25 r/0.25 g4/0.25 e5/0.25 g5/0.25 a5/0.25 r/0.25 f5/0.25 g5/0.25 r/0.25 e5/0.25 c5/0.25 d5/0.25 b4/0.5 r/0.25 ' +
-      'g5/0.25 f#5/0.25 f5/0.25 d#5/0.25 r/0.25 e5/0.25 r/0.25 g#4/0.25 a4/0.25 c5/0.25 r/0.25 a4/0.25 c5/0.25 d5/0.25 r/0.5 g5/0.25 f#5/0.25 f5/0.25 d#5/0.25 r/0.25 e5/0.25 r/0.25 c6/0.25 r/0.25 c6/0.25 c6/0.5 r/0.5';
-    const chords = ['C', 'G', 'C', 'G', 'C', 'G', 'C', 'G', 'C', 'G', 'C', 'G', 'C', 'G', 'C', 'G'];
+      'b4/0.5 c#5/0.5 d5/0.5 e5/0.5 f#5/0.5 d5/0.5 f#5/0.5 e5/0.5 ' +
+      'f5/0.5 e5/0.5 d5/0.5 c#5/0.5 b4/0.5 c#5/0.5 d5/0.5 e5/0.5 ' +
+      'f#5/0.5 d5/0.5 f#5/0.5 e5/0.5 f5/0.5 e5/0.5 d5/0.5 c#5/0.5 b4/1 f#4/1 b4/1 r/1';
+    const bass = ['Bm', 'Bm', 'F#7', 'Bm', 'G', 'F#7', 'Bm', 'Bm'];
+    const per = beatsOf(theme) / bass.length;
     let at = 0;
     at = s.repeat(6, at, (cursor, pass) => {
-      s.chords(chords, cursor, { per: 2, pattern: 'pulse', vel: 0.42 + (pass % 3) * 0.03 });
-      return s.line(theme, cursor, { octave: pass % 2, vel: pass >= 4 ? 0.78 : 0.88 });
+      s.chords(bass, cursor, { per, pattern: pass >= 3 ? 'pulse' : 'block', vel: 0.4 + pass * 0.045 });
+      return s.line(theme, cursor, { octave: pass % 3 === 1 ? 0 : pass >= 3 ? -1 : 0, vel: 0.72 + pass * 0.03 });
     });
-    s.chord(['c3', 'c4', 'e4', 'g4', 'c5'], at, 2, 0.68);
+    s.chord(['b2', 'd3', 'f#3', 'b3'], at, 4, 0.78);
   }),
   withAccompaniment(
-    'got',
-    ['权力的游戏主题曲', 'Game of Thrones theme'],
-    'Ramin Djawadi',
-    112,
-    'c4/1 c4/0.5 c4/0.5 c4/1 d#4/0.5 d4/0.5 c4/1 a#3/0.5 c4/0.5 d#4/1 d4/0.5 c4/0.5 a#3/1 g#3/0.5 a#3/0.5 c4/2 ' +
-      'g3/1 g3/0.5 g3/0.5 g3/1 a#3/0.5 a3/0.5 g3/1 f3/0.5 g3/0.5 a#3/1 a3/0.5 g3/0.5 f3/1 d#3/0.5 f3/0.5 g3/2' +
-      ' c4/1 d#4/0.5 d4/0.5 c4/1 a#3/0.5 c4/0.5 d#4/1 f4/0.5 d#4/0.5 c4/1 a#3/0.5 g#3/0.5 a#3/2 c4/2',
-    ['Cm', 'Ab', 'Eb', 'Bb', 'Cm', 'Ab', 'Fm', 'Gm'],
-    { per: 4, pattern: 'block', vel: 0.42 },
+    'lullaby',
+    ['摇篮曲', 'Brahms’ Lullaby'],
+    'J. Brahms',
+    pd('Op. 49 No. 4'),
+    90,
+    'e4/1 e4/1 g4/1 g4/2 a4/1 a4/2 g4/1 ' +
+      'f4/1 f4/1 e4/1 e4/2 d4/1 d4/2 c4/1',
+    ['C', 'G7', 'C', 'F', 'C', 'G7'],
+    { per: 3, pattern: 'waltz', passes: 4 },
   ),
   withAccompaniment(
-    'butterfly',
-    ['梁祝（选段）', 'Butterfly Lovers (excerpt)'],
-    'He Zhanhao / Chen Gang',
-    72,
-    'g4/0.5 a4/0.5 b4/0.5 d5/0.75 c5/0.5 b4/0.5 a4/0.75 g4/0.5 e4/0.5 d4/0.75 e4/0.5 g4/0.5 a4/0.5 b4/1.5 ' +
-      'd5/0.5 e5/0.5 d5/0.75 c5/0.5 b4/0.5 a4/0.75 g4/0.5 a4/0.5 b4/0.75 a4/0.5 g4/0.5 e4/1.5' +
-      ' e5/0.5 d5/0.5 c5/0.5 b4/0.5 a4/0.5 g4/0.5 a4/0.5 b4/0.5 c5/1 b4/0.5 a4/0.5 g4/0.5 e4/0.5 d4/1 e4/1',
-    ['G', 'Em', 'C', 'D', 'G', 'Em', 'Am', 'D'],
-    { per: 4, pattern: 'broken' },
-  ),
-  withAccompaniment(
-    'seashore',
-    ['沧海一声笑', 'A Chinese Ghost Story theme'],
-    'James Wong',
+    'sugar-plum',
+    ['糖果仙子之舞', 'Dance of the Sugar Plum Fairy'],
+    'P. I. Tchaikovsky',
+    pd('Op. 71'),
     92,
-    'a4/1 g4/0.5 e4/0.5 d4/0.5 c4/0.5 a3/1 c4/0.5 d4/0.5 e4/1 g4/0.5 a4/0.5 c5/1.5 ' +
-      'd5/0.5 c5/0.5 a4/0.5 g4/0.5 e4/0.5 g4/0.5 a4/0.5 c5/0.5 d5/1 c5/0.5 a4/0.5 g4/1.5' +
-      ' a4/0.5 c5/0.5 d5/0.5 e5/0.5 d5/0.5 c5/0.5 a4/0.5 g4/0.5 a4/1 c5/0.5 a4/0.5 g4/0.5 e4/0.5 g4/1 a4/1',
-    ['Am', 'C', 'G', 'Am', 'F', 'C', 'G', 'Am'],
-    { per: 4, pattern: 'broken', passes: 4 },
+    'e5/0.5 b4/0.5 g4/0.5 f#4/0.5 e5/0.5 b4/0.5 g4/0.5 f#4/0.5 ' +
+      'e5/0.5 b4/0.5 g4/0.5 f#4/0.5 e5/1 b4/1 ' +
+      'c5/0.5 g4/0.5 e4/0.5 d#4/0.5 c5/0.5 g4/0.5 e4/0.5 d#4/0.5 c5/1 g4/1',
+    ['Em', 'Em', 'Am', 'Em', 'Em', 'Am'],
+    { per: 2, pattern: 'broken', passes: 6, octave: 1 },
+  ),
+  spec('toccata', ['托卡塔（原创）', 'Toccata (original)'], 'GS-1 original', original, 100, (s) => {
+    // A keyboard toccata in D minor: a descending 16th figure over a pedal,
+    // answered in the bass, then a closing run. Written for the project.
+    const run =
+      'a5/0.25 g5/0.25 f5/0.25 e5/0.25 d5/0.25 c#5/0.25 d5/0.25 e5/0.25 ' +
+      'f5/0.25 e5/0.25 d5/0.25 c#5/0.25 b4/0.25 a#4/0.25 b4/0.25 c#5/0.25 ' +
+      'd5/0.25 c#5/0.25 b4/0.25 a4/0.25 g#4/0.25 f#4/0.25 g#4/0.25 a4/0.25 a4/1';
+    const subject =
+      'd3/0.5 a3/0.25 d4/0.25 f4/0.5 e4/0.25 d4/0.25 c#4/0.5 a3/0.25 e4/0.25 f4/0.5 d4/0.25 a3/0.25 d4/1';
+    const runBeats = beatsOf(run);
+    let at = 0;
+    at = s.repeat(2, at, (cursor) => {
+      s.chord(['d2', 'a2', 'd3'], cursor, runBeats, 0.5);
+      return s.line(run, cursor, { vel: 0.86 });
+    });
+    s.chord(['d3', 'f3', 'a3', 'd4'], at, 4, 0.7);
+    at += 4;
+    at = s.repeat(2, at, (cursor) => {
+      s.chord(['a2', 'e3', 'a3'], cursor, runBeats, 0.5);
+      return s.line(run, cursor, { octave: -1, vel: 0.82 });
+    });
+    s.chord(['d3', 'f3', 'a3', 'd4'], at, 4, 0.7);
+    at += 4;
+    at = s.repeat(2, at, (cursor) => {
+      s.chord(['d2', 'a2', 'd3'], cursor, runBeats, 0.55);
+      return s.line(run, cursor, { vel: 0.9 });
+    });
+    s.chord(['d3', 'f3', 'a3', 'd4'], at, 4, 0.72);
+    at += 4;
+    at = s.line(subject, at, { vel: 0.8 });
+    s.chord(['g2', 'd3', 'g3'], at, 4, 0.6);
+    at += 4;
+    s.chord(['d3', 'f3', 'a3', 'd4'], at, 8, 0.75);
+  }),
+  withAccompaniment(
+    'highland-song',
+    ['山歌（原创）', 'Mountain Song (original)'],
+    'GS-1 original',
+    original,
+    88,
+    'd5/1 e5/1 f#5/1 a5/1 b5/1 a5/1 f#5/2 e5/1 d5/1 e5/1 f#5/1 e5/1 d5/2 b4/1',
+    ['D', 'Bm', 'G', 'A', 'D', 'Bm'],
+    { per: 3, pattern: 'broken', passes: 4, octave: 1 },
+  ),
+  withAccompaniment(
+    'scarborough',
+    ['斯卡布罗集市', 'Scarborough Fair'],
+    'Traditional English',
+    pd('英格兰民谣'),
+    100,
+    'a4/1 a4/1 e5/1 e5/1 b4/1 c5/1 b4/1 a4/1 g4/1 a4/1 b4/1 c5/1 a4/2 a4/1',
+    ['Am', 'G', 'Am', 'C', 'Am'],
+    { per: 3, pattern: 'broken', passes: 5, octave: 1 },
   ),
   jasmine(),
   // ------------------------------------------------- well-known, fun, public domain
@@ -668,6 +702,7 @@ export const DEMO_SONGS: SongSpec[] = [
     'tetris',
     ['俄罗斯方块（主题）', 'Tetris (Korobeiniki)'],
     'Russian folk',
+    pd('Korobeiniki'),
     138,
     'e5/0.5 b4/0.25 c5/0.25 d5/0.5 c5/0.25 b4/0.25 a4/0.5 a4/0.25 c5/0.25 e5/0.5 d5/0.25 c5/0.25 ' +
       'b4/0.75 c5/0.25 d5/0.5 e5/0.5 c5/0.5 a4/0.5 a4/0.5 ' +
@@ -679,6 +714,7 @@ export const DEMO_SONGS: SongSpec[] = [
     'joy',
     ['欢乐颂', 'Ode to Joy'],
     'Beethoven',
+    pd('Op. 125'),
     112,
     'e4/1 e4/1 f4/1 g4/1 g4/1 f4/1 e4/1 d4/1 c4/1 c4/1 d4/1 e4/1 e4/1.5 d4/0.5 d4/2 ' +
       'e4/1 e4/1 f4/1 g4/1 g4/1 f4/1 e4/1 d4/1 c4/1 c4/1 d4/1 e4/1 d4/1.5 c4/0.5 c4/2',
@@ -689,6 +725,7 @@ export const DEMO_SONGS: SongSpec[] = [
     'greensleeves',
     ['绿袖子', 'Greensleeves'],
     'Traditional English',
+    pd('英格兰民谣'),
     96,
     'a4/1 c5/2 d5/1 e5/1.5 f5/0.5 e5/1 d5/2 b4/1 g4/1.5 a4/0.5 b4/1 c5/2 a4/1 a4/1.5 g#4/0.5 a4/1 b4/2 g#4/1 e4/2 ' +
       'a4/1 c5/2 d5/1 e5/1.5 f5/0.5 e5/1 d5/2 b4/1 g4/1.5 a4/0.5 b4/1 c5/1.5 b4/0.5 a4/1 g#4/1.5 a4/0.5 b4/1 g#4/1 e4/2',
@@ -699,6 +736,7 @@ export const DEMO_SONGS: SongSpec[] = [
     'furelise-rock',
     ['致爱丽丝（八位机版）', 'Für Elise (8-bit)'],
     'Beethoven',
+    pd('WoO 59'),
     140,
     'e5/0.5 d#5/0.5 e5/0.5 d#5/0.5 e5/0.5 b4/0.5 d5/0.5 c5/0.5 a4/1 ' +
       'c4/0.5 e4/0.5 a4/0.5 b4/1 e4/0.5 g#4/0.5 b4/0.5 c5/1 e4/1 ' +

@@ -316,3 +316,63 @@ test('record quantise is selectable and remembered', async ({ page }) => {
   await page.locator('.player-open').click();
   await expect(page.locator('.player-quantise select')).toHaveValue('1/16');
 });
+
+test.describe('player library compliance', () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test('labels every track with its source and licence', async ({ page }) => {
+    await boot(page);
+    await page.locator('.player-open').click();
+    await expect(page.locator('.player.open')).toBeVisible();
+    const rows = page.locator('.player-track');
+    const count = await rows.count();
+    expect(count).toBeGreaterThanOrEqual(16);
+    // One label per row — the row is not a row without provenance (P10.5).
+    await expect(page.locator('.player-track .pt-source')).toHaveCount(count);
+    await expect(
+      page.locator('.player-track', { hasText: '致爱丽丝', hasNotText: '八位机' }).locator('.pt-source'),
+    ).toContainText('公版');
+    await expect(page.locator('.player-track', { hasText: '黄昏圆舞曲' }).locator('.pt-source')).toContainText(
+      '原创',
+    );
+    // The protected works P10.5 removed must not come back.
+    for (const gone of [
+      '梦中的婚礼', 'River Flows in You', 'Summer', '天空之城', '超级玛丽',
+      '权力的游戏', '梁祝', '沧海一声笑', '克罗地亚',
+    ]) {
+      await expect(page.locator('.player-track', { hasText: gone })).toHaveCount(0);
+    }
+  });
+
+  test('refuses a damaged file with a visible reason', async ({ page }) => {
+    await boot(page);
+    await page.locator('.player-open').click();
+    await expect(page.locator('.player.open')).toBeVisible();
+    const input = page.locator('.player input[type=file]');
+
+    // Not a MIDI file at all.
+    await input.setInputFiles({
+      name: 'broken.mid',
+      mimeType: 'audio/midi',
+      buffer: Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]),
+    });
+    await expect(page.locator('.toast')).toContainText('导入失败');
+    await expect(page.locator('.player-track', { hasText: 'broken' })).toHaveCount(0);
+
+    // A `.gs1song` whose share code cannot be decoded.
+    await input.setInputFiles({
+      name: 'broken.gs1song',
+      mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({ format: 'gs1-song', schema: 1, code: 'not-a-share-code' })),
+    });
+    await expect(page.locator('.toast')).toContainText('损坏');
+
+    // A patch file is not a song and is named as such.
+    await input.setInputFiles({
+      name: 'patch.gs1.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({ format: 'gs1-preset', version: 1, params: { 1: 1 } })),
+    });
+    await expect(page.locator('.toast')).toContainText('音色文件');
+  });
+});

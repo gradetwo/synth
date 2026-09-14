@@ -149,6 +149,54 @@ describe('MIDI library persistence', () => {
     expect(library.getTracks().some((entry) => entry.id.startsWith('demo:'))).toBe(true);
   });
 
+  it('labels built-ins with the licence from their spec', async () => {
+    const library = await loadLibrary();
+    const builtins = library.getTracks().filter((entry) => entry.id.startsWith('demo:'));
+    expect(builtins.length).toBeGreaterThan(10);
+    for (const entry of builtins) {
+      expect(['public-domain', 'original'], entry.id).toContain(entry.source?.kind);
+      expect(entry.source?.credit.length, entry.id).toBeGreaterThan(0);
+    }
+    expect(library.getTracks().find((entry) => entry.id === 'demo:elise')?.source?.kind).toBe('public-domain');
+  });
+
+  it('keeps a user track\'s own source across a reload', async () => {
+    const library = await loadLibrary();
+    library.put({
+      ...track,
+      id: 'file:labelled.mid:1',
+      source: { kind: 'user', credit: 'labelled.mid' },
+    });
+    vi.resetModules();
+    const reloaded = await loadLibrary();
+    expect(reloaded.getTracks().find((entry) => entry.id === 'file:labelled.mid:1')?.source).toEqual({
+      kind: 'user',
+      credit: 'labelled.mid',
+    });
+  });
+
+  it('gives an unlabelled track a source and discards a junk one', async () => {
+    const library = await loadLibrary();
+    // A shared arrangement arrives through `put()` without a source.
+    library.put({ ...track, id: 'share:abc' });
+    expect(library.getTracks().find((entry) => entry.id === 'share:abc')?.source?.kind).toBe('user');
+
+    // A hand-edited store cannot smuggle in a kind the app does not know.
+    vi.resetModules();
+    localStorage.setItem(
+      KEY,
+      JSON.stringify(
+        wrap({
+          tracks: [{ ...track, id: 'file:junk.mid:1', source: { kind: 'pirated' } }],
+          currentId: 'file:junk.mid:1',
+        }),
+      ),
+    );
+    const reloaded = await loadLibrary();
+    const stored = reloaded.getTracks().find((entry) => entry.id === 'file:junk.mid:1');
+    expect(stored?.source?.kind).toBe('user');
+  });
+
   it('ignores junk, damaged songs and a newer schema', async () => {
     localStorage.setItem(KEY, 'not json');
     expect((await loadLibrary()).getTracks().every((entry) => entry.id.startsWith('demo:'))).toBe(true);

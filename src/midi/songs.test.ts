@@ -7,11 +7,32 @@ describe('demo playlist', () => {
     const ids = DEMO_SONGS.map((s) => s.id);
     expect(new Set(ids).size).toBe(20);
     for (const required of [
-      'elise', 'canon', 'moonlight', 'mariage', 'turkish', 'river', 'summer',
-      'croatian', 'castle', 'mario', 'got', 'jasmine', 'butterfly', 'seashore',
-      'arpeggio', 'scale', 'tetris', 'joy', 'greensleeves', 'furelise-rock',
+      'elise', 'canon', 'moonlight', 'waltz', 'turkish', 'drift', 'can-can',
+      'mountain-king', 'lullaby', 'sugar-plum', 'toccata', 'highland-song',
+      'scarborough', 'jasmine', 'tetris', 'joy', 'greensleeves', 'furelise-rock',
+      'arpeggio', 'scale',
     ]) {
       expect(ids, required).toContain(required);
+    }
+  });
+
+  /**
+   * The P10.5 compliance rule: no built-in may be a work still in copyright,
+   * however short, and every entry must say what it is. The nine ids below were
+   * removed because their composers hold the rights; this test is what stops
+   * one from quietly returning.
+   */
+  it('ships only public-domain or original works, each with a licence', () => {
+    const ids = DEMO_SONGS.map((s) => s.id);
+    for (const removed of [
+      'mariage', 'river', 'summer', 'croatian', 'castle', 'mario', 'got',
+      'butterfly', 'seashore',
+    ]) {
+      expect(ids, removed).not.toContain(removed);
+    }
+    for (const spec of DEMO_SONGS) {
+      expect(['public-domain', 'original'], spec.id).toContain(spec.source.kind);
+      expect(spec.source.credit.length, spec.id).toBeGreaterThan(0);
     }
   });
 
@@ -40,11 +61,11 @@ describe('demo playlist', () => {
   });
 
   it('ships full-length arrangements, not snippets', () => {
-    // Public-domain works are arranged in full; the modern themes stay as
-    // longer demonstrations for copyright reasons.
+    // The five works arranged end to end: longer than a demonstration and dense
+    // enough that a patch is heard doing real work.
     const publicDomain = ['elise', 'canon', 'moonlight', 'turkish', 'jasmine'];
-    // The four fun additions are loops by design (a game theme or a folk tune
-    // played through), so they are allowed to be shorter than an arrangement.
+    // Loops by design: a folk tune or a theme played through a few times rather
+    // than developed, so they are allowed to be shorter than an arrangement.
     const loops = ['tetris', 'joy', 'greensleeves', 'furelise-rock'];
     for (const spec of DEMO_SONGS) {
       const song = specToSong(spec);
