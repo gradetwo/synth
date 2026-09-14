@@ -8,6 +8,8 @@ dist/
 release/*.zip
 release/*.tar.gz
 release/SHA256SUMS
+# retained rollback store (P12.4): local, machine-specific copies of the last N releases
+release/retained/
 *.tsbuildinfo
 
 # rust
