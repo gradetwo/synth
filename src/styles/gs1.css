@@ -285,6 +285,17 @@ body{font-family:var(--grot);color:var(--txt-1);background:var(--bg-deep);
 .fxg-scroll{flex:1;overflow:auto;padding:10px}
 .fxg-canvas{position:relative;min-width:100%}
 .fxg-wires{position:absolute;inset:0;pointer-events:none}
+/* What a click on a wire actually hits: a solid twin of the visible stroke, on
+   the same curve, drawn under it.
+   A stroke hit area follows the *painted* stroke, and the modulation wires are
+   dashed, so on Gecko and WebKit the 3/8 of a wire that falls in a dash gap is
+   dead canvas (Chromium hit-tests the whole path, which is why only Chromium's
+   E2E passed). The twin is solid, so the whole wire is clickable in every
+   engine. It is deliberately kept at the drawn 2 px instead of being widened
+   into a fat touch target: measured, a 12 px band makes wires that pass close
+   to one another steal each other's clicks -- clicking a wire's own midpoint
+   selected the neighbouring edge instead, and the wrong edge got deleted. */
+.fxg-wire-hit{fill:none;stroke:transparent;stroke-width:2;pointer-events:stroke;cursor:pointer}
 .fxg-wire{fill:none;stroke:color-mix(in srgb,var(--accent) 70%,transparent);stroke-width:2;
   pointer-events:stroke;cursor:pointer}
 .fxg-wire.selected{stroke:var(--accent);stroke-width:3}
