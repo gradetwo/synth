@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.112.0',
+    version: '1.113.0',
     date: '2026-09-14',
-    kind: 'fix',
+    kind: 'sound',
     items: [
       [
-        '**修掉一声很罕见的爆音。** 高音区某些音符在起音的瞬间会有一次整级错误的修正，听起来是一声短促的爆音（实测约每 150 次新起音出现 1 次）。除此之外整段波形**逐字节不变**，工厂预设与音量都没有改动。',
-        '**Fixed a crackle that only showed up rarely.** In the high register, a few notes got one full-scale correction error the moment they started, which sounds like a short crackle (measured: about one fresh note in 150). Every other phase is **byte-for-byte** unchanged, and no factory preset or level moved.',
+        '**高音区更干净。** 波表音色在高音区原本有一层"沙"——那是插值读表的折回成分（非谐波能量 −26…−47 dB），现在**最差 −98 dB**；导入的采样音色也一并更干净（−30 → −33 dB，这条受录音自身带宽限制，已如实记录）。用到波表的 4 个工厂预设音色会有轻微变化，其余 77 个在百分之一 dB 以内，默认音色不受影响。内部同时加入了发布版本保留 + 一键回滚，以及 nightly 的平台矩阵报告（对使用者不可见）。',
+        '**Cleaner high notes.** Wavetable voices carried a layer of grit up high -- the folded-back products of reading the tables with interpolation, at -26...-47 dB of non-harmonic energy -- and that now measures a worst case of **-98 dB**. Imported samples are cleaner too (-30 -> -33 dB, limited by the recording\'s own bandwidth, which is written down honestly). Four factory presets that use wavetables change slightly, the other 77 stay within a hundredth of a dB, and the default voice is untouched. Internally this also brings release retention with one-command rollback and a nightly platform-matrix report, neither visible in the app.',
       ],
     ],
   };
