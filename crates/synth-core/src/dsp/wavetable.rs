@@ -17,18 +17,38 @@
 //! wall, phase included) before being decimated. Same guarantee, measured the
 //! same way.
 
-/// Longest table (level 0). Lower levels halve it until [`MIN_LEN`].
+/// Table length. **Every** level is this long (P9.7): the levels differ in how
+/// many harmonics they hold, not in how many samples they use.
+///
+/// P9.5 measured the residuum and attributed it to the *interpolator*: a short
+/// level read with linear interpolation is a piecewise-linear approximation of
+/// a band-limited signal, and the chord error is a train of high harmonics that
+/// folds back to `SR − k·f0` (1/N²: -24 dB at 16 samples, -58 dB at 128). The
+/// obvious repair — keep a shorter level but hold more samples — trades one
+/// error for a worse one, because the read rate is fixed by the note: a level
+/// of `N` samples holding `h` harmonics is read with a phase step of `2πh/N`
+/// per output sample, and the chord error is set by that product, not by `N`
+/// alone. Decimating the level (what shipped) keeps `h/N` at its Nyquist
+/// maximum, so the error stays where it was.
+///
+/// Holding every level at [`BASE_LEN`] samples instead leaves the same
+/// harmonic content in a table dozens of times longer than the pitch needs:
+/// C8 uses 4 harmonics of a 2048-sample table, so the read is nearly
+/// sample-for-sample and the fold-back falls away. Measured on the P9.5 ruler
+/// (BH-7, 4 s, exact bins, real wasm): the worst factory bank went from
+/// -25.8 dB to -105 dB, and a full-spectrum imported saw from -31 dB to -119 dB
+/// at C2. See `docs/notes/band-limited-oscillators.md` §P9.7.
 pub const BASE_LEN: usize = 2048;
-pub const MIN_LEN: usize = 8;
-/// Shortest cycle [`Table::from_cycle`] will accept: below this the analysis is
-/// all rounding noise.
-pub const MIN_CYCLE: usize = 16;
-/// Number of mip levels: 2048, 1024, … 8.
+/// Number of mip levels: each holds one octave's worth of harmonics.
 ///
 /// The shortest level matters: at the top of the keyboard even 16 harmonics
 /// reach above Nyquist (16 × 4186 Hz), so the bank has to go down to a few
 /// harmonics or the highest notes alias.
 pub const LEVELS: usize = 9;
+/// Shortest cycle [`Table::from_cycle`] will accept. The analysis resamples it
+/// to [`BASE_LEN`], so anything shorter than the point where the source
+/// resolution stops mattering is refused.
+pub const MIN_CYCLE: usize = 64;
 
 /// A harmonic recipe: amplitude per harmonic, `1` = the fundamental.
 pub type Recipe = &'static [(u32, f32)];
@@ -79,14 +99,29 @@ pub struct Table {
     levels: Vec<Vec<f32>>,
 }
 
+/// The harmonic ceiling of mip `level`: `BASE_LEN >> level` harmonics, i.e. the
+/// content that still fits below Nyquist when the level is played at the pitch
+/// that selects it. The level *length* no longer takes part in this: every level
+/// is [`BASE_LEN`] samples.
+///
+/// Note the `/ 2`: a level holding `h` harmonics is safe to read while
+/// `h <= SR / (2 f)`, which is exactly what [`Table::level_for`] checks, and the
+/// engine clamps `f` to `SR / (BASE_LEN >> level)`. The harmonic *count* here is
+/// therefore `(BASE_LEN >> level) / 2`, not `BASE_LEN >> level`: one octave of
+/// headroom over that clamp. Without it level 8 would hold 8 harmonics and C8
+/// (4186 Hz) would have its 6th–8th fold back to 22.9/18.7/14.5 kHz.
+#[inline]
+fn level_top(level: usize) -> u32 {
+    ((BASE_LEN >> level) / 2).max(1) as u32
+}
+
 impl Table {
-    /// Build the mipmaps of `recipe`. Level `k` has `BASE_LEN >> k` samples and
-    /// contains only harmonics up to its own Nyquist.
+    /// Build the mipmaps of `recipe`: every level is [`BASE_LEN`] samples long
+    /// and holds only the harmonics up to its own octave's Nyquist.
     pub fn from_recipe(recipe: Recipe) -> Self {
         let mut levels = Vec::with_capacity(LEVELS);
         for level in 0..LEVELS {
-            let len = (BASE_LEN >> level).max(MIN_LEN);
-            levels.push(render_level(recipe, len));
+            levels.push(render_level(recipe, BASE_LEN, level_top(level)));
         }
         Self { levels }
     }
@@ -134,23 +169,26 @@ impl Table {
 
         let mut levels = Vec::with_capacity(LEVELS);
         for level in 0..LEVELS {
-            let len = (BASE_LEN >> level).max(MIN_LEN);
             let mut level_re = re.clone();
             let mut level_im = im.clone();
             // Harmonics 1..=top survive; `bin` folds the upper half of the
             // spectrum onto its mirror so one test covers both sides.
-            let top = (len / 2).saturating_sub(1).max(1);
+            let top = level_top(level);
             for (k, (r, i)) in level_re.iter_mut().zip(level_im.iter_mut()).enumerate() {
                 let bin = if k <= n / 2 { k } else { n - k };
-                if bin == 0 || bin > top {
+                if bin == 0 || bin as u32 > top {
                     *r = 0.0;
                     *i = 0.0;
                 }
             }
             crate::dsp::util::fft(&mut level_re, &mut level_im, true);
 
-            let decimate = n / len;
-            let mut out: Vec<f32> = (0..len).map(|j| level_re[j * decimate] as f32).collect();
+            // Every level keeps the full table length: the inverse transform
+            // already *is* the level, no decimation. That is the P9.7 fix --
+            // the read step per output sample is `freq / sample_rate`, and a
+            // long table holding few harmonics is what makes the chord error
+            // small (see the module note on `BASE_LEN`).
+            let mut out: Vec<f32> = level_re.iter().map(|value| *value as f32).collect();
             let peak = out.iter().fold(0.0f32, |peak, value| peak.max(value.abs()));
             if peak > 0.0 {
                 let gain = 1.0 / peak;
@@ -168,10 +206,11 @@ impl Table {
     pub fn level_for(&self, freq_hz: f32, sample_rate: f32) -> usize {
         let nyquist = sample_rate.max(1000.0) * 0.5;
         let mut index = self.levels.len() - 1;
-        for (level, table) in self.levels.iter().enumerate() {
-            // The table's own Nyquist is `len / 2` harmonics; a harmonic `h` of
-            // the note sits at `h * freq`, so it fits while `h * freq <= nyq`.
-            let max_harmonic = (table.len() / 2).max(1) as f32;
+        for level in 0..self.levels.len() {
+            // The level holds harmonics up to its own octave's Nyquist; a
+            // harmonic `h` of the note sits at `h * freq`, so it fits while
+            // `h * freq <= nyq`.
+            let max_harmonic = level_top(level) as f32;
             if freq_hz * max_harmonic <= nyquist {
                 index = level;
                 break;
@@ -198,13 +237,13 @@ impl Table {
     }
 }
 
-/// One mip level: the recipe's harmonics below `len / 2`, as a sine sum.
-fn render_level(recipe: Recipe, len: usize) -> Vec<f32> {
-    let max_harmonic = (len / 2 - 1).max(1) as u32;
+/// One mip level: the recipe's harmonics up to `top`, as a sine sum over the
+/// full `len`-sample table.
+fn render_level(recipe: Recipe, len: usize, top: u32) -> Vec<f32> {
     let mut out = vec![0.0f32; len];
     let mut peak = 0.0f32;
     for (harmonic, amplitude) in recipe.iter() {
-        if *harmonic > max_harmonic {
+        if *harmonic > top {
             // Higher levels simply drop what does not fit: that *is* the
             // band-limiting, and it is why a high note cannot alias.
             continue;
@@ -271,11 +310,12 @@ mod tests {
     }
 
     #[test]
-    fn levels_shrink_and_stay_normalised() {
+    fn every_level_is_full_length_and_still_normalised() {
         let table = Table::from_recipe(GLASS);
         for level in 0..LEVELS {
-            let len = table.level_len(level);
-            assert_eq!(len, (BASE_LEN >> level).max(MIN_LEN));
+            // P9.7: levels no longer shrink -- the length is what keeps the
+            // read step small. Only the harmonic ceiling falls with the level.
+            assert_eq!(table.level_len(level), BASE_LEN);
         }
         for level in 0..LEVELS {
             let peak = (0..1024)
@@ -290,27 +330,27 @@ mod tests {
         let table = Table::from_recipe(GLASS);
         for freq in [55.0f32, 110.0, 440.0, 880.0, 2093.0, 4186.0] {
             let level = table.level_for(freq, 48_000.0);
-            let len = table.level_len(level) as f32;
-            // The level's highest harmonic is `len / 2`, and that partial must
-            // still sit below Nyquist at this pitch — that is the whole point of
-            // a mipmap.
-            let top = (len / 2.0) * freq;
+            // The level's highest surviving harmonic is `level_top(level)`, and
+            // that partial must still sit below Nyquist at this pitch — that is
+            // the whole point of a mipmap.
+            let top = level_top(level) as f32 * freq;
             assert!(
                 top <= 48_000.0 * 0.5,
-                "{freq} Hz picked a {len}-sample level whose top harmonic is {top} Hz"
+                "{freq} Hz picked level {level} whose top harmonic is {top} Hz"
             );
             // And it must be the *longest* level that satisfies that, or the
             // note would be needlessly dull.
             if level > 0 {
-                let longer = table.level_len(level - 1) as f32;
+                let longer = level_top(level - 1) as f32 * freq;
                 assert!(
-                    (longer / 2.0) * freq > 48_000.0 * 0.5,
-                    "{freq} Hz could have used the longer {longer}-sample level"
+                    longer > 48_000.0 * 0.5,
+                    "{freq} Hz could have used level {} ({longer} Hz top)",
+                    level - 1
                 );
             }
         }
         // The very top of the keyboard has to fall back to the shortest level.
-        assert_eq!(table.level_len(table.level_for(4186.0, 48_000.0)), MIN_LEN);
+        assert_eq!(table.level_for(4186.0, 48_000.0), LEVELS - 1);
     }
 
     #[test]

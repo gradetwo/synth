@@ -122,3 +122,48 @@ npm run presets:update:2x -- --reason "为什么 2× 音色变了"   # 接受新
 - 改了 DSP 但预设没变：`verify:presets` / `verify:presets:2x` 会告诉你哪些预设的频谱动了——这正是它的用途；
   如果动得对，`--update --reason "..."` 把新音色写下来，顺便在理由里写清是哪个改动导致的。
 - 只改了过采样路径：通常只有 2× 会红，这时只更新 2× 基线，并在理由里写清。
+
+## P9.7：波表 mip level 改全长（只有 4 条预设真的变了）
+
+P9.7 把波表的每个 mip level 都改成**全长 2048 点**（只按八度降低谐波上限，不再抽取变短），
+并把采样读位置/步进改成 f64、插值器改成 4 点三次。这是**相容红线级**改动，用户 2026-09-14
+已授权改音色 + 重录全部指纹，所以 1×/2× 两份都按协议重录：
+
+```
+npm run presets:update    -- --reason "<见下>"
+npm run presets:update:2x -- --reason "<同一句>"
+→ [presets]     baseline written (--update) · 81 presets · ABI 8
+→ [presets 2x]  baseline written (--update) · 81 presets · ABI 8
+```
+
+两份基线里写进的 `reason` 原文：
+
+> P9.7 波表带限修复：每个 mip level 都改成全长 2048 点、只按八度降低谐波上限（不再抽取变短），
+> 读取步进因此很小、线性插值的折回成分消失；采样读取位置与步进改 f64、插值器改 4 点三次。
+> ≥1 kHz 波表非谐波能量 −25.8…−46.7 → −98.0…−119.7 dB，采样 −29.9 → −33.4 dB。
+> 只有 4 条用到波表的预设（wtorgan/wtvocal/wtmetal/wtglass）音色变化。
+
+**实际重录条数：81 条全部**（`--update` 会整份重写）。其中**真的变了的只有 4 条**，
+也就是用到波表的那四条；其余 77 条的最大偏移 ≤ **0.0090 dB**，是「新增的 16 KB 表改变了
+堆布局、重编译的二进制」那一档噪声（旧基线是上一次编译录的，容差 1e-4 dB 压不住它），
+不是可听变化：
+
+| 预设 | 最大偏移 | 说明 |
+| :--- | ---: | :--- |
+| `wtglass` | 2.604 dB | 波表 glass bank，5012–10000 Hz 折回成分下降 |
+| `wtmetal` | 1.175 dB | 波表 metallic bank（还带动 rms −32.444 → −31.861 dB） |
+| `wtvocal` | 0.838 dB | 波表 vocal bank |
+| `wtorgan` | 0.793 dB | 波表 organ bank |
+| 其余 77 条 | ≤ 0.0090 dB | 重编译噪声，无音色变化 |
+
+采样那层在预设渲染里没有采样内容可读（采样是乐器级导入状态，预设只决定放不放它），
+所以采样路径的改动**没有**体现在指纹里；它的证据在 `verify:audio` 的采样行（−29.9 → −33.4 dB）
+与 `docs/notes/band-limited-oscillators.md` §P9.7。重录后两条门禁都回到
+
+```
+[presets] 81 presets unchanged · ABI 8
+[presets 2x] 81 presets unchanged · ABI 8
+```
+
+`test:dsp` 保持 `rms 0.030735`、`verify:dsp:2x` 保持 `0.030852`（默认音色是锯齿，
+不走波表路径），所以**没有**重录 DSP 基线。

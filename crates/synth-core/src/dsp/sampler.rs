@@ -89,11 +89,22 @@ impl SampleParams {
 }
 
 /// Per-voice read position, in samples of the level being played.
+///
+/// P9.7: the position is **f64**, not f32. It runs to `MAX_BASE_SAMPLES`
+/// (192000) and a level can be thousands of samples long, so an f32's unit in
+/// the last place is a few 1e-4 samples — a *phase* error about 10⁴ times
+/// coarser than the wavetable's `phase ∈ [0,1)`. Because the level's loop is
+/// seamless, that error does not average out: it repeats at the loop rate and
+/// shows up as a family of sidebands `± loop_rate` around every harmonic. At
+/// C7 the full-length loop (8.31 Hz) put them at -35 dB, and an f64 replica of
+/// the same read put the floor at -44.7 dB with the sidebands gone. The table
+/// itself stays f32; only the accumulator and the wrap arithmetic need the
+/// wider type.
 #[derive(Clone, Copy)]
 pub struct ReadState {
-    pub position: f32,
+    pub position: f64,
     /// +1 forward, −1 in ping-pong reverse.
-    pub direction: f32,
+    pub direction: f64,
     /// Set once a one-shot has run past its end.
     pub finished: bool,
 }
@@ -210,26 +221,41 @@ impl Sample {
 
     /// Read one sample of `level` at `position` (in level samples), wrapping
     /// across the loop bounds in loop modes and stopping in one-shot mode.
-    fn read(&self, level: usize, position: f32) -> f32 {
+    ///
+    /// Four-point (cubic Lagrange) interpolation rather than linear: at the
+    /// rates an octave or two above the root the read step is a large fraction
+    /// of a sample, and a chord's error is a train of high harmonics that folds
+    /// back. Measured on the P9.5 ruler, cubic buys a few dB over linear here.
+    fn read(&self, level: usize, position: f64) -> f32 {
         let table = &self.levels[level];
         let len = table.len();
-        let wrapped = position.rem_euclid(len as f32);
+        let wrapped = position.rem_euclid(len as f64);
         let index = wrapped as usize;
-        let fraction = wrapped - index as f32;
-        let a = table[index % len];
-        let b = table[(index + 1) % len];
-        a + (b - a) * fraction
+        let fraction = (wrapped - index as f64) as f32;
+        let at = |offset: isize| table[(index as isize + offset).rem_euclid(len as isize) as usize];
+        let a = at(0);
+        let b = at(1);
+        let previous = at(-1);
+        let next = at(2);
+        // Lagrange through (-1, previous), (0, a), (1, b), (2, next):
+        // p(x) = a + k1*x + k2*x*(x-1) + k3*x*(x-1)*(x-2).
+        let k1 = b - a;
+        let k2 = 0.5 * (previous - 2.0 * a + b);
+        let k3 = (next - 3.0 * b + 3.0 * a - previous) / 6.0;
+        a + fraction * (k1 + (fraction - 1.0) * (k2 + (fraction - 2.0) * k3))
     }
 
     /// Render a block into `out`.
     ///
     /// `step` is the position increment per output sample at this level
-    /// (`rate / 2^level`), so one rate works for every level.
+    /// (`rate / 2^level`), so one rate works for every level. It is f64 for the
+    /// same reason the position is: rounding the increment to f32 would put the
+    /// same loop-rate error back a sample at a time.
     pub fn render(
         &self,
         level: usize,
         out: &mut [f32],
-        step: f32,
+        step: f64,
         params: &SampleParams,
         state: &mut ReadState,
     ) {
@@ -237,14 +263,14 @@ impl Sample {
             out.fill(0.0);
             return;
         }
-        let len = self.level_len(level) as f32;
+        let len = self.level_len(level) as f64;
         // A one-shot plays the whole sample: loop points only mean something to
         // the looping modes.
         let (start, end) = if params.mode == LoopMode::OneShot {
             (0.0, len)
         } else {
-            let start = (params.loop_start.clamp(0.0, 1.0) * len).min(len - 2.0);
-            let end = (params.loop_end.clamp(0.0, 1.0) * len).max(start + 2.0).min(len);
+            let start = (params.loop_start.clamp(0.0, 1.0) as f64 * len).min(len - 2.0);
+            let end = (params.loop_end.clamp(0.0, 1.0) as f64 * len).max(start + 2.0).min(len);
             (start, end)
         };
         let last = (end - 1.0).max(start);
@@ -391,7 +417,7 @@ mod tests {
 
     fn render(sample: &Sample, rate: f32, params: SampleParams, frames: usize) -> Vec<f32> {
         let level = sample.level_for(rate);
-        let step = rate / (1 << level) as f32;
+        let step = (rate / (1 << level) as f32) as f64;
         let mut state = ReadState::new();
         let mut out = vec![0.0f32; frames];
         sample.render(level, &mut out, step, &params, &mut state);
@@ -442,7 +468,7 @@ mod tests {
         };
 
         // Force level 0 (what a naive sampler would do) and play four times up.
-        let step0 = 4.0f32;
+        let step0 = 4.0f64;
         let mut state = ReadState::new();
         let mut naive = vec![0.0f32; 8_192];
         sample.render(0, &mut naive, step0, &params, &mut state);
@@ -469,7 +495,7 @@ mod tests {
         // the rate must stay under the output Nyquist.
         for rate in [1.0f32, 1.3, 2.0, 3.0, 6.0, 12.0] {
             let level = sample.level_for(rate);
-            let step = rate / (1 << level) as f32;
+            let step = (rate / (1 << level) as f32) as f64;
             let mut state = ReadState::new();
             let mut out = vec![0.0f32; 4_096];
             sample.render(level, &mut out, step, &SampleParams::new(), &mut state);

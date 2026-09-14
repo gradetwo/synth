@@ -4122,7 +4122,10 @@ fn render_wave(
                 let root = sampler.root_hz.max(1.0);
                 let rate = (freq / root).clamp(0.01, 64.0);
                 let level = sample.level_for(rate);
-                let step = rate / (1usize << level) as f32;
+                // f64 step: see `ReadState`. The increment is tiny next to the
+                // position it advances, so rounding it to f32 would re-introduce
+                // the loop-rate sidebands a sample at a time.
+                let step = (freq as f64 / root as f64) / (1usize << level) as f64;
                 sample.render(level, out, step, &sampler, sample_state);
                 unsafe {
                     gs_voice_osc_delay_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32)
