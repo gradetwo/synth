@@ -224,7 +224,6 @@ export const PLAYER_STRINGS: StringTable = {
   'player.track': ['曲目', 'Track'],
   'player.record': ['录制', 'Record'],
   'player.stopRec': ['停止录制', 'Stop recording'],
-  'player.import': ['导入 MIDI', 'Import MIDI'],
   'player.importedBy': ['导入文件', 'Imported file'],
   'player.imported': ['已导入 <b>{name}</b> · {n} 个音符', 'Imported <b>{name}</b> · {n} notes'],
   'player.importFailed': ['MIDI 导入失败：{msg}', 'MIDI import failed: {msg}'],
@@ -247,10 +246,6 @@ export const PLAYER_STRINGS: StringTable = {
   'player.clipSaved': [
     '录制完成 · {n} 个音符 · 点「编辑」可在钢琴卷帘里修改',
     'Take finished · {n} notes — tap Edit to tweak it in the piano roll',
-  ],
-  'player.copyright': [
-    '古典与民乐为公版作品，已完整编配；现代影视 / 游戏主题仅作简短示范，版权归原作者所有。',
-    'Classical and folk pieces are public domain and fully arranged; modern film/game themes are short demonstrations and remain the property of their owners.',
   ],
 
   // --- recorded takes (P5.4, P10.3) ----------------------------------------

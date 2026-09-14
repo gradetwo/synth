@@ -17,6 +17,7 @@ import {
   AUDIO_STRINGS,
   DOCS_STRINGS,
   FLOW_STRINGS,
+  PROJECT_STRINGS,
   FX_STRINGS,
   PLAYER_STRINGS,
   ROLL_STRINGS,
@@ -59,6 +60,7 @@ const MODULES: Array<{ name: string; table: StringTable }> = [
   { name: 'i18n-panels:AUDIO_STRINGS', table: AUDIO_STRINGS },
   { name: 'i18n-panels:DOCS_STRINGS', table: DOCS_STRINGS },
   { name: 'i18n-panels:FLOW_STRINGS', table: FLOW_STRINGS },
+  { name: 'i18n-panels:PROJECT_STRINGS', table: PROJECT_STRINGS },
   { name: 'i18n.library:LIBRARY_STRINGS', table: LIBRARY_STRINGS },
 ];
 
