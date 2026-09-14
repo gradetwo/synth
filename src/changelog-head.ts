@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '2.0.3',
+    version: '2.0.4',
     date: '2026-09-14',
-    kind: 'feature',
+    kind: 'sound',
     items: [
       [
-        '**新增教学与练习模式。** 选一个音阶或和弦，目标音会在键盘上高亮；弹一遍就给出**可量化的评分**——命中率、音准、节奏偏差和 0–100 的总分。评分规则是写下来、可以手算复核的，不是黑箱。这个面板**按需加载**，所以从没打开过它的人不会为此多下载任何东西。',
-        '**New teaching and practice mode.** Pick a scale or a chord and the target notes light up on the keyboard; play a take and it scores it -- hit rate, intonation, timing deviation and an overall 0-100. The scoring rule is written down and can be checked by hand rather than being a black box. The panel loads on demand, so anyone who never opens it downloads nothing for it.',
+        '**导入的采样再干净一档。** 高音区的折回杂音从 −70 dB 降到 **−86 dB**，而且把上一版为压杂音牺牲掉的**高音亮度也拿回来了**——采样弹到原音以上一个八度时不再发闷。顺带修掉一个偶发、还随调用顺序变化的插值错位（相位表少了最后一行，约每 1024 个样本错用一次核）。导入速度没有变慢，反而略快。',
+        '**Imported samples got cleaner again.** The folded-back grit in the high register drops from -70 dB to **-86 dB**, and the **brightness the last version traded away comes back** -- a sample played an octave above its root is no longer dull. Also fixed an intermittent interpolation slip that changed with call order: the phase table was missing its last row, so roughly one sample in 1024 used the wrong kernel. Importing is not slower; it is slightly faster.',
       ],
     ],
   };
