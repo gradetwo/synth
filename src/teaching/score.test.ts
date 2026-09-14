@@ -35,7 +35,7 @@ const play = (note: number, start: number, duration = 0.4): PlayedNote => ({ not
 
 /** On the grid, exactly what the exercise asks for. */
 const perfect = (t: ExerciseTarget): PlayedNote[] =>
-  t.steps.map((step, index) => play(step.pitches[0], step.onset));
+  t.steps.map((step) => play(step.pitches[0], step.onset));
 
 describe('scorePerformance — the defined cases', () => {
   it('gives a perfect on-time take exactly 100', () => {

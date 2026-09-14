@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { TEACH_STRINGS } from '@/i18n.teach';
 import {
   CHORDS,
   MAX_MIDI,
@@ -85,6 +86,13 @@ describe('pitch sets', () => {
         expect(set.semitones[i], `${set.id} is not ascending`).toBeGreaterThan(set.semitones[i - 1]);
       }
     }
+  });
+
+  it('has both languages for every set id', () => {
+    // The UI builds these keys at runtime, so the i18n source walker cannot see
+    // them: this is the guard that a new scale cannot ship as a key name.
+    for (const set of SCALES) expect(TEACH_STRINGS[`teach.scale.${set.id}`], set.id).toHaveLength(2);
+    for (const set of CHORDS) expect(TEACH_STRINGS[`teach.chord.${set.id}`], set.id).toHaveLength(2);
   });
 });
 
