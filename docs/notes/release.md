@@ -67,6 +67,20 @@ npm run release -- --check           # 只做发布前校验（`npm run verify` 
 `build`；改了 UI 才跑 `test:visual`，改了 E2E 才跑那个 spec 文件。**不跑** `fuzz` / `bench` / 全量 E2E /
 整链 `verify`。
 
+**更新记录要轮换（v2.1.1 起有上限）**：`src/changelog.ts` 只发运 30 条（`SHIPPED_CHANGELOG_LIMIT`，head 也算一条），
+所以每发一版必须把**上一个 head 搬进发运列表、把最老的那条搬进 `src/changelog-archive.ts`**。
+这一步现在是脚本，别手抄（手抄出过两个错：数组少一个 `]`、条数多一条）：
+
+```
+node scripts/changelog-rotate.mjs            # 先轮换（--dry-run 只看不动）
+# 再把新版本写进 src/changelog-head.ts
+npx vitest run src/changelog.test.ts         # 搬运无损 + 上限守卫
+npm run verify:release                       # 版本唯一且 newest-first
+```
+
+**顺序不能颠倒，两步之间不要跑测试**：轮换后、新 head 写入前，上一个版本会同时出现在 head 与发运列表里，
+`changelog.test.ts` 的「无重复」与「head 等于当前版本」两条会（正确地）红。脚本会拒绝第二次轮换。
+
 **发布（快轨）**：`npm run release:fast -- <version>`（即 `release.mjs --skip-verify --skip-e2e`）——
 preflight → package → **产物门禁** → deploy → 线上哈希核对 → tag，几分钟内完成。前提是快轨已绿、工作树干净。
 
