@@ -13,119 +13,41 @@
  *   4. CPU       — the worst-case block still fits the real-time budget.
  *
  * Run with `--update`? No: every threshold is a hard limit, deliberately.
+ *
+ * P13.1: the render bootstrap and the rulers live in `scripts/lib/` now, shared
+ * with the P13 tools (see `docs/LLM-INTERFACE.md`) so the gate and the tools can
+ * never measure different engines. This file keeps the scenarios and every
+ * threshold; the modules keep the machinery. Nothing here may change a number.
+ *
+ * Layer: the modules run the wasm core in Node -- no AudioWorklet, no AudioParam
+ * automation, no Web Audio graph. That is the layer every number below belongs
+ * to (see their file headers; browser-layer measurement is P13.4).
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import {
+  SR, BLOCK, BUDGET_US, P, WAVE, WAVE_TYPES,
+  ex, initCore,
+  engine, render, clearModMatrix, renderFloor,
+  noteOnCount, countNoteOn,
+  blockSteps, worstStepOf, peakOf, rmsOf,
+  arenaFreeBytes,
+  importWavetableCycle, importSample, importImpulseResponse,
+} from './lib/render-core.mjs';
+import {
+  offGridFloor, binMag, binMagRect, spectrum, binMagHann,
+  aliasFloor, aliasBase, ALIAS_NOTE, ALIAS_F0,
+  thdPercent, interHarmonicDb,
+} from './lib/audio-ruler.mjs';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const wasmPath = resolve(root, 'src/generated/synth_core.wasm');
-
-if (!existsSync(wasmPath)) {
-  console.error('[audio] src/generated/synth_core.wasm missing — run "npm run build:wasm"');
-  process.exit(1);
-}
-
-const ex = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(wasmPath)), {}).exports;
-const SR = 48000;
-const BLOCK = 128;
-const BUDGET_US = (BLOCK / SR) * 1e6;
+initCore();
 /** The soft limiter is transparent below this level (see dsp/util.rs). */
 const KNEE = 0.82;
 
-const P = {
-  MASTER_VOLUME: 0, OSC1_ON: 1, OSC1_WAVE: 2, OSC1_LEVEL: 5, OSC2_ON: 7, OSC2_WAVE: 8,
-  OSC2_LEVEL: 11, FILTER_TYPE: 13, FILTER_CUTOFF: 14, FILTER_RES: 15, FILTER_DRIVE: 16,
-  FILTER_ENV_AMT: 17, FILTER_KBD: 18, ENV_ATTACK: 19, ENV_DECAY: 20, ENV_SUSTAIN: 21, ENV_RELEASE: 22,
-  LFO_ON: 23, LFO2_ON: 62, FX_REVERB_ON: 29, FX_DELAY_ON: 32, FX_CHORUS_ON: 43, FX_FLANGER_ON: 47,
-  FX_PHASER_ON: 51, FX_DRIVE_ON: 55, VOICE_MODE: 42, OSC1_PW: 6, WT_USER: 79,
-  FX_DELAY_FB: 34, FX_DELAY_MIX: 35, FX_DELAY_SYNC: 33, FX_DRIVE_AMT: 56, FX_DRIVE_MIX: 57,
-  FX_REVERB_MIX: 31, FX_REVERB_MODE: 94, FX_CONV_TRIM: 95,
-  FX_CHAIN1: 82, FX_CHAIN2: 83, FX_CHAIN3: 84, FX_CHAIN4: 85, FX_CHAIN5: 86, FX_CHAIN6: 87,
-  SMP_ROOT: 96, SMP_MODE: 97, SMP_LOOP_START: 98, SMP_LOOP_END: 99, TEMPO: 37,
-  OSC2_PITCH: 9, OSC_FM: 137, OSC_RING: 138,
-  OSC1_PITCH: 3, OSC1_SYNC: 139, OSC1_SUB: 140, OSC1_SUB_LEVEL: 141,
-  OSC2_SUB: 142, OSC2_SUB_LEVEL: 143, NOISE_MIX: 144, FILTER_MORPH: 145,
-  FILTER_ROUTING: 146, FILTER2_TYPE: 147, FILTER2_CUTOFF: 148, FILTER2_RES: 149,
-  FILTER2_DRIVE: 150, FILTER_BLEND: 151,
-  FX_CRUSH_ON: 152, FX_CRUSH_BITS: 153, FX_CRUSH_DOWN: 154, FX_CRUSH_AA: 155, FX_CRUSH_MIX: 156,
-  FX_EQ_ON: 157, FX_EQ_LOW_GAIN: 158, FX_EQ_LOW_FREQ: 159, FX_EQ_MID_GAIN: 160,
-  FX_EQ_MID_FREQ: 161, FX_EQ_MID_Q: 162, FX_EQ_HIGH_GAIN: 163, FX_EQ_HIGH_FREQ: 164,
-  FX_EQ_MIX: 165,
-  FILTER_ROUTING: 146, OSC_FM: 137, OSC_RING: 138, FX_GRAPH: 100,
-  OSC1_PITCH: 3, OSC2_PITCH: 9, OSC1_DETUNE: 4, OSC2_DETUNE: 10,
-  OSC1_UNISON: 70, OSC2_UNISON: 72, OSC1_SPREAD: 71, OSC2_SPREAD: 73, MASTER_TUNE: 41,
-  /** P6.5: 2x oversampling of the drive/filter path. */
-  OVERSAMPLE: 166,
-  /**
-   * P9.4: the routing graph's node fields, one id per node (node 1 is id 101,
-   * node 2 is 102, ...). Only the two this gate drives are named; the graph
-   * parameter decoder is `base <= id < base + 6`.
-   */
-  FX_NODE_IN1: 101, FX_NODE_IN1_GAIN: 107, FX_NODE_TO_OUT: 125, FX_NODE_OUT_GAIN: 131,
-  /** P9.2 transient shaper: on/off, the two signed amounts and the mix. */
-  FX_TRANSIENT_ON: 179, FX_TRANSIENT_ATTACK: 180, FX_TRANSIENT_SUSTAIN: 181,
-  FX_TRANSIENT_MIX: 182, OSC1_DETUNE: 4, OSC1_UNISON: 70, OSC1_SPREAD: 71,
-  FX_GRAPH: 100,
-};
-
-const WAVE_TYPES = { lp: 0, hp: 1, bp: 2, notch: 3, sem: 6 };
-const WAVE = { sine: 0, triangle: 1, saw: 2, square: 3, pulse: 4, noise: 5, wavetable: 8, sample: 9 };
-
-/**
- * How many `gs_note_on` calls this process has made. `gs_init` does not reset
- * the engine's phase counter, so the Nth note-on always starts on the same
- * phases -- which is what lets P9.6 pin one exact, known-bad phase below.
- * Every `gs_note_on` in this file must increment this.
- */
-let noteOns = 0;
 const failures = [];
 const report = [];
 
 function check(name, ok, detail) {
   report.push(`  ${ok ? '✓' : '✗'} ${name} — ${detail}`);
   if (!ok) failures.push(name);
-}
-
-function engine(params, notes = []) {
-  ex.gs_init(SR, 16);
-  // gs_init keeps the parameter block (the worklet pushes it every block), so
-  // release everything and let the tails die before the scenario starts —
-  // otherwise the previous scenario's reverb tail pollutes the measurement.
-  ex.gs_set_param(P.ENV_RELEASE, 0.005);
-  ex.gs_set_param(P.FX_REVERB_ON, 0);
-  ex.gs_set_param(P.FX_DELAY_ON, 0);
-  ex.gs_all_notes_off();
-  for (let i = 0; i < 80; i++) ex.gs_process(BLOCK);
-  for (const [id, value] of params) {
-    // A mistyped id would land on parameter 0 and quietly change the master
-    // volume instead of failing, which is exactly the kind of gate bug that
-    // hides for months.
-    if (!Number.isInteger(id)) throw new Error(`bad parameter id in the gate: ${id}`);
-    ex.gs_set_param(id, value);
-  }
-  for (const [note, velocity] of notes) {
-    ex.gs_note_on(note, velocity);
-    noteOns++;
-  }
-  return ex;
-}
-
-function render(blocks, skip = 20) {
-  const left = new Float32Array(BLOCK);
-  const right = new Float32Array(BLOCK);
-  const out = [];
-  for (let b = 0; b < blocks; b++) {
-    ex.gs_process(BLOCK);
-    if (b < skip) continue;
-    const lPtr = ex.gs_left_ptr() / 4;
-    const rPtr = ex.gs_right_ptr() / 4;
-    const heap = new Float32Array(ex.memory.buffer);
-    left.set(heap.subarray(lPtr, lPtr + BLOCK));
-    right.set(heap.subarray(rPtr, rPtr + BLOCK));
-    out.push([left.slice(), right.slice()]);
-  }
-  return out;
 }
 
 // ----------------------------- P9.1a: a ruler that does not leak (see below)
@@ -150,242 +72,6 @@ function render(blocks, skip = 20) {
 // its -92 dB sidelobes leave a pure sine at -104 dB, above the -105 dB line
 // this batch has to hold, while the 7-term one reads -117 dB and does not move
 // when the exclusion band is widened to 16 Hz.
-
-/**
- * Everything a settled oscillator measurement depends on, pinned. `gs_init`
- * keeps the parameter block *and* the modulation matrix, so an unset pitch or
- * noise amount is the previous scenario's — which is how the hard-sync section
- * was silent the first few times it ran, and why P6.3a measured the default
- * patch's ENV -> CUTOFF instead of its filter.
- */
-const QUIET_PATCH = [
-  [P.OSC1_ON, 1], [P.OSC1_LEVEL, 0.9], [P.OSC1_PITCH, 0], [P.OSC1_DETUNE, 0],
-  [P.OSC1_UNISON, 1], [P.OSC1_SPREAD, 0], [P.OSC1_PW, 0.5], [P.OSC1_SYNC, 0],
-  [P.OSC1_SUB, 0], [P.OSC1_SUB_LEVEL, 0],
-  [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0], [P.OSC2_PITCH, 0], [P.OSC2_DETUNE, 0],
-  [P.OSC2_UNISON, 1], [P.OSC2_SPREAD, 0], [P.OSC2_SUB, 0], [P.OSC2_SUB_LEVEL, 0],
-  [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0], [P.MASTER_TUNE, 0],
-  [P.FILTER_TYPE, 0], [P.FILTER_CUTOFF, 18000], [P.FILTER_RES, 0.05],
-  [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0], [P.FILTER_KBD, 0],
-  [P.FILTER_ROUTING, 0], [P.FILTER_MORPH, 0], [P.FILTER_BLEND, 0],
-  [P.FILTER2_TYPE, 0], [P.FILTER2_CUTOFF, 20000], [P.FILTER2_RES, 0],
-  [P.FILTER2_DRIVE, 0],
-  [P.ENV_ATTACK, 0.01], [P.ENV_DECAY, 0.5], [P.ENV_SUSTAIN, 1], [P.ENV_RELEASE, 0.005],
-  [P.LFO_ON, 0], [P.LFO2_ON, 0], [P.VOICE_MODE, 0], [P.OVERSAMPLE, 0],
-  [P.MASTER_VOLUME, 1],
-  [P.FX_GRAPH, 0], [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
-  [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0], [P.FX_DRIVE_ON, 0], [P.FX_CRUSH_ON, 0],
-  [P.FX_EQ_ON, 0], [P.FX_TRANSIENT_ON, 0],
-];
-
-/** The P6.3a lesson in one call: the default patch's ENV/LFO -> CUTOFF is live. */
-function clearModMatrix() {
-  for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
-}
-
-/** 400 blocks = 1.07 s: the P6.2b report measured another 12 dB over 200. */
-const SETTLE_BLOCKS = 400;
-/** The alias ruler's window, and its exclusion half-width in bins of it. */
-const FLOOR_SECONDS = 4;
-const FLOOR_BINS = 8;
-
-/**
- * A settled, pinned, unmodulated four-second render of one note, left channel.
- */
-function renderFloor(extra, note) {
-  engine([...QUIET_PATCH, ...extra], [[note, 1]]);
-  clearModMatrix();
-  const blocks = Math.round((FLOOR_SECONDS * SR) / BLOCK);
-  const out = new Float64Array(blocks * BLOCK);
-  const heap = new Float32Array(ex.memory.buffer);
-  let w = 0;
-  for (let b = 0; b < SETTLE_BLOCKS + blocks; b++) {
-    ex.gs_process(BLOCK);
-    if (b < SETTLE_BLOCKS) continue;
-    const ptr = ex.gs_left_ptr() / 4;
-    for (let i = 0; i < BLOCK; i++) out[w++] = heap[ptr + i];
-  }
-  return out;
-}
-
-/** Iterative radix-2 FFT, in place, on a Float64Array pair. */
-function fftInPlace(re, im) {
-  const n = re.length;
-  for (let i = 1, j = 0; i < n; i++) {
-    let bit = n >> 1;
-    for (; j & bit; bit >>= 1) j ^= bit;
-    j ^= bit;
-    if (i < j) {
-      const tr = re[i];
-      re[i] = re[j];
-      re[j] = tr;
-      const ti = im[i];
-      im[i] = im[j];
-      im[j] = ti;
-    }
-  }
-  for (let len = 2; len <= n; len <<= 1) {
-    const ang = (-2 * Math.PI) / len;
-    const wr = Math.cos(ang);
-    const wi = Math.sin(ang);
-    const half = len >> 1;
-    for (let i = 0; i < n; i += len) {
-      let cr = 1;
-      let ci = 0;
-      for (let j = 0; j < half; j++) {
-        const ur = re[i + j];
-        const ui = im[i + j];
-        const vr = re[i + j + half] * cr - im[i + j + half] * ci;
-        const vi = re[i + j + half] * ci + im[i + j + half] * cr;
-        re[i + j] = ur + vr;
-        im[i + j] = ui + vi;
-        re[i + j + half] = ur - vr;
-        im[i + j + half] = ui - vi;
-        const ncr = cr * wr - ci * wi;
-        ci = cr * wi + ci * wr;
-        cr = ncr;
-      }
-    }
-  }
-}
-
-/** 7-term Blackman-Harris, the minimum-sidelobe member of the family. */
-const BH7 = [
-  0.27105140069342, 0.43329793923448, 0.21812299954311, 0.06592544638803,
-  0.01081174209837, 0.00077658482522, 0.00001388721735,
-];
-
-function bh7Window(n, N) {
-  let v = BH7[0];
-  for (let k = 1; k < BH7.length; k++) {
-    v += (k % 2 ? -1 : 1) * BH7[k] * Math.cos((2 * Math.PI * k * n) / (N - 1));
-  }
-  return v;
-}
-
-/**
- * The share of a settled render's power that is *not* on the harmonic grid of
- * `f0`, in dB. The window is a 7-term Blackman-Harris over the whole render,
- * zero-padded to the next power of two; eight bins either side of every
- * harmonic are excluded. At four seconds a bin is 0.25 Hz and the window's own
- * main lobe is +-1.75 Hz, so the exclusion covers the lobe and no line power
- * can be mistaken for off-grid energy.
- */
-function offGridFloor(samples, f0) {
-  const N = samples.length;
-  let nfft = 1;
-  while (nfft < N) nfft <<= 1;
-  const re = new Float64Array(nfft);
-  const im = new Float64Array(nfft);
-  for (let i = 0; i < N; i++) re[i] = samples[i] * bh7Window(i, N);
-  fftInPlace(re, im);
-  const half = nfft >> 1;
-  const df = SR / nfft;
-  const exHz = (FLOOR_BINS * SR) / N;
-  const excluded = new Uint8Array(half);
-  for (let k = 1; k * f0 < SR / 2 + exHz; k++) {
-    const centre = k * f0;
-    const lo = Math.max(0, Math.ceil((centre - exHz) / df));
-    const hi = Math.min(half - 1, Math.floor((centre + exHz) / df));
-    for (let b = lo; b <= hi; b++) excluded[b] = 1;
-  }
-  let off = 0;
-  let total = 0;
-  for (let b = 0; b < half; b++) {
-    const p = re[b] * re[b] + im[b] * im[b];
-    total += p;
-    if (!excluded[b]) off += p;
-  }
-  return 10 * Math.log10(Math.max(off, 1e-300) / Math.max(total, 1e-300));
-}
-
-/** Windowed single-bin magnitude (Hann window, same maths as the Rust tests). */
-function binMag(samples, freq) {
-  const n = samples.length;
-  const w = (2 * Math.PI * freq) / SR;
-  let re = 0;
-  let im = 0;
-  for (let i = 0; i < n; i++) {
-    const win = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n);
-    const v = samples[i] * win;
-    re += v * Math.cos(w * i);
-    im -= v * Math.sin(w * i);
-  }
-  return (Math.hypot(re, im) / n) * 2;
-}
-
-/**
- * Radix-2 FFT magnitude spectrum, Blackman-Harris windowed.
- *
- * The gate needs the frequency domain, not just levels: a filter that drops a
- * sample at every render-block boundary is a click train, and a click train is
- * broadband noise — invisible to a peak or RMS check, obvious in a spectrum.
- *
- * The window has to be this good: a Hann window's own sidelobes sit around
- * -46 dB a few bins away from a strong partial, which is indistinguishable from
- * real broadband junk. Blackman-Harris puts them below -92 dB, so whatever the
- * "everything that is not a harmonic" number reports is the signal, not the
- * measurement.
- */
-function spectrum(samples, n = 8192) {
-  const BH = [0.35875, 0.48829, 0.14128, 0.01168];
-  const re = new Float64Array(n);
-  const im = new Float64Array(n);
-  for (let i = 0; i < n; i++) {
-    const src = samples[i] ?? 0;
-    const t = (2 * Math.PI * i) / n;
-    const win =
-      BH[0] - BH[1] * Math.cos(t) + BH[2] * Math.cos(2 * t) - BH[3] * Math.cos(3 * t);
-    re[i] = src * win;
-  }
-  for (let i = 1, j = 0; i < n; i++) {
-    let bit = n >> 1;
-    for (; j & bit; bit >>= 1) j ^= bit;
-    j ^= bit;
-    if (i < j) {
-      [re[i], re[j]] = [re[j], re[i]];
-      [im[i], im[j]] = [im[j], im[i]];
-    }
-  }
-  for (let len = 2; len <= n; len <<= 1) {
-    const ang = (-2 * Math.PI) / len;
-    for (let i = 0; i < n; i += len) {
-      for (let k = 0; k < len / 2; k++) {
-        const wr = Math.cos(ang * k);
-        const wi = Math.sin(ang * k);
-        const ur = re[i + k];
-        const ui = im[i + k];
-        const vr = re[i + k + len / 2] * wr - im[i + k + len / 2] * wi;
-        const vi = re[i + k + len / 2] * wi + im[i + k + len / 2] * wr;
-        re[i + k] = ur + vr;
-        im[i + k] = ui + vi;
-        re[i + k + len / 2] = ur - vr;
-        im[i + k + len / 2] = ui - vi;
-      }
-    }
-  }
-  const mag = new Float64Array(n / 2);
-  for (let i = 0; i < n / 2; i++) mag[i] = Math.hypot(re[i], im[i]) / n;
-  return mag;
-}
-
-/** Worst sample-to-sample step inside every 128-sample block, and where. */
-function blockSteps(frames) {
-  const worst = [];
-  for (let start = 0; start + BLOCK <= frames.length; start += BLOCK) {
-    let step = 0;
-    let at = start;
-    for (let i = 1; i < BLOCK; i++) {
-      const d = Math.abs(frames[start + i] - frames[start + i - 1]);
-      if (d > step) {
-        step = d;
-        at = start + i;
-      }
-    }
-    worst.push({ start, step, at });
-  }
-  return worst;
-}
 
 // ---------------------------------------------------------------- 1. headroom
 {
@@ -515,10 +201,7 @@ function blockSteps(frames) {
   const blocks = render(80);
   const buf = [];
   for (const [l] of blocks) buf.push(...l);
-  const fund = binMag(buf, 440);
-  let harmonics = 0;
-  for (let k = 2; k <= 12; k++) harmonics += binMag(buf, 440 * k) ** 2;
-  const thd = (Math.sqrt(harmonics) / Math.max(fund, 1e-9)) * 100;
+  const thd = thdPercent(buf, 440);
   check('filter drive stays musical', thd < 6, `THD ${thd.toFixed(2)}% at full drive`);
 }
 
@@ -552,21 +235,12 @@ function blockSteps(frames) {
     const blocks = render(100);
     const buf = [];
     for (const [l] of blocks) buf.push(...l);
-    const fundamental = binMag(buf, f0);
-    let between = 0;
-    let k = 1;
-    while (f0 * (k + 0.5) < 20000) {
-      between += binMag(buf, f0 * (k + 0.5)) ** 2;
-      k += 1;
-    }
-    const signal = buf.reduce((sum, v) => sum + v * v, 0) / buf.length;
-    const ratio = 10 * Math.log10(between / Math.max(signal, 1e-12));
+    const ratio = interHarmonicDb(buf, f0);
     check(
       `${name} at C7 is band-limited`,
       ratio < (name === 'wavetable' ? -60 : -55),
       `aliasing ${ratio.toFixed(1)} dB below the signal`,
     );
-    void fundamental;
   }
 }
 
@@ -600,21 +274,14 @@ function blockSteps(frames) {
 // ------------------------------------------ 5. imported single-cycle wavetable
 {
   /** Hand a cycle to the core exactly as the worklet does. */
-  const importCycle = (cycle) => {
-    const capacity = ex.gs_wavetable_capacity();
-    if (cycle.length > capacity) throw new Error(`cycle longer than ${capacity}`);
-    const scratch = new Float32Array(ex.memory.buffer, ex.gs_wavetable_import_ptr(), capacity);
-    scratch.set(cycle);
-    return ex.gs_wavetable_import(cycle.length);
-  };
 
   const sine = Array.from({ length: 2048 }, (_, i) => Math.sin((2 * Math.PI * i) / 2048));
-  check('a clean cycle imports', importCycle(sine) === 0, 'code 0');
+  check('a clean cycle imports', importWavetableCycle(sine) === 0, 'code 0');
   check('the core reports the imported table', ex.gs_wavetable_has() === 1, 'has = 1');
-  check('junk is refused', importCycle(new Array(2048).fill(0)) === 2, 'a silent cycle is rejected');
+  check('junk is refused', importWavetableCycle(new Array(2048).fill(0)) === 2, 'a silent cycle is rejected');
 
   // Put the sine back and play it: one harmonic, and it must be a *sine*.
-  importCycle(sine);
+  importWavetableCycle(sine);
   const patch = (wave, wtUser) => [
     [P.OSC1_ON, 1], [P.OSC1_WAVE, wave], [P.OSC1_LEVEL, 0.9],
     [P.OSC1_PW, 1], [P.WT_USER, wtUser], [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0],
@@ -654,20 +321,13 @@ function blockSteps(frames) {
     for (let k = 1; k <= 1024; k++) sum += Math.sin((2 * Math.PI * k * i) / 2048) / k;
     return sum;
   });
-  check('an imported saw is accepted', importCycle(saw) === 0, 'code 0');
+  check('an imported saw is accepted', importWavetableCycle(saw) === 0, 'code 0');
   engine(patch(WAVE.wavetable, 1), [[96, 1]]); // C7
   {
     const buf = [];
     for (const [l] of render(100)) buf.push(...l);
     const f0 = 2093;
-    let between = 0;
-    let k = 1;
-    while (f0 * (k + 0.5) < 20000) {
-      between += binMag(buf, f0 * (k + 0.5)) ** 2;
-      k += 1;
-    }
-    const signal = buf.reduce((sum, v) => sum + v * v, 0) / buf.length;
-    const ratio = 10 * Math.log10(between / Math.max(signal, 1e-12));
+    const ratio = interHarmonicDb(buf, f0);
     check('an imported saw is band-limited at C7', ratio < -60, `aliasing ${ratio.toFixed(1)} dB below the signal`);
   }
 
@@ -680,9 +340,9 @@ function blockSteps(frames) {
   // Every scenario above re-initialises the core, which is also what happens
   // when the host restarts the audio engine. Anything allocated per init and not
   // freed shrinks the arena until a later start fails outright.
-  const before = ex.gs_arena_free_bytes();
+  const before = arenaFreeBytes();
   for (let i = 0; i < 4; i++) ex.gs_init(SR, 16);
-  const after = ex.gs_arena_free_bytes();
+  const after = arenaFreeBytes();
   const lost = (before - after) / 1024;
   check('re-initialising the core does not leak the arena', lost < 64, `${lost.toFixed(0)} KB lost over 4 restarts`);
   check('the arena still has room after the restarts', after > 512 * 1024, `${(after / 1024).toFixed(0)} KB free`);
@@ -690,13 +350,6 @@ function blockSteps(frames) {
 
 // ------------------------------------------------ 6. sampler and response (A/A5)
 {
-  const importSample = (samples, rate) => {
-    const capacity = ex.gs_sample_capacity();
-    const scratch = new Float32Array(ex.memory.buffer, ex.gs_sample_import_ptr(), capacity);
-    const count = Math.min(samples.length, capacity);
-    scratch.set(samples.subarray(0, count));
-    return ex.gs_sample_import(count, rate);
-  };
   const tone = Float32Array.from({ length: 24_000 }, (_, i) => Math.sin((2 * Math.PI * 440 * i) / 48_000) * 0.8);
   check('a sample imports', importSample(tone, 48_000) === 0, 'code 0');
   check('the core reports the sample', ex.gs_sample_has() === 1, 'has = 1');
@@ -730,20 +383,13 @@ function blockSteps(frames) {
     );
   }
 
-  const importIr = (ir) => {
-    const capacity = ex.gs_ir_capacity();
-    const scratch = new Float32Array(ex.memory.buffer, ex.gs_ir_import_ptr(), capacity);
-    const count = Math.min(ir.length, capacity);
-    scratch.set(ir.subarray(0, count));
-    return ex.gs_ir_import(count);
-  };
   // A unit-energy response: the core normalises it, so the wet level of a noise
   // source should land within a few dB of the dry signal.
   const response = Float32Array.from({ length: 24_000 }, (_, i) => (Math.random() * 2 - 1) * Math.exp(-i / 6_000));
-  check('an impulse response imports', importIr(response) === 0, 'code 0');
+  check('an impulse response imports', importImpulseResponse(response) === 0, 'code 0');
   check('the core reports the response', ex.gs_ir_has() === 1, 'has = 1');
-  check('a short response is refused', importIr(new Float32Array(8)) === 1, 'code 1');
-  importIr(response);
+  check('a short response is refused', importImpulseResponse(new Float32Array(8)) === 1, 'code 1');
+  importImpulseResponse(response);
 
   const noisePatch = (mix) => [
     [P.OSC1_ON, 1], [P.OSC1_WAVE, WAVE.noise], [P.OSC1_LEVEL, 0.6],
@@ -787,11 +433,10 @@ function blockSteps(frames) {
     for (const [l] of render(120, 10)) buf.push(...l);
     return buf;
   };
-  const rms = (buf) => Math.sqrt(buf.reduce((sum, v) => sum + v * v, 0) / buf.length);
 
   const delayThenDrive = renderPatch(patch([1, 6, 0, 0, 0, 0], true));
   const driveThenDelay = renderPatch(patch([6, 1, 0, 0, 0, 0], true));
-  const reference = rms(delayThenDrive);
+  const reference = rmsOf(delayThenDrive);
   const difference = Math.sqrt(
     delayThenDrive.reduce((sum, v, i) => sum + (v - driveThenDelay[i]) ** 2, 0) / delayThenDrive.length,
   );
@@ -808,8 +453,8 @@ function blockSteps(frames) {
   const noEffects = renderPatch(patch([0, 0, 0, 0, 0, 0], false));
   check(
     'an empty chain with the effects switched on is a clean pass-through',
-    Math.abs(rms(emptyChain) - rms(noEffects)) < rms(noEffects) * 0.01,
-    `${rms(emptyChain).toFixed(5)} vs ${rms(noEffects).toFixed(5)}`,
+    Math.abs(rmsOf(emptyChain) - rmsOf(noEffects)) < rmsOf(noEffects) * 0.01,
+    `${rmsOf(emptyChain).toFixed(5)} vs ${rmsOf(noEffects).toFixed(5)}`,
   );
 }
 
@@ -876,7 +521,6 @@ function blockSteps(frames) {
     crossings(modulated) > crossings(clean) * 2,
     `${crossings(modulated)} zero crossings vs ${crossings(clean)} for the plain sine`,
   );
-  const peakOf = (samples) => samples.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
   check(
     'FM does not change the level',
     Math.abs(peakOf(modulated) - peakOf(clean)) < 0.3,
@@ -1199,9 +843,6 @@ function blockSteps(frames) {
   // measures the modulation instead of the filter: with the route live, the
   // low-pass end of the morph *rose* with frequency by 1.3 dB where it has to
   // fall by 12. This section pins the matrix, like the Rust tests do.
-  const quietMatrix = () => {
-    for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
-  };
   const tone = (freq, morph, cut = cutoff) => {
     // The tone is played by pitch, and the oscillator's range is ±48 semitones
     // around C4 (the same ceiling the Rust tests keep bumping into): a silent
@@ -1209,7 +850,7 @@ function blockSteps(frames) {
     const pitch = 12 * Math.log2(freq / 261.6256);
     if (Math.abs(pitch) > 48) throw new Error(`gate frequency ${freq} Hz is outside the oscillator's range`);
     engine([...flat, [P.FILTER_CUTOFF, cut], [P.FILTER_MORPH, morph], [P.OSC1_PITCH, pitch]], [[60, 1]]);
-    quietMatrix();
+    clearModMatrix();
     const out = [];
     for (const [l] of render(90, 40)) out.push(...l);
     return binMag(out, freq);
@@ -1252,7 +893,7 @@ function blockSteps(frames) {
   // this measures the sample-to-sample step of the rendered signal rather than
   // the parameter it came from.
   engine([...flat, [P.FILTER_MORPH, 0]], [[45, 1]]);
-  quietMatrix();
+  clearModMatrix();
   let worstStep = 0;
   let peak = 0;
   let finite = true;
@@ -1305,14 +946,11 @@ function blockSteps(frames) {
   // The default patch's ENV/LFO -> CUTOFF routes are live; without clearing the
   // matrix these numbers are measurements of the modulation (P6.3a paid for
   // that lesson with a low-pass that appeared to rise with frequency).
-  const quietMatrix = () => {
-    for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
-  };
   const tone = (freq, extra) => {
     const pitch = 12 * Math.log2(freq / 261.6256);
     if (Math.abs(pitch) > 48) throw new Error(`gate frequency ${freq} Hz is outside the oscillator's range`);
     engine([...flat, [P.OSC1_PITCH, pitch], ...extra], [[60, 1]]);
-    quietMatrix();
+    clearModMatrix();
     const out = [];
     for (const [l] of render(90, 40)) out.push(...l);
     return binMag(out, freq);
@@ -1373,7 +1011,7 @@ function blockSteps(frames) {
   // Time domain: switching arrangement and moving the second cutoff must not
   // click. The rendered step is what a listener would hear.
   engine([...flat, [P.FILTER_ROUTING, 0], [P.FILTER2_TYPE, 0]], [[45, 1]]);
-  quietMatrix();
+  clearModMatrix();
   let worstStep = 0;
   let peak = 0;
   let finite = true;
@@ -1436,9 +1074,6 @@ function blockSteps(frames) {
   ];
   // The default patch's ENV/LFO -> CUTOFF routes are live; without clearing the
   // matrix these numbers are measurements of the modulation (P6.3a's lesson).
-  const quietMatrix = () => {
-    for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
-  };
   const toDb = (v) => 20 * Math.log10(Math.max(v, 1e-12));
   // C6 is 1046.5 Hz, and the pitch control spans ±48 semitones around it, so
   // this covers 65 Hz .. 16.7 kHz — both the crusher's mirror and every EQ
@@ -1447,7 +1082,7 @@ function blockSteps(frames) {
     const pitch = 12 * Math.log2(freq / 1046.502);
     if (Math.abs(pitch) > 48) throw new Error(`gate frequency ${freq} Hz is outside the oscillator's range`);
     engine([...flat, [P.OSC1_PITCH, pitch], ...extra], [[84, 1]]);
-    quietMatrix();
+    clearModMatrix();
     // 120 blocks (`render(220, 120)`) is a 320 ms warm-up, not the 100 ms the
     // other sections get: these probes jump between 70 Hz and 16 kHz, and the
     // pitch is a *smoothed* parameter, so a shorter warm-up measures a tone
@@ -1560,7 +1195,7 @@ function blockSteps(frames) {
     ],
     [[84, 1]],
   );
-  quietMatrix();
+  clearModMatrix();
   {
     let peak = 0;
     let worstStep = 0;
@@ -1619,92 +1254,6 @@ function blockSteps(frames) {
 // The ruler and the patch live outside the scenario blocks: P9.4's graph
 // section below measures the same quantity with the same code, so the two
 // sections can never drift apart.
-/** Rectangular-window single-bin amplitude (no leakage on an exact bin). */
-const binMagRect = (samples, freq) => {
-  const w = (2 * Math.PI * freq) / SR;
-  let re = 0;
-  let im = 0;
-  for (let i = 0; i < samples.length; i++) {
-    const v = samples[i];
-    re += v * Math.cos(w * i);
-    im -= v * Math.sin(w * i);
-  }
-  return Math.hypot(re, im) / samples.length;
-};
-/**
- * The fixture every alias measurement renders: one quiet, unmodulated sine with
- * the whole rest of the engine spelled out, so a measurement does not depend on
- * where in the file it sits. `aliasFloor` and 4c's delay probe both build on it.
- */
-const aliasBase = [
-  [P.OSC1_ON, 1], [P.OSC1_WAVE, WAVE.sine], [P.OSC1_LEVEL, 0.8],
-  // One voice, on pitch: unison, detune and microtuning are all state a
-  // previous scenario may have left behind, and all three would move the
-  // harmonics off the bins the measurement subtracts.
-  [P.OSC1_PITCH, 0], [P.OSC1_DETUNE, 0], [P.OSC1_UNISON, 1], [P.OSC1_SPREAD, 0],
-  [P.OSC1_SYNC, 0], [P.OSC1_SUB, 0], [P.OSC1_SUB_LEVEL, 0], [P.MASTER_TUNE, 0],
-  [P.OSC2_ON, 0], [P.OSC2_LEVEL, 0],
-  [P.OSC2_PITCH, 0], [P.OSC2_DETUNE, 0], [P.OSC2_UNISON, 1], [P.OSC2_SPREAD, 0],
-  [P.OSC_FM, 0], [P.OSC_RING, 0], [P.NOISE_MIX, 0], [P.VOICE_MODE, 0],
-  [P.FILTER_TYPE, 0], [P.FILTER_CUTOFF, 20000], [P.FILTER_RES, 0.1],
-  [P.FILTER_DRIVE, 0], [P.FILTER_ENV_AMT, 0], [P.FILTER_KBD, 0],
-  // No second stage: the whole scenario is spelled out, so the measurement
-  // does not depend on where in the file it sits.
-  [P.FILTER_ROUTING, 0], [P.FILTER_MORPH, 0], [P.FILTER2_TYPE, 0],
-  [P.FILTER2_CUTOFF, 20000], [P.FILTER2_RES, 0], [P.FILTER2_DRIVE, 0],
-  [P.ENV_ATTACK, 0.01], [P.ENV_SUSTAIN, 1],
-  [P.LFO_ON, 0], [P.LFO2_ON, 0],
-  [P.FX_REVERB_ON, 0], [P.FX_DELAY_ON, 0], [P.FX_CHORUS_ON, 0],
-  [P.FX_FLANGER_ON, 0], [P.FX_PHASER_ON, 0],
-  [P.FX_CRUSH_ON, 0], [P.FX_EQ_ON, 0], [P.FX_TRANSIENT_ON, 0],
-  // Master volume low enough that the master limiter stays linear: its
-  // gain loop is time-varying and would be counted as non-harmonic
-  // energy that no amount of oversampling can remove.
-  [P.MASTER_VOLUME, 0.1],
-];
-
-/**
- * Non-harmonic energy in dB below the signal's own RMS. Parseval rather than
- * a list of probed frequencies: the folds land at `n * fs - k * f0`, which is
- * not a fixed fraction of the grid, and probing the wrong bins would report
- * the noise floor and call it a pass.
- */
-const aliasFloor = (extra) => {
-  engine(
-    [
-      ...aliasBase,
-      ...extra,
-    ],
-    [[ALIAS_NOTE, 1]],
-  );
-  for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
-  const rendered = render(20 + ALIAS_SKIP + ALIAS_BLOCKS);
-  const buf = [];
-  for (let b = ALIAS_SKIP; b < ALIAS_SKIP + ALIAS_BLOCKS; b++) {
-    for (const v of rendered[b][0]) buf.push(v);
-  }
-  const rms = Math.sqrt(buf.reduce((sum, v) => sum + v * v, 0) / buf.length);
-  let harmonics = 0;
-  for (let k = 1; k * ALIAS_F0 < SR / 2; k++) {
-    const m = binMagRect(buf, k * ALIAS_F0);
-    // A sinusoid of amplitude A reads |sum|/N = A/2, so its power is 2m^2.
-    harmonics += 2 * m * m;
-  }
-  const folded = Math.max(rms * rms - harmonics, 1e-30);
-  let peak = 0;
-  for (const v of buf) peak = Math.max(peak, Math.abs(v));
-  return {
-    db: 10 * Math.log10(folded / Math.max(rms * rms, 1e-30)),
-    fund: binMagRect(buf, ALIAS_F0) * 2,
-    samples: buf.length,
-    rms,
-    peak,
-  };
-};
-const ALIAS_NOTE = 45;
-const ALIAS_F0 = 440 * 2 ** ((ALIAS_NOTE - 69) / 12);
-const ALIAS_BLOCKS = (1 * SR) / BLOCK; // one whole second
-const ALIAS_SKIP = 400; // let the attack and the limiter settle (P9.1a: was 240)
 
 {
   const oneX = aliasFloor([
@@ -2036,9 +1585,6 @@ const ALIAS_SKIP = 400; // let the attack and the limiter settle (P9.1a: was 240
   ];
   // The default patch's ENV/LFO -> CUTOFF routes are live; without clearing the
   // matrix these numbers are measurements of the modulation (P6.3a's lesson).
-  const quietMatrix = () => {
-    for (let i = 0; i < 8; i++) ex.gs_set_mod_route(i, 0, 0, 0, 0);
-  };
   const pitch = (freq) => {
     const semis = 12 * Math.log2(freq / 1046.502);
     if (Math.abs(semis) > 48) throw new Error(`gate frequency ${freq} Hz is out of range`);
@@ -2061,7 +1607,7 @@ const ALIAS_SKIP = 400; // let the attack and the limiter settle (P9.1a: was 240
    */
   const renderNote = (extra) => {
     engine([...flat, [P.OSC1_PITCH, pitch(PROBE)], ...extra]);
-    quietMatrix();
+    clearModMatrix();
     const out = [];
     const capture = (blocks) => {
       for (let b = 0; b < blocks; b++) {
@@ -2073,7 +1619,7 @@ const ALIAS_SKIP = 400; // let the attack and the limiter settle (P9.1a: was 240
     };
     capture(AT_ON - 2);
     ex.gs_note_on(84, 1);
-    noteOns++;
+    countNoteOn();
     capture(AT_RELEASE - AT_ON);
     ex.gs_all_notes_off();
     capture(BLOCKS - AT_RELEASE);
@@ -2149,9 +1695,9 @@ const ALIAS_SKIP = 400; // let the attack and the limiter settle (P9.1a: was 240
   // compared as a number, never sample against sample.
   const thdOf = (extra) => {
     engine([...flat, [P.OSC1_PITCH, pitch(PROBE)], ...extra]);
-    quietMatrix();
+    clearModMatrix();
     ex.gs_note_on(84, 1);
-    noteOns++;
+    countNoteOn();
     const out = [];
     for (let b = 0; b < 260; b++) {
       ex.gs_process(BLOCK);
@@ -2188,7 +1734,7 @@ const ALIAS_SKIP = 400; // let the attack and the limiter settle (P9.1a: was 240
     [...flat, [P.OSC1_PITCH, pitch(PROBE)], [P.FX_TRANSIENT_ON, 1], [P.FX_TRANSIENT_MIX, 1]],
     [[84, 1]],
   );
-  quietMatrix();
+  clearModMatrix();
   {
     let peak = 0;
     let worstStep = 0;
@@ -2321,23 +1867,6 @@ const P96_SEED = 707;
 const P96_STEP_RATIO = 1.1;
 const P96_SWEEP = 24;
 
-/** Worst sample-to-sample step in a rendered frame, alongside the frame's own
- * peak and the step as a fraction of it. The ratio is the scale-free number;
- * the absolute pair is printed so a failure is still readable. */
-function worstStepOf(frames) {
-  let step = 0;
-  let peak = 0;
-  for (let i = 0; i < frames.length; i++) {
-    const a = Math.abs(frames[i]);
-    if (a > peak) peak = a;
-    if (i > 0) {
-      const d = Math.abs(frames[i] - frames[i - 1]);
-      if (d > step) step = d;
-    }
-  }
-  return { step, peak, ratio: step / Math.max(peak, 1e-30) };
-}
-
 // ------------------- P9.6: the BLEP wrap that lands on the table's node
 //
 // P9.1b's band-limited oscillator writes its corrections with a float table
@@ -2379,23 +1908,23 @@ function worstStepOf(frames) {
 
   // Walk the phase counter to the pinned seed. Note-ons cost a block each, not
   // a scene, so this is cheap; the release cycle keeps the voices free.
-  const need = P96_SEED - 1 - noteOns;
+  const need = P96_SEED - 1 - noteOnCount();
   check(
     'the pinned P9.6 phase is still reachable',
     need >= 0,
-    `${noteOns} note-ons have already fired, so phase ${P96_SEED} is behind us`,
+    `${noteOnCount()} note-ons have already fired, so phase ${P96_SEED} is behind us`,
   );
   ex.gs_set_param(P.ENV_RELEASE, 0.005);
   ex.gs_set_param(P.FX_REVERB_ON, 0);
   ex.gs_set_param(P.FX_DELAY_ON, 0);
   for (let k = 0; k < need; k++) {
     ex.gs_note_on(96, 1);
-    noteOns++;
+    countNoteOn();
     ex.gs_all_notes_off();
     ex.gs_process(BLOCK);
   }
   const pinned = renderFloor([[P.OSC1_WAVE, WAVE.saw]], 96); // note-on #P96_SEED
-  noteOns++;
+  countNoteOn();
   const pinnedDb = offGridFloor(pinned, hz);
   check(
     `the pinned P9.6 phase (note-on ${P96_SEED}) stays on its harmonic grid`,
@@ -2477,22 +2006,6 @@ function worstStepOf(frames) {
 // before/after per note and the self-proofs are in
 // `docs/notes/band-limited-oscillators.md` §P9.8.
 {
-  /** Hand a sample to the core exactly as the worklet's `sample` message does. */
-  const importSample = (samples, rate) => {
-    const capacity = ex.gs_sample_capacity();
-    const count = Math.min(samples.length, capacity);
-    const scratch = new Float32Array(ex.memory.buffer, ex.gs_sample_import_ptr(), capacity);
-    scratch.set(samples.subarray(0, count));
-    return ex.gs_sample_import(count, rate);
-  };
-  /** Hand a cycle to the core exactly as the worklet does (§5's helper). */
-  const importCycle = (cycle) => {
-    const capacity = ex.gs_wavetable_capacity();
-    if (cycle.length > capacity) throw new Error(`cycle longer than ${capacity}`);
-    const scratch = new Float32Array(ex.memory.buffer, ex.gs_wavetable_import_ptr(), capacity);
-    scratch.set(cycle);
-    return ex.gs_wavetable_import(cycle.length);
-  };
 
   // There is no factory sample: a sample is instrument state the player
   // imports, so the review imports a deterministic one. It is 32768 samples at
@@ -2595,7 +2108,7 @@ function worstStepOf(frames) {
     for (let k = 1; k <= 1024; k++) sum += Math.sin((2 * Math.PI * k * i) / 2048) / k;
     sawCycle[i] = sum;
   }
-  check('the review cycle imports', importCycle(sawCycle) === 0, 'code 0');
+  check('the review cycle imports', importWavetableCycle(sawCycle) === 0, 'code 0');
   const importedCycleFloor = floors(
     [[P.OSC1_WAVE, WAVE.wavetable], [P.WT_USER, 1]],
     [84, 96, 105, 108],
@@ -2610,39 +2123,6 @@ function worstStepOf(frames) {
   }
   ex.gs_wavetable_clear();
 
-  // The second, independent ruler. C7 is the note whose 4 s hold **exactly 8372
-  // cycles** (4 * 2093 = 8372), so at C7 every harmonic sits on a whole-Hz
-  // frequency and the gaps between them are several hundred Hz wide. A Hann
-  // window read at a single frequency in one of those gaps (Goertzel, no DFT
-  // bin) therefore sees *only* what the source puts there: the window keeps the
-  // neighbouring harmonic lines 100+ dB down and the probe is far from any of
-  // them. This is a different question from the BH-7 ruler above -- that one
-  // integrates the whole off-grid spectrum with a window chosen for its -180 dB
-  // sidelobes, this one reads the height of the floor at a handful of exact
-  // frequencies. It is reported as a ratio to the fundamental.
-  //
-  // The P9.5 review's second ruler was a *rectangular* window over the same 8372
-  // cycles. At the -30 dB it was measuring that was fine; P9.7's fix dropped the
-  // floor by another 70 dB and exposed the ruler's own limit -- a rectangular
-  // window's sidelobes decay as 1/bin, so with harmonic lines this strong the
-  // gap bins hold about -13 dB of leakage no matter what the source does. It is
-  // kept in `docs/notes/band-limited-oscillators.md` §P9.7 as the measurement
-  // lesson; the Hann probe below is what replaced it.
-  const binMagHann = (samples, freq) => {
-    const n = samples.length;
-    const w = (2 * Math.PI * freq) / SR;
-    let re = 0;
-    let im = 0;
-    let windowSum = 0;
-    for (let i = 0; i < n; i++) {
-      const win = 0.5 - 0.5 * Math.cos((2 * Math.PI * (i + 0.5)) / n);
-      const v = samples[i] * win;
-      re += v * Math.cos(w * i);
-      im -= v * Math.sin(w * i);
-      windowSum += win;
-    }
-    return (Math.hypot(re, im) / windowSum) * 2;
-  };
   {
     const C7 = 96;
     const f0 = hz(C7);
