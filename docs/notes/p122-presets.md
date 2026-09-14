@@ -60,10 +60,11 @@ Measured (node zlib level 9, the gate's own gzip):
 | `initial JS` gzip | 126 769 B (123.8 KB) | 127 597 B (124.6 KB) |
 | `dist total` | 1592.2 KB | 1592.0 KB |
 
-So the ten presets, the five songs and the new audition gate cost **+828 B of
-gzip**, and the whole thing is **0.2 KB smaller on `dist total` than the tree it
-started from**. `test:dsp` (0.030735) and `verify:dsp:2x` (0.030852) are
-unchanged — nothing here touches the default patch.
+So the ten presets and the five songs cost **+828 B of gzip**, and the whole
+thing is **0.2 KB smaller on `dist total` than the tree it started from** (the
+audition gate is a test file and is not bundled). `test:dsp` (0.030735) and
+`verify:dsp:2x` (0.030852) are unchanged — nothing here touches the default
+patch.
 
 Five public-domain songs were also added (20 -> 25): *When the Saints Go
 Marching In*, *Sakura Sakura*, *Minuet in G* (BWV Anh. 114), *Frère Jacques* and
