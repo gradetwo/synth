@@ -524,24 +524,20 @@ impl Sample {
         let high = low + KERNEL_TAPS;
 
         let start = index as isize + FIRST_TAP;
-        let mut acc = 0.0f32;
         if start >= 0 && start + KERNEL_TAPS as isize <= len as isize {
             // The common case: every tap is inside the table, no wrap per tap.
+            // This is the loop that stays in line and in registers.
             let base = start as usize;
+            let mut acc = 0.0f32;
             for tap in 0..KERNEL_TAPS {
                 let a = self.kernel[low + tap];
                 let weight = a + (self.kernel[high + tap] - a) * blend;
                 acc += table[base + tap] * weight;
             }
+            acc
         } else {
-            for tap in 0..KERNEL_TAPS {
-                let a = self.kernel[low + tap];
-                let weight = a + (self.kernel[high + tap] - a) * blend;
-                let at = (start + tap as isize).rem_euclid(len as isize) as usize;
-                acc += table[at] * weight;
-            }
+            read_wrapped(table, &self.kernel, low, high, blend, start)
         }
-        acc
     }
 
     /// Render a block into `out`.
@@ -661,6 +657,23 @@ pub const fn mipmap_samples(base_len: usize) -> usize {
 /// and for the budget test below.
 pub const fn mipmap_bytes(base_len: usize) -> usize {
     mipmap_samples(base_len) * core::mem::size_of::<f32>()
+}
+
+/// The rare case of [`Sample::read`]: the interpolation window straddles a table
+/// edge, so the tap index has to wrap. Kept out of line — it runs for at most
+/// [`KERNEL_TAPS`] samples per loop pass, and outlining it keeps the interior
+/// loop (the one on the audio path) from being emitted twice.
+#[inline(never)]
+fn read_wrapped(table: &[f32], kernel: &[f32], low: usize, high: usize, blend: f32, start: isize) -> f32 {
+    let len = table.len() as isize;
+    let mut acc = 0.0f32;
+    for tap in 0..KERNEL_TAPS {
+        let a = kernel[low + tap];
+        let weight = a + (kernel[high + tap] - a) * blend;
+        let at = (start + tap as isize).rem_euclid(len) as usize;
+        acc += table[at] * weight;
+    }
+    acc
 }
 
 /// Low-pass `input` into `out`, which must be the same length, with a
