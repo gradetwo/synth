@@ -3,14 +3,14 @@ import { DEMO_SONGS, demoSong, midiOf, specToSong } from './songs';
 
 describe('demo playlist', () => {
   it('ships the requested entries with unique ids', () => {
-    expect(DEMO_SONGS).toHaveLength(20);
+    expect(DEMO_SONGS).toHaveLength(25);
     const ids = DEMO_SONGS.map((s) => s.id);
-    expect(new Set(ids).size).toBe(20);
+    expect(new Set(ids).size).toBe(25);
     for (const required of [
       'elise', 'canon', 'moonlight', 'waltz', 'turkish', 'drift', 'can-can',
       'mountain-king', 'lullaby', 'sugar-plum', 'toccata', 'highland-song',
       'scarborough', 'jasmine', 'tetris', 'joy', 'greensleeves', 'furelise-rock',
-      'arpeggio', 'scale',
+      'arpeggio', 'scale', 'saints', 'sakura', 'bachminuet', 'frere', 'londonderry',
     ]) {
       expect(ids, required).toContain(required);
     }
