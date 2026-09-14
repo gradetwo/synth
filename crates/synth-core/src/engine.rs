@@ -5879,7 +5879,18 @@ mod tests {
         if bus_peak > LIMIT_CEILING {
             assert!(min_gain < 0.999, "bus peaked at {bus_peak} but the limiter stayed open");
         }
-        assert!(min_gain > 0.4, "limiter worked far too hard: {min_gain}");
+        // The floor moved 0.4 -> 0.25 on 2026-09-14 with `VOICE_GAIN` 0.22 -> 0.44
+        // (+6 dB, the user's "the default is much quieter than other software").
+        // It is *not* "the limiter must not act": this deliberately extreme
+        // 16-note, both-oscillators-at-1.0, master-1.0 chord already drove the
+        // limiter to 0.553 (-5.1 dB) at 0.22, and the louder bus takes that to
+        // 0.341 (-9.3 dB) at +4.5 dB, 0.322 (-9.8 dB) at +5.0 dB and 0.286
+        // (-10.9 dB) here. The guard's purpose is unchanged and still proven --
+        // the limiter compresses the transient instead of clipping (the
+        // `peak <= 1.0` line above is the clipping check, and `bus_peak` is
+        // 3.64 here, so a non-working limiter would have clipped hard). 0.25
+        // still separates "working" from "crushed to nothing".
+        assert!(min_gain > 0.25, "limiter worked far too hard: {min_gain}");
 
         // Release: with the notes released the gain must return to unity.
         for note in notes {
@@ -8009,8 +8020,28 @@ mod tests {
         let (peak, knee, min_gain) =
             render_chord(&mut e, &[36, 43, 48, 52, 55, 59, 62, 64, 67, 71, 74, 79], 200);
         assert!(peak <= 1.0, "output clipped at {peak}");
-        assert!(knee < 0.001, "{:.2}% of the output was soft-limited", knee * 100.0);
-        assert!(min_gain > 0.98, "limiter worked too hard: {min_gain}");
+        // The bound moved 0.1% -> 5% on 2026-09-14 with `VOICE_GAIN` 0.22 -> 0.44
+        // (+6 dB, the user's "the default is much quieter than other software").
+        // This is a known, accepted trade and not a regression: `soft_limit`'s
+        // 0.82 knee is an *absolute* output level, so a louder bus necessarily
+        // spends headroom on material as hot as this 12-note, both-oscillators-at-
+        // 1.0 chord. Measured on this test: 0.00% at 0.22, 0.94% at +4.5 dB,
+        // 1.21% at +5.0 dB, 1.50% here at +6.0 dB. The guard's purpose still
+        // holds -- it was written against a ~25% overload, and 5% catches that
+        // with 3.3x margin. Musical material is unaffected: the 91-preset bank's
+        // loudest patch peaks at -0.73 dBFS with 32 of 86 400 samples at the
+        // knee, and the dense bench limiter never moves.
+        assert!(knee < 0.05, "{:.2}% of the output was soft-limited", knee * 100.0);
+        // The limiter floor moved 0.98 -> 0.5 in the same 2026-09-14 +6 dB
+        // change. The old 0.98 asserted "the lookahead limiter does not touch a
+        // dense chord"; measured here it now trims to 0.668 (-3.5 dB) at 0.44,
+        // against 1.000 at 0.22, 0.790 at +4.5 dB and 0.748 at +5.0 dB. That is
+        // the same accepted trade as the knee above -- a louder bus reaches the
+        // absolute ceiling sooner. 0.5 keeps the guard's actual purpose, "the
+        // limiter only trims this chord rather than crushing it", with 1.34x
+        // margin at +6 dB; the deliberately extreme 16-note chord has its own
+        // test with a 0.25 floor.
+        assert!(min_gain > 0.5, "limiter worked too hard: {min_gain}");
     }
 
     /// Voices start at random phases, so a stacked chord grows like sqrt(N)
@@ -8036,7 +8067,21 @@ mod tests {
                 peak_mix = peak_mix.max(e.mix_l[i].abs().max(e.mix_r[i].abs()));
             }
         }
-        assert!(peak_mix < 1.2, "in-phase stacking suspected, mix peaked at {peak_mix}");
+        // Scale-free since 2026-09-14, when `VOICE_GAIN` went 0.22 -> 0.44
+        // (+6 dB) for the user's "the default is much quieter than other
+        // software". `mix_l/r` is the *linear* pre-limiter bus, so it is exactly
+        // proportional to `VOICE_GAIN`: this chord measured 0.961732 at 0.22 and
+        // 1.923464 at 0.44, a ratio of 2.0000, which is the gain ratio and not a
+        // change in behaviour. The old absolute 1.2 was that same calibration at
+        // one bus gain (1.25x what the chord actually peaked at), so dividing the
+        // reference gain back out keeps the verdict identical at 0.22 and makes
+        // it survive any future gain change. This is a re-calibration, not a
+        // relaxation.
+        let stack_limit = 1.2 * VOICE_GAIN / 0.22;
+        assert!(
+            peak_mix < stack_limit,
+            "in-phase stacking suspected, mix peaked at {peak_mix} (bound {stack_limit})"
+        );
     }
 
 
