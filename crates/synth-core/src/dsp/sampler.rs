@@ -84,10 +84,32 @@ pub const MIN_LEVEL_LEN: usize = 256;
 /// `docs/notes/band-limited-oscillators.md` §P9.8.
 pub const LEVEL_NYQUIST: f32 = 0.25;
 /// Taps in each mip-chain low-pass. With the levels above, the transition a
-/// filter has to make is at most 2:1 (cutoff at half the new Nyquist), so this is
-/// generous; it is kept at 192 because P9.8's measured floor is the same at 96
-/// taps and the import cost was accepted (see §P9.8).
-const CHAIN_TAPS: usize = 192;
+/// filter has to make is at most 2:1 (cutoff at half the new Nyquist), so 96 taps
+/// would already be generous — but the two ends of the chain want different
+/// things and the measured floor says so:
+///
+///   * the **early** stages build the levels a note one or two octaves up reads,
+///     and there the filter's transition band is what folds: at 192 taps a
+///     harmonic just above the level's band is 40-60 dB further down than at 96
+///     (2960 Hz read -87.5 dB with 192, -66.6 with 96);
+///   * the **late** stages build short tables (a few hundred samples) whose loop
+///     starts a couple of samples in, so a 192-tap filter's edge-clamped region
+///     covers the whole loop and the seam folds back (8372 Hz read -58.1 dB with
+///     192 taps, -80.2 with 96).
+///
+/// Measured across the keyboard (7-term Blackman-Harris ruler, gate sample):
+/// 192/192 worst -58.1 dB, 96/96 worst -66.6 dB, 192 early + 96 late worst
+/// -77.3 dB. See `docs/notes/band-limited-oscillators.md` §P9.8.
+const CHAIN_TAPS_EARLY: usize = 192;
+const CHAIN_TAPS_LATE: usize = 96;
+/// Filter length for chain step `step` (`0` builds level 1's table).
+const fn chain_taps(step: usize) -> usize {
+    if step < 3 {
+        CHAIN_TAPS_EARLY
+    } else {
+        CHAIN_TAPS_LATE
+    }
+}
 /// Longest filter this module will build.
 const MAX_TAPS: usize = 192;
 
@@ -101,7 +123,12 @@ const MAX_TAPS: usize = 192;
 /// blend between the two nearest phases.
 const KERNEL_TAPS: usize = 16;
 const KERNEL_PHASES: usize = 1024;
-const KERNEL_LEN: usize = KERNEL_TAPS * KERNEL_PHASES;
+/// Rows in the phase table: one more than the phase count, because the blend for
+/// the last phase needs the kernel at `x = 1`, and that is *not* the row for
+/// `x = 0` — its taps sit one sample further along. Wrapping to row 0 there ran
+/// every thousandth sample through the wrong kernel and cost 30 dB.
+const KERNEL_ROWS: usize = KERNEL_PHASES + 1;
+const KERNEL_LEN: usize = KERNEL_TAPS * KERNEL_ROWS;
 /// Offset of the first tap from the read position's integer part: the kernel's
 /// taps sit at `-7..=8`, so the interpolation point lands between them.
 const FIRST_TAP: isize = -(KERNEL_TAPS as isize / 2) + 1;
@@ -264,7 +291,7 @@ impl Sample {
         // 4-term Blackman-Harris: a deep stopband at a wider main lobe than a
         // Blackman window, which is what buys the extra 30 dB here.
         const C: [f32; 4] = [0.35875, 0.48829, 0.14128, 0.01168];
-        for phase in 0..KERNEL_PHASES {
+        for phase in 0..KERNEL_ROWS {
             let x = phase as f32 / KERNEL_PHASES as f32;
             let row = &mut self.kernel[phase * KERNEL_TAPS..(phase + 1) * KERNEL_TAPS];
             let mut sum = 0.0f32;
@@ -446,10 +473,11 @@ impl Sample {
             let (head, tail) = self.pool.split_at_mut(write);
             let input = &head[start..start + input_len];
             let out = &mut tail[..next_len];
+            let taps = chain_taps(step);
             if step == 0 {
-                low_pass_into(input, cutoff, CHAIN_TAPS, out);
+                low_pass_into(input, cutoff, taps, out);
             } else {
-                low_pass_decimate_into(input, cutoff, CHAIN_TAPS, out);
+                low_pass_decimate_into(input, cutoff, taps, out);
             }
             self.tables[self.count] = Table { offset: write as u32, len: next_len as u32 };
             self.count += 1;
@@ -493,7 +521,7 @@ impl Sample {
         let phase = (scaled as usize).min(KERNEL_PHASES - 1);
         let blend = scaled - phase as f32;
         let low = phase * KERNEL_TAPS;
-        let high = if phase + 1 == KERNEL_PHASES { 0 } else { low + KERNEL_TAPS };
+        let high = low + KERNEL_TAPS;
 
         let start = index as isize + FIRST_TAP;
         let mut acc = 0.0f32;
@@ -923,7 +951,7 @@ mod tests {
         assert_eq!(sample.level_len(4), 6_000);
     }
 
-    /// The interpolator's own two failure modes, pinned directly: every phase row
+    /// The interpolator's own failure modes, pinned directly: every phase row
     /// must sum to one (a DC offset has to survive untouched, which is what a
     /// windowed sinc's normalisation buys) and the largest weight must sit at the
     /// interpolation point, not somewhere else (a tap-indexing bug would still
@@ -943,6 +971,31 @@ mod tests {
                 .expect("non-empty row");
             assert!((7..=8).contains(&peak), "phase {phase} peaks at tap {peak}");
         }
+    }
+
+    /// The row *past* the last phase is not the row for phase zero. At `x = 1`
+    /// the interpolation point has moved one sample along, so the kernel is a
+    /// delta in tap 8, not tap 7 — and the last phase blends into it. Reading row
+    /// zero there instead ran every thousandth sample through a kernel shifted by
+    /// a whole sample: a click train that cost 30 dB of floor (1047 Hz -86.4 dB
+    /// with the extra row, -54.7 without).
+    #[test]
+    fn the_phase_table_has_a_row_past_the_last_phase() {
+        let sample = load(&sine(12_000.0, 48_000, SR));
+        let last = &sample.kernel[KERNEL_PHASES * KERNEL_TAPS..KERNEL_ROWS * KERNEL_TAPS];
+        assert!((last[8] - 1.0).abs() < 1e-3, "x = 1 should be a delta at tap 8: {}", last[8]);
+        assert!(last[7].abs() < 1e-2, "x = 1 should not sit at tap 7: {}", last[7]);
+        // And the blend really lands there: a position just short of the next
+        // sample must still interpolate a quarter-Nyquist sine accurately.
+        let mut worst = 0.0f32;
+        for i in 0..256 {
+            let position = 11.0 + 0.999 + i as f64 * 3.0;
+            let got = sample.read(0, position);
+            let want = (core::f32::consts::TAU * 12_000.0 * position as f32 / SR).sin();
+            worst = worst.max((got - want).abs());
+        }
+        let db = 20.0 * worst.max(1e-30).log10();
+        assert!(db < -60.0, "the last phase cell interpolates {db:.1} dB down");
     }
 
     /// A tone well inside a level's band has to come back with its level intact:
