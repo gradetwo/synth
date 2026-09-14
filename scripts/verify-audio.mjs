@@ -2413,23 +2413,33 @@ function worstStepOf(frames) {
 //
 // P9.8 finished the sampler. The remaining -33 dB was the *level*, not the
 // interpolator: a level built by decimating by 2^k leaves its content at 0.44 of
-// its own Nyquist whatever k is, so the four-point chord error stayed put no
-// matter how the chain was shuffled. The fix is to make a level as long as its
-// band allows — content at `SR / 2^(k+1)` stored at `SR / 2^(k-3)` sits at 1/16
-// of the level's Nyquist, and the error falls with ν⁴. So the sampler now
-// measures -70.5 dB at its worst (a 37 dB improvement) and the -60 dB line the
-// P9.1b oscillator work established **is** reached on this path. The ceilings
-// below are the measured worst case plus roughly 5 dB, exactly as the P9.1b and
-// P9.7 rows are. What it cost: the levels are ~1.5× longer (a 4 s sample's
-// mipmap is 2.2 MB, and the arena went 8 → 12 MiB), the chain's filters are 192
-// taps, and a level read between one and two octaves above the root is
-// band-limited to `SR/16` (3 kHz at 48 kHz) — the one audible cost, recorded
-// with the arithmetic in `docs/notes/band-limited-oscillators.md` §P9.8.
+// its own Nyquist whatever k is, so the chord error stayed put no matter how the
+// chain was shuffled. A level is now as long as its band allows, and its content
+// sits at 1/4 of the level's Nyquist rather than 0.44. That quarter is only
+// affordable because the read is a 16-tap Blackman-Harris-windowed sinc (a
+// 1024-phase table, blended between phases) instead of the four-point cubic:
+// measured on this ruler the cubic is -34 dB of images at a quarter of Nyquist
+// and the sinc is -86 dB. Every level therefore gets the widest band its own
+// rate range allows (`SR / 2^(k+1)`, i.e. 12-24 kHz of output at every level)
+// and the sampler reads **-86.4 dB worst at high notes** against the -60 dB
+// P9.1b line, with the whole keyboard at -81 dB or better. The ceilings below
+// are the measured worst case plus 5 dB, exactly as the P9.1b and P9.7 rows are.
 //
-// A layout one step less aggressive (content at 1/8 of the level's Nyquist,
-// which would double that band) was built and measured in the same batch: it
-// reads -56.0 dB at 4186 Hz, above the line, which is why the levels are as long
-// as they are.
+// Two things are worth knowing about the implementation. The phase table has
+// `KERNEL_PHASES + 1` rows because the last phase blends into the kernel at
+// `x = 1`, which is not the kernel at `x = 0` — using row zero there put every
+// thousandth sample through a kernel shifted by a whole sample and cost 30 dB
+// (that is what `the_phase_table_has_a_row_past_the_last_phase` guards). And the
+// chain's filters are 192 taps for the first three stages and 96 after that: the
+// early stages need the sharper transition, the late ones build short tables
+// whose loop sits inside a long filter's edge-clamped region (8372 Hz read
+// -58 dB with 192 taps everywhere, -81 dB with the split).
+//
+// What it cost: the levels are ~1.5× longer (a 4 s sample's mipmap is 2.3 MB,
+// and the arena went 8 → 12 MiB), the read is 16 taps instead of 4, and the
+// import filter still runs on the message path. All of the arithmetic, the
+// before/after per note and the self-proofs are in
+// `docs/notes/band-limited-oscillators.md` §P9.8.
 {
   /** Hand a sample to the core exactly as the worklet's `sample` message does. */
   const importSample = (samples, rate) => {
@@ -2635,40 +2645,52 @@ function worstStepOf(frames) {
     const bh7 = offGridFloor(rendered, f0);
     check(
       'the second ruler sees no floor between the sampler harmonics',
-      Number.isFinite(worst) && worst < -120 && bh7 < -65,
+      Number.isFinite(worst) && worst < -120 && bh7 < -85,
       `sample at C7: BH-7 ${bh7.toFixed(1)} dB, Hann probes ${gaps.map((v) => v.toFixed(1)).join(' / ')} dB below the fundamental at 9000/9200/9500 Hz (worst ${worst.toFixed(1)} dB, ceiling -120)`,
     );
   }
 
   // The sampler, on the deterministic content imported above, at three notes
   // above 1 kHz (rate = note/root: 2.8, 5.6 and 11.2, so three different mip
-  // levels and a fractional rate in every case). This is the P9.1b acceptance
-  // line's own range, and P9.8 brings it inside: -70.5 dB worst, against the
-  // -60 dB line and a -65 ceiling.
+  // levels and a fractional rate in every case). P9.8 brought this path inside
+  // the P9.1b line (-86.4 dB worst against -60), and the ceiling is the measured
+  // worst plus 5 dB.
   const sampleNotes = [84, 96, 108];
   {
     const { values, worst } = floors(samplerPatch(SAMPLE_ROOT), sampleNotes);
     check(
       'the sampler stays inside its measured high-note floor',
-      values.every((v) => Number.isFinite(v) && v < -65),
-      `${at(sampleNotes, values)} (worst ${worst.toFixed(1)} dB, ceiling -65: the measured worst plus 5 dB, against the -60 dB P9.1b line)`,
+      values.every((v) => Number.isFinite(v) && v < -81),
+      `${at(sampleNotes, values)} (worst ${worst.toFixed(1)} dB, ceiling -81: the measured worst plus 5 dB, against the -60 dB P9.1b line)`,
     );
   }
 
-  // Below the root the sampler reads mip level 0, which is the recording itself
-  // at full band — the one level this batch could not also make longer, because
-  // there is no longer version of a 4 s file that fits. Its floor is the chord
-  // error of the sample's own top octave and it is exactly what P9.7 measured
-  // there, so this row is a regression guard on an untouched path rather than a
-  // headline. It is also where the ruler reads the *sample's* harmonics, not the
-  // note's, so the ceiling is looser on purpose.
+  // The top of the keyboard, where the mip tables are only a few hundred samples
+  // long and a filter's edge-clamped region can cover a whole loop. This row is
+  // what pins the chain's per-stage filter length: with 192 taps everywhere
+  // 8372 Hz folds back to -58 dB, with the shorter late-stage filters it is
+  // -81 dB. Without it that choice could be undone silently.
+  {
+    const topNotes = [114, 120];
+    const { values, worst } = floors(samplerPatch(SAMPLE_ROOT), topNotes);
+    check(
+      'the sampler stays inside its measured top-note floor',
+      values.every((v) => Number.isFinite(v) && v < -75),
+      `${at(topNotes, values)} (worst ${worst.toFixed(1)} dB, ceiling -75: the measured worst plus 5 dB)`,
+    );
+  }
+
+  // Below the root the sampler reads mip level 0, the recording itself at full
+  // band. P9.8's interpolator is flat and DC-exact there, so this row is 40 dB
+  // better than the cubic it replaced (-82.0 dB against -47.3 in §P9.7) rather
+  // than the loose regression guard it used to be.
   {
     const lowNotes = [36, 48, 60];
     const { values, worst } = floors(samplerPatch(SAMPLE_ROOT), lowNotes);
     check(
       'the sampler stays inside its measured low-note floor',
-      values.every((v) => Number.isFinite(v) && v < -42),
-      `${at(lowNotes, values)} (worst ${worst.toFixed(1)} dB, ceiling -42; level 0 is the full-band base, unchanged by P9.8)`,
+      values.every((v) => Number.isFinite(v) && v < -77),
+      `${at(lowNotes, values)} (worst ${worst.toFixed(1)} dB, ceiling -77: the measured worst plus 5 dB)`,
     );
   }
 
