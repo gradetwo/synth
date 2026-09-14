@@ -25,6 +25,12 @@ batch adds no ids, so the four-way sync (`params.rs` / `params.ts` /
 new patches land on the bank's median (-40.87 dBFS). Measured spread with the
 new entries: **7.8 dB** (gate allows < 9.0).
 
+> 2026-09-14: `VOICE_GAIN` 0.22 → 0.44 (+6 dB) moved the whole bank up, so the
+> median this note targets is now ≈ **-34.0 dBFS** (fingerprint phrase) / the
+> same test's 5 s phrase reads ≈ -34.8 dBFS, spread **8.1 dB**. New patches
+> should be trimmed against a freshly dumped median, not the -40.87 above.
+> See `docs/notes/loudness.md`.
+
 ## The table is now a flat pair list (option B: buy the space back)
 
 The batch had a hard size problem: `presets.ts` and `songs.ts` are both eager
