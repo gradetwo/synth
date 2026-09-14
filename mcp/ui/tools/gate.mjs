@@ -7,7 +7,8 @@
  * is the difference between "run the visual gate" and "run arbitrary code with
  * the repository's dev dependencies".
  *
- *   * `visual`       — `e2e/visual.spec.ts`, the twenty-baseline comparison.
+ *   * `visual`       — `e2e/visual.spec.ts`, the baseline comparison (the count
+ *                      is read from the snapshot directory, never written down).
  *                      Opt-in upstream (`GS1_VISUAL=1`), which this sets.
  *   * `performance`  — `e2e/performance.spec.ts`, the two frame-cost gates.
  *                      Runs in its own `perf` project, single worker, exactly
@@ -26,6 +27,14 @@ import { resolveOutputPath, repoPath } from '../../lib/paths.mjs';
 import { ROOT } from '../../lib/data.mjs';
 import { ERRORS, fail } from '../../lib/errors.mjs';
 import { previewPort } from '../lib/preview.mjs';
+import { baselineNames } from '../lib/baselines.mjs';
+
+/**
+ * How many desktop baselines `visual` will compare. Counted, not written down:
+ * the note below used to say "twenty" while the suite had grown to 24, which is
+ * exactly the drift `scripts/verify-llm-docs.mjs` catches in the docs.
+ */
+const VISUAL_BASELINES = baselineNames('desktop').length;
 
 /** The gates this tool will run: a name, the spec, and the env it needs. */
 export const SPECS = {
@@ -33,7 +42,7 @@ export const SPECS = {
     spec: 'e2e/visual.spec.ts',
     project: 'chromium',
     env: { GS1_VISUAL: '1' },
-    note: 'twenty visual baselines, compared with the suite\'s own tolerance',
+    note: `${VISUAL_BASELINES} visual baselines, compared with the suite's own tolerance`,
   },
   performance: {
     spec: 'e2e/performance.spec.ts',
