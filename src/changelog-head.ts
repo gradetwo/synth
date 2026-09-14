@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '2.0.2',
+    version: '2.0.3',
     date: '2026-09-14',
     kind: 'feature',
     items: [
       [
-        '**新增 10 个工厂音色和 5 首曲子。** 新音色专门展示双滤波、位粉碎、过采样与图内调制这几项能力；曲库扩到 25 首，全部公版并标注来源。顺带修好更新横幅：**它现在报的是「将要安装的版本」**，而不是页面正在跑的那个——回滚之后那条提示曾经指向的就是被回滚掉的版本。',
-        '**Ten new factory patches and five more songs.** The patches exist to show off the dual filter, the bit crusher, oversampling and in-graph modulation; the library grows to 25 tracks, all public domain and each labelled with its source. Also fixed: the update banner now names **the version it is about to install** rather than the one the page is running -- after a rollback that notice used to point at the very version being rolled back.',
+        '**新增教学与练习模式。** 选一个音阶或和弦，目标音会在键盘上高亮；弹一遍就给出**可量化的评分**——命中率、音准、节奏偏差和 0–100 的总分。评分规则是写下来、可以手算复核的，不是黑箱。这个面板**按需加载**，所以从没打开过它的人不会为此多下载任何东西。',
+        '**New teaching and practice mode.** Pick a scale or a chord and the target notes light up on the keyboard; play a take and it scores it -- hit rate, intonation, timing deviation and an overall 0-100. The scoring rule is written down and can be checked by hand rather than being a black box. The panel loads on demand, so anyone who never opens it downloads nothing for it.',
       ],
     ],
   };
