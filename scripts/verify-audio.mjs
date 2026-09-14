@@ -37,6 +37,8 @@ import {
   aliasFloor, aliasBase, ALIAS_NOTE, ALIAS_F0,
   thdPercent, interHarmonicDb,
 } from './lib/audio-ruler.mjs';
+// P14.2: the one timing criteria, shared with `bench.mjs` and `src/fuzz.test.ts`.
+import { timingTrust, PROBE_REFERENCE_US } from './lib/host-load.mjs';
 
 initCore();
 /** The soft limiter is transparent below this level (see dsp/util.rs). */
@@ -48,6 +50,18 @@ const report = [];
 function check(name, ok, detail) {
   report.push(`  ${ok ? '✓' : '✗'} ${name} — ${detail}`);
   if (!ok) failures.push(name);
+}
+
+/**
+ * A timing check the host cannot decide. It is printed like everything else —
+ * with its reading — but is not a failure, and the verdict at the end of the
+ * run says so in words: a green that quietly contains "the timing was never
+ * judged" is what the third full sweep lost hours to.
+ */
+let timingNotJudged = null;
+function inconclusive(name, reason, reading, host) {
+  report.push(`  ⚠ ${name} — inconclusive: ${reason}; ${reading}`);
+  timingNotJudged = { name, reason, host };
 }
 
 // ----------------------------- P9.1a: a ruler that does not leak (see below)
@@ -245,6 +259,16 @@ function check(name, ok, detail) {
 }
 
 // -------------------------------------------------------------------- 4. CPU
+//
+// P14.2: this is the fourth section's *timing* gate — the only one in this file
+// — and it used to have no load probe at all. On a busy host it read 232 %,
+// 149 % and 155 % of the quantum on unchanged code and failed, while the same
+// scene read 26 % in a quiet window: the readings were the host, not the
+// engine, and nothing in the output said which. The criteria are now the shared
+// `timingTrust()` from `scripts/lib/host-load.mjs`, the same one `bench.mjs`
+// has used since P9.1b, and **every reading is printed whether the check passes,
+// fails, or cannot be judged**. No threshold moved: 16 voices through the whole
+// effect chain, 200 blocks × 5 rounds, min of the rounds, `< 60 %` of 2667 µs.
 {
   const notes = [36, 43, 48, 52, 55, 59, 62, 64, 67, 71, 74, 79, 83, 86, 88, 91];
   engine(
@@ -260,15 +284,30 @@ function check(name, ok, detail) {
   for (let i = 0; i < 60; i++) ex.gs_process(BLOCK); // warm up
   // Best of five rounds: the minimum is the stable estimator of the real cost,
   // while a single long round picks up whatever else the machine is doing.
-  let perBlockUs = Infinity;
-  for (let round = 0; round < 5; round++) {
-    const blocks = 200;
+  const ROUNDS = 5;
+  const BLOCKS_PER_ROUND = 200;
+  const roundUs = [];
+  for (let round = 0; round < ROUNDS; round++) {
     const start = process.hrtime.bigint();
-    for (let i = 0; i < blocks; i++) ex.gs_process(BLOCK);
-    perBlockUs = Math.min(perBlockUs, Number(process.hrtime.bigint() - start) / 1000 / blocks);
+    for (let i = 0; i < BLOCKS_PER_ROUND; i++) ex.gs_process(BLOCK);
+    roundUs.push(Number(process.hrtime.bigint() - start) / 1000 / BLOCKS_PER_ROUND);
   }
+  const perBlockUs = Math.min(...roundUs);
   const load = (perBlockUs / BUDGET_US) * 100;
-  check('worst-case block fits the budget', load < 60, `${load.toFixed(0)}% of ${BUDGET_US.toFixed(0)} µs`);
+  // The reading, in full, on every path: the number, its share of the budget,
+  // each round (so an outlier is visible rather than averaged away), how the
+  // measurement was taken, and what the host was doing while it ran.
+  const host = timingTrust();
+  const reading =
+    `perBlockUs ${perBlockUs.toFixed(0)} µs = ${load.toFixed(0)}% of ${BUDGET_US.toFixed(0)} µs; ` +
+    `rounds ${roundUs.map((v) => v.toFixed(0)).join('/')} µs (best of ${ROUNDS} × ${BLOCKS_PER_ROUND} blocks, ` +
+    `${notes.length} voices); host load ${host.load.toFixed(1)} on ${host.cpus} cpus, ` +
+    `cpu probe ${host.probeUs.toFixed(0)} µs vs ${PROBE_REFERENCE_US} µs idle`;
+  if (host.trusted) {
+    check('worst-case block fits the budget', load < 60, reading);
+  } else {
+    inconclusive('worst-case block fits the budget', host.reason, reading, host);
+  }
 }
 
 // ------------------------------------------ 5. imported single-cycle wavetable
@@ -2291,4 +2330,18 @@ if (failures.length) {
   console.error(`[audio] FAIL — ${failures.join(', ')}`);
   process.exit(1);
 }
-console.log('[audio] PASS');
+// P14.2: a green that hides an unjudged timing check is the bug this batch
+// exists to kill, so when the host could not decide the CPU gate the verdict
+// says it in words — with the load and the probe that made it say so. It is
+// still an exit 0: a shared dev box or a CI runner must not go red because
+// someone else was building.
+if (timingNotJudged) {
+  const { host } = timingNotJudged;
+  console.log(
+    `[audio] PASS (correctness only — timing not judged: load ${host.load.toFixed(1)} on ${host.cpus} cpus, ` +
+      `cpu probe ${host.probeUs.toFixed(0)} µs vs ${PROBE_REFERENCE_US} µs idle)`,
+  );
+  console.log(`[audio]   ↳ ${timingNotJudged.name}: ${timingNotJudged.reason}`);
+} else {
+  console.log('[audio] PASS');
+}
