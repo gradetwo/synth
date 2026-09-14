@@ -189,10 +189,13 @@ Chromium 上同样会让点击超时——实测一个无限平移的按钮在�
   `node scripts/nightly-report.mjs --self-test` 会校验**磁盘上的 `nightly.md` 正是脚本会写出的样子**，手改过的
   （因而会过期的）趋势过不了自测。写在这两列存在之前的旧行，`显示` 记 `—`：不回填、不猜。
 - **CI**：`.github/workflows/ci.yml` 的 `nightly` 作业，`on.schedule: cron '0 19 * * *'`（UTC，约北京时间 03:00），
-  只在 `github.event_name == 'schedule'` 时跑：WebKit（`--all` 全量，Xvfb 有头）+ Firefox（`--subset=nightly`，
-  即核心 + 视觉冒烟 + 音频；全量 Firefox 已由同一 schedule 上的 `e2e-engines` 作业跑）+ `npm run bench:long`，
+  只在 `github.event_name == 'schedule'` 时跑：WebKit 与 Firefox **各一遍 `--all` 全量**（Xvfb 有头）+ `npm run bench:long`，
   产物（`.tmp/nightly`、`test-results`）保留 14 天。CI 不写记录（工作区一次性的），记录由本机 / systemd 那次写。
   `scripts/verify-ci.mjs` 把这个作业也纳入门禁，防止它被静默删掉。
+  **2026-09-14 变更**：原来另有一个每次 push/PR 都跑的 `e2e-engines` 作业（WebKit 全量 + Firefox 全量），
+  已按用户的 **20 分钟判据**删除（WebKit 整包实测 **42.7 min**，连最相关的 50 条都要 **19.1 min**）⇒ 两个慢引擎
+  现在**只**在这个 schedule 作业里跑。`verify-ci.mjs` 为此加了断言：慢引擎不许出现在任何非 schedule 的作业里，
+  且 `nightly` 必须对**两个**引擎都跑 `--all`——否则删掉 `e2e-engines` 就成了一次静默的覆盖率损失。
 - **本机**：`npm run nightly`（脚本 `scripts/nightly-e2e.mjs`）= 锁文件防并发（中途抛错也会释放）+ 每个内核一份日志
   （保留 14 份）+ `--update` 写记录。默认子集比 P11.6 之前大得多（核心 + 视觉冒烟 + 音频，约 50 个用例），而本机
   WebKit 约 1 fps，所以整轮以小时计；只想快速看一眼用 `--core`。`--display=desktop` 走自己的会话，
@@ -277,7 +280,8 @@ Xvfb（`test:e2e:webkit:headed`）只在 Weston 不可用时作为回退。
 ## 8. 虚线描边的命中测试在 Gecko/WebKit 上会「漏」（v2.0.1，fxwire 轨道实测）
 
 **现象**：`e2e/fxgraph.spec.ts` 的「拉调制线」用例在 **Firefox 与 WebKit 上确定性失败、Chromium 通过**，
-自 P7.2（v1.101.0）起就如此。它让 CI 的 `e2e-engines` 长期带着一个假红——**跨引擎信号因此失去意义**。
+自 P7.2（v1.101.0）起就如此。它让当时的 CI 跨引擎作业（`e2e-engines`，2026-09-14 已按 20 分钟判据并进 `nightly`）
+长期带着一个假红——**跨引擎信号因此失去意义**。
 
 **真因不是「点到了包围盒中心之外」**（那条被点线的包围盒中心恰好就是曲线中点，三引擎几何完全一致），
 而是 **`stroke-dasharray: 5 3`**：命中测试跟随**画出来的**描边，而虚线间隙是死画布。

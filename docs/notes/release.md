@@ -71,7 +71,8 @@ npm run release -- --check           # 只做发布前校验（`npm run verify` 
 preflight → package → deploy → 线上哈希核对 → tag，几分钟内完成。前提是快轨已绿、工作树干净。
 
 **慢轨（每 3–4 个版本一次）**：另开一个 agent 在**安静主机**上做全面回归 —— 完整 `npm run verify`、
-全量 E2E（app 套件 + 隔离的 perf 套件）、视觉基线、**WebKit 与 Firefox**（`e2e-engines` / nightly 子集）、
+全量 E2E（app 套件 + 隔离的 perf 套件）、视觉基线、**WebKit 与 Firefox**（`npm run nightly -- --all`；
+CI 侧同样只在 schedule 的 `nightly` 作业里跑）、
 以及一段时间的连续观察；
 > **Firefox / WebKit 只在慢轨测**（用户 2026-09-14 明确指示）：日常批次只跑 chromium，不碰 firefox/webkit project，也不跑 nightly。
 它**只报告**，发现的问题回头**单独立批**修。慢轨与开发**解耦**：它慢它的，迭代继续。
@@ -287,7 +288,8 @@ fps 守卫会得到「idle 61 但 playback 15」这种**纯争用**的读数并�
 判据：如果 `idle-with-engine` 高而 `playback`/`graph-edit` 塌，那是争用；两者一起低才是真回归。
 
 ## WebKit 的归属：以 **20 分钟**为界（用户 2026-09-14 定）
-**规则**：**WebKit 总耗时 > 20 分钟 ⇒ 不进常规门禁**（`verify` / `release*` / `ci.yml` 的常规路径），**只留慢轨**（nightly、CI 的 `e2e-engines` 作业、或专门的全面回归扫描）。
+**规则**：**WebKit 总耗时 > 20 分钟 ⇒ 不进常规门禁**（`verify` / `release*` / `ci.yml` 的常规路径），**只留慢轨**（本机 `npm run nightly`、CI 里 schedule 触发的 `nightly` 作业、或专门的全面回归扫描）。
+**已经落地（2026-09-14）**：CI 里那个每次 push/PR 都跑的 `e2e-engines` 作业**已删除**（它跑的正是超界的整包 WebKit），两个慢引擎改由 schedule 触发的 `nightly` 作业各跑一遍 `--all`；`scripts/verify-ci.mjs` 现在会**拒绝**把 `--project=webkit|firefox` 写进任何非 schedule 的作业，也会**拒绝**删掉 `nightly` 的 `--all`（否则删 `e2e-engines` 就成了静默的覆盖率损失）。
 
 **已有实测**（本机，`--workers=1`，帧无关交互生效后）：
 
@@ -295,6 +297,7 @@ fps 守卫会得到「idle 61 但 playback 15」这种**纯争用**的读数并�
 | :--- | ---: | :--- |
 | headless 整包（v2.0.3，9 failed） | **42.7 min** | 超界 ⇒ 慢轨 |
 | headless 核心子集（8 spec / 38 用例） | **22.7 min** | 超界 ⇒ 慢轨 |
+| headless「相关 6 spec」子集 50 条（v2.1.0，跑到 38/50 被打断） | **19.1 min**（还没跑完） | 早已超界 ⇒ 慢轨 |
 | Weston GL（40 min 上限只到 11 passed） | **≥40 min** | 超界 ⇒ 慢轨 |
 | 单条用例（如 `fxgraph` 的调制线） | 40 s | 可用于**定点**排查，不构成门禁 |
 

@@ -6,8 +6,10 @@
  * test: deleting a step from `ci.yml` silently removes a check, and nothing
  * locally would notice. This walks the workflow (a small indentation-aware
  * reader is enough for the shape GitHub Actions uses) and asserts that the gates
- * we promise — Rust, unit, lint, build, wasm, dist, budget, audio, DSP, E2E on
- * all three engines — are still wired up.
+ * we promise — Rust, unit, lint, build, wasm, dist, budget, audio, DSP, Chromium
+ * E2E — are still wired up, that the two slow engines still run somewhere, and
+ * that they run *only* from the schedule-gated job (see the twenty-minute rule
+ * in `docs/notes/release.md`).
  *
  * It checks both halves of that promise. A command named in the workflow is only
  * real if `package.json` still defines it: a script can vanish (a bad merge, a
@@ -77,7 +79,7 @@ for (const raw of lines) {
 const body = (name) => (jobs.get(name) ?? []).join('\n');
 console.log('[ci] workflow gates');
 
-check('has a verify job and a cross-engine E2E job', jobs.has('verify') && jobs.has('e2e-engines'), [...jobs.keys()].join(', '));
+check('has a verify job', jobs.has('verify'), [...jobs.keys()].join(', '));
 
 const verify = body('verify');
 const required = [
@@ -133,26 +135,42 @@ for (const name of [...requiredCommands] .map(scriptOf).filter((n) => n && n !==
 check('the scalar core is gated too', verify.includes('synth_core_scalar.wasm'));
 check('dist is uploaded for inspection', verify.includes('upload-artifact'));
 
-const engines = body('e2e-engines');
-check('installs WebKit and Firefox', /playwright install[^\n]*webkit[^\n]*firefox/.test(engines));
-check('runs the WebKit project', engines.includes('--project=webkit'));
-check('runs the Firefox project', engines.includes('--project=firefox'));
-check('builds the app before the browser run', engines.includes('npm run build'));
-check('keeps failure artefacts', engines.includes('test-results'));
+// The slow engines may not sit in a push-triggered job. WebKit needs 42.7 min
+// for the whole suite on a warm workstation (and 19.1 min for the fifty most
+// relevant tests), Firefox is slow-lane only by the same decision, and the rule
+// in `docs/notes/release.md` sends anything over twenty minutes to the slow
+// lane. `e2e-engines` used to run both of them on every push and PR; this is the
+// check that keeps that from being added back, by naming the engines anywhere in
+// a job that the schedule guard does not cover.
+const scheduledOnly = (name) => new RegExp(`\\n  ${name}:\\n\\s+if:\\s*github\\.event_name\\s*==\\s*'schedule'`).test(text);
+for (const [name, steps] of jobs) {
+  const slow = steps.some((line) => /--project=(webkit|firefox)\b|--engines=[^\n]*(webkit|firefox)/.test(line));
+  if (!slow) continue;
+  const gated = scheduledOnly(name);
+  check(`the "${name}" job runs the slow engines only on the schedule`, gated,
+    gated ? '' : `"${name}" names WebKit or Firefox but is not schedule-gated`);
+}
+check('no push-triggered cross-engine job', !jobs.has('e2e-engines'),
+  jobs.has('e2e-engines') ? 'e2e-engines ran the whole WebKit suite on every push and is meant to stay gone' : '');
 
 // The nightly job is a promise too: a scheduled run that quietly disappears is
-// how a WebKit-only regression survives for days.
+// how a WebKit-only regression survives for days. It owns the two slow engines
+// now, and it has to keep covering both of them over the whole suite — that was
+// `e2e-engines`' job before, and dropping Firefox's full pass would be a silent
+// coverage loss.
 const nightly = body('nightly');
 check('a nightly job exists', text.includes('  nightly:'));
 check('it is scheduled', /cron:\s*'[^']+'/.test(text));
 // The `if:` sits on the job, not inside its steps, so it is read from the whole
 // file rather than from the step list.
-check(
-  'it only runs on the schedule',
-  /nightly:\n\s+if:\s*github\.event_name\s*==\s*'schedule'/.test(text),
-);
+check('it only runs on the schedule', scheduledOnly('nightly'));
+check('it installs WebKit and Firefox', /playwright install[^\n]*webkit[^\n]*firefox/.test(nightly));
+check('it builds the app before the browser run', nightly.includes('npm run build'));
 check('it runs WebKit', nightly.includes('--engines=webkit'));
 check('it runs Firefox', nightly.includes('--engines=firefox'));
+const wholeSuite = (nightly.match(/--all\b/g) ?? []).length;
+check('it runs both engines over the whole suite', wholeSuite >= 2,
+  wholeSuite >= 2 ? '' : 'each engine needs an `--all` pass now that `e2e-engines` is gone');
 check('it runs the long benchmark', nightly.includes('npm run bench:long'));
 check('it keeps its logs', nightly.includes('nightly-logs'));
 

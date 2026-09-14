@@ -108,56 +108,28 @@ jobs:
           path: dist
           retention-days: 7
 
-  # P0.5: the same specs on the other two engines. The platform-sensitive parts
-  # are audio (AudioWorklet, WebAudio autoplay), file import, the service worker
-  # and touch — exactly what a Chromium-only run cannot speak for.
-  e2e-engines:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install Rust + wasm target
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Install clang (vendored C/C++ -> wasm)
-        run: sudo apt-get update && sudo apt-get install -y clang llvm
-
-      - run: npm ci
-
-      - name: Production build (WASM + SW)
-        run: npm run build
-
-      - name: Install Playwright WebKit + Firefox
-        run: npx playwright install --with-deps webkit firefox
-
-      - name: Browser E2E (WebKit)
-        run: npx playwright test --project=webkit
-
-      - name: Browser E2E (Firefox)
-        run: npx playwright test --project=firefox
-
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: e2e-engines-failures
-          path: test-results
-          retention-days: 7
-
-  # The scheduled run: the same engines, the whole suite, plus the long
-  # benchmark. It reports rather than blocks — a nightly that goes red for a
-  # flaky click teaches everyone to ignore it — but its artefacts are kept.
+  # P0.5 used to live here: an `e2e-engines` job that ran the whole suite on
+  # WebKit and Firefox on every push. It is gone on purpose.
   #
-  # The two engines do not run the same set, on purpose. WebKit takes `--all`;
-  # Firefox takes the nightly subset (core + visual + audio, see the header of
-  # `scripts/nightly-e2e.mjs`), because the full Firefox suite already runs in
-  # `e2e-engines` on the same schedule and a second one would only be slower.
+  # WebKit on this app needs more than twenty minutes for a full pass even on a
+  # warm workstation (measured: 19.1 min for the *fifty* most relevant tests,
+  # 42.7 min for all 147 in v2.0.3), and the user's rule is that anything that
+  # slow does not sit in the regular gate — it belongs to the slow lane. Firefox
+  # was already slow-lane-only for the same reason. Both now run in `nightly`
+  # below, which is schedule-gated and therefore cannot block a push or a PR.
+  #
+  # The coverage itself did not shrink: `nightly` runs both engines over `--all`
+  # (it used to run WebKit `--all` and only the nightly subset for Firefox, because the
+  # full Firefox pass was here).
+
+  # The scheduled run: both other engines, the whole suite, plus the long
+  # benchmark. It reports rather than blocks a development push — a nightly that
+  # goes red for a flaky click teaches everyone to ignore it — but its artefacts
+  # are kept. Only the schedule reaches it, so a red WebKit run never blocks a
+  # PR; `scripts/verify-ci.mjs` asserts that gate as well, because "the slow
+  # lane quietly stopped running" is exactly how a WebKit-only regression
+  # survived for days.
+  #
   # Neither step writes `docs/notes/nightly.md`: this workspace is thrown away,
   # so the record is the local/systemd run's job.
   #
@@ -194,8 +166,8 @@ jobs:
       - name: Browser E2E (WebKit, whole suite, headed under Xvfb)
         run: npm run nightly -- --engines=webkit --all
 
-      - name: Browser E2E (Firefox, nightly subset)
-        run: npm run nightly -- --engines=firefox --subset=nightly
+      - name: Browser E2E (Firefox, whole suite)
+        run: npm run nightly -- --engines=firefox --all
 
       - name: Long sustained-load benchmark
         run: npm run bench:long

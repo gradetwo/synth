@@ -176,12 +176,14 @@ CMD ["nginx", "-g", "daemon off;"]
 
 ## 持续集成（GitHub Actions）
 
-`.github/workflows/ci.yml` 有两个作业：
+`.github/workflows/ci.yml` 现在有两个作业（下表第三行是**已删除**的那个，留在这里是因为它的理由值得记）：
 
 | 作业 | 内容 |
 | --- | --- |
 | `verify` | Rust 测试、前端/Worklet 测试、lint、生产构建、**SIMD 与标量两套 WASM 门禁**、dist 完整性、体积预算、音频质量门禁（时域+频域）、DSP 指纹基线、Chromium 端到端（`npm run test:e2e`）与**隔离单跑的性能套件**（`npm run test:perf`，1 worker；fps 守卫在并行套件里测的是主机争用，v1.111.0 起单独跑）；`dist/` 作为产物上传 |
-| `e2e-engines` | 在 **WebKit 与 Firefox** 上跑同一套端到端（P0.5）；这些引擎涉及 AudioWorklet、WebAudio 手势、文件导入、Service Worker 与触屏，Chromium 跑得再绿也代表不了它们 |
+| `nightly`（**只由 schedule 触发**，见下） | 在 **WebKit 与 Firefox** 上各跑一遍**全量**端到端（`npm run nightly -- --engines=<e> --all`）+ `npm run bench:long`，产物保留 14 天；这些引擎涉及 AudioWorklet、WebAudio 手势、文件导入、Service Worker 与触屏，Chromium 跑得再绿也代表不了它们 |
+| ~~`e2e-engines`~~ | **已删除**：它每次 push/PR 都阻塞式跑整包 WebKit，而 WebKit 整包实测 **42.7 min**（连「最相关的 50 条」都要 **19.1 min**）⇒ 按用户 2026-09-14 的 **20 分钟判据**属于慢轨。覆盖率没有缩水，改由 `nightly` 的 `--all` 承担 |
 
 本地只需 `npm run verify` + `npm run test:e2e` + `npm run test:perf`：`npm run verify` 里含 `verify:ci`，
-它会检查上面的门禁没有被误删。WebKit/Firefox 的浏览器二进制需要系统库，本机没有安装，因此以 CI 为准。
+它会检查上面的门禁没有被误删，也检查慢引擎（WebKit/Firefox）**只**出现在 schedule 触发的作业里
+（往 push 触发的作业里加 `--project=webkit` 会当场判红）。WebKit/Firefox 的浏览器二进制需要系统库，本机没有安装，因此以 CI 为准。
