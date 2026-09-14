@@ -16,13 +16,12 @@
 //! `2^k`, which leaves its content at 0.44 of its own Nyquist no matter what:
 //! the read step of `rate / 2^k` then handed the interpolator a signal at the
 //! worst frequency it could be at, and the four-point Lagrange chord error came
-//! out around -33 dB. A level is now **as long as its band allows**: content at
-//! `SR / 2^(k+1)` is stored at `SR / 2^(k-3)`, so it sits at 1/16 of the level's
-//! Nyquist and the error falls with ν⁴. Levels 1..=3 (rates up to 8×) all read
-//! one full-length table band-limited to `SR/16`; each later level halves both
-//! the rate and the band. Building those tables is a sharp low-pass per level,
-//! which is why the chain is filtered with 192 taps of Blackman-windowed sinc
-//! rather than the old short half-band filters — see [`LEVEL_NYQUIST`].
+//! out around -33 dB. A level is now **as long as its band allows**: level `k`
+//! holds `SR / 2^(k+1)` — the widest band a rate of `2^k` can carry — stored at
+//! `SR / 2^(k-1)`, so the content sits at a quarter of the level's Nyquist. That
+//! quarter is only affordable because the read is a 16-tap windowed sinc rather
+//! than a cubic; the four-point kernel needs the content down at a sixteenth
+//! (see [`LEVEL_NYQUIST`] for the numbers).
 //!
 //! Levels are built with a windowed-sinc decimator rather than an FFT: the
 //! sample is seconds long, not 2048 points, and this runs once when a file is
@@ -57,33 +56,91 @@ pub const MIN_LEVEL_LEN: usize = 256;
 /// only what the alias-free band allows, because the sample itself supplies the
 /// bandwidth and the table has to be filtered down to it.
 ///
-/// The value is not free: level *k* has to be decimated by `2^(k-3)`, so levels
-/// 1..=3 (rates up to 8×) read a full-length table band-limited to `SR/16`
-/// (3 kHz at 48 kHz). Below the range this batch is judged on — the P9.1b line
-/// is ≥ 1 kHz — that is a real bandwidth loss when a sample is played an octave
-/// or two up, and it is the honest price of reaching −60 dB with a four-point
-/// interpolator. Measured: 192 taps of Blackman-windowed sinc at this cutoff
-/// put the whole chain 68 dB down or better on the P9.5 ruler (see
-/// `docs/notes/band-limited-oscillators.md` §P9.8).
-pub const LEVEL_NYQUIST: f32 = 0.0625;
-/// Taps in each mip-chain low-pass. The transition has to be sharp: content just
-/// above a level's band is what folds when that level is read at the top of its
-/// rate range, and only the *filter* can remove it. 192 taps of Blackman are
-/// where the measured floor stops improving (see §P9.8).
-const CHAIN_TAPS: usize = 192;
+/// Where the content of a mip level sits inside that level's own band, as a
+/// fraction of its Nyquist (P9.8).
+///
+/// P9.7 fixed the *interpolator* (f32 position → f64, linear → cubic) and left
+/// the sampler at −33 dB because a mip level built by plain decimation always
+/// holds content right up to its own Nyquist: 0.44 of it with the 0.22-cutoff
+/// half-band filter, whatever the level. The read step of `rate / 2^k` samples
+/// then hands the interpolator a signal at the worst possible frequency, and a
+/// four-point Lagrange chord error at ν = 0.44 is a train of images about 30 dB
+/// down.
+///
+/// Making the level *longer for the same content* moves ν down, and the error
+/// falls with ν^(order). The level layout is then set by two constraints at once:
+/// level `k` must be band-limited to `SR / 2^(k+1)` (or a rate up to `2^k` folds),
+/// and its content must sit at `LEVEL_NYQUIST` of the table it is stored in (or
+/// the interpolator's images come back). Together they fix the level's table at
+/// `SR / 2^(1 + log2(1/LEVEL_NYQUIST) - k)` samples — which is `SR / 2^(k+1)` for
+/// this value, i.e. **every level gets the widest band its own rate range
+/// allows**, and none of them is short.
+///
+/// 1/4 is only reachable because the interpolator is a 16-tap windowed sinc
+/// rather than a cubic: measured (f64, per-phase scan) the four-point kernel
+/// images at −22 dB when the content sits at a quarter of Nyquist, while this one
+/// is −92 dB there *after* the lookup table's own 1024-phase quantization. The
+/// full arithmetic and the pre-1C numbers are in
+/// `docs/notes/band-limited-oscillators.md` §P9.8.
+pub const LEVEL_NYQUIST: f32 = 0.25;
+/// Taps in each mip-chain low-pass. With the levels above, the transition a
+/// filter has to make is at most 2:1 (cutoff at half the new Nyquist), so 96 taps
+/// would already be generous — but the two ends of the chain want different
+/// things and the measured floor says so:
+///
+///   * the **early** stages build the levels a note one or two octaves up reads,
+///     and there the filter's transition band is what folds: at 192 taps a
+///     harmonic just above the level's band is 40-60 dB further down than at 96
+///     (2960 Hz read -87.5 dB with 192, -66.6 with 96);
+///   * the **late** stages build short tables (a few hundred samples) whose loop
+///     starts a couple of samples in, so a 192-tap filter's edge-clamped region
+///     covers the whole loop and the seam folds back (8372 Hz read -58.1 dB with
+///     192 taps, -80.2 with 96).
+///
+/// Measured across the keyboard (7-term Blackman-Harris ruler, gate sample):
+/// 192/192 worst -58.1 dB, 96/96 worst -66.6 dB, 192 early + 96 late worst
+/// -77.3 dB. See `docs/notes/band-limited-oscillators.md` §P9.8.
+const CHAIN_TAPS_EARLY: usize = 192;
+const CHAIN_TAPS_LATE: usize = 96;
+/// Filter length for chain step `step` (`0` builds level 1's table).
+const fn chain_taps(step: usize) -> usize {
+    if step < 3 {
+        CHAIN_TAPS_EARLY
+    } else {
+        CHAIN_TAPS_LATE
+    }
+}
 /// Longest filter this module will build.
 const MAX_TAPS: usize = 192;
 
-/// The table level `level` reads. Level 0 is the full-band base; levels 1..=3
-/// only need `SR/16`, which is exactly what the first chain entry holds at full
-/// length; level `k >= 4` reads chain entry `k - 3`.
+/// Taps in the playback interpolator, and entries in its phase table.
+///
+/// A windowed sinc rather than a polynomial: 16 taps of a 4-term
+/// Blackman-Harris-windowed sinc are flat to within 0.01 dB across the band a
+/// level holds, where a cubic is already 0.4 dB down and −34 dB of images at the
+/// same frequency. The kernel is precomputed per phase on the import path (one
+/// `sin`/`cos` per tap per phase, never in `process`) and read back with a linear
+/// blend between the two nearest phases.
+const KERNEL_TAPS: usize = 16;
+const KERNEL_PHASES: usize = 1024;
+/// Rows in the phase table: one more than the phase count, because the blend for
+/// the last phase needs the kernel at `x = 1`, and that is *not* the row for
+/// `x = 0` — its taps sit one sample further along. Wrapping to row 0 there ran
+/// every thousandth sample through the wrong kernel and cost 30 dB.
+const KERNEL_ROWS: usize = KERNEL_PHASES + 1;
+const KERNEL_LEN: usize = KERNEL_TAPS * KERNEL_ROWS;
+/// Offset of the first tap from the read position's integer part: the kernel's
+/// taps sit at `-7..=8`, so the interpolation point lands between them.
+const FIRST_TAP: isize = -(KERNEL_TAPS as isize / 2) + 1;
+
+/// The table level `level` reads: the full-band base for level 0, then chain
+/// entry `level - 1` — one table per level, each holding exactly the band its own
+/// rate range allows.
 const fn table_for(level: usize) -> usize {
     if level == 0 {
         0
-    } else if level <= 3 {
-        1
     } else {
-        level - 2
+        level
     }
 }
 
@@ -91,15 +148,14 @@ const fn table_for(level: usize) -> usize {
 /// is decimated by `2^level_shift(level)` relative to the engine rate, so the
 /// read step for a rate is `rate / 2^level_shift(level)`.
 pub const fn level_shift(level: usize) -> usize {
-    let table = table_for(level);
-    if table == 0 {
+    if level == 0 {
         0
     } else {
-        table - 1
+        level - 1
     }
 }
 
-/// Tables the mip chain can hold: the base plus chain entries 0..=5.
+/// Tables the mip chain can hold: the base plus one per level.
 const TABLE_COUNT: usize = table_for(LEVELS - 1) + 1;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -209,11 +265,59 @@ pub struct Sample {
     pool: Vec<f32>,
     tables: [Table; TABLE_COUNT],
     count: usize,
+    /// [`KERNEL_PHASES`] rows of [`KERNEL_TAPS`] windowed-sinc weights, filled by
+    /// [`Sample::prepare_kernel`] on the import path. A fixed array rather than a
+    /// `Vec`: it is read from `process`, and it must not be a per-sample heap
+    /// allocation.
+    kernel: [f32; KERNEL_LEN],
 }
 
 impl Sample {
     pub const fn new() -> Self {
-        Self { pool: Vec::new(), tables: [Table::EMPTY; TABLE_COUNT], count: 0 }
+        Self {
+            pool: Vec::new(),
+            tables: [Table::EMPTY; TABLE_COUNT],
+            count: 0,
+            kernel: [0.0; KERNEL_LEN],
+        }
+    }
+
+    /// Build the playback interpolator's phase table: a 4-term Blackman-Harris
+    /// windowed sinc over [`KERNEL_TAPS`] taps, one row per phase, each row
+    /// normalised to unity DC gain. One-time, ~16 k `sin`/`cos` calls, and
+    /// idempotent — the same table for every sample.
+    fn prepare_kernel(&mut self) {
+        let half = KERNEL_TAPS as f32 / 2.0;
+        // 4-term Blackman-Harris: a deep stopband at a wider main lobe than a
+        // Blackman window, which is what buys the extra 30 dB here.
+        const C: [f32; 4] = [0.35875, 0.48829, 0.14128, 0.01168];
+        for phase in 0..KERNEL_ROWS {
+            let x = phase as f32 / KERNEL_PHASES as f32;
+            let row = &mut self.kernel[phase * KERNEL_TAPS..(phase + 1) * KERNEL_TAPS];
+            let mut sum = 0.0f32;
+            for (tap, weight) in row.iter_mut().enumerate() {
+                let distance = x - (FIRST_TAP + tap as isize) as f32;
+                let sinc = if distance.abs() < 1e-6 {
+                    1.0
+                } else {
+                    (core::f32::consts::PI * distance).sin() / (core::f32::consts::PI * distance)
+                };
+                let t = (distance + half) / KERNEL_TAPS as f32;
+                let window = if (0.0..=1.0).contains(&t) {
+                    let angle = core::f32::consts::TAU * t;
+                    C[0] - C[1] * angle.cos() + C[2] * (2.0 * angle).cos() - C[3] * (3.0 * angle).cos()
+                } else {
+                    0.0
+                };
+                *weight = sinc * window;
+                sum += *weight;
+            }
+            if sum.abs() > 1e-9 {
+                for weight in row.iter_mut() {
+                    *weight /= sum;
+                }
+            }
+        }
     }
 
     /// Drop the sample and hand its memory back to the arena: the response
@@ -247,12 +351,12 @@ impl Sample {
         &self.pool[entry.offset as usize..entry.offset as usize + entry.len as usize]
     }
 
-    /// Highest mip level the built chain can serve. Levels 0..=3 read chain
-    /// entry 0, and each further entry carries exactly one more level.
+    /// Highest mip level the built chain can serve. Level `k >= 1` reads chain
+    /// entry `k - 1`, so the tables built are exactly the levels available.
     pub fn max_level(&self) -> usize {
         match self.count {
-            0 | 1 => 0,
-            n => (n + 1).min(LEVELS - 1),
+            0 => 0,
+            n => (n - 1).min(LEVELS - 1),
         }
     }
 
@@ -279,6 +383,7 @@ impl Sample {
     /// that is decided before the pool is touched. A file rejected for its own
     /// content (silent, short, not finite) clears the sampler.
     pub fn load(&mut self, samples: &[f32], source_rate: f32, engine_rate: f32) -> Result<(), SampleError> {
+        self.prepare_kernel();
         if samples.len() < MIN_BASE_SAMPLES / 4 {
             return Err(SampleError::TooShort);
         }
@@ -343,11 +448,12 @@ impl Sample {
             return Ok(());
         }
 
-        // Table 1 is the base low-passed once at `LEVEL_NYQUIST`; every later
-        // table filters the one before it at half the band and halves its rate,
-        // so each one keeps its content at `LEVEL_NYQUIST` of its own Nyquist.
-        // Each filter writes straight into the next slot of the pool: the input
-        // and the output ranges never overlap, so the mipmap needs no scratch.
+        // Table 1 is the base low-passed once at `LEVEL_NYQUIST` — the widest band
+        // a level read at up to 2× may hold; every later table filters the one
+        // before it at half the band and halves its rate, so level `k` ends up
+        // with exactly `SR / 2^(k+1)` and all of it is inside Nyquist. Each filter
+        // writes straight into the next slot of the pool: the input and the output
+        // ranges never overlap, so the mipmap needs no scratch.
         let mut offset = base_len;
         while self.count < TABLE_COUNT {
             let step = self.count - 1;
@@ -367,10 +473,11 @@ impl Sample {
             let (head, tail) = self.pool.split_at_mut(write);
             let input = &head[start..start + input_len];
             let out = &mut tail[..next_len];
+            let taps = chain_taps(step);
             if step == 0 {
-                low_pass_into(input, cutoff, CHAIN_TAPS, out);
+                low_pass_into(input, cutoff, taps, out);
             } else {
-                low_pass_decimate_into(input, cutoff, CHAIN_TAPS, out);
+                low_pass_decimate_into(input, cutoff, taps, out);
             }
             self.tables[self.count] = Table { offset: write as u32, len: next_len as u32 };
             self.count += 1;
@@ -397,28 +504,40 @@ impl Sample {
     /// Read one sample of `level` at `position` (in level samples), wrapping
     /// across the loop bounds in loop modes and stopping in one-shot mode.
     ///
-    /// Four-point (cubic Lagrange) interpolation rather than linear: at the
-    /// rates an octave or two above the root the read step is a large fraction
-    /// of a sample, and a chord's error is a train of high harmonics that folds
-    /// back. P9.7 measured cubic a few dB better than linear here; P9.8's longer
-    /// levels are what let the chord error fall with the table's own band.
+    /// Sixteen-tap windowed-sinc interpolation from the phase table built in
+    /// [`Sample::prepare_kernel`], blended between the two nearest phases. P9.7
+    /// shipped a four-point cubic, which is enough when a level holds its content
+    /// at a sixteenth of its Nyquist (P9.8's first layout) but is 34 dB down at
+    /// the quarter-of-Nyquist point this layout uses; the sinc is flat to 0.01 dB
+    /// there with 92 dB of image rejection (see [`LEVEL_NYQUIST`]).
     fn read(&self, level: usize, position: f64) -> f32 {
         let table = self.table(level);
         let len = table.len();
         let wrapped = position.rem_euclid(len as f64);
         let index = wrapped as usize;
         let fraction = (wrapped - index as f64) as f32;
-        let at = |offset: isize| table[(index as isize + offset).rem_euclid(len as isize) as usize];
-        let a = at(0);
-        let b = at(1);
-        let previous = at(-1);
-        let next = at(2);
-        // Lagrange through (-1, previous), (0, a), (1, b), (2, next):
-        // p(x) = a + k1*x + k2*x*(x-1) + k3*x*(x-1)*(x-2).
-        let k1 = b - a;
-        let k2 = 0.5 * (previous - 2.0 * a + b);
-        let k3 = (next - 3.0 * b + 3.0 * a - previous) / 6.0;
-        a + fraction * (k1 + (fraction - 1.0) * (k2 + (fraction - 2.0) * k3))
+
+        let scaled = fraction * KERNEL_PHASES as f32;
+        let phase = (scaled as usize).min(KERNEL_PHASES - 1);
+        let blend = scaled - phase as f32;
+        let low = phase * KERNEL_TAPS;
+        let high = low + KERNEL_TAPS;
+
+        let start = index as isize + FIRST_TAP;
+        if start >= 0 && start + KERNEL_TAPS as isize <= len as isize {
+            // The common case: every tap is inside the table, no wrap per tap.
+            // This is the loop that stays in line and in registers.
+            let base = start as usize;
+            let mut acc = 0.0f32;
+            for tap in 0..KERNEL_TAPS {
+                let a = self.kernel[low + tap];
+                let weight = a + (self.kernel[high + tap] - a) * blend;
+                acc += table[base + tap] * weight;
+            }
+            acc
+        } else {
+            read_wrapped(table, &self.kernel, low, high, blend, start)
+        }
     }
 
     /// Render a block into `out`.
@@ -538,6 +657,23 @@ pub const fn mipmap_samples(base_len: usize) -> usize {
 /// and for the budget test below.
 pub const fn mipmap_bytes(base_len: usize) -> usize {
     mipmap_samples(base_len) * core::mem::size_of::<f32>()
+}
+
+/// The rare case of [`Sample::read`]: the interpolation window straddles a table
+/// edge, so the tap index has to wrap. Kept out of line — it runs for at most
+/// [`KERNEL_TAPS`] samples per loop pass, and outlining it keeps the interior
+/// loop (the one on the audio path) from being emitted twice.
+#[inline(never)]
+fn read_wrapped(table: &[f32], kernel: &[f32], low: usize, high: usize, blend: f32, start: isize) -> f32 {
+    let len = table.len() as isize;
+    let mut acc = 0.0f32;
+    for tap in 0..KERNEL_TAPS {
+        let a = kernel[low + tap];
+        let weight = a + (kernel[high + tap] - a) * blend;
+        let at = (start + tap as isize).rem_euclid(len) as usize;
+        acc += table[at] * weight;
+    }
+    acc
 }
 
 /// Low-pass `input` into `out`, which must be the same length, with a
@@ -801,27 +937,111 @@ mod tests {
 
     /// P9.8's whole point, pinned: every level's table is as long as its band
     /// allows, so its content sits at [`LEVEL_NYQUIST`] of the table's Nyquist
-    /// rather than at the 0.44 the old decimate-by-`2^k` chain left it at.
+    /// rather than at the 0.44 the old decimate-by-`2^k` chain left it at, and
+    /// the band itself is the widest `SR / 2^(k+1)` a rate of `2^k` can carry.
     #[test]
     fn every_level_keeps_its_content_well_inside_its_own_band() {
-        let sample = load(&sine(220.0, 24_000, SR));
+        // A second of audio: every one of the nine levels is long enough to build
+        // (the shortest is `SR / 128` samples).
+        let sample = load(&sine(220.0, 48_000, SR));
         assert_eq!(sample.level_count(), LEVELS);
         for level in 0..LEVELS {
             let shift = level_shift(level);
-            assert_eq!(sample.level_len(level), 24_000 >> shift, "level {level} length");
+            assert_eq!(sample.level_len(level), 48_000 >> shift, "level {level} length");
             if level == 0 {
                 continue;
             }
-            // Table 1 upward holds `LEVEL_NYQUIST` of the rate it was built at,
-            // and level `k` is read at up to `2^k`, so its output content stops
-            // at the output Nyquist (the `<=` is tight for levels 3, 4 and 8).
+            // Table `k` holds `LEVEL_NYQUIST` of its own rate, and level `k` is
+            // read at up to `2^k`, so its output content stops exactly at the
+            // output Nyquist — the `<=` is tight for every level, which is what
+            // "as wide as its band allows" means.
             let band = LEVEL_NYQUIST * SR / (1 << shift) as f32;
             assert!(band * (1 << level) as f32 <= SR / 2.0 + 1e-3, "level {level} band {band}");
+            assert!(band * (1 << level) as f32 > SR / 4.0, "level {level} band {band}");
         }
-        // Level 1 reads the same full-length table as level 3, which is the price
-        // this batch paid for -60 dB: band above `SR/16` is gone an octave up.
-        assert_eq!(sample.level_len(1), 24_000);
-        assert_eq!(sample.level_len(4), 12_000);
+        // Level 1 is full length and level 4 is an eighth of it: nothing is short.
+        assert_eq!(sample.level_len(1), 48_000);
+        assert_eq!(sample.level_len(4), 6_000);
+    }
+
+    /// The interpolator's own failure modes, pinned directly: every phase row
+    /// must sum to one (a DC offset has to survive untouched, which is what a
+    /// windowed sinc's normalisation buys) and the largest weight must sit at the
+    /// interpolation point, not somewhere else (a tap-indexing bug would still
+    /// "interpolate", just wrongly).
+    #[test]
+    fn the_kernel_table_is_dc_normalised_and_centred() {
+        let sample = load(&sine(440.0, 4_800, SR));
+        for phase in [0usize, 1, 17, KERNEL_PHASES / 2, KERNEL_PHASES - 1] {
+            let row = &sample.kernel[phase * KERNEL_TAPS..(phase + 1) * KERNEL_TAPS];
+            let sum: f32 = row.iter().sum();
+            assert!((sum - 1.0).abs() < 1e-4, "phase {phase} sums to {sum}");
+            let peak = row
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.abs().partial_cmp(&b.1.abs()).expect("finite weights"))
+                .map(|(tap, _)| tap)
+                .expect("non-empty row");
+            assert!((7..=8).contains(&peak), "phase {phase} peaks at tap {peak}");
+        }
+    }
+
+    /// The row *past* the last phase is not the row for phase zero. At `x = 1`
+    /// the interpolation point has moved one sample along, so the kernel is a
+    /// delta in tap 8, not tap 7 — and the last phase blends into it. Reading row
+    /// zero there instead ran every thousandth sample through a kernel shifted by
+    /// a whole sample: a click train that cost 30 dB of floor (1047 Hz -86.4 dB
+    /// with the extra row, -54.7 without).
+    #[test]
+    fn the_phase_table_has_a_row_past_the_last_phase() {
+        let sample = load(&sine(12_000.0, 48_000, SR));
+        let last = &sample.kernel[KERNEL_PHASES * KERNEL_TAPS..KERNEL_ROWS * KERNEL_TAPS];
+        assert!((last[8] - 1.0).abs() < 1e-3, "x = 1 should be a delta at tap 8: {}", last[8]);
+        assert!(last[7].abs() < 1e-2, "x = 1 should not sit at tap 7: {}", last[7]);
+        // And the blend really lands there: a position just short of the next
+        // sample must still interpolate a quarter-Nyquist sine accurately.
+        let mut worst = 0.0f32;
+        for i in 0..256 {
+            let position = 11.0 + 0.999 + i as f64 * 3.0;
+            let got = sample.read(0, position);
+            let want = (core::f32::consts::TAU * 12_000.0 * position as f32 / SR).sin();
+            worst = worst.max((got - want).abs());
+        }
+        let db = 20.0 * worst.max(1e-30).log10();
+        assert!(db < -60.0, "the last phase cell interpolates {db:.1} dB down");
+    }
+
+    /// A tone well inside a level's band has to come back with its level intact:
+    /// this is the cost side of a wider band, and it fails loudly if the kernel's
+    /// passband ripples or the read step is off by a factor.
+    #[test]
+    fn the_kernel_passes_its_band_flat() {
+        // 500 whole periods of 1 kHz, so a loop is seamless and an RMS reading is
+        // a clean amplitude measurement of whatever level the rate picks.
+        let sample = load(&sine(1_000.0, 24_000, SR));
+        let params = SampleParams { root_hz: 440.0, mode: LoopMode::Loop, loop_start: 0.0, loop_end: 1.0 };
+        let mut reference = 0.0f32;
+        for rate in [1.0f32, 2.0, 4.0] {
+            let level = sample.level_for(rate);
+            let step = (rate / (1 << level_shift(level)) as f32) as f64;
+            let mut state = ReadState::new();
+            let mut out = vec![0.0f32; 48_000];
+            sample.render(level, &mut out, step, &params, &mut state);
+            let rms = (out.iter().map(|value| (*value as f64) * (*value as f64)).sum::<f64>()
+                / out.len() as f64)
+                .sqrt() as f32;
+            if reference == 0.0 {
+                reference = rms;
+                assert!((reference - 0.7071).abs() < 0.02, "the loop should be a unit sine: {reference}");
+            }
+            // The windowed sinc is flat to a hundredth of a dB in band and the
+            // chain filters pass 1 kHz at every level, so the level must not move
+            // by more than a few percent from one rate to the next.
+            assert!(
+                (rms - reference).abs() < reference * 0.05,
+                "rate {rate} changed the tone: {rms} vs {reference}"
+            );
+        }
     }
 
     /// The memory an import costs is known before it is attempted, and the
