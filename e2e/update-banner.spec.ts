@@ -1,4 +1,5 @@
 import { expect, test, type Page } from './fixtures';
+import { CHANGELOG_HEAD } from '../src/changelog-head';
 
 /**
  * The update banner, in the state a returning player actually sees it: a new
@@ -9,12 +10,25 @@ import { expect, test, type Page } from './fixtures';
  * It used to be a bare flex row: no width cap, no `min-width:0` on the text and
  * no sizes on the buttons, so on a wide window the headline could not ellipsize
  * and dragged the two actions into tall blocks.
+ *
+ * The fake's `postMessage` answers the version handshake exactly the way the
+ * generated `sw.js` does (`scripts/gen-sw.mjs`: `GET_VERSION` in, `VERSION`
+ * back over the transferred port). `version: null` models a waiting worker that
+ * never answers; the banner must then show no version rather than the running
+ * build's.
  */
-
-async function withWaitingWorker(page: Page) {
-  await page.addInitScript(() => {
+async function withWaitingWorker(page: Page, version: string | null = '2.0.2') {
+  await page.addInitScript((version: string | null) => {
+    const waiting = {
+      state: 'installed',
+      postMessage(message: { type?: string }, transfer?: MessagePort[]) {
+        if (message?.type === 'GET_VERSION' && version && transfer?.[0]) {
+          transfer[0].postMessage({ type: 'VERSION', version });
+        }
+      },
+    };
     const registration = {
-      waiting: { state: 'installed', postMessage() {} },
+      waiting,
       installing: null,
       active: { state: 'activated' },
       scope: `${location.origin}/`,
@@ -34,7 +48,7 @@ async function withWaitingWorker(page: Page) {
       startMessages() {},
     };
     Object.defineProperty(navigator, 'serviceWorker', { value: container, configurable: true });
-  });
+  }, version);
 }
 
 test.describe('update banner', () => {
@@ -69,6 +83,51 @@ test.describe('update banner', () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
 
     await banner.screenshot({ path: 'test-results/banner-desktop.png' });
+  });
+
+  /**
+   * P12.6: the version label. It used to come from the *running* bundle's
+   * `CHANGELOG_HEAD` — the release the page already has, and after a rollback
+   * the release being removed. The waiting worker is the only thing that knows
+   * which build the button will install.
+   */
+  test('names the version the waiting worker will install, not the running one', async ({ page }) => {
+    await withWaitingWorker(page, '9.9.9');
+    await page.goto('/');
+    const line = page.locator('.update-what');
+    await expect(page.locator('.update-banner')).toBeVisible();
+    await expect(line).toContainText('v9.9.9 ·');
+    await expect(line).not.toContainText(`v${CHANGELOG_HEAD.version} `);
+  });
+
+  test('names the rollback target when the waiting worker is older than the page', async ({ page }) => {
+    // The exact P12.4 -> P12.6 shape: the page still runs the newer build (the
+    // version being rolled back) while the waiting worker is the older rollback
+    // target. The label has to be the target, because that is what gets
+    // installed.
+    const rollbackTarget = '0.9.9';
+    expect(rollbackTarget).not.toBe(CHANGELOG_HEAD.version);
+    await withWaitingWorker(page, rollbackTarget);
+    await page.goto('/');
+    const banner = page.locator('.update-banner');
+    await expect(banner).toBeVisible();
+    await expect(page.locator('.update-what')).toContainText(`v${rollbackTarget} ·`);
+    await expect(banner).not.toContainText(`v${CHANGELOG_HEAD.version}`);
+  });
+
+  test('shows no version at all when the waiting worker never answers', async ({ page }) => {
+    await withWaitingWorker(page, null);
+    await page.goto('/');
+    const banner = page.locator('.update-banner');
+    await expect(banner).toBeVisible();
+    // Wait past the handshake timeout: the copy must still carry no version,
+    // and specifically not the running build's. No number is honest; a wrong
+    // one is what this whole handshake exists to stop.
+    await page.waitForTimeout(1700);
+    const line = page.locator('.update-what');
+    await expect(line).toBeVisible();
+    await expect(banner).not.toContainText(`v${CHANGELOG_HEAD.version}`);
+    expect(await line.textContent()).not.toMatch(/\bv\d/);
   });
 
   test.describe('on a phone', () => {
