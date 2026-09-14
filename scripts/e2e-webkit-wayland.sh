@@ -56,15 +56,21 @@ chmod 700 "$runtime"
 # `Using rendering device: /dev/dri/renderD128` (EGL 1.5, Mesa). If GL cannot
 # come up we fall back to the default renderer rather than failing the lane.
 weston_renderer_args=()
-if ls /dev/dri/renderD* >/dev/null 2>&1; then
+# `GS1_WESTON_NO_GL=1` forces the old software path so the two can be measured
+# against each other on the same machine (see docs/notes/compat.md §10).
+if [ "${GS1_WESTON_NO_GL:-0}" != "1" ] && ls /dev/dri/renderD* >/dev/null 2>&1; then
   weston_renderer_args=(--renderer=gl)
 fi
 
 weston_pid=""
 start_weston() {
+  # `${arr[@]+"${arr[@]}"}` rather than `"${arr[@]}"`: under `set -u` an empty
+  # array expansion is an unbound-variable error in bash < 4.4, which made the
+  # whole lane exit in 0.3 s on any machine with no /dev/dri (and on the
+  # GS1_WESTON_NO_GL=1 path). Found by A/B-ing the two renderers.
   XDG_RUNTIME_DIR="$runtime" weston \
     --backend=headless-backend.so --socket=wayland-gs1 \
-    "${weston_renderer_args[@]}" \
+    ${weston_renderer_args[@]+"${weston_renderer_args[@]}"} \
     --width=1280 --height=900 --idle-time=0 >"$log" 2>&1 &
   weston_pid=$!
 }
@@ -97,7 +103,10 @@ fi
 
 # Report what weston *actually* chose, not what /dev happens to contain: the
 # old line printed `ls /dev/dri | head -1`, i.e. the literal string "by-path".
-renderer_device="$(grep -a 'Using rendering device' "$log" | head -1 | sed 's/.*: //')"
+# The `|| true` is load-bearing: with `set -e` + `pipefail` a grep that finds
+# nothing (the software path, or any machine without /dev/dri) aborts the whole
+# script. Found by A/B-ing the two renderers against each other.
+renderer_device="$(grep -a 'Using rendering device' "$log" | head -1 | sed 's/.*: //' || true)"
 echo "[wayland] weston headless up (socket $runtime/wayland-gs1)"
 if [ -n "$renderer_device" ]; then
   echo "[wayland] renderer: GL via $renderer_device"
