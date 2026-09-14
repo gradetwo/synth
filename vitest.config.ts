@@ -13,7 +13,10 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    // The MCP server's tests (P13.2) live outside `src/` because the server does:
+    // they run the real wasm and speak JSON-RPC over the same modules the
+    // `npm run mcp` entry point uses.
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'mcp/**/*.test.mjs'],
     globals: false,
     restoreMocks: true,
     // The worklet integration test renders all 67 presets through WASM and is

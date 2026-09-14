@@ -141,10 +141,28 @@ export function engine(params, notes = []) {
 }
 
 export function render(blocks, skip = 20) {
+  return renderWith(blocks, null, skip);
+}
+
+/**
+ * `render`, plus a hook that runs before each block is processed.
+ *
+ * P13.2's `gs1.render` starts and stops notes at block boundaries, and the one
+ * thing it must not do is grow a second copy of the block loop (the whole point
+ * of `scripts/lib/` is that the gate and the tools share this code). `render`
+ * is now this function with no hook, so the gate's buffers are copied by
+ * exactly the statements it always used.
+ *
+ * @param {number} blocks how many 128-sample blocks to process
+ * @param {((block: number) => void) | null} onBlock called with the block index
+ * @param {number} skip blocks dropped from the returned buffer (settling)
+ */
+export function renderWith(blocks, onBlock, skip = 0) {
   const left = new Float32Array(BLOCK);
   const right = new Float32Array(BLOCK);
   const out = [];
   for (let b = 0; b < blocks; b++) {
+    if (onBlock) onBlock(b);
     ex.gs_process(BLOCK);
     if (b < skip) continue;
     const lPtr = ex.gs_left_ptr() / 4;
