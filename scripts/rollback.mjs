@@ -160,13 +160,14 @@ function run(cmd, args, { capture = false, env = {} } = {}) {
 function pwaNote(entry) {
   log('[rollback] what this does on the client side (PWA / service worker):');
   log(`[rollback]   · new visitors and reloads: served v${entry.version} (shell ${entry.indexHash}) immediately —`);
-  log('[rollback]     the worker fetches the shell with cache:no-store, so a reload never reuses the old index.html.');
-  log(`[rollback]   · installed clients (sw ${entry.swCache}): the rolled-back sw.js is a different worker, so the`);
-  log('[rollback]     browser installs it as *waiting* and the update banner appears; tapping 立即更新 activates');
-  log(`[rollback]     v${entry.version} and reloads once.`);
-  log('[rollback]   · the banner names the *running* build, not the waiting one, so a client on the newer build is told');
-  log('[rollback]     "v<newer> · …" — the very version being rolled back — while the action lands on the rollback');
-  log(`[rollback]     target v${entry.version}. Do not read the banner label as the version it will install.`);
+  log('[rollback]     the worker fetches the shell with cache:no-store, so a reload never reuses the old index.html,');
+  log('[rollback]     and the hashed assets it points at are not in the old cache, so they come from the network.');
+  log(`[rollback]   · a session whose page is still the newer build and is never reloaded: the rolled-back sw.js`);
+  log(`[rollback]     (${entry.swCache}) is a different worker, so the browser installs it as *waiting* and the update`);
+  log(`[rollback]     banner appears; tapping 立即更新 activates v${entry.version} and reloads once.`);
+  log('[rollback]   · on that banner the version comes from the *running* bundle, so a client on the newer build is');
+  log('[rollback]     told "v<newer> · …" — the very version being rolled back — while the action lands on the');
+  log(`[rollback]     rollback target v${entry.version}. Do not read the banner label as the version it will install.`);
   log('[rollback]   · offline clients keep their own build until they are online again; nothing server-side reaches them.');
   log(`[rollback]   · there is no push channel here, so "everyone is back on v${entry.version}" is only true of new`);
   log('[rollback]     visitors plus whoever reloads or taps the banner. See docs/notes/release.md.');
