@@ -22,8 +22,12 @@
  * range, inside the caps — not about matching the parser's own code.
  */
 
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, type TaskContext } from 'vitest';
 import { DEFAULT_PARAMS } from '@/audio/params';
+// P14.2: the budget below is a *timing* gate, so it asks the host the same
+// question `scripts/bench.mjs` and `scripts/verify-audio.mjs` ask, through the
+// same module. The criteria and the 4000 ms budget are unchanged.
+import { timingTrust, PROBE_REFERENCE_US } from '../scripts/lib/host-load.mjs';
 import { decodeMidi } from '@/audio/midi';
 import { parseInterval, parseScala, type ScalaScale } from '@/audio/scala';
 import { decodeSamples16, encodeSamples, parseWav } from '@/audio/wavefile';
@@ -37,6 +41,20 @@ import { unwrap, wrap } from '@/state/persist';
 const RUNS = 10_000;
 /** A parser taking longer than this on 10k inputs is stuck, not slow. */
 const BUDGET_MS = 4000;
+
+/**
+ * Timing readings collected by `runFuzz`, judged by `finishTiming`.
+ *
+ * P14.2: this budget is a wall-clock gate with no load probe until now, and on
+ * a busy host it read 4050/4252/6001/7945 ms on code that reads 442/656/452/328
+ * ms in a quiet window — a red that looks exactly like a parser regression and
+ * is not one. The probe is shared with the other two timing gates now, the
+ * reading is printed on the passing path too (the margin is the number the last
+ * sweep could not see), and readings are *collected* rather than asserted
+ * inline so a busy host does not abort a test halfway through its parsers: the
+ * correctness work all runs, then the verdict says the clock was not judged.
+ */
+const timings: { name: string; runs: number; elapsed: number; budget: number }[] = [];
 
 // ----------------------------------------------------------------- the harness
 
@@ -204,10 +222,52 @@ function runFuzz<T, O>(spec: FuzzSpec<T, O>): void {
     }
   }
   const elapsed = Date.now() - started;
-  expect(
-    elapsed,
-    `${spec.name}: ${runs} inputs took ${elapsed} ms (budget ${spec.budgetMs ?? BUDGET_MS} ms)`,
-  ).toBeLessThan(spec.budgetMs ?? BUDGET_MS);
+  const budget = spec.budgetMs ?? BUDGET_MS;
+  // Always, pass or fail: a green with no visible margin is how a budget that
+  // was one hiccup from red looks fine, and a red with no number is how three
+  // agents read a busy host as a regression.
+  console.log(
+    `[fuzz] ${spec.name}: ${runs} inputs in ${elapsed} ms of ${budget} ms budget ` +
+      `(${(((budget - elapsed) / budget) * 100).toFixed(1)}% headroom)`,
+  );
+  timings.push({ name: spec.name, runs, elapsed, budget });
+}
+
+/**
+ * Judge the timing readings this test collected — or say, visibly, why the host
+ * cannot. Called at the end of every `it`, after all of its parsers have run.
+ */
+function finishTiming(ctx: TaskContext): void {
+  const collected = timings.splice(0, timings.length);
+  if (collected.length === 0) return;
+  const host = timingTrust();
+  if (!host.trusted) {
+    console.warn(
+      `[fuzz] timing not judged — ${host.reason} ` +
+        `(load ${host.load.toFixed(1)} on ${host.cpus} cpus, cpu probe ${host.probeUs.toFixed(0)} µs ` +
+        `vs ${PROBE_REFERENCE_US} µs idle); readings: ` +
+        collected.map((t) => `${t.name} ${t.elapsed} ms/${t.budget} ms`).join(', '),
+    );
+    // Vitest 2.1.9 has the runtime skip, and a skip is a *visible* state in the
+    // summary — which is the point: `passed` would hide that the budget was
+    // never judged. If this ever stops working, fall back to the warning above
+    // plus skipping only this assertion (never a red).
+    ctx.skip();
+  }
+  for (const t of collected) {
+    expect(
+      t.elapsed,
+      `${t.name}: ${t.runs} inputs took ${t.elapsed} ms (budget ${t.budget} ms)`,
+    ).toBeLessThan(t.budget);
+  }
+}
+
+/** `it` for a parser test: the timing verdict is part of every one of them. */
+function itFuzz(name: string, body: () => void): void {
+  it(name, (ctx) => {
+    body();
+    finishTiming(ctx);
+  });
 }
 
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
@@ -300,7 +360,12 @@ const validSongFile = (): string => JSON.stringify({ format: 'gs1-song', schema:
 // --------------------------------------------------------------- the parsers
 
 describe('parser fuzzing', () => {
-  it('share codes: decodePatch and readShareCode', () => {
+  // A test that threw a correctness error never reached its verdict; do not
+  // let its readings leak into the next test's judgement.
+  beforeEach(() => {
+    timings.length = 0;
+  });
+  itFuzz('share codes: decodePatch and readShareCode', () => {
     const code = validCode();
     const urls = [
       `https://synth.wangda.today/#p=${code}`,
@@ -369,7 +434,7 @@ describe('parser fuzzing', () => {
     });
   });
 
-  it('patch files: parsePatchFile', () => {
+  itFuzz('patch files: parsePatchFile', () => {
     const preset = validPatchFile();
     const arrangement = validSongFile();
     runFuzz<string, ReturnType<typeof parsePatchFile>>({
@@ -420,7 +485,7 @@ describe('parser fuzzing', () => {
     });
   });
 
-  it('MIDI files: parseMidi', () => {
+  itFuzz('MIDI files: parseMidi', () => {
     const midi = validMidi();
     runFuzz<Uint8Array, MidiSong>({
       name: 'parseMidi',
@@ -463,7 +528,7 @@ describe('parser fuzzing', () => {
     });
   });
 
-  it('Scala scale files: parseScala and parseInterval', () => {
+  itFuzz('Scala scale files: parseScala and parseInterval', () => {
     runFuzz<string, ScalaScale>({
       name: 'parseScala',
       seed: 0x5eed_0005,
@@ -499,7 +564,7 @@ describe('parser fuzzing', () => {
     });
   });
 
-  it('WAV files: parseWav', () => {
+  itFuzz('WAV files: parseWav', () => {
     const wav = validWav();
     runFuzz<ArrayBuffer, ReturnType<typeof parseWav>>({
       name: 'parseWav',
@@ -544,7 +609,7 @@ describe('parser fuzzing', () => {
     });
   });
 
-  it('stored waveforms and envelopes: decodeUserWave, unwrap', () => {
+  itFuzz('stored waveforms and envelopes: decodeUserWave, unwrap', () => {
     runFuzz<string, ReturnType<typeof decodeUserWave>>({
       name: 'decodeUserWave',
       seed: 0x5eed_0009,
@@ -585,7 +650,7 @@ describe('parser fuzzing', () => {
     });
   });
 
-  it('Web MIDI messages: decodeMidi', () => {
+  itFuzz('Web MIDI messages: decodeMidi', () => {
     const messages: number[][] = [
       [0x90, 60, 100],
       [0x80, 60, 0],
