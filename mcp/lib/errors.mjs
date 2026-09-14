@@ -43,6 +43,21 @@ export const ERRORS = {
   TOOL: 'E_TOOL',
   /** A P9.8 import refusal such as `noRoom` (code 4); passed through as-is. */
   IMPORT: 'E_IMPORT',
+  /**
+   * P13.4 browser layer: the URL is not this server's own loopback preview.
+   * Kept apart from `E_PATH` because the caller's fix is different (use a local
+   * `path`, or open the preview) and because "we refused to fetch that host" is
+   * a security fact worth being able to assert.
+   */
+  UI_URL: 'E_UI_URL',
+  /** A `gs1.ui.*` verb that needs a page, with none open (or a closed one). */
+  UI_SESSION: 'E_UI_SESSION',
+  /** Chromium is missing or would not launch. */
+  UI_BROWSER: 'E_UI_BROWSER',
+  /** A spec outside the `gs1.ui.gate` whitelist, or a project other than chromium. */
+  UI_SPEC: 'E_UI_SPEC',
+  /** An element did not become clickable/visible before the deadline. */
+  UI_TIMEOUT: 'E_UI_TIMEOUT',
 };
 
 /** Make a rejection. */

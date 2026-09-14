@@ -11,6 +11,8 @@
     "build:sw": "node scripts/gen-sw.mjs",
     "icons": "node scripts/gen-icons.mjs",
     "mcp": "node mcp/server.mjs",
+    "mcp:ui": "node mcp/ui/server.mjs",
+    "ui:smoke": "node scripts/ui-smoke.mjs",
     "build": "npm run build:wasm && tsc -b && vite build && npm run build:sw",
     "preview": "vite preview --port 4173",
     "test": "vitest run",

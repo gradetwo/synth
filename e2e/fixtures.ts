@@ -1,6 +1,7 @@
 import { test as base, expect } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import type { Locator, Page } from '@playwright/test';
+import { interact, setDefaultTimeout } from './interact.mjs';
 
 /**
  * The specs import `test` from here instead of from '@playwright/test' (that is
@@ -40,6 +41,15 @@ export type { Page, Locator } from '@playwright/test';
  *    enforced -- only the two checks that are *defined* in terms of animation
  *    frames are dropped. Assertions are untouched.
  *
+ *    **P13.4 moved that implementation to `e2e/interact.mjs`**, which is a plain
+ *    module: `e2e/fixtures.ts` still installs it over Playwright's verbs exactly
+ *    as before, and `mcp/ui/tools/click.mjs` (`gs1.ui.click`) calls the same
+ *    functions, so the MCP browser layer and the E2E suite share one
+ *    hit-test/scroll/dispatch implementation instead of two that can drift. The
+ *    only behaviour change in the move is the one Playwright defines and this
+ *    code used to miss: `options.force` is now honoured (it skips the
+ *    actionability checks instead of looping to the timeout).
+ *
  *    Measured: the same clicks take 39-57 ms this way, and `boot.spec.ts` goes
  *    from 2.4 min to 1.2 min (its first test: 56.3 s -> 6.6 s).
  *
@@ -74,7 +84,9 @@ const isFrameFree = () => frameFreeActive;
 /**
  * Playwright's own action timeout defaults to the *test* timeout (nothing sets
  * `actionTimeout` here), so the replacement must default the same way instead of
- * inventing a shorter cap that would fail a legitimately slow wait.
+ * inventing a shorter cap that would fail a legitimately slow wait. The default
+ * itself lives in `interact.mjs` now (the MCP layer needs one too); this is the
+ * per-test value it is pointed at.
  */
 let frameFreeTimeout = 120_000;
 const defaultTimeout = () => frameFreeTimeout;
@@ -90,99 +102,6 @@ type ClickOptions = {
   timeout?: number;
   trial?: boolean;
 };
-
-const remaining = (deadline: number, timeout: number) => Math.max(0, Math.min(timeout, deadline - Date.now()));
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Scroll the element into view with a DOM call (no animation frames). */
-async function scrollIntoView(locator: Locator): Promise<void> {
-  await locator.evaluate((el) => {
-    const rect = el.getBoundingClientRect();
-    const viewportWidth = window.innerWidth || 0;
-    const viewportHeight = window.innerHeight || 0;
-    if (rect.top < 0 || rect.bottom > viewportHeight || rect.left < 0 || rect.right > viewportWidth) {
-      el.scrollIntoView({ block: 'center', inline: 'center' });
-    }
-  });
-}
-
-async function boxOf(locator: Locator): Promise<{ x: number; y: number; width: number; height: number }> {
-  return locator.evaluate((el) => {
-    const rect = el.getBoundingClientRect();
-    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-  });
-}
-
-/**
- * Resolve a clickable viewport point, re-reading the box on every attempt: an
- * element that is still settling (a panel sliding open) moves between attempts,
- * and a point computed once would then never be over it. Playwright recomputes
- * on every retry for the same reason.
- */
-async function frameFreePoint(
-  locator: Locator,
-  options: ClickOptions,
-): Promise<{ page: Page; x: number; y: number }> {
-  const timeout = options.timeout ?? defaultTimeout();
-  const deadline = Date.now() + timeout;
-  await locator.waitFor({ state: 'visible', timeout });
-  for (;;) {
-    if (!(await locator.isEnabled().catch(() => true))) {
-      if (Date.now() >= deadline) {
-        throw new Error(`locator: Timeout ${timeout}ms exceeded.\nCall log:\n  - waiting for element to be enabled\n`);
-      }
-      await sleep(50);
-      continue;
-    }
-    await scrollIntoView(locator);
-    const box = await boxOf(locator);
-    const x = box.x + (options.position?.x ?? box.width / 2);
-    const y = box.y + (options.position?.y ?? box.height / 2);
-    // "receives events" without animation frames: a synchronous hit test.
-    const hits = await locator
-      .evaluate((el, at) => {
-        const top = document.elementFromPoint(at.x, at.y);
-        return !!top && (top === el || el.contains(top));
-      }, { x, y })
-      .catch(() => false);
-    if (hits) return { page: locator.page(), x, y };
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `locator: Timeout ${timeout}ms exceeded.\nCall log:\n  - waiting for element to receive pointer events\n`,
-      );
-    }
-    await sleep(50);
-  }
-}
-
-async function dispatchClick(locator: Locator, options: ClickOptions): Promise<void> {
-  const { page, x, y } = await frameFreePoint(locator, options);
-  if (options.trial) return;
-  const modifiers = options.modifiers ?? [];
-  for (const key of modifiers) await page.keyboard.down(key);
-  try {
-    await page.mouse.click(x, y, {
-      button: options.button ?? 'left',
-      clickCount: options.clickCount ?? 1,
-      delay: options.delay,
-    });
-  } finally {
-    for (const key of [...modifiers].reverse()) await page.keyboard.up(key);
-  }
-}
-
-async function dispatchTap(locator: Locator, options: ClickOptions): Promise<void> {
-  const { page, x, y } = await frameFreePoint(locator, options);
-  if (options.trial) return;
-  await page.touchscreen.tap(x, y);
-}
-
-async function dispatchHover(locator: Locator, options: ClickOptions): Promise<void> {
-  const { page, x, y } = await frameFreePoint(locator, options);
-  if (options.trial) return;
-  await page.mouse.move(x, y);
-}
 
 type LocatorLike = Locator & { [MARK]?: boolean };
 
@@ -201,34 +120,32 @@ function install(page: Page): void {
 
   proto.click = async function click(this: Locator, options: ClickOptions = {}) {
     if (!isFrameFree()) return originalClick.call(this, options);
-    return dispatchClick(this, options);
+    return interact.click(this, options);
   };
 
   proto.dblclick = async function dblclick(this: Locator, options: ClickOptions = {}) {
     if (!isFrameFree()) return originalDblclick.call(this, options);
-    return dispatchClick(this, { ...options, clickCount: 2 });
+    return interact.dblclick(this, options);
   };
 
   proto.hover = async function hover(this: Locator, options: ClickOptions = {}) {
     if (!isFrameFree()) return originalHover.call(this, options);
-    return dispatchHover(this, options);
+    return interact.hover(this, options);
   };
 
   proto.tap = async function tap(this: Locator, options: ClickOptions = {}) {
     if (!isFrameFree()) return originalTap.call(this, options);
-    return dispatchTap(this, options);
+    return interact.tap(this, options);
   };
 
   proto.check = async function check(this: Locator, options: ClickOptions = {}) {
     if (!isFrameFree()) return originalCheck.call(this, options);
-    if (await this.isChecked()) return;
-    return dispatchClick(this, options);
+    return interact.check(this, options);
   };
 
   proto.uncheck = async function uncheck(this: Locator, options: ClickOptions = {}) {
     if (!isFrameFree()) return originalUncheck.call(this, options);
-    if (!(await this.isChecked())) return;
-    return dispatchClick(this, options);
+    return interact.uncheck(this, options);
   };
 
   proto.scrollIntoViewIfNeeded = async function scrollIntoViewIfNeeded(
@@ -236,9 +153,7 @@ function install(page: Page): void {
     options: { timeout?: number } = {},
   ) {
     if (!isFrameFree()) return originalScroll.call(this, options);
-    const timeout = options.timeout ?? defaultTimeout();
-    await this.waitFor({ state: 'attached', timeout });
-    await scrollIntoView(this);
+    return interact.scrollIntoViewIfNeeded(this, options);
   };
 }
 
@@ -250,6 +165,7 @@ export const test = base.extend<{ frameFree: void }>({  frameFree: [
       } catch {
         // outside a test context: keep the module default
       }
+      setDefaultTimeout(frameFreeTimeout);
       if (wanted) install(page);
       if (wantsRafFallback(browserName)) await page.addInitScript({ path: RAF_FALLBACK_PATH });
       frameFreeActive = wanted;

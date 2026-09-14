@@ -473,8 +473,10 @@ describe('shared implementation with the gate', () => {
     expect(joined).not.toMatch(/function\s+offGridFloor/);
     expect(joined).not.toMatch(/function\s+binMagHann/);
 
-    // And at least one file really does pull the shared modules in.
-    const renderSources = sources.filter((file) => /tools\/(render|analyze|gate)\.mjs$/.test(file));
+    // And at least one file really does pull the shared modules in. The regex is
+    // anchored to `mcp/tools/` on purpose: P13.4's `mcp/ui/tools/gate.mjs` is a
+    // different gate (a Playwright spec runner), not this measurement gate.
+    const renderSources = sources.filter((file) => /[/\\]mcp[/\\]tools[/\\](render|analyze|gate)\.mjs$/.test(file));
     expect(renderSources.length).toBe(3);
     const measure = readFileSync(resolve(MCP_DIR, 'lib/measure.mjs'), 'utf8');
     expect(measure).toContain("scripts/lib/audio-ruler.mjs");
@@ -520,7 +522,7 @@ describe('dependencies', () => {
     expect(Object.keys(all).filter((name) => /mcp|modelcontextprotocol/i.test(name))).toEqual([]);
   });
 
-  it('has mcp/ import only node builtins, esbuild and relative paths', () => {
+  it('has mcp/ import only node builtins, esbuild, playwright and relative paths', () => {
     const sources = [];
     const walk = (dir) => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -544,9 +546,33 @@ describe('dependencies', () => {
       // entry string in data.mjs — repository source, not an npm package.
       specifier.startsWith('@/') ||
       specifier === 'esbuild' ||
-      specifier === 'vitest';
+      specifier === 'vitest' ||
+      // P13.4: `mcp/ui/lib/session.mjs` imports the browser driver. This is not
+      // a new dependency — `playwright` is in `dependencies` at the v2.1.0
+      // baseline and the E2E suite already uses it — and it is imported by the
+      // browser layer *only*, dynamically, so the offline entry point never
+      // loads it.
+      specifier === 'playwright';
     const offenders = [...specifiers].filter((specifier) => !allowed(specifier));
     expect(offenders).toEqual([]);
+  });
+
+  it('keeps the browser import out of the offline tools', () => {
+    const offline = [];
+    const walk = (dir) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = resolve(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith('.mjs')) offline.push(full);
+      }
+    };
+    walk(resolve(MCP_DIR, 'tools'));
+    walk(resolve(MCP_DIR, 'lib'));
+    for (const file of [resolve(MCP_DIR, 'registry.mjs'), resolve(MCP_DIR, 'protocol.mjs'), resolve(MCP_DIR, 'server.mjs')]) {
+      offline.push(file);
+    }
+    const importers = offline.filter((file) => /from\s+'playwright'|import\(\s*'playwright'\s*\)/.test(readFileSync(file, 'utf8')));
+    expect(importers).toEqual([]);
   });
 });
 
