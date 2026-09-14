@@ -7,19 +7,19 @@
 > + 核对线上资源 + 中文文档/更新记录同步**；**音频批次必须同时有时域与频域断言**；**工程/质量批次必须自证有效**
 > （故意改坏一处必须让门禁变红，并把证据写进文档）。
 
-## 一、现状（**v2.1.0**；以下数字第三/第四次全面回归实测，2026-09-14）
+## 一、现状（**v2.1.1**；数字来自 v2.1.1 的发布跑与第三次全面回归，2026-09-15）
 
 > 这一节原来停在 v1.97.0，里面的红线（`0.030806/0.030946`、81 条指纹）与体积线早就过期了，
 > 第三次全面回归把它逐条抓了出来（见 §一.39）。**每次发布都要顺手改这里**，否则下一个人会拿旧数字当基线。
 
 | 维度 | 现状 |
 | :--- | :--- |
-| 版本 | **v2.1.0** 已上线并核对：线上 44/44 文件与本地 `dist/`（以及 `release/gs1-synth-2.1.0-dist.zip`）**逐字节相同**（`assets/index-GZMzj-mR.js` ↔ `3b1e9b0b…`） |
-| 门禁 | Rust **231** · Vitest **538**（+P13.2 的 54 条 MCP 用例）· Chromium E2E **149 passed / 1 failed（环境假红）· 10 skipped** · MCP 黄金会话逐字节相同 · `node scripts/nightly-e2e.mjs --self-test` PASS |
-| 体积 | dist **≤1619 KB**（实测 1619.6，**红**——更新记录 chunk 每版 +1.2 KB，p141 正在把它上限化）、首屏 JS **≤126 KB** gzip（实测 125.1）、CSS **≤21 KB**（20.3）、最大 WASM gzip **≤75 KB**（P9.10 后用 `#[inline(never)]` 买回，实测 **76 717 B = 74.92 KB**，余 ~83 B） |
-| 启动 / 性能 | 安静窗口：bench `p50 1111 µs (41.7%)` timing judged · `bench --long` `p50 1215 µs` · perf 6 passed · wasm memory **15.1 MB**（上限 32）· arena 余 **8471 KB** |
+| 版本 | **v2.1.1** 已上线并核对：部署时 `live BIF-uuaG == built BIF-uuaG`（一次命中）；`release/retained/` 保留 5 个（v2.1.1、v2.1.0、v2.0.7、v2.0.6、v2.0.5，v2.0.4 已按窗口淘汰） |
+| 门禁 | Rust **231**（+P9.10 的 2 条逐位单测，共 233）· Vitest **628 passed / 7 skipped**（64 文件；7 条 skip 是 fuzz 的计时项在宿主忙时**显式**报「没判」）· MCP 黄金会话 21 次调用两遍哈希相同 · Chromium E2E **149 passed / 1 failed（环境假红）· 10 skipped** · `nightly-e2e --self-test` PASS |
+| 体积 | dist **≤1550 KB**（v2.1.1 实测 **1540.2**，P141 把线从 1619 **下调**了 69 KB）、首屏 JS **≤126 KB** gzip（实测 125.3）、CSS **≤21 KB**（20.3）、最大 WASM gzip **≤75 KB**（**74.9**，P9.10 用 `#[inline(never)]` 买回） |
+| 启动 / 性能 | v2.1.1 发布跑：首屏可交互 **581 ms**（预算 3200）、fps idle **61.3** / playback **62.5** / graph-edit **61.3**；安静窗口 bench `p50 1111 µs (41.7%)`、`bench --long p50 1215 µs`、wasm memory **15.1 MB**（上限 32）、arena 余 **8471 KB** |
 | 相容红线 | `test:dsp` **`rms 0.06147`**、`verify:dsp:2x` **`0.061703`**、`verify:presets` 与 `verify:presets:2x` 都是 **`91 presets unchanged · ABI 8`** 一字不动；零分配 `gs_alloc_violations()==0`；`PARAM_COUNT` **224**；ABI **8** |
-| 已完成 | P5–P12 全部交付（P12.3 分享协作、P12.5 无障碍**按用户决定不做**）；P13.1（v2.1.0）、P13.2（MCP 只读+渲染+测量）、P9.10（导入提速 1.7×）已合并待发 v2.1.1；源码里 **无 TODO/FIXME 残留** |
+| 已完成 | P5–P12 全部交付（P12.3 分享协作、P12.5 无障碍**按用户决定不做**）；**P13.1–P13.3、P9.10 已在 v2.1.1 发布**；P13.4 进行中、P13.5 待做；源码里 **无 TODO/FIXME 残留** |
 
 ### 已记录的技术债与已知边界（本计划的输入）
 
@@ -111,16 +111,16 @@
    **两条确定性真红（与负载无关）**：
    - **① `verify:clippy` EXIT=101——`verify` 链第一步就断。** clippy **1.98** 把 `approx_constant` 变成 deny-by-default（不带任何 `-D` 也红），打中 `crates/synth-core/src/dsp/sampler.rs` 测试里的 `assert!((reference - 0.7071).abs() < 0.02)`（单位正弦 RMS）。代码来自 v2.1.0 之前的 `5421198`，**是工具链升级让老代码变红**；CI 用 `dtolnay/rust-toolchain@stable` 且无 `rust-toolchain.toml` ⇒ CI 同样会红在第一步。**✅ 已修（父代理，`d5b8679`）**：改用 `core::f32::consts::FRAC_1_SQRT_2`；`verify:clippy` 由 101 转 0。**未做**：把 `rustc/clippy --version` 打进 CI 日志（`@stable` 不钉版本，这类事会复发）。
    - **② `verify:budget` EXIT=1——`dist total 1619.6 / 预算 1619.0 KB`，tag 自身超线 0.6 KB。** 归因：v2.0.7→v2.1.0 的 `Changelog-*.js` **113 366 → 114 644 B（+1 278）**、`index-*.js` −58 B、两个 wasm 逐字节未变 ⇒ **这一版自己的更新记录把线顶破**（与 §一.33 的 v2.0.5 同类，但那次的洞更大：`release:fast` 完全跳过整条 `verify`）。
-     **根因是结构性的**：更新记录每发一版 +≈1.2 KB，rebase 只能撑一版。**用户 2026-09-14 拍板 A 方案**：**应用内只保留最近约 30 条更新记录**，更早的搬到 `src/changelog-archive.ts`（不进 bundle），界面写明「更早的见项目仓库」⇒ 预计 dist **−≈78 KB**，且增长**永久有界**。**轨道 `p141` 正在做**，父代理负责把 dist 线**下调**并记账。
+     **根因是结构性的**：更新记录每发一版 +≈1.2 KB，rebase 只能撑一版。**用户 2026-09-14 拍板 A 方案**：**应用内只保留最近约 30 条更新记录**，更早的搬到 `src/changelog-archive.ts`（不进 bundle），界面写明「更早的见项目仓库」⇒ 预计 dist **−≈78 KB**，且增长**永久有界**。**✅ 已在 v2.1.1 做成（轨道 `p141`）**：发运列表 = **30 条（head 也算一条，即面板正好列 30 条）**，更早的 104 条搬进 `src/changelog-archive.ts`（不进 bundle）。实测 `Changelog-*.js` **114.7 → 33.5 KB**、dist total **1619.6 → 1540.2 KB**，父代理把线**下调** 1619 → **1550**（余 ~9 KB，够 4 个版本；增长从此有界）。搬运由测试逐条校验（新增/丢失/改文案/换顺序都红）。
    **③ 已顺带堵掉的两个洞（父代理，`d5b8679`）**：`scripts/release.mjs` 现在在 `package` 之后**无条件**跑 `verify:ci`/`verify:dist`/`verify:budget`（它们量的是刚构建出来的产物，秒级、确定性、不需要浏览器）——`--skip-verify` 再也不能把体积门禁一起跳过去；`scripts/nightly-e2e.mjs` 现在把「套件根本没启动」（端口被残留 preview 占、缺浏览器、没有 display）识别出来并在**空闲端口重试一次**，而不是写成一格 `❌ fail — 0 passed, 0 failed`；`PLAYWRIGHT_BROWSERS_PATH` 只在目录存在时才钉住，缺浏览器改成**启动前具名报错**（第三次回归为此白跑了一整轮 Firefox：把「浏览器没装」报成 **141 条用例失败**，与真红无法区分）。
    **④ Firefox 新增 6 条红（v2.0.3 清单之外，Chromium 同批全绿，`--retries=0` 可复现）**：`boot:54`、`fm:33`、`i18n:83`、`meter:10`、`preset-audition:42`、`pwa:33`；其中 4 条（`boot:54`/`meter:10`/`preset-audition:42`/`pwa:33`）共同签名是 **headless Firefox 里音频引擎没跑起来**（`引擎状态 suspended`、电平表恒 `— · —`、面板还显示「恢复音频」按钮），看起来像 `playwright.config.ts` 只给 chromium/perf 传了 `--autoplay-policy=user-gesture-required`、firefox project 没有对应设置。
      **⚠️ 该假设已被证伪（父代理，2026-09-15）**：给 firefox project 加 `firefoxUserPrefs: { 'media.autoplay.default': 0, 'media.autoplay.blocking_policy': 0, 'media.autoplay.block-webaudio': false }` 后，`boot.spec.ts` + `meter.spec.ts` 在 Firefox 上**仍然 2 failed**，读数还是 `引擎状态 suspended` / `— · —` ⇒ **不是自动播放放行的问题**，该改动已 `git checkout` 撤销（不许留没被证实的改动）。
      **下一步（需专门探针，别猜）**：在 Firefox 里加 `page.on('console')`/`page.on('pageerror')` 打开真页面点启动，看三件事：① `audioWorklet.addModule` 有没有失败；② `AudioContext.state` 与 `sampleRate`（日志里是 **44.1 kHz**，Chromium 侧是 48 kHz——这条差异可能才是线索）；③ 引擎自报的失败原因。**要留足预算**：父代理试图用独立 Playwright 脚本做「±prefs 各起一次 Firefox 读 `AudioContext.state`」，**5 分钟超时被杀** ⇒ Firefox 在本沙箱里启动很慢，探针要给 ≥10 min。
      另外 `fm:33`（读控件值 `fmValue == 0`）与 `i18n:83`（`.player-transport` 找不到）签名不同，**不像**同一个音频根因，需单独定位（`fm:33` 的 `selftest` 脚本已提到过）。
      **登记待立批**：修法二选一——(a) 真因定位后修产品/配置；(b) 若确认是「本沙箱没有音频后端（`/dev` 被 tmpfs 盖住，Firefox 不像 Chromium 有 null sink）」，就让这些断言在 `ctx.state !== 'running'` 时**显式 skip 并打印原因**，而不是报成「引擎悬浮」。**判据**：Firefox 全量回到「只有已知 5 红 + 2 flaky」。**不要把 Firefox 的这些红当产品缺陷发布**，也不要用重试掩盖。
-   **⑤ 门禁/测试基建缺陷（与真回归同等价值，轨道 `p142` 正在修）**：
-   - **`verify-audio.mjs` 里藏着一个计时门禁却没有负载探针**（16 声部满链、`<60% of 2667 µs`）：load 16–21 读 **232%/149%/155% 红**，安静窗口（load1=1.00）读 **26% PASS**；**失败时不打印 perBlockUs、不打印 load、不给跳过路径**。这正是它连续误导三个 agent + 一次全面回归的原因。
-   - **`src/fuzz.test.ts` 的 4000 ms 预算**同样无探针：load 16–21 读 4050/4252/6001/7945 ms（红），安静窗口读 **442/656/452/328 ms**；成功时也不打印余量。
+   **⑤ 门禁/测试基建缺陷（与真回归同等价值）——✅ 已在 v2.1.1 修（轨道 `p142`）**：
+   - **`verify-audio.mjs` 里藏着一个计时门禁却没有负载探针**（16 声部满链、`<60% of 2667 µs`）：load 16–21 读 **232%/149%/155% 红**，安静窗口（load1=1.00）读 **26% PASS**；**失败时不打印 perBlockUs、不打印 load、不给跳过路径**。这正是它连续误导三个 agent + 一次全面回归的原因。**修法**：三处计时门禁（bench / verify-audio / fuzz）现在共用 `scripts/lib/host-load.mjs`（`hostLoad` / `cpuProbe` / `timingTrust`），**读数永远打印**（含余量与每一轮窗口），宿主不可信时 `verify-audio` 打 `⚠ inconclusive` 且 PASS 行写明「timing not judged」，fuzz 用 vitest 的运行时 `ctx.skip()` 报**可见的 skipped**；**阈值一个都没动**。
+   - **`src/fuzz.test.ts` 的 4000 ms 预算**同样无探针：load 16–21 读 4050/4252/6001/7945 ms（红），安静窗口读 **442/656/452/328 ms**；成功时也不打印余量。**✅ 已修**（同上）。
    - 因此本轮所有「Vitest 6 红」「`verify:audio` 红」「`test:e2e player:45` 60 s 超时」「visual self-check 红」**全部判为环境假红**（安静窗口逐条转绿：perf 6 passed、bench timing judged `p50 1111 µs (41.7%)`、`bench --long p50 1215 µs`、`player:45` 单跑 13.8 s 绿、visual self-check 单跑 18.7 s 绿）。
    - **`test:visual` 的 self-check 用例起点不干净**：整套串行跑红（15% 像素差）、单跑绿；48 张主基线本身全绿 ⇒ 是「机制自证」用例被前面用例改过的应用状态污染。**登记待立批**（给它干净起点或独立 context）。
    - **`playwright.config.ts` 没配 `retries`**：贴 60 s 线的用例（`player:45`，同 spec 邻居整套里 49.7 s）在慢主机上直接红。**登记待立批**，但**不许靠重试掩盖**——要么降低套件争用，要么明确「这条在慢主机上属于计时项」。
@@ -456,14 +456,14 @@
 | 15 | P12.1 教学/练习 ✅ 纯逻辑评分（公式可手算）+ 懒 chunk UI；正确 100 / 错误 0；首屏只 +0.1 KB、dist 记账 rebase 1614 | P10 | 中 | ✅ v2.0.3 |
 | 16 | P12.2 内容包 ✅ **10 条新预设**（SEM 双滤波/位粉碎/过采样/图内调制）+ **5 首公版曲**（20→25）+ 试听门禁；指纹 81 → **91**（既有 81 条逐字节未变）；**压缩工厂表把空间买回来**（dist 反降 0.2 KB） | P9 | 中 | ✅ v2.0.2 |
 | 17 | P12.4 分发与回滚 ✅ **随并行轨道提前交付**：保留 N=5（`release/retained/`，逐文件 sha256 + tar 快照）、`rollback` 默认 dry-run、演练脚本、storeSchema 倒退闸；横幅标签错位见 §一.17 | P11 | 中 | ✅ v1.113.0 |
-| 18 | **P13.1 抽尺子（为 LLM 接口共用一份测量实现）** | P9/P10 定型 | 中 | v2.1.0 |
-| 19 | **P13.2 MCP 只读+渲染+测量** ✅ 已合并（7 个工具、54 条测试、黄金会话逐字节相同、目录驱动注册表、`npm run mcp` 与 CI/verify-ci 同步；**零新增运行时依赖**） | P13.1 | 中 | v2.1.1 |
-| 20 | **P13.3 MCP 操作类（patch/sample/preset）** 🔄 进行中 | P13.2 | 中 | v2.1.2 |
+| 18 | **P13.1 抽尺子（为 LLM 接口共用一份测量实现）** ✅ 门禁读数逐字节不变 | P9/P10 定型 | 中 | ✅ v2.1.0 |
+| 19 | **P13.2 MCP 只读+渲染+测量** ✅ 7 个工具、54 条测试、黄金会话逐字节相同、目录驱动注册表、`npm run mcp` 与 CI/verify-ci 同步；**零新增运行时依赖** | P13.1 | 中 | ✅ **v2.1.1** |
+| 20 | **P13.3 MCP 操作类（patch/sample/preset）** ✅ 7 个工具、变异工具会如实报告夹取/拒绝；MCP 测试共 **88** 条、黄金会话 21 次调用两遍哈希相同 | P13.2 | 中 | ✅ **v2.1.1** |
 | 21 | **P13.4 MCP 浏览器层 + 实战范例** | P13.2 | 中 | v2.1.3 |
 | 22 | **P13.5 LLM 接口文档与发现** | P13.2 | 小 | v2.1.4 |
-| 23 | **P9.10 采样导入提速（把每抽头 clamp 提出内循环，逐位相同；§一.29）** ✅ 已合并（4 s 导入 **130 → 78 ms**，`test:dsp`/91 指纹/导入→渲染 sha256 全部一字不动；用 `#[inline(never)]` 把 gzip 从超线 92 B 买回到 **余 83 B**） | P9.8 | 小 | v2.1.1 |
-| 24 | **p141 更新记录上限化（买回 dist 体积；§一.39②）** 🔄 进行中 | — | 小 | v2.1.1 |
-| 25 | **p142 计时判据统一 + 读数可见（§一.20①②⑤）** 🔄 进行中 | — | 小 | v2.1.1 |
+| 23 | **P9.10 采样导入提速（每抽头 clamp 提出内循环，逐位相同；§一.29）** ✅ 安静主机 4 s 导入 **130 → 78 ms**（1.68×），`test:dsp` / 91 指纹 / 导入→渲染 sha256 全部一字不动；`#[inline(never)]` 把 wasm gzip 从超线 92 B 买回（76 717 B，余 83 B） | P9.8 | 小 | ✅ **v2.1.1** |
+| 24 | **p141 更新记录上限化（买回 dist 体积；§一.39②）** ✅ dist **−79.4 KB**，线 1619 → **1550（下调）** | — | 小 | ✅ **v2.1.1** |
+| 25 | **p142 计时判据统一 + 读数可见（§一.20①②⑤）** ✅ 三处门禁共用 `scripts/lib/host-load.mjs`，读数恒打印，不可信时可见地 skip；阈值未动 | — | 小 | ✅ **v2.1.1** |
 
 > **并行开发（2026-09-14 起，用户指示）**：多个 agent 在各自 worktree/分支上并行开发、由父代理合并后发布，所以**版本号的「批次」映射关系不再严格**——版本列是**预计**，实际以发布顺序为准（同一次发布可能合并了多批，例如 v1.113.0 = P9.7 + P11.6 + P12.4）。规则见 `/.tmp/parallel-dev.md`。
 
