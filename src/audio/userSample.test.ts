@@ -102,4 +102,22 @@ describe('sample state', () => {
     const future = await import('./userSample');
     expect(future.getUserSample()).toBeNull();
   });
+
+  // P9.8: the core can now say "the mipmap does not fit the arena" (code 4).
+  // That has to reach the player as a reason, not as a silent truncation or a
+  // crashed worklet: `UserSamplePicker` renders `smp.err.noRoom` for this code.
+  it('turns the core\'s out-of-room refusal into a noRoom error', async () => {
+    vi.resetModules();
+    vi.doMock('./engine', () => ({
+      engine: {
+        importSample: async () => ({ ok: false, code: 4 }),
+        clearSample: () => {},
+      },
+    }));
+    const fresh = await import('./userSample');
+    await expect(fresh.importUserSample(wavFile('long.wav', tone()))).rejects.toMatchObject({ code: 'noRoom' });
+    expect(fresh.getUserSample()).toBeNull();
+    vi.doUnmock('./engine');
+    vi.resetModules();
+  });
 });

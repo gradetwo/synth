@@ -152,7 +152,9 @@ pub extern "C" fn gs_sample_capacity() -> u32 {
 }
 
 /// Analyse the staged sample: 0 = ok, 1 = too short, 2 = silent, 3 = not
-/// finite. `source_rate` is the rate the file was recorded at.
+/// finite, 4 = the arena cannot hold the sample's mipmap. `source_rate` is the
+/// rate the file was recorded at. Runs on the message path, never inside
+/// `process`.
 #[no_mangle]
 pub extern "C" fn gs_sample_import(len: u32, source_rate: f32) -> i32 {
     engine().import_sample(len as usize, source_rate)

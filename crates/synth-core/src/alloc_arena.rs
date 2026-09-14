@@ -11,9 +11,17 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-/// 8 MiB is comfortably above the Soundpipe reverb/delay working set
-/// (~150 KB) plus DSP scratch, while keeping the initial WASM memory small.
-pub const ARENA_SIZE: usize = 8 * 1024 * 1024;
+/// 12 MiB (P9.8). P9.7 shipped 8 MiB, which held the Soundpipe reverb/delay
+/// working set (~150 KB), the DSP scratch and the old sampler mipmap (~1.5 MB
+/// for a 4 s sample) with room to spare. P9.8's sampler levels are ~1.5× longer
+/// (they cost 11.875 bytes per base sample instead of ~8), and a 4 s sample plus
+/// a 96 KB response — a combination `verify-audio.mjs` exercises — left 169 KB
+/// free and then failed a later message-path allocation outright. The arithmetic
+/// for the new size is in `docs/notes/band-limited-oscillators.md` §P9.8: the
+/// worst measured occupancy is a 4 s sample imported over another one, which
+/// peaks near 9.0 MB, so 12 MiB leaves ~3 MB of headroom while keeping the wasm
+/// module's linear memory comfortably under the 32 MB `bench --long` bound.
+pub const ARENA_SIZE: usize = 12 * 1024 * 1024;
 const ALIGN: usize = 16;
 
 #[repr(C)]
