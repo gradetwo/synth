@@ -1,4 +1,4 @@
-# 下一阶段开发 · 完善 · 改进计划（v2.0.0 起 · **P10 已收官**）
+# 下一阶段开发 · 完善 · 改进计划（v2.0.1 起 · P10 已收官 · 慢轨首次扫描的三条都已关闭）
 
 > 接在 `docs/NEXT-PLAN.md`（v1.79.0–v1.97.0，14 个批次全部交付）之后。本文档规划 **P9–P12 四个方向、23 个批次**
 > （原为 21 个；P9.1a 的实测发现把「硬同步重启对齐」立为新的 **P9.1c**，P9.1b 的实测发现把
@@ -39,17 +39,22 @@
 
 15. **bench 的「超预算块占比」在本机不可复现（v1.111.0 发现）** ⇒ **慢轨已判定：此前是环境假红，P9.6 无真回归**。第一次全面回归扫描在**安静窗口（load 2.64/2.67、cpu probe 930/913 µs）**下跑了两次 bench，**两次都 timing judged 4/4**：`p50 1199 µs (45.0%)` 与 `p50 1197 µs (44.9%)`、**超预算块 0/2250**（raw 9 / raw 1），IR 路径同样 0/2250 ⇒ 与 P9.1b 记录的 1169 µs/44% 一致，P9.6 那次改动约 +30 µs（+1% quantum，远在 +10% 内）。同代码在 `verify` 复合链里撞上 load 6.7 时是 `p50 1554 µs`、**`PASS (correctness only) — 0 judged, 4 skipped`** ⇒ 唯一变量是宿主负载。**仍然要做的（慢轨建议，未做）**：把 bench 的 host-busy 判据与 `fuzz.test.ts` 统一到 `cpuProbe()`（`hostLoad()` 用 `load1 > 0.5×cpus = 4.0`，而已知假红发生在 load 3.7–4.0；fuzz 连判据都没有），**不动 60%/2%/4000 ms 这些阈值**；并让 `verify` 的汇总把「timing skipped」显示成**非绿**，而不是普通的 `PASS (correctness only)`。
 
-16. **采样路径到不了 −60 dB（P9.7 量化，v1.113.0 登记）⇒ 用户已拍板「扩 arena」**：P9.7 把采样从 −29.9 修到 **−33.4 dB**（f32 边带已消），再往下是「表就是录音本身」的物理账——要把读步进从 0.698 降到 ≈0.055，即**每级表长 ×12–13**。量化：门禁样本（32768 点 @C6）需 ≤103 770 点/级、总链 ≈2.5 MB；1 s 样本 ≈3.4 MB；而**上限 4 s 样本（192000 点 @C6）需 557 000 点/级、总链 ≈18 MB ≫ 8 MiB arena**。父代理把「压低 `MAX_BASE_SAMPLES`」与「扩 arena」两个选项报给用户，**用户选择扩 arena** ⇒ 立为 **P9.8**（见 §三 P9.8 与版本表）。**约束**：扩 arena 必须**按需增长**（容量是上限、短样本不吃满），**音频线程零分配不变**（表只在 import/init 时建），**装不下时要优雅拒绝 + 可见原因**（不许静默截断成错音），并如实评估对低端设备（手机）内存的含义。
+16. ~~**采样路径到不了 −60 dB（P9.7 量化）⇒ 用户已拍板「扩 arena」**~~ **✅ 已在 v2.0.1（P9.8）解决，且 P9.7 的估计错了 8 倍**。真因不是「录音自身带宽」，而是**每一级都按 2^k 抽取**——内容永远待在自身 Nyquist 的 0.44 处，表再长也没用；改成「**级长 = 该级带宽允许的长度**」（内容落在 1/16 Nyquist）后，弦误差按 ν⁴ 下降，采样 **−33.4 → −70.5 dB**（BH-7、4 s、真 wasm），第二把尺子 Hann Goertzel **−146.7 dB**，≥1 kHz 的 −60 验收线**达到且有 10 dB 余量**。级长是**一个精确大小的池**（`11.875 B/底采样`）：门禁样本 380 KB、1 s 557 KB、**上限 4 s 仅 2 227 KB**（P9.7 估的 18 MB 小了 8 倍）。**arena 8 → 12 MiB 是被一次真实失败逼出来的**（8 MiB 下门禁自己的「4 s 采样 + 96 KB 响应」压到 169 KB 后一次消息路径分配直接 trap），最坏峰值 ≈9.0 MB。**装不下时优雅拒绝**：`try_reserve_exact` → `SampleError::NoRoom` → `gs_sample_import` 返回 **4** → UI toast（复用既有 `smp.err.noRoom`，未动 i18n）；拒绝时旧采样保留、不 trap。**体积没有涨**：arena 是 `.bss`，wasm raw −0.7 KB、gzip 74.5/75 未变 ⇒ **不需要 rebase**。
+**新登记的两条代价（见 §一.22/23）**：级 1/2（速率 1–4×）输出带宽收窄；4 s 采样的导入在消息路径上要 274 ms。
 
 17. **回滚后的更新横幅会写「被回滚掉的那个版本」（P12.4 发现）⇒ 用户已批准修（会动 SW 协议 + i18n + 首屏预算）**：横幅的版本号取自**正在运行的那份 bundle** 的 `CHANGELOG_HEAD`。对「页面还开着、自回滚后从未重载」的 PWA，运行的仍是 vW，于是横幅写「新版本已就绪 · vW」（vW 正是被回滚掉的版本），点下去装的却是 vX。新访客与重载过的 PWA 不会错位。P12.4 已断言「线上 `sw.js` 的 cache 名 = 快照 pin」⇒ waiting worker 必然出现 ⇒ 横幅一定会重新出现（那类客户端唯一会被主动通知的通道），但**版本标签本身没修**。**用户 2026-09-14 批准**：给 SW 加**版本握手**（现在只有内容哈希缓存名、没有 semver），会动 `scripts/gen-sw.mjs` + `src/pwa/register.ts` + `src/App.tsx` + i18n + 首屏预算⇒ 立为 **P12.6**，但**排在 p104（工程管理）合并之后**再做（它要动 `src/App.tsx` 与 i18n，与 p104 撞）。
 
 18. **nightly 默认子集在 1 fps 的 WebKit 上可能逼近 systemd 的 `TimeoutStartSec=3h`（P11.6 登记，未实测）**：默认子集从 8 个 spec 扩到 18（core+visual+audio），P11.6 按「不许为变绿缩子集」保留了它；第一次 timer 实跑后视情况决定是调 unit 的超时还是让默认走 `--core`（`scripts/systemd/gs1-nightly.service`）。
 
-19. **跨引擎 E2E 脆弱用例挡住了整个 Firefox/WebKit 信号（第一次全面回归扫描的**唯一红项**，真问题、非 v1.112.0 引入）**：`e2e/fxgraph.spec.ts:377`「拉调制线」在 `:412` 的 `[data-mod-edit="0"]` 上失败——**Firefox（静默窗口 load 2.58，2/2 次）与 WebKit 确定性失败，Chromium 通过**；`git archive v1.111.0` 纯净树对照**同样失败而 Chromium 通过**，相关文件两版零 diff ⇒ **自 `8ccb582`（P7.2，v1.101.0）起就存在**，**推论 CI 的 `e2e-engines` 作业此刻很可能也是红的**。疑似根因：helper 的 `click({ force: true })` 点的是元素**包围盒中心**，而被点是 `stroke-width:2; pointer-events:stroke` 的 SVG `<path>`，中心不在笔画上。**严重度最高**：它让跨引擎回归长期为红、会掩盖真回归。**处理**：已单开轨道 `fxwire`（`.tmp/wt-fxwire`）修，验收是 Firefox/WebKit 各 2/2 绿 + Chromium 不回归 + 同类用例清单。
+19. ~~**跨引擎 E2E 脆弱用例挡住 Firefox/WebKit 信号**~~ **✅ 已在 v2.0.1（fxwire）修复——但真正的原因和慢轨的猜测不同，这一点更重要**。慢轨猜「`click({force:true})` 点包围盒中心、中心不在笔画上」；三引擎实测**否掉了它**（那个坐标恰好就是曲线中点，几何完全一致）。真因是 **`stroke-dasharray: 5 3`**：命中测试跟随**画出来的**描边，**虚线间隙在 Gecko/WebKit 上是死画布**，而 Chromium 把整条路径当命中区。**WebKit 是陷阱**：它的 `elementFromPoint` **忽略** dash、事件命中**不忽略**，两者不一致 ⇒ **不能拿 `elementFromPoint` 当判据**。**加宽也无效**（间隙横跨整个线宽）。**修法（产品侧）**：每条 wire 在可见路径之下加一条同曲线的**实心透明 2 px 命中笔画**（`aria-hidden`、不带 `data-wire`/`data-modwire`），**刻意不加宽**（实测 12 px 会让相邻 wire 互抢点击、删错边）。**足迹只有 2 个产品文件，`e2e/fxgraph.spec.ts` 最终未改**（测试是对的，产品有真缺陷）。**验收**：Firefox `--retries=0` 2/2 绿、Chromium 整个 spec 16/16 不回归、`test:visual` 10 passed。**与 webkitraf 合并后我在主树复跑**：headless WebKit 上这条用例 **40.7 s 通过**（远在 120 s 预算内）⇒ **不需要动 timeout**，CI 的 `e2e-engines` 那半应转绿。全量 grep 确认真正点 SVG 描边的只有 3 处（都在该 spec），均已被覆盖。教训写进 `docs/notes/compat.md` §8。
 
 20. **门禁一致性与可见性（慢轨提出的系统性意见，未做）**：①计时判据不统一（bench 双判据 / fuzz 无判据 / fps 与 boot 只靠 best-of-N）⇒ 同一台机器「谁算红」取决于撞上哪道判据，正是第 15 条的病根；②`verify` 复合链里的 bench 会**静默降级**成 `PASS (correctness only)`，「整链绿」可能包含「计时根本没判」；③`e2e-engines`（WebKit/Firefox）既不在 `verify` 也不在 `release.mjs`，只在 CI ⇒ 本机不看 CI 就看不见跨引擎问题（第 19 条就是这样被漏掉的）；④nightly 把**端口冲突**报成引擎 `fail`（4–6 s 内 `0 passed / 0 failed`），应识别为启动失败并自动顺延端口；⑤`fuzz` 成功时不打印余量（无法判断 4000 ms 的富余）；⑥fps 的 best-of-5 会掩盖争用（实测 `graph-edit best 60.0 of [21.3, 32.5, 42.5, 33.8, 60.0]`，最差窗只比 floor 高 1.3，同次 load 2.6→6.25）⇒ 建议同时打印/断言最差窗；⑦48 张视觉基线既不在 CI 也不在发布链（与第 12 条同源）；⑧`SHA256SUMS` 只覆盖最新一版（P12.4 的 `release/retained/<v>/sha256.txt` 已部分补上历史）。
 
-21. **headless WebKit 永远等 rAF（用户要求解决或绕过，已开轨道）**：headless WebKit on Linux 不触发 `requestAnimationFrame`，而 Playwright 的可操作性检查要等「连续两帧稳定」⇒ 每次 click 永远等下去（慢轨实测：~30 min 只跑到 8 个 spec 的第 5 个）。既有对策是有头 + headless Weston（约 1 fps，能跑但极慢）。**用户要求尝试解决或测试中巧妙绕过** ⇒ 已开轨道 `webkitraf`（`.tmp/wt-webkitraf`）：优先**测试侧注入 rAF 兜底**（只影响测试、可关、不改产品运行时代码），备选绕开 actionability，**不许**用加长 timeout/retries 掩盖。验收：headless 核心子集能在合理时间跑完 + chromium 不受影响 + 仍需有头 Weston 的用例逐个列出。
+21. ~~**headless WebKit 永远等 rAF**~~ **✅ v2.0.1（webkitraf）解决——但前提被推翻两次，两次都值得记**。**否定一**：headless WebKit **会**触发 rAF（空白页 55–57 fps、静态 data: 页 42–55）。真正发生的是**应用页交不出帧**（0 帧/3.5 s）：headless WebKitGTK 没有合成器、只能软件光栅化，而主线程是健康的（同期 `setTimeout` 跑了 110 次）。证据链：载入时 `#root{display:none}` → 82 帧、abort 全部 JS → 93 帧、单个 `box-shadow`/`filter: blur` 的 div 就只剩 1 帧；排除过 SW/wasm/字体/AudioContext/全部重绘特性/5 个合成环境变量。**否定二**：任务书首选的「注入 rAF 兜底」**从原理上够不着**——Playwright 在 `__playwright_utility_world__` **隔离世界**里做可操作性检查（三个内核都是），主世界的 `addInitScript` 改不到（实测注入后主世界 0 → 36–54 fps，而 `locator.click()` 仍超时）；`page.clock.install()` 同样无效。**采用的绕过（测试侧，仅 WebKit）**：`e2e/fixtures.ts` 把按帧等待的动词换成帧无关实现（定时器版可见性 + `isEnabled` + DOM scroll + `evaluate` 读盒子 + `elementFromPoint` 命中 + 真实 `page.mouse.click`/`touchscreen.tap`），**保留与帧无关的三项检查、只丢掉定义上依赖帧的两项**；**断言、阈值、超时、retries 一个没改**。`playwright.config.ts` **一行未改**（与其它轨道零冲突）。**实测**：单次点击 8–30 s → **39–57 ms**；`boot.spec.ts` 2.4 → 1.2 min（首例 56.3 → 6.6 s）；核心子集 8 spec/38 用例从「30 min 跑不到第 5 个」变成 **35 passed / 3 failed / 22.7 min**。3 个失败逐个归因：1 个是 WebKit 自身差异（已被 fxwire 修掉，见第 19 条）、2 个 `theme` 需要合成器（Weston 下 2 passed）。**Chromium 不受影响**（38 passed；把两个开关强制打开也是 38 passed，逐条一致）。仍需有头 Weston 的只有：`visual`（`locator.screenshot()` headless 20 s 不返回）与 `performance`（量的就是帧率）。诊断与边界写进 `docs/notes/compat.md` §3/§3.5。
+
+22. **采样：级 1/2 的带宽被换掉了（P9.8 登记，需拍板）**：为了让内容落在 1/16 Nyquist，级 1/2（播放速率 1–4×）的输出带宽收窄到 **3–12 kHz**（P9.7 的抽取链是 10.6–21 kHz），级 3 及以上反而更宽，**根音及以下逐字未变**。补回级 1 的 6–12 kHz 需要 **+0.77 MB**（4 s 上限时），代价是那一档的非谐波地板从 −79 抬到 **≈−60**——正好压在验收线上、没有余量。**当前选择：保持现状（验收线有 10 dB 余量）**，把「要不要用带宽换地板」留给用户。数字在 `docs/notes/band-limited-oscillators.md` §P9.8。
+
+23. **采样导入的 274 ms 卡顿与 >4 s 截断（P9.8 登记）**：4 s 样本的 mipmap 构建在**消息路径**（音频线程的消息处理里，不在 `process` 回调内）要 **273.9 ms**（filter 16–64 → 192 抽头；32768 点 26.4 ms、1 s 39.3 ms）。旋钮是抽头数（会往 −60 贴）或把第一条链换成 FFT/polyphase。另外 `>4 s` 的文件仍按既有产品行为在 JS 侧**截断**（UI hint 已写明），要不要改成「可见拒绝」需要动 `src/i18n-panels.ts` 的 hint。
 
 ## 二、四个方向
 
@@ -325,10 +330,10 @@
 | 11 | P9.5 波表带限复核 ⚠️ **验收线未达标**：实测 −25.8…−46.7 dB，根因是线性插值，已加门禁钉住实测地面 | P9.1 | 小 | ✅ v1.111.0 |
 | 11b | P9.6 滤波器共振 × 新振荡器交互 ⚠️ **计划前提被否掉**：真因是 BLEP 查表 f32 舍入（P9.1c 姊妹案例），已修 1/150 → 0/150，**无基线重录** | P9.1b | 小 | ✅ v1.112.0 |
 | 11c | **P9.7 波表/采样插值器** ✅ 波表 **−98.0 dB**（超额）、采样 −33.4（边界见 §一.16）；指纹重录（真的只变 4 条）；dist 记账 rebase 1568 | P9.5 | 中 | ✅ v1.113.0 |
-| 11d | **P9.8 扩 arena + 采样修到接近 −60 dB**（用户已拍板扩 arena；按需增长、零分配不变、装不下优雅拒绝） | P9.7 | 中 | v2.0.1 |
+| 11d | **P9.8 扩 arena（8→12 MiB）+ 采样修到 −60 dB** ✅ 实测 **−33.4 → −70.5 dB**；级长 = 带宽允许的长度（P9.7 的 18 MB 估计错了 8 倍，实际 2.23 MB）；**体积未涨** | P9.7 | 中 | ✅ v2.0.1 |
 | 12 | P10.4 工程管理 ✅ 多套工程 + `.gs1proj` + 配额降级；**dist 记账 rebase 1595** | — | 中 | ✅ v2.0.0 |
 | 13 | P10.5 曲库合规 → **收官打 v2.0.0** ✅ 移除 **9 首**在版权曲目（计划外多 2 首）+ 逐首来源/许可 + 分因拒绝的导入 | — | 中 | ✅ **v2.0.0** |
-| 17b | **P12.6 SW 版本握手 + 修回滚后的横幅标签**（用户已批准动 SW 协议/i18n/首屏预算；P10.4 已合并，可开工） | P12.4 | 中 | v2.0.2 |
+| 17b | **P12.6 SW 版本握手 + 修回滚后的横幅标签**（用户已批准动 SW 协议/i18n/首屏预算；P10.4 已合并，**可开工**） | P12.4 | 中 | v2.0.2 |
 | 14 | P11.6 平台矩阵 ✅ **随并行轨道提前交付**：nightly 加 display 列 + 生成式通过率趋势（12 项自测）、DEVICE-TESTING 32 个可勾选项、视觉在 WebKit/Firefox 走冒烟（有证据地不比像素） | — | 小 | ✅ v1.113.0 |
 | 15 | P12.1 教学/练习 | P10 | 中 | v2.0.3 |
 | 16 | P12.2 内容包 | P9 | 中 | v2.0.4 |
