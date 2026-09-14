@@ -119,3 +119,65 @@ playback 的 5 个窗口从并行时的 13.8…20.0 收敛到 **37.5…52.5**，
 （`idle 61.3 [61.3, 60.0, 61.3, 61.3, 61.3]`、`playback 61.3 [58.8, 46.3, 51.3, 48.8, 61.3]`、
 `graph-edit 56.3 [50.0, 47.5, 42.5, 53.8, 56.3]`），最后 `[release] PASS`（EXIT=0）。
 CI 与 release 现在调用同一对命令（`npm run test:e2e` + `npm run test:perf`）。
+
+## 计时判据只有一份（P14.2）
+
+三处门禁都在读墙上时钟。第三次全面回归里它们**各判各的**，同一台机器上「谁算红」于是取决于撞上
+哪道判据；更糟的是其中两道**没有负载探针、失败也不打印读数**，它们给出的红和真回归长得一模一样：
+
+| 门禁 | 计时判据 | 探针之前的行为 |
+| :--- | :--- | :--- |
+| `scripts/bench.mjs` | p50 < 60 % 量子、超预算块 ≤ 2 %（另有 IR 路径与 hop 摊平） | 早就有探针：`~ skipped` + `PASS (correctness only)` |
+| `scripts/verify-audio.mjs` CPU 一节 | 16 声部满效果链、200 块 × 5 轮取最小，`perBlockUs / 2667 µs < 60 %` | **无探针、不打印读数**：load 16–21 读 232 % / 149 % / 155 %（FAIL），同一场景安静窗口读 26 % |
+| `src/fuzz.test.ts` | 每个 parser 10k 输入 < 4000 ms | **无探针、成功不打印余量**：load 16–21 读 4050 / 4252 / 6001 / 7945 ms，安静窗口读 442 / 656 / 452 / 328 ms |
+
+**一份实现**：`scripts/lib/host-load.mjs`。`bench.mjs` 的 `hostLoad()` / `cpuProbe()` **连注释一起搬过来**，
+`bench.mjs` 改为 import——阈值、判据、输出格式一字未动（把前后两次短跑的读数归一化后 `diff` 为空）。
+
+- `hostLoad()`：`/proc/loadavg` 的 1 分钟值 **> 0.5 × 核数** = busy。0.5 而不是 0.75 是量出来的：
+  同一场景在 load ~2 读 p50 1169 µs（44 %）、load 5.8 读 1621 µs（61 %），宿主本身就能造成 38 % 的摆动，
+  而那正是这道门禁要抓的回归量级。
+- `cpuProbe()`：与 DSP 无关的固定循环（无 wasm、无分配），跑 7 次取**最小值**（「这个进程最快能跑多快」，
+  被抢占只会让某一次更慢）。空闲参考 `PROBE_REFERENCE_US = 1600` µs，超过 **4×** 参考值 = 进程被饿。
+  引擎自身的耗时**不参与**这个判断：P9.1b 的教训正是拿工作负载当自己的借口，会在引擎变重时把门禁悄悄关掉。
+- `timingTrust()`：两个信号**任一**成立即不可信，返回 `{ trusted, reason, load, cpus, probeUs }`；
+  `reason` 会被打在被它作废的那行读数旁边。被饿优先于 load 报告（它是更锐利的那个信号）。
+
+**阈值一个都没动**：2667 µs、60 %、4000 ms、0.5 × 核数、4 × 参考值全部原值。这批只改可见性与判据统一。
+
+**不可信时各自做什么**（退出码都是 **0**：CI 与开发机不该因为宿主忙而红）：
+
+- `bench.mjs`：计时项 `~ … skipped, host is loaded (…)`，结论 `[bench] PASS (correctness only) — timing checks: N judged, M skipped`；
+- `verify-audio.mjs`：CPU 那项 `⚠ worst-case block fits the budget — inconclusive: <reason>; perBlockUs … µs = …% of 2667 µs; rounds … µs (best of 5 × 200 blocks, 16 voices); host load … cpu probe …`，
+  结论行 `[audio] PASS (correctness only — timing not judged: load 16.0 on 8 cpus, cpu probe 5200 µs vs 1600 µs idle)`，
+  再跟一行 `↳ <哪一项>：<reason>`——**一眼可见**，不是普通的绿；
+- `src/fuzz.test.ts`：读数**恒打印**（`[fuzz] decodePatch: 10000 inputs in 480 ms of 4000 ms budget (88.0% headroom)`），
+  不可信时 `console.warn` 打出读数与理由，然后 `ctx.skip()`（vitest 2.1.9 的运行时跳过，汇总里出现 **skipped**）。
+  读数先收集、在每个 `it` 末尾统一裁决，所以宿主忙**不会**让某个测试跑到一半就中断、丢掉后面的 parser。
+
+**复跑（安静窗口）**：
+
+```sh
+awk '{print $1}' /proc/loadavg    # 1 分钟值，应 ≤ 0.5 × nproc
+node scripts/verify-audio.mjs     # CPU 那行恒打印 perBlockUs / 百分比 / 每轮 / load / probe
+npx vitest run src/fuzz.test.ts   # [fuzz] 行恒打印 elapsed / budget / 余量
+node scripts/bench.mjs            # 短跑；p50 与超预算比例是判据
+```
+
+**只用于自证/演练的覆盖**（与 `GS1_BOOT_BUDGET_MS` 同类，默认不设 = 真实测量；两个信号正交，可单独演练）：
+`GS1_TIMING_HOST=busy` 强制不可信、`GS1_TIMING_HOST=idle` 只覆盖 load 信号（探针照测，所以「宿主安静但
+进程被饿」仍会被抓）、`GS1_TIMING_PROBE_US=<n>` 替换探针读数。
+
+**自证（P14.2 原始输出，本机 load 4.5–14；本机同时有别的轨道在跑，所以 load 一直不低）**：
+
+- 真实测量（无覆盖）：`⚠ worst-case block fits the budget — inconclusive: host is busy: load 7.8 on 8 cpus is over 0.5 × 8 cpus; perBlockUs 884 µs = 33% of 2667 µs; rounds 1159/884/1002/1573/1421 µs` +
+  `[audio] PASS (correctness only — timing not judged: load 7.8 on 8 cpus, cpu probe 940 µs vs 1600 µs idle)`，EXIT=0
+  （读数本来是绿的 33 %，宿主忙时依然只写成 `correctness only`）；
+- `GS1_TIMING_HOST=busy`：`⚠ … inconclusive: forced busy by GS1_TIMING_HOST; perBlockUs 736 µs = 28% of 2667 µs`，EXIT=0
+  （这一次读数本可过，但因为没判，不写成普通的绿）；
+- `GS1_TIMING_PROBE_US=99999`：`⚠ … inconclusive: process is starved: cpu probe 99999 µs is over 4 × the 1600 µs idle reference`，EXIT=0；
+- **可信宿主仍然会红**（`GS1_TIMING_HOST=idle` 强制可信，等 load 落到 ~4.7 的真实读数）：
+  `✓ worst-case block fits the budget — perBlockUs 757 µs = 28% of 2667 µs; rounds 820/842/785/763/757 µs` + `[audio] PASS`，EXIT=0；
+  把同一行读数 ×0.01 做对照 → `0% of 2667 µs` + `[audio] PASS`；改成 ×100（临时改动，已 `git checkout` 还原，**一行阈值都没改**）→
+  `✗ worst-case block fits the budget — perBlockUs 708 µs = 2655% of 2667 µs` + `[audio] FAIL — worst-case block fits the budget`，EXIT=**1**。
+
