@@ -12,7 +12,6 @@ import {
   DEFAULT_PARAMS,
   DEFAULT_ROUTES,
   clamp,
-  intToFilter,
   intToWave,
   type ModDst,
   type ModRoute,
@@ -167,11 +166,20 @@ function normalizeUserPresets(raw: unknown): Preset[] {
   return out;
 }
 
-function saveJson(key: string, value: unknown) {
+/**
+ * Write a document, reporting whether storage took it.
+ *
+ * The return value is what lets a project switch tell "the workspace is live but
+ * the disk is full" apart from "it is saved" (P10.4); everything else ignores it
+ * and keeps the old behaviour of carrying on without storage.
+ */
+function saveJson(key: string, value: unknown): boolean {
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
     /* storage may be unavailable (private mode); the synth still works */
+    return false;
   }
 }
 
@@ -251,12 +259,14 @@ export class SynthStore {
     };
   }
 
-  private commit() {
+  private commit(): boolean {
     this.version += 1;
     this.snapshot = this.buildSnapshot();
     for (const fn of this.listeners) fn();
-    saveJson(STORAGE_KEY, wrap({ ...this.state, presetId: this.currentPresetId }));
-    saveJson(LAYOUT_KEY, wrap(this.layout));
+    return (
+      saveJson(STORAGE_KEY, wrap({ ...this.state, presetId: this.currentPresetId })) &&
+      saveJson(LAYOUT_KEY, wrap(this.layout))
+    );
   }
 
   subscribe = (fn: () => void): (() => void) => {
@@ -666,10 +676,6 @@ export class SynthStore {
     this.commit();
   }
 
-  resetToInit() {
-    this.applyPresetById('init');
-  }
-
   // ---------------------------------------------------------- undo / redo
 
   private captureEntry(): HistoryEntry {
@@ -713,18 +719,33 @@ export class SynthStore {
     this.commit();
   }
 
-  /** Full document restore, used by undo/redo. */
-  private restoreEntry(entry: HistoryEntry) {
+  /** Full document restore, used by undo/redo. Returns false when storage refused it. */
+  private restoreEntry(entry: HistoryEntry): boolean {
     this.state = cloneState(entry.state);
     this.layout = cloneLayout(entry.layout);
     setLang(this.layout.lang);
     this.userPresets = entry.userPresets.map((p) => ({ ...p }));
     this.currentPresetId = entry.currentPresetId;
-    saveJson(USER_KEY, wrap(this.userPresets));
-    saveJson(LAYOUT_KEY, this.layout);
+    const presets = saveJson(USER_KEY, wrap(this.userPresets));
+    const layout = saveJson(LAYOUT_KEY, this.layout);
     midiLibrary.restore(entry.clips, entry.currentClipId);
     engine.applyState(this.state, true);
-    this.commit();
+    return this.commit() && presets && layout;
+  }
+
+  /**
+   * Replace the whole document — a restored project or snapshot (P10.4).
+   *
+   * `layout` must be complete: a project owns only part of it, and the caller
+   * merges the player's own preferences in first. The replacement is one undo
+   * step, which is what makes "recall this snapshot" a safe thing to click.
+   * Returns false when storage refused the write; the document is live either
+   * way, and the caller decides what to tell the player.
+   */
+  loadDocument(entry: HistoryEntry): boolean {
+    const stored = this.restoreEntry(entry);
+    this.recordHistory();
+    return stored;
   }
 
   undo(): boolean {
@@ -1083,13 +1104,6 @@ export class SynthStore {
     this.commit();
   }
 
-  clearAllMidiCc() {
-    this.layout = { ...this.layout, ccMap: [] };
-    saveJson(LAYOUT_KEY, this.layout);
-    this.mark();
-    this.commit();
-  }
-
   /** Change the microtuning temperament and push it to the engine. */
   setTemperament(id: string) {
     this.layout = { ...this.layout, temperament: id };
@@ -1185,14 +1199,6 @@ export class SynthStore {
     this.layout = { ...this.layout, polyphony: n };
     saveJson(LAYOUT_KEY, this.layout);
     engine.setPolyphony(n);
-  }
-
-  filterTypeLabel(): string {
-    return intToFilter(this.getParam(13)).toUpperCase();
-  }
-
-  waveLabel(): string {
-    return intToWave(this.getParam(2)).toUpperCase();
   }
 
   /** Clamp helper used by controls. */
