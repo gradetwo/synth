@@ -77,15 +77,22 @@ describe('tool registry', () => {
     for (const file of files) expect(file.startsWith('_')).toBe(false);
   });
 
-  it('exposes the whole P13.2 surface', () => {
+  it('exposes the P13.2 read/render surface and the P13.3 operations', () => {
     expect([...tools.keys()].sort()).toEqual([
       'gs1.analyze',
       'gs1.describe',
       'gs1.gate',
       'gs1.params.list',
       'gs1.patch.get',
+      'gs1.patch.random',
+      'gs1.patch.set',
+      'gs1.preset.apply',
+      'gs1.preset.save',
       'gs1.presets.list',
       'gs1.render',
+      'gs1.sample.import',
+      'gs1.songs.list',
+      'gs1.wavetable.import',
     ]);
   });
 
@@ -102,7 +109,7 @@ describe('tool registry', () => {
   it('tools/list follows the file order and carries each schema', async () => {
     const response = await dispatch(tools, ctx, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, { log: false });
     const listed = response.result.tools.map((tool) => tool.name);
-    expect(listed).toHaveLength(7);
+    expect(listed).toHaveLength(14);
     for (const tool of response.result.tools) {
       expect(tool.description.length, tool.name).toBeGreaterThan(10);
       expect(tool.inputSchema.type, tool.name).toBe('object');
@@ -392,7 +399,7 @@ describe('determinism', () => {
       expect(result.failures).toEqual([]);
       expect(result.identical).toBe(true);
       expect(result.hashA).toBe(result.hashB);
-      expect(result.calls).toBe(7);
+      expect(result.calls).toBe(21);
       expect(result.wavSha256[0]).toMatch(/^[0-9a-f]{64}$/);
     },
     180_000,
