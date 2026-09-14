@@ -148,10 +148,33 @@ const SILENT_VOICE: f32 = 0.002;
 /// such as the bell, which is nothing but two sines.
 const FILTER_TRIM: f32 = 0.65;
 
-/// Per-voice bus gain. With decorrelated start phases a dense chord sums to
-/// roughly sqrt(N) instead of N, so this leaves the master bus inside the
-/// limiter's linear region even with every oscillator at full level.
-const VOICE_GAIN: f32 = 0.22;
+/// Per-voice bus gain.
+///
+/// Deliberately raised from 0.22 to 0.44 (+6 dB) on 2026-09-14 after a user
+/// report that the instrument played back far quieter than other software —
+/// "the system volume has to be pushed very high to hear it". Measured, the old
+/// value left a clean full-level sine at -18.82 dBFS: `VOICE_GAIN` -13.15,
+/// equal-power panning -3.01, the oscillator's 0.9 sine -0.92 and the ladder's
+/// passband loss ~-1.7. (The often-quoted "-13 dB" ignored the last 5.6 dB.)
+/// At +6 dB the same sine reads -12.80, the first-run default patch reads
+/// -14.00 (was -20.02), the 91-preset bank's median phrase RMS moves -40.05 ->
+/// -34.04 dBFS, and the loudest preset (`phonk`) peaks at -0.73 dBFS with 32 of
+/// 86 400 samples grazing the `soft_limit` knee by 0.06 dB — inaudible.
+///
+/// Deliberately not more: +9 dB was measured and rejected. It pushes three
+/// presets past the knee, bends `phonk` down 2.79 dB, and drops the 2x-drive
+/// anti-aliasing gate to 11.2 dB against its 12 dB line — genuine quality loss,
+/// not a calibration — while +6 dB leaves that same gate at 13.7 dB, only
+/// 1.7 dB of margin. +3 dB buys half the loudness and still needs the same
+/// gate re-calibration (`preset-loudness` spread already reaches 8.9 of the
+/// 9.0 line).
+///
+/// The old reason for the small value — "a dense chord sums to roughly sqrt(N)
+/// instead of N, so this leaves the bus inside the limiter's linear region" —
+/// is not what actually bounds the level: the lookahead limiter never engages
+/// even at +9 dB, because the peaks are caught by `soft_limit` (knee 0.82),
+/// which was already working at the old gain.
+const VOICE_GAIN: f32 = 0.44;
 /// One-pole time constant for continuous-parameter smoothing (seconds).
 const SMOOTH_TAU_S: f32 = 0.02;
 /// Peak limiter: ceiling, lookahead window and release (seconds).
@@ -2341,7 +2364,7 @@ impl Engine {
             // gain below.
             self.silent_blocks = self.silent_blocks.saturating_add(1);
         } else if kind == crate::params::FilterType::Formant {
-            // Vowel formants: cutoff morphs A→E→I→O→U, resonance sets the Q.
+            // Vowel formants: cutoff morphs A->E->I->O->U, resonance sets the Q.
             // Each oscillator side keeps its own three band-passes.
             // Map the cutoff knob logarithmically onto the five vowels: 80 Hz
             // is "A", 4 kHz and above is "U", so the useful travel spans the
@@ -6554,7 +6577,7 @@ mod tests {
         }
     }
 
-    /// The notch position is the one morph point a two-line LP→BP→HP mix can
+    /// The notch position is the one morph point a two-line LP->BP->HP mix can
     /// never reach, so it is asserted on its own: a deep minimum at the cutoff
     /// with both ends still at 0 dB.
     #[test]
