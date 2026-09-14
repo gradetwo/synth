@@ -99,6 +99,7 @@ const required = [
   ['DSP regression baseline', 'npm run test:dsp'],
   ['2x oversampling DSP baseline', 'npm run verify:dsp:2x'],
   ['MCP tool server golden session', 'npm run mcp -- --self-test'],
+  ['LLM interface docs vs the live registry', 'npm run verify:llm-docs'],
   ['Chromium E2E', 'npm run test:e2e'],
   ['performance E2E (isolated single worker)', 'npm run test:perf'],
 ];

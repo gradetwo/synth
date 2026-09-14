@@ -1,38 +1,83 @@
-# 让别的 AI / LLM 使用 GS-1：接口设计与批次规划（P13，2026-09-14 立项）
+# GS-1 的 LLM / MCP 接口：外部可读的契约（P13，2026-09-14 立项）
 
 > 用户要求：「设计规划提供接口让其它 AI/LLM 使用本 app」。
-> 本文是**设计 + 规划**，不是实现。它先说清「用什么形态、为什么」，再给出可验收的批次拆分。
+> 本文是**外部 agent 读的那一份**：19 个工具的名字、输入、返回字段、错误码、资源上限、怎么接、
+> 以及末尾的**接入自查清单**。另一份 `docs/notes/mcp.md` 是**实现说明**：为什么手写 JSON-RPC、
+> 为什么零新增运行时依赖、目录驱动注册表、确定性的来源、浏览器层为什么独立进程/端口，以及
+> P13.2–P13.4 的已知取舍。**只读这两份文件就能接上**，不必读源码；门禁的自证在
+> `scripts/verify-llm-docs.mjs`（文档与代码漂移即红）。
 
-## 一、目标与非目标
+## 一、现状：已经交付了什么（v2.1.1，2026-09-15）
+
+一共 **19 个工具**：**14 个离线工具**（`mcp/tools/*.mjs`，入口 `npm run mcp`）+
+**5 个浏览器工具**（`mcp/ui/tools/*.mjs`，入口 `npm run mcp:ui`）。两个 registry 都是**扫目录**：
+按**文件名**排序（不是工具名的字母序——所以 `gs1.patch.random`、`gs1.patch.set` 在前，
+`gs1.patch.get` 在后）、跳过 `_` 前缀的辅助模块；新增一个工具＝加一个文件，不动任何共享清单。
+`tools/list` 的顺序因此是**稳定**的。
+
+| | 离线层（14） | 浏览器层（5） |
+| :--- | :--- | :--- |
+| 入口 | `npm run mcp`（stdio）或 `--http` | `npm run mcp:ui`（stdio）或 `--http` |
+| 需要 | `npm install`（CI 与本地实测的 Node 是 22；`esbuild` 是 vite 带来的既有 devDependency） | 上面全部 **+** 一份 `dist/` **+** Chromium |
+| 不读 | `dist/`、Chromium、网络 | —— |
+| 端口 | `--http` 默认 `127.0.0.1:3939` | 自己的预览默认 `127.0.0.1:4796`（`GS1_MCP_UI_PORT` 可改） |
+| 在 `verify`/CI 里？ | **是**（`npm run mcp -- --self-test`） | **故意不在**：它需要 Chromium 与 `dist/` |
+
+**起法**（仓库根目录）：
+
+```bash
+npm install                                   # 必需；零新增运行时依赖
+npm run build:wasm                            # 第一次跑门禁/工具前需要 src/generated/*.wasm
+npm run mcp                                   # 离线层：MCP over stdio
+npm run mcp -- --http --port 3939             # 离线层：同一套工具的 JSON-RPC，只绑 127.0.0.1
+npm run mcp -- --self-test                    # 黄金会话跑两遍、逐字节比较
+npm run mcp -- --no-log                       # 不写 .tmp/mcp/calls.jsonl
+
+npm run build                                 # 浏览器层要先有一份 dist/（含 wasm + SW）
+npx playwright install chromium               # 浏览器层要 Chromium
+npm run mcp:ui                                # 浏览器层：14 个离线工具 + 5 个 gs1.ui.*
+npm run ui:smoke                              # 端到端冒烟：开页 → 启动引擎 → 装预设 → 读 DOM → 截图
+```
+
+- **两个 script 故意不在 `npm run verify` / CI 里**：`mcp:ui` 与 `ui:smoke` 需要 Chromium 和
+  `dist/`，与 `test:e2e` / `test:perf` 同类；`scripts/verify-ci.mjs` 会断言它们**没有**被塞进
+  必需门禁。离线层的黄金会话（`npm run mcp -- --self-test`）**在** `verify` 与 CI 链里。
+- **19 个工具的名字**（文档与注册表由 `scripts/verify-llm-docs.mjs` 双向核对）：
+  `gs1.analyze`、`gs1.describe`、`gs1.gate`、`gs1.params.list`、`gs1.patch.get`、`gs1.patch.random`、
+  `gs1.patch.set`、`gs1.preset.apply`、`gs1.preset.save`、`gs1.presets.list`、`gs1.render`、
+  `gs1.sample.import`、`gs1.songs.list`、`gs1.wavetable.import`；
+  `gs1.ui.click`、`gs1.ui.gate`、`gs1.ui.open`、`gs1.ui.screenshot`、`gs1.ui.text`。
+- **版本**：引擎与工具都读 `package.json` 的 `version`（当前 **2.1.1**）。`gs1.describe` 的 `version`
+  与 `initialize` 的 `serverInfo.version` 都是它；ABI 是 **8**。
+
+## 二、目标与非目标
 
 **目标**：让一个外部 agent（Claude/ChatGPT/自研）能**离线、确定地**：
 1. **看懂**这台合成器有什么：参数表（id/名字/范围/默认/单位）、预设、曲库、效果节点；
 2. **改**它：读写整套音色（patch）、套用/保存预设、导入采样与波表；
 3. **听**它：把一段演奏**渲染成 WAV**；
-4. **量**它：用**本仓库自己的尺子**（BH-7 非谐波地板、THD、峰值/RMS、最大步进、过采样对照）给出结构化数字；
+4. **量**它：用**本仓库自己的尺子**（BH-7 非谐波地板、Hann 探针、THD、峰值/RMS、最大步进）给出结构化数字；
 5. **迭代**：拿到数字 → 改参数 → 再量，直到满足某个门禁（例如「≥1 kHz 非谐波 ≤ −60 dB」）。
 
-**非目标（第一版明确不做）**：
+**非目标（明确不做）**：
 - **不做真实音频输出**（不接声卡；只做离线渲染）——省掉设备与实时性的全部麻烦；
-- **不做联网/云**：服务器只在本机 stdio/loopback 上跑，不发任何请求；
+- **不做联网/云**：服务器只在本机 stdio/loopback 上跑，**不发任何请求**；
 - **不做任意代码执行**：工具是**白名单**的固定动词，不接受表达式/脚本；
-- **不碰部署**：MCP 服务器**永远不会**调用 `wrangler` / `release`；它只能读仓库与写临时目录。
+- **不碰部署**：MCP 服务器**永远不会**调用 `wrangler` / `release`；它只能读仓库与写 `.tmp/mcp/`。
 
 **为什么值得做**：本仓库最有价值的、别人没有的东西不是「又一个合成器」，而是
 **一套已经被交叉验证过的测量尺子**（BH-7 + Hann 双尺子、1/N² 表长律、P9.1b/P9.1c/P9.6/P9.7/P9.8 的回归门禁）。
 把它做成工具，别的 agent 就能**对着真实门禁迭代音色**，而不是凭感觉调参。
 
-## 二、形态：MCP（stdio）+ 可选 HTTP，**手写、不引新运行时依赖**
+## 三、形态与架构
 
-- 主形态：**MCP（Model Context Protocol）over stdio**。这是现在 LLM 客户端接工具的事实标准，Claude Desktop / 各类 agent 框架都能直接挂。
+- 主形态：**MCP（Model Context Protocol）over stdio**——现在 LLM 客户端接工具的事实标准，
+  Claude Desktop / 各类 agent 框架都能直接挂。
 - 次形态：**同一套工具的 HTTP JSON-RPC**（`127.0.0.1` 只回环），给不玩 MCP 的客户端；
   两个入口共用**同一份 tool registry**，不存在两套实现。
 - **手写而不引入 `@modelcontextprotocol/sdk`**：MCP 的 stdio 框架是**很小的 JSON-RPC 子集**
-  （`initialize` / `tools/list` / `tools/call` + 通知），手写约 150 行；换来的是**零新增运行时依赖**
-  （与仓库一贯的依赖极简一致，也避免把一条供应链塞进一个「本地音频工具」里）。
-  若日后协议演进到需要 SDK，再引也不迟——`server.mjs` 会把 framing 与 tools 分层，替换只动一层。
-
-## 三、架构：两层，共用一份核心
+  （`initialize` / `tools/list` / `tools/call` + 通知），手写换来的是**零新增运行时依赖**
+  （与仓库一贯的依赖极简一致）。理由与做法见 `docs/notes/mcp.md` §一/§四。
 
 ```
  ┌───────────────────────────── 外部 agent（LLM） ─────────────────────────────┐
@@ -41,89 +86,196 @@
                  │  tools/call { name, arguments }
  ┌───────────────▼──────────────────────────────────────────────────────────────┐
  │ mcp/server.mjs        手写 JSON-RPC（stdio / 回环 HTTP），只做协议与校验      │
+ │ mcp/ui/server.mjs     P13.4 浏览器层入口（同一协议，另一套 registry）         │
  ├──────────────────────────────────────────────────────────────────────────────┤
- │ mcp/tools/*.mjs       工具实现（参数校验 → 调用下层 → 结构化结果）            │
+ │ mcp/tools/*.mjs       14 个离线工具（参数校验 → 调用下层 → 结构化结果）        │
+ │ mcp/ui/tools/*.mjs    5 个浏览器工具（Playwright 驱动真实页面）              │
  ├──────────────────────────────────────────────────────────────────────────────┤
- │ scripts/lib/render-core.mjs   在 Node 里起真 wasm 核心（**今天已经这么干**：   │
- │                               verify-audio / dsp-baseline / bench 都这么跑） │
+ │ scripts/lib/render-core.mjs   在 Node 里起真 wasm 核心（门禁也在用同一份）     │
  │ scripts/lib/audio-ruler.mjs   尺子：FFT、BH-7、Hann Goertzel、±8 bin 地板、   │
  │                               THD、峰值/RMS、最大步进、过采样对照            │
  └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**关键点：不新增音频代码。** 第 4 层的两件事今天**已经存在**，只是当年长在 `scripts/verify-audio.mjs`（P13.1 抽尺子前 2814 行，抽完 **2294 行**）里。
-所以第一批（P13.1）是**抽取**，不是新写：把尺子与渲染引导抽成 `scripts/lib/`，让**门禁与 MCP 共用同一份实现**——
-否则「工具量出来的数」与「门禁量出来的数」迟早会分叉，那这套接口就没有意义了。
+**关键点：不新增音频代码。** 第 4 层的两件事**已经存在**，只是当年长在 `scripts/verify-audio.mjs`
+里。P13.1 把它们抽成 `scripts/lib/render-core.mjs` + `scripts/lib/audio-ruler.mjs`，让**门禁与 MCP
+共用同一份实现**——否则「工具量出来的数」与「门禁量出来的数」迟早会分叉，那这套接口就没有意义了。
+那次抽取的 `verify-audio.mjs` 是 2814 行 → **2294 行**；此后 P14.2 的负载探针又给它加了 53 行，
+**今天是 2347 行**（`wc -l scripts/verify-audio.mjs`；抽取提交 `0239b41`，负载探针提交 `1458a8f`）。
 
-## 四、工具契约（第一版）
+## 四、工具契约（19 个，实现后）
 
-命名 `gs1.*`，全部**纯函数式**（给同样的输入，得同样的字节），全部返回**结构化 JSON**（大对象用文件路径而不是塞进 base64 里）。
+命名 `gs1.*`，全部**纯函数式**（给同样的输入，得同样的字节），全部返回**结构化 JSON**
+（大对象用文件路径而不是塞进 base64 里）。
 
-### 4.1 认知类
-| 工具 | 输入 | 输出 |
-| :--- | :--- | :--- |
-| `gs1.describe` | — | 版本、ABI、`PARAM_COUNT`、渲染采样率、arena 容量与余量、可用波形/滤波类型/效果种类（枚举与 id） |
-| `gs1.params.list` | `{ filter?: string }` | `[{ id, key, nameZh, nameEn, min, max, default, unit, discrete }]`（**从 `params.ts`/`params.rs` 的同一张表派生**，不做第二份清单） |
-| `gs1.presets.list` | — | `[{ id, name, tags }]`（**91** 条工厂预设定） |
-| `gs1.songs.list` | — | `[{ id, title, composer, source:{kind,credit} }]`（含 v2.0.0 的来源/许可） |
-| `gs1.fxGraph.describe` | — | 节点种类、每个节点的槽位语义、调制目标（供 agent 构图） |
+**三条通用约定**：
+1. **每个数字都带「用的是哪把尺子」**（`ruler`/`window` 字段），否则不同尺子的数字不可比；
+2. **`nonFinite` / `allocViolations` 永远在渲染与测量结果里**——零分配是这个引擎的底线，
+   agent 改参数时不该能破坏它（`gs1.analyze` 只读磁盘上的 WAV 时 `allocViolations` 为 `null`，
+   因为文件里没有引擎可问）；
+3. **拒绝是结构化的**：`tools/call` 返回**成功的** JSON-RPC 响应，`result.isError === true`，
+   `result.structuredContent` 与 `content[0].text` 是同一个 `{ ok:false, error:{ code, message, … } }`。
+   错误码表见 §5.4。
 
-### 4.2 操作类
-| 工具 | 输入 | 输出 |
-| :--- | :--- | :--- |
-| `gs1.patch.get` | `{ presetId? }` | 完整 patch JSON（**与分享码/预设同一格式**，不是另造一套） |
-| `gs1.patch.set` | `{ patch }` / `{ presetId }` / `{ params: {key:value}, partial:true }` | 生效后的 patch 摘要 + 被夹取的参数清单（**夹取要报告，不静默**） |
-| `gs1.patch.random` | `{ seed }` | 同 `random` 按钮的确定性版本（**必须带 seed**，否则 agent 无法复现） |
-| `gs1.sample.import` | `{ path }` 或 `{ wavBase64 }` | `{ ok, code, note?, poolBytes }`；**装不下时返回 `noRoom`（P9.8 的返回码 4），不许静默截断** |
-| `gs1.wavetable.import` | `{ path }` 或 `{ cycleBase64 }` | `{ ok, code, capacity }` |
+### 4.1 离线层 · 认知类（4）
 
-### 4.3 渲染与测量类（这套接口的真正价值）
-| 工具 | 输入 | 输出 |
-| :--- | :--- | :--- |
-| `gs1.render` | `{ patch?, notes:[{note,velocity,start,duration}], seconds, oversample?, sampleRate?, seed? }` | `{ wavPath, samples, peak, rms, sha256 }` |
-| `gs1.analyze` | `{ wavPath }` 或 `{ render: <同 gs1.render> }` + `{ f0 }` | 见下 |
-| `gs1.gate` | `{ render, ruler:'bh7'\|'hann'\|'both', harmonics:±8 }` | **与 `verify:audio` 同一套判据**：各音高的非谐波地板、是否满足给定阈值、**以及它用的是哪把尺子** |
+| 工具 | 输入（类型 / 范围 / 默认） | 返回（要点） | 错误码 |
+| :--- | :--- | :--- | :--- |
+| `gs1.describe` | — | `name`、`version`、`abi`、`paramCount`、`sampleRate`、`blockSize`、`maxBlockSize`、`maxVoices`、`arena{capacityBytes,freeBytes,allocViolations}`、`sampler{maxBaseSamples,importCapacity,importCodes{ok,short,silent,notFinite,noRoom}}`、`enums{waves,waveNamesZh,filterTypes,lfoWaves,lfoTargets,delaySyncs,fxKinds,fxSlots,fxModSlots,modSources,modDests}`、`presets{count,categories}`、`layer{render,rulers,excludes}` | `E_INTERNAL` |
+| `gs1.params.list` | `filter?: string`（≥1 字符，id/key/label 的大小写不敏感子串；省略＝全部） | `{ count, total, params:[{ id, key, nameEn, nameZh, min, max, default, unit, discrete }] }`（`total` 恒 224；`nameZh` 恒 `null`——本仓库不逐个本地化旋钮标签） | `E_INTERNAL` |
+| `gs1.presets.list` | — | `{ count, categories, presets:[{ id, name, tag, cat, wave, tags, user, hasLayer, instanceMode }] }`（91 条工厂预设） | `E_INTERNAL` |
+| `gs1.songs.list` | — | `{ count, sourceKinds, songs:[{ id, title, titleZh, composer, source:{kind,credit,url?}, bpm, steps }] }`（25 首；`sourceKinds` 是 `{kind: 条数}`） | `E_INTERNAL` |
 
-`gs1.analyze` 的输出（示意）：
+真跑片段（`gs1.describe` 截断）：
+
 ```json
-{
-  "sampleRate": 48000, "seconds": 4, "blocks": 1500,
-  "peak": 0.6043, "rms": 0.1210, "maxStep": 0.0938,
-  "aliasing": { "ruler": "bh7", "window": "blackman-harris-7", "bins": 8,
-                "perNote": [{ "note": 96, "f0": 2093.0, "worstDb": -70.5 }],
-                "worstDb": -70.5 },
-  "secondRuler": { "ruler": "hann-goertzel", "probes": [9000,9200,9500], "worstDb": -146.7 },
-  "nonFinite": 0, "allocViolations": 0
-}
+{"name":"GS-1","version":"2.1.1","abi":8,"paramCount":224,"sampleRate":48000,"blockSize":128,
+ "maxBlockSize":1024,"maxVoices":32,
+ "arena":{"capacityBytes":12582912,"freeBytes":12582912,"allocViolations":0},
+ "sampler":{"maxBaseSamples":192000,"importCapacity":192000,
+            "importCodes":{"ok":0,"short":1,"silent":2,"notFinite":3,"noRoom":4}},
+ "presets":{"count":91,
+            "categories":["ALL","LEAD","BASS","PAD","PLUCK","KEYS","FX","BASIC","USER"]}}
 ```
-**两条硬规矩**：①每个数字都带**用的是哪把尺子**（否则不同尺子的数字不可比）；②`allocViolations`/`nonFinite` 永远在结果里
-（零分配是这个引擎的底线，agent 改参数时不该能破坏它）。
 
-### 4.4 浏览器层（P13.4，独立进程，默认关闭）
-| 工具 | 用途 |
-| :--- | :--- |
-| `gs1.ui.open` / `gs1.ui.screenshot` / `gs1.ui.click` / `gs1.ui.text` | 让 agent 看到并驱动**真实页面**（Playwright，复用 `e2e/fixtures.ts` 的帧无关交互） |
-| `gs1.ui.gate` | 跑**视觉基线**比对与 `performance.spec.ts` 的两个门禁 |
+（上面省了 `enums` 的其余枚举与 `layer` 字段；`layer` 是三个字符串，说明这一层的数字来自
+`scripts/lib/render-core.mjs` 里的 wasm 核、尺子来自 `scripts/lib/audio-ruler.mjs`，以及它**不覆盖**
+AudioWorklet / AudioParam 自动化 / Web Audio 图。）
 
-这一层单独一个进程/子命令，因为浏览器比 wasm 重得多，而且它需要 `dist`——不该让「只想要个 patch」的 agent 付这个代价。
+`gs1.params.list { filter:"filterCutoff" }`：
 
-**已经实现**（`npm run mcp:ui`，入口 `mcp/ui/server.mjs`；工具在 `mcp/ui/tools/`，和离线层一样**扫目录**注册：
+```json
+{"count":1,"total":224,
+ "params":[{"id":14,"key":"filterCutoff","nameEn":"CUTOFF","nameZh":null,
+            "min":20,"max":20000,"default":9000,"unit":"kHz","discrete":false}]}
+```
 
-| 工具 | 输入 | 输出（要点） |
+### 4.2 离线层 · 操作类（7）
+
+`gs1.patch.get` / `gs1.patch.set` / `gs1.render` / `gs1.analyze` / `gs1.gate` 都能拿
+`patch`（分享码字符串**或**解码后的 `{params, routes, params2?, instanceMode?, splitNote?}` 对象）
+或 `presetId`；**都不给**时用**会话当前 patch**（没设过则是默认 patch）。`patch` 与分享码、
+预设**是同一格式**：`gs1.patch.get` 给的 `shareCode` 就是分享链接里那一串，`src/state/share.ts`
+自己的 `encodePatch`/`decodePatch` 产生与读取，`mcp/` 里没有第二套。
+
+| 工具 | 输入（类型 / 范围 / 默认） | 返回（要点） | 错误码 |
+| :--- | :--- | :--- | :--- |
+| `gs1.patch.get` | `{ presetId?: string(≥1), patch?: string \| object }`；给 `presetId` 时它优先，两个都不给＝**会话当前 patch** | `format:'gs1-share-code'`、`abi`、`source`（`preset`\|`session`\|`default`\|`shareCode`\|`object`）、`presetId`、`name`、`tag`、`cat`、`wave`、`shareCode`、`instanceMode`、`splitNote`、`routeCount`、`paramCount`、`patch{params,params2,instanceMode,splitNote,routes}` | `E_SCHEMA`、`E_PATCH` |
+| `gs1.patch.set` | `{ patch? \| presetId? \| params?, partial?: boolean }`——三者**恰好一个**；`params` 是 `{ key\|id: value }`，值会按浏览器服务的量程**夹取**并报告 | `ok`、`applied`（`params`\|`presetId`\|`patch`）、`partial`、`source`、`presetId`、`shareCode`、`summary{presetId,instanceMode,splitNote,routeCount,paramCount,shareCode}`、`clamped[{key,asked,got,reason}]`、`clampedCount`、`patch` | `E_SCHEMA`、`E_PATCH`、`E_PARAM` |
+| `gs1.patch.random` | `{ seed: integer 0..4294967295 }`（**必填**） | 同 `patch.set` 的载荷，外加 `seed` 与 `randomised:[id…]`（本轮被随机化的参数 id；`applied:'random'`） | `E_SCHEMA`（缺 seed / 非整数）、`E_RANGE`（负数） |
+| `gs1.preset.apply` | `{ presetId? \| file? }`——**恰好一个**；`file` 是仓库内的 `.gs1.json` | 同 `patch.set` 的结果（`applied:'preset.apply'`）；`file` 来源再加 `name`、`file` | `E_SCHEMA`、`E_PATCH`、`E_PATH` |
+| `gs1.preset.save` | `{ name?: string, outPath?: string }`（默认名 `GS1 Patch`；`outPath` 必须在 `.tmp/mcp/` 内） | `ok`、`format:'gs1-preset'`、`savePath`、`name`、`byteLength`、`sha256`、`paramCount`、`routeCount`、`layered`、`source`（`session`\|`default`）、`note` | `E_PATH`、`E_SCHEMA` |
+| `gs1.sample.import` | `{ path? \| wavBase64?, name?: string }`——**恰好一个**来源；解码用 app 自己的 `src/audio/wavefile.ts` | `ok`、`code`、`note`、`name`、`source`、`samples`、`sampleRate`、`seconds`、`capacity`、`poolBytes`（本次新占的 arena 字节）、`arenaFreeBytes`、`installed` | `E_SCHEMA`、`E_PATH`、`E_WAV`、`E_RANGE`（超 `MAX_BASE_SAMPLES`，**拒绝不截断**）、`E_IMPORT` |
+| `gs1.wavetable.import` | `{ path? \| cycleBase64?, name?: string }`——**恰好一个**来源；周期由 app 自己的自相关分析找出 | `ok`、`code`、`note`、`name`、`source`、`samples`（恒 2048）、`capacity`、`seconds`、`installed` | `E_SCHEMA`、`E_PATH`、`E_WAV`、`E_RANGE`、`E_IMPORT` |
+
+**夹取必须报告，不许静默**——`clamped` 里每一条是 `{ key, asked, got, reason }`，`reason` 取
+`max`/`min`/`discrete`。真跑：
+
+```json
+{"tool":"gs1.patch.set","args":{"params":{"filterCutoff":99999,"osc1Wave":1.4}}}
+```
+```json
+{"ok":true,"applied":"params","partial":false,"source":"session","presetId":null,
+ "clamped":[{"key":"filterCutoff","asked":99999,"got":20000,"reason":"max"},
+            {"key":"osc1Wave","asked":1.4,"got":1,"reason":"discrete"}],
+ "clampedCount":2,"shareCode":"gs1.1.eyJzIjo0LCJ2IjpbMC43NSwxLDEsMCw3LD…",
+ "summary":{"presetId":null,"instanceMode":"single","splitNote":60,"routeCount":4,
+            "paramCount":224,"shareCode":"gs1.1.eyJzIjo0LCJ2IjpbMC43NSwxLDEsMCw3LD…"}}
+```
+
+`gs1.sample.import`（480 样本 @48 kHz）——`poolBytes` 是**这次调用向 arena 新要到的字节数**；
+同一个引擎里第二次导入同样长度的采样，pool 被复用，`poolBytes` 就是 `0`（如实报告，不是没导入）：
+
+```json
+{"ok":true,"code":0,"note":"ok","name":"tone.wav","source":"wavBase64","samples":480,
+ "sampleRate":48000,"seconds":0.01,"capacity":192000,"poolBytes":3856,"arenaFreeBytes":11811040,
+ "installed":"session sample — replayed into every later render/gate"}
+```
+
+**会话状态规则**（状态一份，放在 `ctx.session`）：
+
+| 工具 | 读 | 写 |
 | :--- | :--- | :--- |
-| `gs1.ui.open` | `{ path?, url?, viewport?{width,height}, waitForMs? }` | `{ url, title, status, viewport, mounted, gateCleared, ready, consoleErrors, consoleMessages, navigationMs, bootMs, distDir, previewPort, baseline }`。默认 `1440x900`（视觉基线桌面尺寸）；**只接受本站**预览的 URL，外部 origin 一律 `E_UI_URL` |
-| `gs1.ui.click` | `{ selector, force?, timeoutMs?, position? }` | `{ ok, force, hitTested, clicked:{x,y}, box, element, elapsedMs, implementation }`；`force:true` 跳过可操作性检查（Playwright 语义） |
-| `gs1.ui.text` | `{ selector?, all?, attribute?, maxLength? }` | `{ ok, selector, count, text }` 或 `all:true` 的 `{ values }`；**空匹配不是错误**（`count:0`） |
-| `gs1.ui.screenshot` | `{ name?, fullPage?, selector?, animations? }` | `{ screenshotPath, width, height, bytes, sha256, viewport, consoleErrors, baseline:{device,width,height,matches,count,names} }`；只写 `.tmp/mcp/`，宽高从 PNG 头**读回** |
-| `gs1.ui.gate` | `{ spec:'visual'\|'performance'\|'param-range', project?:'chromium', timeoutMs? }` | `{ ok, spec, specFile, command, port, exitCode, passed, failed, skipped, tests[], logPath, reportPath, logTail }`；**白名单**，不接受 spec 路径/其它 project |
+| `gs1.describe` / `params.list` / `presets.list` / `songs.list` | app 数据 | — |
+| `gs1.patch.get`（无 `patch`/`presetId`） | `session.patch`（空则默认 patch） | — |
+| `gs1.patch.set` / `patch.random` / `preset.apply` | 会话（`partial:true` 时） | **`session.patch`** |
+| `gs1.sample.import` | — | **`session.sample`** |
+| `gs1.wavetable.import` | — | **`session.wavetable`** |
+| `gs1.render` / `gs1.analyze {render}` / `gs1.gate` | `session.patch`（仅当调用者没给 `patch`/`presetId`）+ `session.sample` / `session.wavetable` | — |
+| `gs1.preset.save` | `session.patch`（空则默认 patch） | 只写 `.tmp/mcp/` 的文件 |
 
-**单一实现**：`gs1.ui.click` 调用的就是 `e2e/interact.mjs`——从 `e2e/fixtures.ts` 抽出来的那份帧无关交互（`fixtures.ts` 仍然在 WebKit 上把它装到 Playwright 的动词上）。`mcp/ui/` 里**没有**第二份命中/滚动逻辑。抽取时修掉了 `e2e/fixtures.ts` 里的一个真缺陷：`ClickOptions.force` 从来没被读，`click({force:true})` 会死循环到超时。
+**引擎不跨调用保留**：每次 `render`/`gate` 都起一个**全新的 wasm 实例**（`phase_seed = 0`，
+这是逐字节确定性的来源），随后 `installInstrument()` 把 `session.sample` / `session.wavetable`
+**重放进新实例**——和浏览器 reload 后装用户采样做的是同一件事。
 
-边界与冒烟跑法见 `docs/notes/mcp.md` §九；**下面这节是这套工具真跑过一次的范例**。
+### 4.3 离线层 · 渲染与测量类（3）
+
+| 工具 | 输入（类型 / 范围 / 默认） | 返回（要点） | 错误码 |
+| :--- | :--- | :--- | :--- |
+| `gs1.render` | `{ patch? \| presetId?, notes(**必填**, 1..512 条), seconds?(0.05..30，默认 2), oversample?(0\|1 或 bool，默认 0), sampleRate?(枚举 `[48000]`，默认 48000), seed?(0..512，默认 0), outPath?(必须在 `.tmp/mcp/` 内) }`；`notes[i] = { note(0..127，必填), velocity?(0..1，默认 1), start?(秒，默认 0), duration?(秒，默认到渲染结束) }`，按 128 样本块边界放置 | `ok`、`wavPath`、`sha256`（WAV 字节）、`byteLength`、`samples`、`channels:2`、`sampleRate`、`seconds`、`blocks`、`seed`、`oversample`、`time{ruler:'time-domain-float',peak,rms,maxStep}`、`nonFinite`、`allocViolations`、`patch{source,presetId,instanceMode,splitNote,routeCount,paramCount,shareCode,layersRendered}` | `E_SCHEMA`、`E_RANGE`、`E_SAMPLE_RATE`、`E_PATCH`、`E_PATH` |
+| `gs1.analyze` | `{ wavPath? \| render? }`——**恰好一个**（`render` 与 `gs1.render` 同 spec，在内存里量、不落盘）；`f0?(1..24000)` 或 `note?(0..127)`（WAV 来源**必须**给其一）；`bins?(0..64，默认 8)`；`probes?(1..16 个 1..24000 的频率，默认门禁的 `[9000,9200,9500]`)` | `ok`、`source`、`sampleRate`、`seconds`、`blocks`、`frames`、`time{ruler,peak,rms,maxStep}`、`aliasing{ruler:'bh7',window:'blackman-harris-7',bins,perNote[{note,f0,floorDb}],worstDb}`、`secondRuler{ruler:'hann-goertzel',window:'hann',f0,fundamental,probes[{frequency,db}],worstDb}`、`thd{ruler,window,maxHarmonic:12,percent}`、`interHarmonic{ruler,window,limitHz:20000,db}`、`rulers{bh7,second}`、`nonFinite`、`allocViolations`（WAV 来源为 `null`） | `E_SCHEMA`、`E_WAV`、`E_SAMPLE_RATE`、`E_RANGE`、`E_PATCH` |
+| `gs1.gate` | `{ patch? \| presetId?, notes(**必填**, 1..512), oversample?, ruler?('bh7'\|'hann'\|'both'，默认 'bh7'), harmonics?(0..64，默认 8), thresholdDb?(-200..0，默认 -60), probes?(1..16 个，默认 `[9000,9200,9500]`) }`；**没有 `seconds`/`seed`**——它自己跑门禁那套 settled 4 秒单音 fixture | `ok`、`ruler`、`bins`、`thresholdDb`、`criteria`、`isGateRuler:true`、`perNote[{note,f0,bh7{ruler,window,bins,floorDb,passed}?,hann{ruler,window,probes,worstDb,passed}?,passed}]`、`worstBh7Db`、`worstHannDb`、`passed`、`nonFinite`、`allocViolations` | `E_SCHEMA`、`E_RANGE`、`E_PATCH` |
+
+`gs1.render { notes:[{note:60,velocity:0.9}], seconds:1, seed:7 }`（真跑，节选）：
+
+```json
+{"ok":true,"wavPath":".tmp/mcp/59c16bcb6e59ee00.wav",
+ "sha256":"59c16bcb6e59ee00f293c1a41cb48e29b23475d03c651bbbccd69548715f12dd",
+ "byteLength":192044,"samples":48000,"channels":2,"sampleRate":48000,"seconds":1,"blocks":375,
+ "seed":7,"oversample":0,
+ "time":{"ruler":"time-domain-float","peak":0.05958358570933342,
+         "rms":0.021532217840107986,"maxStep":0.05809706263244152},
+ "nonFinite":0,"allocViolations":0,
+ "patch":{"source":"default","presetId":null,"instanceMode":"single","splitNote":null,
+          "routeCount":4,"paramCount":224,"shareCode":"gs1.1.eyJzIjo0LCJ2IjpbMC…",
+          "layersRendered":"single"}}
+```
+
+`gs1.gate`（用门禁自己的 quiet 差分音色，C4=220 Hz 与 A5=880 Hz；节选，`bh7`/`hann` 是**嵌套对象**，
+每个都带自己的尺子名）：
+
+```json
+{"ok":true,"ruler":"both","bins":8,"thresholdDb":-60,"isGateRuler":true,
+ "perNote":[{"note":57,"f0":220,
+             "bh7":{"ruler":"bh7","window":"blackman-harris-7","bins":8,"floorDb":-115.95862439046535,"passed":true},
+             "hann":{"ruler":"hann-goertzel","window":"hann","worstDb":-161.0251694935408,"passed":true},
+             "passed":true},
+            {"note":81,"f0":880,
+             "bh7":{"ruler":"bh7","window":"blackman-harris-7","bins":8,"floorDb":-113.87405471234766,"passed":true},
+             "hann":{"ruler":"hann-goertzel","window":"hann","worstDb":-153.51766851891068,"passed":true},
+             "passed":true}],
+ "worstBh7Db":-113.87405471234766,"worstHannDb":-153.51766851891068,"passed":true,
+ "nonFinite":0,"allocViolations":0}
+```
+
+### 4.4 浏览器层（5）：要 `dist/`、要 Chromium、只用 4796
+
+这一层单独一个进程/子命令，因为浏览器比 wasm 重得多，而且它需要 `dist/`——不该让「只想要个 patch」
+的 agent 付这个代价。`npm run mcp` **不加载**这些文件（`scripts/verify-llm-docs.mjs` 断言离线
+registry 里没有 `gs1.ui.*`）。
+
+| 工具 | 输入（类型 / 范围 / 默认） | 返回（要点） | 错误码 |
+| :--- | :--- | :--- | :--- |
+| `gs1.ui.open` | `{ path?(默认 `/`), url?(必须**本进程自己**的 `http://127.0.0.1:4796` origin), viewport?{width(320..3840，默认 1440), height(240..2400，默认 900)}, waitForMs?(100..120000，默认 20000) }` | `ok`、`url`、`requestedUrl`、`title`、`status`、`viewport`、`consoleErrors`、`consoleMessages`、`mounted`、`gateCleared`、`ready`、`startedInMs`、`navigationMs`、`bootMs`、`distDir`、`previewPort`、`baseline{device,width,height,note,count,names}`、`layer:'browser'`、`note` | `E_UI_URL`、`E_SCHEMA`、`E_PATH`（没有 `dist/index.html`）、`E_UI_BROWSER`、`E_RANGE` |
+| `gs1.ui.click` | `{ selector(**必填**), force?(默认 false), timeoutMs?(1..120000，默认 5000), position?{x,y} }` | `ok`、`selector`、`force`、`hitTested`（`!force`）、`clicked{x,y}`、`box`、`element`、`elapsedMs`、`implementation:'e2e/interact.mjs (shared with e2e/fixtures.ts)'` | `E_UI_SESSION`、`E_UI_TIMEOUT`、`E_SCHEMA` |
+| `gs1.ui.text` | `{ selector?(默认整页 body), all?, attribute?, maxLength?(1..20000，默认 20000) }` | `all:true` → `{ ok, selector, count, returned, attribute, values }`（最多 200 条）；否则 `{ ok, selector, count, attribute, text, length, truncated }`；**空匹配不是错误**（`count:0`） | `E_UI_SESSION`、`E_SCHEMA` |
+| `gs1.ui.screenshot` | `{ name?(默认 `ui-page-N.png`), fullPage?, selector?, animations?('disabled'\|'allow'，默认 'disabled') }` | `ok`、`screenshotPath`、`width`、`height`（从 PNG 头**读回**，不是请求值）、`bytes`、`sha256`、`fullPage`、`selector`、`element`、`viewport`、`consoleErrors`、`baseline{device,width,height,names,count,matches}`；只写 `.tmp/mcp/` | `E_UI_SESSION`、`E_PATH`、`E_SCHEMA`、`E_UI_TIMEOUT`、`E_UI_BROWSER` |
+| `gs1.ui.gate` | `{ spec(**必填**:'visual'\|'performance'\|'param-range'), project?(枚举 `['chromium']`，默认 chromium), timeoutMs?(1000..900000，默认 300000) }` | `ok`、`spec`、`specFile`、`project`、`command`、`port`、`url`、`exitCode`、`elapsedMs`、`passed`、`failed`、`skipped`、`tests[{title,project,status,durationMs,error}]`、`logPath`、`reportPath`、`logTail`、`note`、`reportParsed`；**白名单**，不接受 spec 路径/其它 project | `E_UI_SPEC`、`E_SCHEMA`、`E_UI_BROWSER` |
+
+**边界**（细节见 `docs/notes/mcp.md` §9.2）：
+- **只连本站**：外部 origin、`//host/path`、非字符串一律 `E_UI_URL`，而且**在起 server / 起浏览器之前**就拒绝；
+- **只写 `.tmp/mcp/`**：`gs1.ui.screenshot` 的文件名解析后必须仍是该目录下的普通文件名
+  （`../x`、`sub/x`、`.x` 都是 `E_PATH`）；
+- **只用自己的端口**：预览默认 **4796**（`GS1_MCP_UI_PORT` 可改），**`4783` 直接拒绝**——那是
+  `playwright.config.ts` 的 E2E 端口；`gs1.ui.gate` 跑的 Playwright 也把 `GS1_E2E_PORT`
+  强制成这个端口，两层不会互相抢。**绝不占用 4783。**
+- **单一实现**：`gs1.ui.click` 调用的就是 `e2e/interact.mjs`——从 `e2e/fixtures.ts` 抽出来的那份
+  帧无关交互；`mcp/` 里**没有**第二份命中/滚动逻辑。抽取时修掉了 `fixtures.ts` 里一个真缺陷：
+  `ClickOptions.force` 从来没被读，`click({force:true})` 会死循环到超时。
 
 ### 4.5 实战范例：把 `crushlead` 的 ≥1 kHz 非谐波地板降 60.86 dB（真跑，2026-09-15）
 
-这一节里的每个数字都是一次真实的 `tools/call` 结果（Node 里的 wasm 核，不是浏览器；浏览器只用于最后一步的「页面里也真的生效」）。**完整调用序列在 §4.5.5**，父代理可以照着重跑。
+这一节里的每个数字都是一次真实的 `tools/call` 结果（Node 里的 wasm 核，不是浏览器；浏览器只用于最后一步的「页面里也真的生效」）。**完整调用序列在 §4.5.5**，可以照着重跑。
 
 #### 4.5.1 先测量：91 条工厂预设，谁的高频非谐波地板最差
 
@@ -352,7 +504,7 @@ gs1.1.eyJzIjo0LCJ2IjpbMC43NSwxLDIsMCw4LDAuNywwLjUsMSwzLDAsLTksMC4zNSwwLjUsMCw2NT
 | `e2e/visual.spec.ts-snapshots/splash-dark-desktop-chromium-linux.png`（基线） | **1440 × 900** | — | — |
 | `e2e/visual.spec.ts-snapshots/splash-dark-phone-chromium-linux.png`（手机基线） | 390 × 844 | — | — |
 
-`gs1.ui.open` 的默认视口就是 `e2e/visual.spec.ts` 的 desktop `test.use({viewport:{width:1440,height:900}})`、`deviceScaleFactor:1`，截图用 `scale:'css'`（与视觉基线同一个 `SHOT` 配置），所以**默认全视口截图与 20 张 desktop 基线同尺寸**；结果里的 `baseline.matches === true` 就是这个断言，`ui:smoke` 里也有一条 check。
+`gs1.ui.open` 的默认视口就是 `e2e/visual.spec.ts` 的 desktop `test.use({viewport:{width:1440,height:900}})`、`deviceScaleFactor:1`，截图用 `scale:'css'`（与视觉基线同一个 `SHOT` 配置），所以**默认全视口截图与 24 张 desktop 基线同尺寸**（快照目录里 desktop/phone 各 24 张、共 48 张）；结果里的 `baseline.matches === true` 就是这个断言，`ui:smoke` 里也有一条 check。
 
 > 诚实说明：尺寸一致，**像素不保证一致**。视觉基线是**启动门出现时**的截图，`ui.open` 拿到的是「外壳已挂载、启动门还在」的同一状态（`gateCleared:false`），但基线本身的容差（1 % 像素、5 % 颜色距离）和字体光栅是 `e2e/visual.spec.ts` 自己的事；`gs1.ui.gate {spec:"visual"}` 才是跑那套比对的地方。**本层只断言尺寸**：`gs1.ui.open`（默认，什么都不点）截的确实是启动门那一屏，但「像素相同」这句话留给视觉套件说。
 
@@ -362,41 +514,250 @@ gs1.1.eyJzIjo0LCJ2IjpbMC43NSwxLDIsMCw4LDAuNywwLjUsMSwzLDAsLTksMC4zNSwwLjUsMCw2NT
 - 这个改动**换来了量化噪声**：`analyze.thd` 从 26.7 % 升到 60.4 %（4 bit 的量化台阶）。任务是「把 ≥1 kHz 非谐波地板降 20 dB」，做到了；但这不是一个可以无脑套用的音色修改，`docs/notes/mcp.md` 的取舍一节也这么写。
 - 低音区（note 72/84）这条改动**不稳定**：宽探针下 note 72 变差 3.7 dB、note 84 变好 7.4 dB（探针与基频的相对位置随音高变），稳定的大幅改善只出现在 C7 以上。这条结论也是真跑出来的，没有藏。
 
-## 五、安全、确定性与资源边界
+## 五、限制、拒绝与边界
 
-- **确定性**：所有随机入口必须吃 `seed`；渲染不使用挂钟；同一输入两次调用**逐字节相同**（输出里带 `sha256` 让调用者自己验）。
-- **无副作用**：渲染与导入只写**调用者指定的**输出路径（默认 `.tmp/mcp/`）；不碰 `src/`、不碰 `release/`、**永不部署**。
-- **资源上限**：`seconds ≤ 30`、`notes ≤ 512`、导入样本遵守既有 `MAX_BASE_SAMPLES` 与 12 MiB arena ⇒ **超出要返回结构化拒绝**，不是崩。
-- **不新增依赖**：MCP framing 手写；HTTP 用 `node:http`；WAV 用仓库既有的写法。
-- **可审计**：服务器把每次 `tools/call` 的名称与参数摘要追加到 `.tmp/mcp/calls.jsonl`（默认开、可关），便于事后复现一次「agent 干了什么」。
+### 5.1 数值上限（全部来自代码常量，`scripts/verify-llm-docs.mjs` 会核对这份文档）
 
-## 六、批次拆分与验收（每批独立可交付）
+| 量 | 上限 / 取值 | 违反时 |
+| :--- | :--- | :--- |
+| 渲染长度 | `0.05 ≤ seconds ≤ 30` | `E_RANGE`：`{ path:"$.seconds", maximum:30, value }`（下限给 `minimum`） |
+| 音符条数 | `notes ≤ 512`（至少 1 条） | `E_RANGE`：`{ path:"$.notes", maximum:512, length }`；空/非数组是 `E_SCHEMA`：`{ path:"$.notes", expected:["array"], got }` |
+| `gs1.render` 的相位种子 | `seed ≤ 512`（0..512） | `E_RANGE`：`{ path:"$.seed", maximum:512, value }` |
+| `gs1.patch.random` 的种子 | `0..4294967295`（u32），**必填** | `E_SCHEMA`（缺/非整数）、`E_RANGE`（负） |
+| 采样率 | 只有 **48000**（尺子校准在这里） | `E_SAMPLE_RATE`（工具路径）/ `E_SCHEMA`：`{ path:"$.sampleRate", enum:[48000] }` |
+| 单个音符 | `note ∈ 0..127` | `E_RANGE`：`{ path:"$.notes[i].note", minimum:0, maximum:127, value }` |
+| 力度 / 起点 / 时长 | `velocity ∈ 0..1`、`start ≥ 0`、时长必须落在渲染内 | `E_RANGE`：`path`/`minimum`/`maximum`（schema 能表达的）或 `field`/`value`/`seconds`（跨字段的 `start`/`duration`） |
+| BH-7 排除半宽 / Hann 探针 | `bins`/`harmonics ≤ 64`；`probes` 1..16 个、每个 1..24000 Hz | `E_RANGE`：`{ path, maximum }` / `E_SCHEMA`：`{ path, expected }` |
+| 导入采样 | `MAX_BASE_SAMPLES = 192000`（4 秒 @48 kHz）；超长**拒绝不截断** | `E_RANGE`：`{ field:"samples", value, max:192000, sampleRate, hint }` |
+| arena | 12 MiB（`12582912` 字节） | 采样导入的 `E_IMPORT` + `importCode:4`（见 §5.6） |
+| 面板文本 | `gs1.ui.text` 单次最多返回 200 条匹配、每条截到 `maxLength`（默认 20000） | 结果里的 `truncated` |
+
+> **`E_RANGE` 有两种形状，按谁先拒它区分**：
+> 1. **schema 层**（`tools/list` 公布的那份 `inputSchema`，服务器真的会走它）——能表达的越界
+>    在这里就被拒，形状是 `{ code:"E_RANGE", message, path:"$.字段", minimum?, maximum?, length?, value? }`；
+>    真跑：`{notes:[{note:300}]}` → `{"code":"E_RANGE","message":"$.notes[0].note: 300 is above the maximum 127","path":"$.notes[0].note","maximum":127,"value":300}`。
+> 2. **handler 层**——schema 表达不了的约束（`start` 超出 `seconds`、`duration` 越过渲染末尾、
+>    导入容量、解码）才走到它，形状是 `{ code:"E_RANGE", message, field, value, min?, max?, seconds? }`；
+>    真跑：`{notes:[{note:60,start:5}],seconds:1}` → `{"code":"E_RANGE","message":"notes[0].start must be within [0, seconds)","field":"notes[0].start","value":5,"seconds":1}`。
+>
+> 想只认一种的调用者请分支 **`code`**；想给用户看原因的，两种里的 `message` 都是给人读的。
+
+### 5.2 写入与读取边界
+
+- **只写 `.tmp/mcp/`**。`outPath`（render/save）与 `name`（screenshot）解析后必须仍在该目录内，
+  否则 `E_PATH`；越界**拒绝，不夹取**。读取只允许仓库内的路径（`resolveReadPath`）。
+- **不碰 `src/`、不碰 `localStorage`、不碰 `release/`、永不部署**。
+- 每次 `tools/call` 追加一行 `{ seq, tool, argsDigest, ok, code }` 到 `.tmp/mcp/calls.jsonl`
+  （默认开，`--no-log` / `GS1_MCP_LOG=0` 可关）；**没有时间戳**，是序号 + 参数 sha256，日志本身也是确定的。
+  `seq` 是**每个进程**从 1 开始的计数：多个进程共用同一个 `.tmp/mcp/calls.jsonl` 时序号会重复，
+  它不是全局唯一 id（要唯一就用 `argsDigest` 或自己配对）。
+
+### 5.3 网络
+
+- 只绑 `127.0.0.1`（离线层 `--http` 默认 `3939`；浏览器层预览默认 `4796`）。
+- 浏览器层**只连本进程自己那个预览**，外部 origin 一律 `E_UI_URL`；也**绝不占用 4783**
+  （`playwright.config.ts` 的 E2E 端口，代码里结构化拒绝）。
+- 不发起任何出站请求；HTTP body 超过 8 MiB 直接断开。
+
+### 5.4 错误码全表（与 `mcp/lib/errors.mjs` 一一对应，门禁双向核对）
+
+| 码 | 含义 | 典型触发 / 附带字段 |
+| :--- | :--- | :--- |
+| `E_SCHEMA` | 必填字段缺失、JSON 类型不对、给了多余字段、枚举不匹配 | 缺 `notes`；`patch.set` 同时给两个来源；`songs.list {filter}`。schema 层带 `path`，多数还带 `expected`/`got` 或 `field`；handler 层（如 `patch.set` 的来源互斥）带 `given`/`field` |
+| `E_RANGE` | 数字/长度越界 | `seconds:999`；`notes` 513 条；采样 200000 个样点。**两种形状**见上表下的说明 |
+| `E_PATCH` | patch 既不是可解码的分享码，也不是已知预设 id | `presetId:"nope"`；坏分享码；`.gs1song` 当补丁。带 `presetId`/`file`/`hint`/`prefix` |
+| `E_PARAM` | 未知参数 key/id，或值不是有限数 | `params:{nonsenseKey:1}`；`filterCutoff:"loud"`。带 `field`（如 `params.nonsenseKey`）与 `hint` |
+| `E_PATH` | 路径逃出允许的根（写 `.tmp/mcp/`、读仓库根） | `outPath:"../x"`；`sample.import {path:"../etc/passwd"}`。带 `field`、`requested`、`allowedRoot` |
+| `E_SAMPLE_RATE` | 渲染/分析不是 48 kHz | 分析一个 44.1 kHz 的 WAV。带 `wavPath`/`field`/`value`/`allowed` |
+| `E_WAV` | WAV 找不到或解不开（RIFF/WAVE PCM） | `wavPath` 不存在；非 RIFF 的 base64。带 `wavPath`/`note:"decode"`/`source:"decoder"` |
+| `E_TOOL` | 未知工具名（JSON-RPC 层是 `-32602`，`data.code` 是它，并列出可用工具） | `tools/call {name:"不存在的名字"}` |
+| `E_IMPORT` | P9.8 导入拒绝（`short`=1 / `silent`=2 / `notFinite`=3 / `noRoom`=4），原样透传在 `importCode` | 导入静音 WAV；采样装不下。带 `note`、`importCode`、`source` |
+| `E_UI_URL` | 浏览器层：URL 不是本进程自己的回环预览 | `url:"https://example.com"`；`path:"//host/x"`。带 `url`/`path`/`allowedOrigin` |
+| `E_UI_SESSION` | 需要页面却没有开（或页面已关） | 没 `gs1.ui.open` 就 `gs1.ui.click`。带 `hint` |
+| `E_UI_BROWSER` | Chromium 缺失/起不来、截图不是 PNG | 未 `npx playwright install chromium`。带 `hint` |
+| `E_UI_SPEC` | `gs1.ui.gate` 的 spec 不在白名单，或 project 不是 chromium | `spec:"../../evil.spec.ts"`。带 `field`、`spec`/`project`、`allowed` |
+| `E_UI_TIMEOUT` | 元素在 deadline 前没有变成可点/可见 | 启动门还在时点工具栏（模态遮挡）。带 `field`、`selector` |
+| `E_INTERNAL` | 兜底：工具抛了非结构化异常 | 理论上不该出现；出现即 bug |
+
+**协议层错误**（请求本身坏了）走 JSON-RPC `error` 帧，不是上面的码：非法 JSON `-32700`、
+不是 JSON-RPC 2.0 `-32600`、未知方法 `-32601`、未知工具 `-32602`（其 `data.code` 才是 `E_TOOL`）。
+
+### 5.5 尺子的适用边界（`gs1.analyze` 与 `gs1.gate`）
+
+- **`analyze` 的 BH-7 / Hann 是对「你给的那段音频」量的**，包含调制与混响的能量；只有
+  「单音、无调制、无混响」时才等同于混叠。要门禁口径的振荡器地板，用 `gs1.gate`（它走门禁的
+  settled 4 秒 fixture）。
+- **Hann 比值以 `f0` 处的 bin 为分母**。patch 的振荡器若偏离音符（OSC1 detune 或 OSC2 在别的
+  音程），必须把**实际基频**传进 `f0`，否则分母近乎为零、整份结果退化成 0 dB 附近。
+  §4.5.2 的 `crushlead` 就是这么做的：`f0` 是 `2102.6986` 而不是 `2093.0`。
+- **`gs1.gate` 的 `bh7` 全带地板对分层/失谐 patch 不适用**（两台振荡器的谐波不在同一栅格上，
+  读数里混进了「分层」）；这类 patch 要读 Hann 探针。`gs1.render` 只渲染 instance A
+  （分层 patch 的 `patch.layersRendered` 会写 `instance A only`）。
+- **所有数字都是 Node 里的 wasm 核测出来的**：没有 AudioWorklet、没有 AudioParam 自动化、
+  没有 Web Audio 图。浏览器层只证明「页面起来、控件响应、DOM 反映出 patch、截图对得上尺寸」，
+  它**看不到音频**（`gs1.describe` 的 `layer` 字段把这件事写进结果里）。
+
+### 5.6 `noRoom`（P9.8 返回码 4）的实际可达性
+
+工具把 core 的 `{0,1,2,3,4}` 原样透传（`error.importCode`、`error.note`），但**本仓库 12 MiB 的
+arena 到不了 `noRoom`**：Rust 自己的测试 `the_longest_mipmap_fits_the_arena`
+（`crates/synth-core/src/dsp/sampler.rs`）断言 4 秒采样的 mipmap 只要不到一半 arena，`mcp/lib/import.mjs`
+的注释记录的直探针（先装满 98304 样本的 IR，再导入 4 秒采样）也还剩 ~7.9 MB。所以 `noRoom` 是
+**防御路径**，P9.8 当年是靠把 `ARENA_SIZE` 临时改成 5 MiB 验证的；测试因此只替换**那一次决定
+判定的 core 调用**，其余（解码、容量检查、staging、arena 计量、错误形状）全是真的。
+**不要指望用超大文件换到 `noRoom`——超长会先撞 `E_RANGE`。**
+
+## 六、客户端怎么接
+
+### 6.1 Claude Desktop / 通用 MCP 客户端（stdio）
+
+`claude_desktop_config.json`（`cwd` 换成你自己的 checkout 路径）：
+
+```json
+{ "mcpServers": { "gs1": { "command": "npm", "args": ["run", "mcp", "--silent"],
+  "cwd": "/home/crow/music/synth" } } }
+```
+
+不想经过 npm 就直接跑入口（等价，且 `stdout` 干净）：
+
+```json
+{ "mcpServers": { "gs1": { "command": "node", "args": ["mcp/server.mjs"],
+  "cwd": "/home/crow/music/synth" } } }
+```
+
+浏览器层同理，把命令换成 `npm run mcp:ui --silent`（或 `node mcp/ui/server.mjs`），并先完成
+`npm run build` + `npx playwright install chromium`。协议方法是 `initialize` / `tools/list` /
+`tools/call` / `ping`（通知不回帧）；stdout 是协议通道，诊断走 stderr。
+
+### 6.2 不玩 MCP：回环 HTTP
+
+```bash
+npm run mcp -- --http --port 3939
+curl -s http://127.0.0.1:3939/            # GET 会列出工具名
+curl -s http://127.0.0.1:3939/ -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+同一个 registry、同一份实现；`POST /` 收 JSON-RPC 2.0 的 `initialize`/`tools/list`/`tools/call`，
+也接受 batch 数组。
+
+### 6.3 一份可照着敲的最小会话（真跑）
+
+stdio 是**换行分隔的 JSON-RPC**（一行一条，无 `Content-Length`）。把下面五行按顺序写进
+`node mcp/server.mjs` 的 stdin，就能从零拿到一个 WAV 和一个数字：
+
+```jsonc
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"my-agent","version":"1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"gs1.presets.list","arguments":{}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"gs1.render","arguments":{"presetId":"pluck","notes":[{"note":60,"velocity":0.9}],"seconds":2,"seed":7}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"gs1.analyze","arguments":{"wavPath":"<第 4 步返回的 wavPath>","note":60}}}
+```
+
+回帧（`tools/call` 的信封是 `result.content[0].text` = `JSON.stringify(result.structuredContent)`、
+`result.isError`；下面只写后者的形状，省掉大数组）：
+
+```jsonc
+// id 1
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18",
+  "capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"gs1-mcp","version":"2.1.1"}}}
+// id 2 —— 14 个元素的 tools 数组，每个 { name, description, inputSchema }
+{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"gs1.analyze","description":"…","inputSchema":{…}}, /* …13 more… */]}}
+// id 3 —— gs1.presets.list
+{"count":91,"categories":["ALL","LEAD","BASS","PAD","PLUCK","KEYS","FX","BASIC","USER"],"presets":[{"id":"pluck",…}, /* …90 more… */]}
+// id 4 —— gs1.render（真跑，pick 了 pluck）
+{"ok":true,"wavPath":".tmp/mcp/<sha256 前 16 位>.wav","sha256":"…","byteLength":…,"samples":…,
+ "channels":2,"sampleRate":48000,"seconds":2,"blocks":…,"seed":7,"oversample":0,
+ "time":{"ruler":"time-domain-float","peak":…,"rms":…,"maxStep":…},"nonFinite":0,"allocViolations":0,"patch":{…}}
+// id 5 —— gs1.analyze：source 变成 "wav:<路径>"，aliasing/secondRuler 各带尺子名
+{"ok":true,"source":"wav:.tmp/mcp/<sha256 前 16 位>.wav","aliasing":{"ruler":"bh7",…},"secondRuler":{"ruler":"hann-goertzel",…},"nonFinite":0,"allocViolations":null}
+```
+
+- `initialize` 会**原样回显**客户端报的 `protocolVersion`（不报就用默认的 `2025-06-18`）；
+  `notifications/initialized` **不是必须的**（通知不回帧，带 `id` 的才回）。
+- **把 `gs1.render` 返回的 `wavPath` 原样交给 `gs1.analyze`**，别自己拼 sha256：默认路径就是仓库根下的
+  `.tmp/mcp/<sha256 前 16 位>.wav`（或在 `outPath` 里指定的那个）。
+- **关掉 stdin（或发 `SIGINT`/`SIGTERM`）服务器就退出，退出码 0**。stderr 只有诊断
+  （`[mcp] stdio ready — 14 tools, log=on`），stdout 只有协议帧——所以 stdout 不能拿来看日志。
+
+## 七、实现批次与验收记录
 
 | 批 | 内容 | 验收 |
 | :--- | :--- | :--- |
 | **P13.1 抽尺子** | 把 `verify-audio.mjs` 的渲染引导与测量抽成 `scripts/lib/render-core.mjs` + `scripts/lib/audio-ruler.mjs`；门禁改为调用它们 | **门禁输出逐字节不变**（`verify:audio` 的每条读数、`test:dsp` **0.061470**、`verify:dsp:2x` **0.061703**、两侧 `91 presets unchanged · ABI 8` 一字不动）；`verify` 绿。**这是纯重构，不接受任何数字变化** |
-| **P13.2 只读 + 渲染 + 测量** ✅ 2026-09-14（v2.1.1）| `mcp/server.mjs` + `mcp/tools/*.mjs`（**目录驱动**：新增工具＝加一个文件，不动共享清单）+ `gs1.describe`/`params.list`/`presets.list`/`patch.get`/`render`/`analyze`/`gate` + `npm run mcp`（stdio / `--http` 回环 / `--self-test`） | ✅ 工具级单测 **54 条**：schema、参数校验、20 条拒绝路径、手写 JSON-RPC 的 `initialize`/`tools/list`/`tools/call`（含 `-32700`/`-32601`/`-32602` 错误帧）、黄金会话、共用实现、依赖自证。**黄金会话**：7 次调用（覆盖全部 7 个工具）跑两遍 `sha256` 相同、WAV 字节相同。**与门禁共用**：`gs1.gate` 的地板与 `offGridFloor(renderFloor(...))`（`verify-audio.mjs` P9.1a 的原调用）`toBe` 全等，四个波形逐一比对。**依赖**：`dependencies` 与 v2.1.0 清单一字不差——本仓库该字段本来就不是空对象（6 条：lamejs、两个 fontsource、playwright、react、react-dom），本批**没有新增任何条目**，尤其没有 `@modelcontextprotocol/sdk`（协议手写，esbuild 读取 app TS 但它是既有 devDependency）。`npm run mcp -- --self-test` 已同步进 `.github/workflows/ci.yml`、`scripts/verify-ci.mjs` 与 `verify` 链。实现说明见 `docs/notes/mcp.md` |
-| **P13.3 操作类** ✅ 2026-09-15 | `mcp/tools/` 七个新文件（**只加文件，不动共享清单**）：`patch-set.mjs`/`patch-random.mjs`/`sample-import.mjs`/`wavetable-import.mjs`/`songs.mjs`/`preset-apply.mjs`/`preset-save.mjs`；`mcp/lib/session.mjs`（会话状态）、`mcp/lib/random.mjs`（带种子的 RANDOM 配方）、`mcp/lib/import.mjs`（解码与结构化拒绝） | ✅ 工具级单测 34 条 + P13.2 的 54 条（共 88 条绿）：schema、每条拒绝路径、**夹取报告**（`filterCutoff: 99999 → 20000`，`clamped:[{key,asked,got,reason}]`，`partial:true` 叠加）、`noRoom` 结构化拒绝、**patch 往返**（`patch.get`→`patch.set`→`patch.get` 的 `shareCode` 与 224 个参数逐字节相同，含手工分层 `params2`）、**会话状态**（无 patch 的 `render` 播放当前 patch；导入的采样/波表被重放进每次 `initCore()` 的全新引擎）、**黄金会话**扩展到 21 次调用（含全部变异工具）跑两遍 `sha256` 相同。**`dependencies` 仍未变**：6 条，与 v2.1.0 清单一字不差。**名字说明**：`gs1.songs.list` 在本文 §4.1 被列在只读类、P13.2 未交付，本批补上；`gs1.preset.apply`/`gs1.preset.save` 本文 §4.2 未列，名字取自 P13.3 任务书。实现与状态规则见 `docs/notes/mcp.md` |
-| **P13.4 浏览器层 + 范例** ✅ 2026-09-15 | `gs1.ui.*`（Playwright 驱动，复用帧无关交互）+ `docs/LLM-INTERFACE.md` 补「实战范例」一节 | ✅ 见 §4.4 与 §4.5：五个工具（`mcp/ui/tools/*.mjs`，独立入口 `npm run mcp:ui`，`npm run mcp` 不加载它们）；`gs1.ui.click` 与 `e2e/fixtures.ts` 共用 `e2e/interact.mjs`（抽取时修掉 `force` 不生效的真缺陷，Chromium 套件不回归，5 条单测在自己进程里证明去掉 `force` 分支即红）；白名单 `gs1.ui.gate`；截图 1440×900 与视觉基线同尺寸；§4.5 是**真跑过**的范例——`crushlead` 的 ≥1 kHz 非谐波地板（Hann 宽探针）**-4.0170 → -64.8761 dB，改善 60.86 dB**（默认三探针 -13.0589 → -67.7049 dB），改动只有 `fxCrushBits: 6 → 4`，前后 JSON、完整调用序列、以及没做到的部分（`bh7` 在这条分层 patch 上不适用、THD 26.7 % → 60.4 %、低音区不稳定）都在那一节里 |
+| **P13.2 只读 + 渲染 + 测量** ✅ 2026-09-14（v2.1.1）| `mcp/server.mjs` + `mcp/tools/*.mjs`（**目录驱动**：新增工具＝加一个文件，不动共享清单）+ `gs1.describe`/`params.list`/`presets.list`/`patch.get`/`render`/`analyze`/`gate` + `npm run mcp`（stdio / `--http` 回环 / `--self-test`） | ✅ 工具级单测 **54 条**（P13.2 当时；`mcp/mcp.test.mjs` 今天是 **55** 条）：schema、参数校验、20 条拒绝路径、手写 JSON-RPC 的 `initialize`/`tools/list`/`tools/call`（含 `-32700`/`-32601`/`-32602` 错误帧）、黄金会话、共用实现、依赖自证。**黄金会话**：7 次调用（覆盖全部 7 个工具）跑两遍 `sha256` 相同、WAV 字节相同。**与门禁共用**：`gs1.gate` 的地板与 `offGridFloor(renderFloor(...))`（`verify-audio.mjs` P9.1a 的原调用）`toBe` 全等，四个波形逐一比对。**依赖**：`dependencies` 与 v2.1.0 清单一字不差——本仓库该字段本来就不是空对象（6 条：lamejs、两个 fontsource、playwright、react、react-dom），本批**没有新增任何条目**，尤其没有 `@modelcontextprotocol/sdk`（协议手写，esbuild 读取 app TS 但它是既有 devDependency）。`npm run mcp -- --self-test` 已同步进 `.github/workflows/ci.yml`、`scripts/verify-ci.mjs` 与 `verify` 链。实现说明见 `docs/notes/mcp.md` |
+| **P13.3 操作类** ✅ 2026-09-15 | `mcp/tools/` 七个新文件（**只加文件，不动共享清单**）：`patch-set.mjs`/`patch-random.mjs`/`sample-import.mjs`/`wavetable-import.mjs`/`songs.mjs`/`preset-apply.mjs`/`preset-save.mjs`；`mcp/lib/session.mjs`（会话状态）、`mcp/lib/random.mjs`（带种子的 RANDOM 配方）、`mcp/lib/import.mjs`（解码与结构化拒绝） | ✅ 工具级单测 34 条 + P13.2 的 54 条（当时共 88 条绿；今天 `mcp/` 四个测试文件共 **132 条**全绿）：schema、每条拒绝路径、**夹取报告**（`filterCutoff: 99999 → 20000`，`clamped:[{key,asked,got,reason}]`，`partial:true` 叠加）、`noRoom` 结构化拒绝、**patch 往返**（`patch.get`→`patch.set`→`patch.get` 的 `shareCode` 与 224 个参数逐字节相同，含手工分层 `params2`）、**会话状态**（无 patch 的 `render` 播放当前 patch；导入的采样/波表被重放进每次 `initCore()` 的全新引擎）、**黄金会话**扩展到 21 次调用（含全部变异工具）跑两遍 `sha256` 相同。**`dependencies` 仍未变**：6 条，与 v2.1.0 清单一字不差 |
+| **P13.4 浏览器层 + 范例** ✅ 2026-09-15（待随下一个版本发布）| `gs1.ui.*`（Playwright 驱动，复用帧无关交互）+ §4.5 的实战范例 | ✅ 见 §4.4 与 §4.5：五个工具（`mcp/ui/tools/*.mjs`，独立入口 `npm run mcp:ui`，`npm run mcp` 不加载它们）；`gs1.ui.click` 与 `e2e/fixtures.ts` 共用 `e2e/interact.mjs`（抽取时修掉 `force` 不生效的真缺陷）；白名单 `gs1.ui.gate`；截图 1440×900 与视觉基线同尺寸（desktop 24 张）；§4.5 是**真跑过**的范例——`crushlead` 的 ≥1 kHz 非谐波地板（Hann 宽探针）**-4.0170 → -64.8761 dB，改善 60.86 dB**（默认三探针 -13.0589 → -67.7049 dB），改动只有 `fxCrushBits: 6 → 4` |
+| **P13.5 文档 + 门禁** ✅ 2026-09-15 | 本文补齐为**外部可读的契约** + `docs/notes/mcp.md` 补完 + `scripts/verify-llm-docs.mjs`（接进 `verify`、`ci.yml`、`verify-ci.mjs`）| ✅ 门禁双向核对 19 个工具名、上限与码表（错误码 15 条）；三条自证（删工具名 / 写不存在的名字 / 改 `MAX_SECONDS`）都红；一次**外部视角**检验（无上下文的 agent 只读这两份文件跑通 `tools/list → presets.list → render → analyze`） |
 
 **顺序理由**：P13.1 必须先做（否则工具与门禁会各量各的）；P13.2 是「能用」的最小集（认知 + 听 + 量）；
-P13.3 才能「改」；P13.4 是给需要看界面的 agent 的，最重、最可延后。
+P13.3 才能「改」；P13.4 是给需要看界面的 agent 的，最重、最可延后；P13.5 把上面四批的用法
+钉成外部契约，并用门禁防止它漂移。
 
-## 七、风险与取舍
+## 八、风险与取舍
 
 | 风险 | 对策 |
 | :--- | :--- |
-| **工具与门禁的测量分叉**（同一个 bug 两种读数） | P13.1 强制「同一份实现」，且验收要求门禁读数**逐字节不变** |
+| **工具与门禁的测量分叉**（同一个 bug 两种读数） | P13.1 强制「同一份实现」，且验收要求门禁读数**逐字节不变**；P13.5 用 `verify-llm-docs.mjs` 钉住文档 |
+| **文档与代码分叉**（改名/改上限后文档还在说旧的） | 工具名双向核对 + 上限/错误码从代码常量派生（本批新增，接进 `verify` 与 CI） |
 | MCP 协议演进 / 客户端差异 | framing 与 tools 分层；先只实现 `initialize`/`tools/list`/`tools/call`；HTTP 入口作为退路 |
 | agent 用 `patch.set` 把音色改坏、或让引擎非有限 | 每次 `render`/`analyze` 都返回 `nonFinite`/`allocViolations`；工具**不做**「自动修好」——把判断留给 agent |
-| 无界渲染把内存吃满 | `seconds`/`notes` 上限 + 12 MiB arena 的既有拒绝路径 |
-| 让 agent 直接驱动浏览器很危险（点击/导航） | `ui.*` 默认关闭、只连本地 `vite preview`、不接外部 URL；不暴露文件系统 |
+| 无界渲染把内存吃满 | `0.05 ≤ seconds ≤ 30`、`notes ≤ 512` + 12 MiB arena 的既有拒绝路径 |
+| 让 agent 直接驱动浏览器很危险（点击/导航） | `ui.*` 默认关闭、只连本地预览、不接外部 URL；不暴露文件系统；`gs1.ui.gate` 白名单三个 spec |
 | 过度设计成「万能 API」 | 工具**只覆盖这四种动词**（认知/操作/渲染测量/UI）；不做插件系统、不做表达式引擎 |
 
-## 八、与现有计划的关系
+## 九、与现有计划的关系
 
 - 这是**新方向 P13**（计划原为 P9–P12）。它**不改**任何既有批次的验收，也不动引擎行为。
 - 依赖：**P13.1 依赖 P9.x/P10.x 全部已交付**（尺子已定型：双尺子、1/N²、P9.6 钉相位、P9.8 的拒绝码）。
-  如果 P12.1/P12.2/P12.6 还没做，P13 **可以并行**——它的足迹是 `scripts/lib/`、`mcp/`、`docs/`，
-  与「教学内容/内容包/SW 握手」都不重叠。
-- 版本：P13.1 起从 v2.1.x 继续累加（**不影响 v2.0.0 里程碑已达成的事实**）。
+  它的足迹是 `scripts/lib/`、`mcp/`、`docs/`，与「教学内容/内容包/SW 握手」都不重叠。
+- 版本：P13.1–P13.3 随 **v2.1.1** 发布（2026-09-15）；P13.4 浏览器层与 P13.5 文档随后续版本发布
+  （**不影响 v2.0.0 里程碑已达成的事实**）。
+
+## 十、接入自查清单
+
+只用**本文 + `docs/notes/mcp.md`** 就应该能回答下面每一条；答不上来说明文档有洞（或这段接口
+漂移了——`scripts/verify-llm-docs.mjs` 是机器版的这份清单）。
+
+1. **一共有几个工具、怎么分层？** 19 个：14 个离线（`npm run mcp`）+ 5 个浏览器（`npm run mcp:ui`）。
+   两层的 registry 都扫目录（§一）。
+2. **怎么起？需要装到什么程度？** `npm install`；离线层直接 `npm run mcp`；浏览器层还要
+   `npm run build` + `npx playwright install chromium`，然后 `npm run mcp:ui`；冒烟是 `npm run ui:smoke`（§一）。
+3. **`gs1.render` 的 `seconds` 上限是多少、超了返回什么？** 上限 **30**（下限 0.05）；
+   超了是结构化拒绝 `E_RANGE`：`{ code:"E_RANGE", path:"$.seconds", maximum:30, value }`，
+   不是崩（§4.3、§5.1）。
+4. **`notes` 上限？** 512 条，至少 1 条；超了 `E_RANGE`（§5.1）。
+5. **`gs1.patch.get` 的 `patch` 与分享码是不是同一格式？** 是。`shareCode` 就是分享链接那串
+   `gs1.1.`/`gs1.2.`，`patch` 是它解码后的 `{params, routes, params2?, instanceMode?, splitNote?}`，
+   两者 `gs1.render`/`patch.set` 都收（§4.2）。
+6. **要量「≥1 kHz 非谐波地板」用哪个工具、哪一项告诉我是哪把尺子？** 首选 `gs1.gate`
+   （门禁口径；`perNote[].bh7.window`/`hann.ruler` 带着尺子名）；`gs1.analyze` 适合量任意 buffer，
+   结果在 `aliasing.ruler`/`secondRuler.ruler`（§4.3、§5.5）。
+7. **要改音色用哪个工具、被夹取时怎么知道？** `gs1.patch.set`（或 `patch.random`/`preset.apply`）；
+   结果里的 `clamped:[{key,asked,got,reason}]` 列出每一个被改动的值，`reason` 是 max/min/discrete（§4.2）。
+8. **改完一组参数后，`gs1.render` 不给 `patch` 会渲染什么？** 会话当前 patch（`patch.set` 设过的
+   那份）；采样/波表也是会话状态，会被重放进每次新引擎（§4.2 会话状态规则）。
+9. **`gs1.analyze` 的 Hann 数字退化成 0 dB 附近是什么原因？** `f0` 给错了——它的分母是 `f0` 处的
+   bin，detune/分层让实际基频偏离音符时必须传**实测基频**（§5.5）。
+10. **两次相同的调用会不会给出不同字节？怎么自己验？** 不会。每次渲染起全新 wasm 实例，
+    `seed` 是输入；结果带 WAV 的 `sha256`，自己比（§4.3、`docs/notes/mcp.md` §五）。
+11. **工具能写哪些路径？** 只能写 `.tmp/mcp/`，越界 `E_PATH`；只读仓库内路径；永不部署、永不联网（§5.2、§5.3）。
+12. **采样超长会怎样？** `E_RANGE`，`max:192000`——**拒绝而不是截断**；`noRoom` 在 12 MiB arena 下
+    基本到不了，见 §5.6（§4.2、§5.6）。
+13. **浏览器层要什么前置条件、端口是哪个？** 一份 `dist/` + Chromium + `npm run mcp:ui`；
+    预览默认 **4796**（`GS1_MCP_UI_PORT` 可改），**绝不占 4783**（E2E 的），外部 URL 一律 `E_UI_URL`（§4.4）。
+14. **浏览器层的 5 个工具叫什么、`gs1.ui.gate` 能跑哪些 spec？** `open`/`click`/`text`/`screenshot`/`gate`；
+    `gate` 只认 `visual`/`performance`/`param-range` 三个 spec 与 `chromium` project（§4.4）。
+15. **为什么浏览器层的两个 script 不在 CI 里？** 它们要 Chromium 和 `dist/`，与 E2E/性能套件同类；
+    `verify-ci.mjs` 会断言它们**没有**被塞进必需门禁（§一、`docs/notes/mcp.md` §9.2）。
+16. **工具拒绝与协议错误怎么区分？** 工具拒绝是**成功的** JSON-RPC 响应 + `result.isError:true`
+    + `structuredContent.error.code`；协议错误（`-32700`/`-32600`/`-32601`/`-32602`）才是 `error` 帧（§4、§5.4）。
+17. **不玩 MCP 怎么接？** `npm run mcp -- --http --port 3939`，往 `http://127.0.0.1:3939/` POST
+    JSON-RPC；`GET /` 列工具名（§6.2）。
+18. **只读这两份文件，能不能跑通一次 `tools/list → presets.list → render → analyze`？**
+    能——§6.3 就是逐行可抄的会话（连回帧信封都有），WAV 落在 `.tmp/mcp/<sha256 前 16 位>.wav`（§6.3）。
+19. **服务器怎么优雅关掉？要发 `notifications/initialized` 吗？** 关掉 stdin（或 `SIGINT`/`SIGTERM`）
+    就退出，退出码 0；`notifications/initialized` 不是必须的（通知不回帧），协议只有
+    `initialize`/`tools/list`/`tools/call`/`ping` 会回（§6.3、`docs/notes/mcp.md` §四）。
+20. **`E_RANGE` 的附带字段有两种形状，为什么？** schema 层能表达的越界带 `path`/`minimum`/`maximum`，
+    schema 表达不了的（跨字段、导入容量）带 `field`/`value`/`max`；只认一种的调用者分支 `code`（§5.1）。

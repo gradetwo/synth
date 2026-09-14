@@ -1,18 +1,34 @@
-# MCP 工具服务器 / The GS-1 tool server（P13.2 + P13.3）
+# MCP 工具服务器 / The GS-1 tool server（P13.2 + P13.3 + P13.4）
 
 **让你的 agent 离线、确定地看懂这台合成器、改它、渲染出 WAV、并用本仓库自己的尺子量它。**
 
-`docs/LLM-INTERFACE.md` 是设计与批次规划；本文件是 **P13.2（只读 + 渲染 + 测量）与 P13.3（操作类）的实现说明**：
-协议、工具契约、会话状态规则、限制、怎么接 Claude/ChatGPT 类客户端，以及「工具与门禁共用同一份实现」的证据。
+`docs/LLM-INTERFACE.md` 是**外部可读的契约**（19 个工具的名字/输入/返回/错误码/上限 + 接入自查清单）；
+本文件是**实现说明**：协议、会话状态规则、确定性从哪来、工具与门禁为什么是同一份实现，以及
+P13.2–P13.4 的**已知取舍**。两份合起来就是「不读源码也能接上」的全部材料。
 
 ## 一、跑起来
 
 ```bash
-npm run mcp                      # MCP over stdio（Claude Desktop、各类 agent SDK）
-npm run mcp -- --http --port 3939   # 同一套工具的 JSON-RPC，只绑 127.0.0.1
-npm run mcp -- --self-test       # 黄金会话跑两遍并逐字节比较，打印结果后退出
-npm run mcp -- --no-log          # 不写 .tmp/mcp/calls.jsonl
+npm install                          # 必需；零新增运行时依赖（esbuild 是 vite 带来的既有 devDependency）
+npm run build:wasm                   # 第一次跑工具/门禁前需要 src/generated/*.wasm
+
+# 离线层（14 个工具；不读 dist/、不碰浏览器、不联网）
+npm run mcp                          # MCP over stdio（Claude Desktop、各类 agent SDK）
+npm run mcp -- --http --port 3939    # 同一套工具的 JSON-RPC，只绑 127.0.0.1
+npm run mcp -- --self-test           # 黄金会话跑两遍并逐字节比较，打印结果后退出
+npm run mcp -- --no-log              # 不写 .tmp/mcp/calls.jsonl
+
+# 浏览器层（14 + 5 个工具；要一份 dist/ 与 Chromium，只用自己的端口 4796）
+npm run build                        # 产出 dist/（含 wasm 与 sw.js）
+npx playwright install chromium      # 只装 Chromium（本层只用 chromium）
+npm run mcp:ui                       # MCP over stdio
+npm run mcp:ui -- --http --port 3939 # 同一套 registry，只绑 127.0.0.1
+npm run ui:smoke                     # 端到端冒烟：开页 → 启动引擎 → 装预设 → 读 DOM → 截图
 ```
+
+**`mcp:ui` 与 `ui:smoke` 故意不进 `verify` / CI**：它们要 Chromium 与 `dist/`，和 `test:e2e` /
+`test:perf` 同类；`scripts/verify-ci.mjs` 会断言它们**没有**被塞进必需门禁。离线层的
+`npm run mcp -- --self-test` 在 `verify` 与 CI 链里。
 
 **零新增运行时依赖**：协议是手写的（`mcp/protocol.mjs` + `mcp/framing.mjs`），
 HTTP 用 `node:http`，WAV 用仓库既有的 `encodeWavBuffer`。读取 app 的 TypeScript 用
@@ -29,23 +45,26 @@ HTTP 用 `node:http`，WAV 用仓库既有的 `encodeWavBuffer`。读取 app 的
 接不玩 MCP 的客户端：`node mcp/server.mjs --http`，然后向 `http://127.0.0.1:3939/`
 POST 一个 JSON-RPC 2.0 消息（`initialize` / `tools/list` / `tools/call`）；`GET /` 会列出工具名。
 
-## 二、工具清单（P13.2：只读 + 渲染 + 测量）
+## 二、工具清单（离线层 14 个）
+
+完整契约表（每个字段的范围与默认）在 `docs/LLM-INTERFACE.md` §4.1–§4.3；这里是速查。
 
 | 工具 | 输入 | 输出（要点） |
 | :--- | :--- | :--- |
 | `gs1.describe` | — | 版本、ABI 8、`paramCount` 224、48000 Hz、128 块、arena 容量/余量、采样器上限与 P9.8 返回码、全部枚举、预设数 |
-| `gs1.params.list` | `{ filter? }` | `{ id, key, nameEn, nameZh, min, max, default, unit, discrete }[]` |
-| `gs1.presets.list` | — | `{ id, name, tag, cat, wave, tags, hasLayer, instanceMode }[]`（91 条） |
-| `gs1.patch.get` | `{ presetId? }` | `shareCode`（**分享码同格式**）+ 解码后的完整 `patch`；无参数时给**会话当前 patch** |
-| `gs1.render` | `{ patch?/presetId?, notes, seconds, oversample?, sampleRate?, seed?, outPath? }` | `{ wavPath, sha256, byteLength, samples, peak, rms, maxStep, nonFinite, allocViolations }` |
+| `gs1.params.list` | `{ filter? }` | `{ count, total, params:[{ id, key, nameEn, nameZh, min, max, default, unit, discrete }] }` |
+| `gs1.presets.list` | — | `{ count, categories, presets:[{ id, name, tag, cat, wave, tags, user, hasLayer, instanceMode }] }`（91 条） |
+| `gs1.patch.get` | `{ presetId?, patch? }` | `shareCode`（**分享码同格式**）+ 解码后的完整 `patch`；无参数时给**会话当前 patch** |
+| `gs1.render` | `{ patch?/presetId?, notes, seconds?, oversample?, sampleRate?, seed?, outPath? }` | `{ ok, wavPath, sha256, byteLength, samples, channels, sampleRate, seconds, blocks, seed, oversample, time{ruler,peak,rms,maxStep}, nonFinite, allocViolations, patch{…,layersRendered} }` |
 | `gs1.analyze` | `{ wavPath }` 或 `{ render }` + `{ f0?, note?, bins?, probes? }` | 时域 + BH-7 + Hann（**每个数都带尺子名**）+ `nonFinite`/`allocViolations` |
-| `gs1.gate` | `{ patch?, notes, ruler?, harmonics?, thresholdDb?, probes?, oversample? }` | 各音高的 BH-7 / Hann 地板 + `passed`，判据与 `verify:audio` 相同 |
+| `gs1.gate` | `{ patch?, notes, ruler?, harmonics?, thresholdDb?, probes?, oversample? }` | 各音高的 BH-7 / Hann 地板（**嵌套对象，各带尺子名**）+ `passed`，判据与 `verify:audio` 相同 |
 
 ### 输入/输出实例（都是真跑出来的）
 
 `gs1.describe`（截断）：
 ```json
-{"version":"2.1.0","abi":8,"paramCount":224,"sampleRate":48000,"blockSize":128,
+{"name":"GS-1","version":"2.1.1","abi":8,"paramCount":224,"sampleRate":48000,"blockSize":128,
+ "maxBlockSize":1024,"maxVoices":32,
  "arena":{"capacityBytes":12582912,"freeBytes":12582912,"allocViolations":0},
  "sampler":{"maxBaseSamples":192000,"importCapacity":192000,
             "importCodes":{"ok":0,"short":1,"silent":2,"notFinite":3,"noRoom":4}},
@@ -57,18 +76,23 @@ POST 一个 JSON-RPC 2.0 消息（`initialize` / `tools/list` / `tools/call`）�
 
 `gs1.params.list {filter:"filterCutoff"}`：
 ```json
-{"id":14,"key":"filterCutoff","nameEn":"CUTOFF","nameZh":null,
- "min":20,"max":20000,"default":9000,"unit":"kHz","discrete":false}
+{"count":1,"total":224,
+ "params":[{"id":14,"key":"filterCutoff","nameEn":"CUTOFF","nameZh":null,
+            "min":20,"max":20000,"default":9000,"unit":"kHz","discrete":false}]}
 ```
 > `min/max/default` 是从 `src/audio/worklet-processor.js` 的 `PARAMS` 表**解析**出来的
 > （浏览器真正服务的量程），`key` 来自 `PARAM_NAMES`，`nameEn` 来自 `PARAM_SPECS.label`，
 > `discrete` 来自 `DISCRETE_PARAMS`。`nameZh` 恒为 `null`：本仓库不逐个本地化旋钮标签，
 > 没有权威中文名可以返回，所以不编一个。
 
-`gs1.render {notes:[{note:60,velocity:0.9}],seconds:1,seed:7}`：
+`gs1.render {notes:[{note:60,velocity:0.9}],seconds:1,seed:7}`（真跑，节选）：
 ```json
-{"wavPath":".tmp/mcp/9f2c...e1.wav","sha256":"59c16bcb…f12dd","byteLength":192044,
- "samples":48000,"time":{"ruler":"time-domain-float","peak":0.0596,"rms":0.0215,"maxStep":0.0581},
+{"ok":true,"wavPath":".tmp/mcp/59c16bcb6e59ee00.wav",
+ "sha256":"59c16bcb6e59ee00f293c1a41cb48e29b23475d03c651bbbccd69548715f12dd",
+ "byteLength":192044,"samples":48000,"channels":2,"sampleRate":48000,"seconds":1,"blocks":375,
+ "seed":7,"oversample":0,
+ "time":{"ruler":"time-domain-float","peak":0.05958358570933342,
+         "rms":0.021532217840107986,"maxStep":0.05809706263244152},
  "nonFinite":0,"allocViolations":0}
 ```
 
@@ -81,12 +105,18 @@ POST 一个 JSON-RPC 2.0 消息（`initialize` / `tools/list` / `tools/call`）�
  "nonFinite":0,"allocViolations":0}
 ```
 
-`gs1.gate`（用门禁自己的 quiet 差分音色，C4=220 Hz 与 A5=880 Hz）：
+`gs1.gate`（用门禁自己的 quiet 差分音色，C4=220 Hz 与 A5=880 Hz；节选）：
 ```json
-{"ruler":"both","bins":8,"thresholdDb":-60,
- "perNote":[{"note":57,"f0":220,"bh7":-115.96,"hann":-161.03,"passed":true},
-            {"note":81,"f0":880,"bh7":-113.87,"hann":-153.52,"passed":true}],
- "worstBh7Db":-113.87,"worstHannDb":-153.52,"passed":true,
+{"ok":true,"ruler":"both","bins":8,"thresholdDb":-60,"isGateRuler":true,
+ "perNote":[{"note":57,"f0":220,
+             "bh7":{"ruler":"bh7","window":"blackman-harris-7","bins":8,"floorDb":-115.95862439046535,"passed":true},
+             "hann":{"ruler":"hann-goertzel","window":"hann","worstDb":-161.0251694935408,"passed":true},
+             "passed":true},
+            {"note":81,"f0":880,
+             "bh7":{"ruler":"bh7","window":"blackman-harris-7","bins":8,"floorDb":-113.87405471234766,"passed":true},
+             "hann":{"ruler":"hann-goertzel","window":"hann","worstDb":-153.51766851891068,"passed":true},
+             "passed":true}],
+ "worstBh7Db":-113.87405471234766,"worstHannDb":-153.51766851891068,"passed":true,
  "nonFinite":0,"allocViolations":0}
 ```
 
@@ -98,13 +128,13 @@ POST 一个 JSON-RPC 2.0 消息（`initialize` / `tools/list` / `tools/call`）�
 | `gs1.patch.random` | `{ seed }`（**必填**） | 同 UI「随机」按钮的配方，输出 `patch`/`shareCode` + `randomised:[id…]`；缺 seed 拒绝 |
 | `gs1.sample.import` | `{ path }` 或 `{ wavBase64 }`，可选 `{ name }` | `{ ok, code, note, samples, sampleRate, capacity, poolBytes, arenaFreeBytes }`；**装不下拒绝，不截断** |
 | `gs1.wavetable.import` | `{ path }` 或 `{ cycleBase64 }`，可选 `{ name }` | `{ ok, code, note, samples, capacity }`（`samples` 恒为 2048） |
-| `gs1.songs.list` | — | `[{ id, title, titleZh, composer, source:{kind,credit,url?}, bpm }]`（**从 `src/midi/songs.ts` 派生**） |
+| `gs1.songs.list` | — | `{ count, sourceKinds, songs:[{ id, title, titleZh, composer, source:{kind,credit,url?}, bpm, steps }] }`（**从 `src/midi/songs.ts` 派生**） |
 | `gs1.preset.apply` | `{ presetId }` 或 `{ file }` | 走 `patch.set` 的同一条路；`file` 是仓库内的 `.gs1.json` |
 | `gs1.preset.save` | `{ name?, outPath? }` | 把当前 patch 写成**用户库 `.gs1.json` 格式**（默认 `.tmp/mcp/`）+ `sha256` |
 
-**名字说明（与 `docs/LLM-INTERFACE.md` 的出入）**：`gs1.songs.list` 在 §4.1 被列在**只读类**、P13.2 没交付，
-本批补上；`gs1.preset.apply` / `gs1.preset.save` 在 §4.2 **根本没有列**，名字取自 P13.3 任务书。
-其余名字与文档一致。
+> `gs1.songs.list` 与 `gs1.preset.apply` / `gs1.preset.save` 是 P13.3 补进契约表的；现在
+> `docs/LLM-INTERFACE.md` §4 与 `mcp/tools/*.mjs` 的 14 个名字**逐字一致**，并由
+> `scripts/verify-llm-docs.mjs` **双向**核对（漏写一个名字、或文档里写一个不存在的名字，门禁即红）。
 
 ### 输入/输出实例（真跑）
 
@@ -120,20 +150,25 @@ POST 一个 JSON-RPC 2.0 消息（`initialize` / `tools/list` / `tools/call`）�
  "shareCode":"gs1.1.eyJzIjo0LCJ2Ij…"}    // 同 seed 两次逐字节相同
 
 // gs1.sample.import { wavBase64: "<480 samples @48k>", name: "tone.wav" }
-{"ok":true,"code":0,"note":"ok","name":"tone.wav","source":"wavBase64",
- "samples":480,"sampleRate":48000,"capacity":192000,"poolBytes":3856,"arenaFreeBytes":11811040}
+{"ok":true,"code":0,"note":"ok","name":"tone.wav","source":"wavBase64","samples":480,
+ "sampleRate":48000,"seconds":0.01,"capacity":192000,"poolBytes":3856,"arenaFreeBytes":11811040,
+ "installed":"session sample — replayed into every later render/gate"}
 
 // gs1.wavetable.import { cycleBase64: "<one cycle>", name: "cycle-a" }
-{"ok":true,"code":0,"note":"ok","name":"cycle-a","samples":2048,"capacity":2048}
+{"ok":true,"code":0,"note":"ok","name":"cycle-a","source":"cycleBase64","samples":2048,
+ "capacity":2048,"seconds":0.042666666666666665,
+ "installed":"session wavetable — replayed into every later render/gate"}
 
 // gs1.songs.list {}
 {"count":25,"sourceKinds":{"public-domain":19,"original":6},
  "songs":[{"id":"elise","title":"Für Elise","titleZh":"致爱丽丝","composer":"L. v. Beethoven",
-           "source":{"kind":"public-domain","credit":"WoO 59"},"bpm":112}, …]}
+           "source":{"kind":"public-domain","credit":"WoO 59"},"bpm":112,"steps":560}, …]}
 
-// gs1.preset.save { name: "demo" }
+// gs1.preset.save { name: "demo" }  —— 会话里没有 patch，所以写的是默认 patch
 {"ok":true,"format":"gs1-preset","savePath":".tmp/mcp/demo.gs1.json","name":"demo",
- "byteLength":3688,"sha256":"d0d514bd…","paramCount":224,"routeCount":4,"layered":false,"source":"session"}
+ "byteLength":3690,"sha256":"3b9cd6bf227d038139cb221c161d991ec4c527681a28b48f887f8a0c688c8bb0",
+ "paramCount":224,"routeCount":4,"layered":false,"source":"default",
+ "note":"written in the app's .gs1.json preset format; src/ and localStorage are untouched"}
 ```
 
 `poolBytes` 的定义是**这次调用向 arena 新要到的字节数**（mipmap 本体；量之前先把 768 KB 的
@@ -220,6 +255,10 @@ P9.8 的数字在 `error.importCode`。
 - **方法**：`initialize` / `tools/list` / `tools/call` / `ping`，以及 `notifications/*`（不回帧）。
   未知方法 → `-32601`；未知工具 → `-32602`（`data.code = E_TOOL`，并列出可用工具）；
   非法 JSON → `-32700`；不是 JSON-RPC 2.0 → `-32600`。
+- **`notifications/initialized` 不是必须的**：客户端发不发都行，服务端不回帧（带 `id` 的才回）。
+  `initialize` 把客户端报的 `protocolVersion` **原样回显**（不报则用默认的 `2025-06-18`）。
+- **退出**：stdio 上关掉 `stdin`（或 `SIGINT`/`SIGTERM`）即按序退出，退出码 0；`stdout` 只有协议帧，
+  诊断（`[mcp] stdio ready — …`）走 `stderr`，所以别把 stdout 当日志读。
 - **两类失败分得很清**：
   - **协议错误**是 JSON-RPC 的 `error` 帧（请求本身坏了）；
   - **工具拒绝**是一条**成功的** JSON-RPC 响应，`result.isError = true`，并在
@@ -230,10 +269,13 @@ P9.8 的数字在 `error.importCode`。
 
 ## 五、确定性、边界、无副作用
 
-- **确定性**：每次 `gs1.render` 都 `initCore()` 起一个**全新的 wasm 实例**——`phase_seed` 与
-  `random_seed` 从构造函数开始，所以同一调用两次逐字节相同；路径里没有任何 `Date.now()`。
-  `seed` 是**真的输入**：新引擎 `phase_seed = 0`，`seed` 会用那么多次静音 note-on 把相位/随机
-  序列推进（每次都分配空闲声部并 retrigger），所以同 seed 同字节、不同 seed 不同字节。
+- **确定性有三个来源**，每一个都是这条接口的前提：
+  1. **每次渲染起全新 wasm 实例**：`gs1.render`/`gs1.gate` 都先 `initCore()`，`phase_seed` 与
+     `random_seed` 从构造函数开始，所以第 N 次调用不会继承第 N-1 次的相位；
+  2. **路径里没有时钟**：整个渲染按块号调度（`renderWith` 的 block index），没有任何 `Date.now()`，
+     连审计日志都用序号而不是时间戳；
+  3. **`seed` 是真的输入**：新引擎 `phase_seed = 0`，`seed` 会用那么多次静音 note-on 把相位/随机
+     序列推进（每次都分配空闲声部并 retrigger），所以同 seed 同字节、不同 seed 不同字节。
   `gs1.patch.random` 的 `seed` 走 `mcp/lib/random.mjs` 里一个具名的 `mulberry32`，同 seed 同
   patch；`mcp/lib/random.mjs` 只拥有「哪些 id、各自的分布」这一小段配方（`store.randomize()`
   用 `Math.random()`，无法被重放），一条测试直接从 `src/state/store.ts` 里抽出 `randomize()`
@@ -254,6 +296,13 @@ P9.8 的数字在 `error.importCode`。
 
 这是 P13 的全部意义：**工具量出来的数**必须与**门禁量出来的数**是同一个数。
 
+- **数据只有一份（esbuild 打包真 TS + stub 浏览器专属 import）**：`mcp/lib/data.mjs` 用
+  `esbuild`（vite 带来的既有 devDependency）把 app 的真 TypeScript 现场打包成
+  `.tmp/mcp/app-data.<pid>.mjs` 再 import——参数表、预设库、分享码、WAV/预设解析器都是 `src/`
+  里的原件，`mcp/` 不存第二份清单。浏览器专属的顶层 import（`@/generated/*.wasm?url`、worklet
+  的 `?url`、`@/audio/engine`、用户内容单例、`@/i18n`）由一个 esbuild 插件替换成惰性 stub；
+  `src/audio/worklet-processor.js` 是 AudioWorklet，Node 里 import 不了，就**按文本解析**它的
+  `PARAMS`（解析器很严格：行数不等于 224 就大声报错，而不是悄悄返回半个量程）。
 - 渲染引导与统计量全部来自 `scripts/lib/render-core.mjs`（P13.1 抽出来的、`verify-audio.mjs`
   自己也在用的那份）：`gs1.render` 的 `mcp/lib/render.mjs` 只调用 `initCore`/`engine`/
   `renderWith`/`clearModMatrix`/`gs_set_mod_route`/`peakOf`/`rmsOf`/`worstStepOf`/
@@ -312,6 +361,8 @@ worktree**里各加各的文件而零冲突。以 `_` 开头的文件（如 `mcp
 **`gs1.ui.*` 是独立入口**，`npm run mcp` 里**没有**它们。
 
 ```bash
+npm run build                          # 先产出 dist/（含 wasm 与 sw.js）
+npx playwright install chromium        # 只装 Chromium（本层只用 chromium）
 npm run mcp:ui                        # MCP over stdio：14 个离线工具 + 5 个浏览器工具
 npm run mcp:ui -- --http --port 3939  # 同一套 registry，只绑 127.0.0.1
 npm run ui:smoke                      # 端到端冒烟：开页 → 启动引擎 → 装预设 → 读 DOM → 截图
@@ -376,7 +427,7 @@ fixtures 里**，Playwright 测试之外用不到。P13.4 把它抽成普通模�
 | 文件 | 内容 | 需要浏览器？ |
 | :--- | :--- | :--- |
 | `mcp/ui/interact.test.mjs` | 12 条：正常路径（wait/check/scroll/box/hit → 真 click）、命中失败重试到 deadline 后抛超时、禁用元素等待、`force` 跳过可操作性检查 | 否（假 locator） |
-| `mcp/ui/ui.test.mjs` | 29 条：五个工具的 schema 与拒绝路径（外部 URL / 其它 origin / `//` 路径 / 无页面 `E_UI_SESSION` / 找不到元素 `E_UI_TIMEOUT` / 文件名逃逸 `E_PATH` / 非白名单 spec 与 project `E_UI_SPEC`）、预览只绑回环与拒绝 4783、gate 用自己的端口并解析 JSON 报告、离线 registry 里没有 `gs1.ui.*`、`click.mjs` 不含第二份命中逻辑 | 否（假 ctx + 真 socket） |
+| `mcp/ui/ui.test.mjs` | 31 条：五个工具的 schema 与拒绝路径（外部 URL / 其它 origin / `//` 路径 / 无页面 `E_UI_SESSION` / 找不到元素 `E_UI_TIMEOUT` / 文件名逃逸 `E_PATH` / 非白名单 spec 与 project `E_UI_SPEC`）、预览只绑回环与拒绝 4783、gate 用自己的端口并解析 JSON 报告、离线 registry 里没有 `gs1.ui.*`、`click.mjs` 不含第二份命中逻辑 | 否（假 ctx + 真 socket） |
 | `scripts/ui-smoke.mjs`（`npm run ui:smoke`） | 端到端：真 MCP stdio → 开页 → 启动引擎 → 预设库 → 装 `crushlead` → 读回 DOM（滤波读数 9.00 kHz→6.50 kHz）→ 截图 1440×900 对齐基线 | **是**（Chromium + `dist/`） |
 
 **冒烟不删除 `.tmp/mcp/ui-smoke.png`？** 默认删；`--keep` 保留（`docs/LLM-INTERFACE.md` §4.5.6
@@ -393,11 +444,16 @@ fixtures 里**，Playwright 测试之外用不到。P13.4 把它抽成普通模�
   读不到——这正是「agent 看得见界面」的意思；要读隐藏值请用 `attribute`。工具在
   `mcp/ui/tools/_common.mjs` 里把读取函数当**函数值**传给 `locator.evaluate`：传模板字符串会被
   Playwright 当成表达式，静默拿到空结果（本批踩过一次）。
-- **`gs1.ui.gate` 的视觉门禁依赖本机基线**。`visual.spec.ts` 的 20 张基线是同主机同 Chromium 录的
+- **`gs1.ui.gate` 的视觉门禁依赖本机基线**。`visual.spec.ts` 的 desktop 基线有 **24 张**
+  （phone 另有 24 张，快照目录共 48 张），是同主机同 Chromium 录的
   （README 与 `docs/notes/visual-regression.md` 的既定立场）；换机器/换 freetype，`visual`
   门禁本来就会红，这不是本层引入的。
+- **本层只断言尺寸，不断言像素**。`gs1.ui.open`（默认什么都不点）截的确实是启动门那一屏、
+  1440×900 与 desktop 基线同尺寸，`gs1.ui.screenshot` 的 `baseline.matches` 就是这句话；
+  「像素相同」留给 `gs1.ui.gate {spec:"visual"}` 那套带容差的比对去说（§9.2 的白名单）。
 - **浏览器层仍然看不到音频**。它证明的是「页面起来、控件响应、DOM 反映出 patch、截图对得上尺寸」；
-  「浏览器里的声音对不对」要真声卡，不在本层（`gs1.describe.layer` 与本文 §一都写着这件事）。
+  「浏览器里的声音对不对」要真声卡，不在本层（`gs1.describe` 结果里的 `layer` 字段，与本文 §一，
+  都写着这件事）。
 - **`gs1.analyze` 的 Hann 比值以 `f0` 处的 bin 为分母**：patch 的振荡器若偏离音符（detune 或 OSC2 在
   别的音程），必须把**实际基频**传进 `f0`，否则分母近乎为零、整份结果退化成 0 dB 附近
   （`docs/LLM-INTERFACE.md` §4.5.2 就是这么做的：`crushlead` 的 `f0` 是 2102.6986 而不是 2093.0）。
