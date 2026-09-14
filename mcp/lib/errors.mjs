@@ -31,6 +31,8 @@ export const ERRORS = {
   RANGE: 'E_RANGE',
   /** The patch is neither a valid share code nor a known preset id. */
   PATCH: 'E_PATCH',
+  /** An unknown parameter key/id, or a parameter value that is not a finite number (P13.3). */
+  PARAM: 'E_PARAM',
   /** The output path is outside `.tmp/mcp/`, which is the only writable root. */
   PATH: 'E_PATH',
   /** A render sample rate other than the rulers' 48 kHz. */
