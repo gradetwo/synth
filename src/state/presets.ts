@@ -654,8 +654,16 @@ export const FACTORY_PRESETS: Preset[] = [
   preset('crushbass', 'Crushed Sub · 位粉碎低音', 'EXPERIMENTAL', 'BASS', 'sine', [
       ...envP(0.002, 0.5, 0.7, 0.3), P.OSC1_WAVE, 0, P.OSC1_PITCH, -12, P.OSC1_LEVEL, 0.85,
       P.OSC2_ON, 0, P.FILTER_CUTOFF, 600, P.FILTER_DRIVE, 0.35, P.FX_CHAIN6, 7, P.FX_CRUSH_ON, 1,
-      P.FX_CRUSH_BITS, 4, P.FX_CRUSH_DOWN, 12, P.FX_CRUSH_AA, 0.6, P.FX_CRUSH_MIX, 0.9,
-      P.FX_REVERB_ON, 0, P.PATCH_GAIN, 0.442,
+      // 6 bit, not 4: a 4-bit quantiser has a 0.125 step and this patch's
+      // pre-effect peak is about 0.044, so every capture rounded to zero and the
+      // crusher emitted silence (only the 10 % dry leg of the mix was audible -
+      // a middle C peaked at 0.0020). 6 bit puts the step at 0.03125, under the
+      // signal, so the crusher actually quantises; with the 12x divider and 60 %
+      // anti-aliasing it is still a hard, aliased crush.
+      P.FX_CRUSH_BITS, 6, P.FX_CRUSH_DOWN, 12, P.FX_CRUSH_AA, 0.6, P.FX_CRUSH_MIX, 0.9,
+      // Trimmed so the *working* crusher lands on the bank median (-40.98 dBFS
+      // against a -40.87 median), not on the accidental silence.
+      P.FX_REVERB_ON, 0, P.PATCH_GAIN, 0.36,
     ]),
   preset('tapecrush', 'Tape Crush Keys · 磁带粉碎键盘', 'EXPERIMENTAL', 'KEYS', 'triangle', [
       ...envP(0.004, 0.7, 0.35, 0.9), P.OSC1_WAVE, 1, P.OSC1_LEVEL, 0.7, P.OSC2_WAVE, 0,

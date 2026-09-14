@@ -81,20 +81,25 @@ interface Audition {
 }
 
 /** Render `params` through the real core and measure the left channel. */
-function render(params: Record<number, number>): Audition {
+function render(
+  params: Record<number, number>,
+  phrase: [number, number, number][] = PHRASE,
+  seconds = SECONDS,
+  velocity = 0.9,
+): Audition {
   const ex = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(wasmPath)), {})
     .exports as unknown as Core;
   ex.gs_init(SR, 16);
   for (const [id, value] of Object.entries(params)) ex.gs_set_param(Number(id), value);
 
   const events: [number, boolean, number][] = [];
-  for (const [note, start, length] of PHRASE) {
+  for (const [note, start, length] of phrase) {
     events.push([start * SR, true, note]);
     events.push([(start + length) * SR, false, note]);
   }
   events.sort((a, b) => a[0] - b[0]);
 
-  const frames = Math.round(SECONDS * SR);
+  const frames = Math.round(seconds * SR);
   const out = new Float32Array(frames);
   const left = ex.gs_left_ptr() / 4;
   let cursor = 0;
@@ -102,7 +107,7 @@ function render(params: Record<number, number>): Audition {
   for (let block = 0; block * BLOCK < frames; block++) {
     while (cursor < events.length && events[cursor][0] < (block + 1) * BLOCK) {
       const [, on, note] = events[cursor++];
-      if (on) ex.gs_note_on(note, 0.9);
+      if (on) ex.gs_note_on(note, velocity);
       else ex.gs_note_off(note);
     }
     ex.gs_process(BLOCK);
@@ -151,21 +156,58 @@ const paramsOf = (id: string): Record<number, number> => {
   return presetParams(preset);
 };
 
+/**
+ * One middle C at full velocity, held for exactly as long as the existing
+ * `worklet-processor.test.ts` guard holds it: `min(attack + max(decay, 0.05),
+ * 1.5) + 0.15` seconds.
+ *
+ * This case is the point. The gate used to render a chord plus a low note, and
+ * a chord hides a patch that only reaches a usable level when notes stack: the
+ * original `crushbass` peaked at 0.088 through the chord but 0.0020 on a single
+ * middle C, because a 4-bit crusher's LSB sat above the patch's pre-effect
+ * level and quantised the wet path to silence. Same window as the existing
+ * guard, so the two gates cannot disagree about what "silent" means.
+ */
+function singleNote(params: Record<number, number>): Audition {
+  const attack = params[Param.ENV_ATTACK] ?? 0;
+  const decay = params[Param.ENV_DECAY] ?? 0;
+  const seconds = Math.min(attack + Math.max(decay, 0.05), 1.5) + 0.15;
+  return render(params, [[60, 0, seconds]], seconds, 1);
+}
+
+/**
+ * The floor the existing all-preset guard uses on this same single-note case:
+ * below it a patch is inaudible on a phone speaker.
+ */
+const SILENT_PEAK = 0.003;
+
+/**
+ * The chord's own RMS floor, raised from 1e-4 (-80 dBFS, which let a -59 dBFS
+ * patch through) to 1e-3 (-60 dBFS). That is still ~19 dB below the bank's
+ * -40.9 dBFS median, so no healthy patch can trip it, while a patch that is
+ * only leaking dry signal is caught.
+ */
+const SILENT_RMS = 1e-3;
+
 describe.skipIf(!existsSync(wasmPath))('P12.2 preset audition', () => {
   it.each(SHOWCASE)('$id makes a clean sound', ({ id }) => {
-    const report = render(paramsOf(id));
+    const params = paramsOf(id);
+    const chord = render(params);
+    const note = singleNote(params);
     console.log(
-      `[audition] ${id.padEnd(12)} ${report.db.toFixed(1)} dBFS · peak ${report.peak.toFixed(3)} · ` +
-        `>1.0 ${report.overUnity} · nan ${report.nan} · nonfinite ${report.nonFinite}`,
+      `[audition] ${id.padEnd(12)} chord ${chord.db.toFixed(1)} dBFS · peak ${chord.peak.toFixed(3)} · ` +
+        `single C peak ${note.peak.toFixed(4)} · >1.0 ${chord.overUnity} · nan ${chord.nan}/${note.nan}`,
     );
-    // (1) It really sounds: a patch that reaches the output is far above this.
-    expect(report.rms, `${id} is silent`).toBeGreaterThan(1e-4);
-    expect(report.peak, `${id} has no peak`).toBeGreaterThan(1e-3);
+    // (1) It really sounds - on a single note as well as on a chord.
+    expect(note.peak, `${id} is silent on a single middle C`).toBeGreaterThanOrEqual(SILENT_PEAK);
+    expect(note.rms, `${id} is silent on a single middle C`).toBeGreaterThan(SILENT_RMS);
+    expect(chord.rms, `${id} is silent`).toBeGreaterThan(SILENT_RMS);
+    expect(chord.peak, `${id} has no peak`).toBeGreaterThanOrEqual(SILENT_PEAK);
     // (2) Finite and nowhere near the limiter.
-    expect(report.nan, `${id} produced NaN`).toBe(0);
-    expect(report.nonFinite, `${id} produced a non-finite sample`).toBe(0);
-    expect(report.overUnity, `${id} clips`).toBe(0);
-    expect(report.peak, `${id} peak`).toBeLessThanOrEqual(1.0);
+    expect(chord.nan + note.nan, `${id} produced NaN`).toBe(0);
+    expect(chord.nonFinite + note.nonFinite, `${id} produced a non-finite sample`).toBe(0);
+    expect(chord.overUnity + note.overUnity, `${id} clips`).toBe(0);
+    expect(Math.max(chord.peak, note.peak), `${id} peak`).toBeLessThanOrEqual(1.0);
   });
 
   it.each(SHOWCASE)('$id actually engages $capability', ({ id, capability, off }) => {
