@@ -42,6 +42,17 @@ import { CHANGELOG_HEAD } from './changelog-head';
 export const CHANGELOG: Release[] = [
   CHANGELOG_HEAD,
   {
+    version: '2.1.0',
+    date: '2026-09-14',
+    kind: 'fix',
+    items: [
+      [
+        '**内部重构：把音频测量的「尺子」抽成共用模块。** 这次没有任何声音或界面变化——但它是一个**给后续 AI 工具接口（P13）铺路**的准备动作：门禁脚本里那套在 Node 里跑真 wasm 的渲染引导、以及两把测量尺子（7 项 Blackman-Harris 与 Hann 窗探针），现在是一份**被门禁和将来的工具共用**的实现，不再是各写一份。验收标准是**门禁读数逐字节不变**（136 行输出哈希一致），也就是说这次改动**证明了它没有改变任何测量结果**。',
+        '**Internal refactor: the audio rulers became a shared module.** Nothing changed in the sound or the interface -- this is groundwork for the tool interface other agents will use (P13): the harness that boots the real wasm core in Node and the two measurement rulers (the 7-term Blackman-Harris scan and the Hann-window probe) are now one implementation that both the gates and the coming tools call, instead of two copies that could drift apart. The acceptance was that **not one gate reading moves** (all 136 output lines hash-identical), so this change proves it changed no measurement.',
+      ],
+    ],
+  },
+  {
     version: '2.0.7',
     date: '2026-09-14',
     kind: 'fix',
@@ -353,28 +364,6 @@ export const CHANGELOG: Release[] = [
       ],
     ],
   },
-  {
-    version: '1.87.0',
-    date: '2026-09-12',
-    kind: 'fix',
-    items: [
-      [
-        '**界面被改坏会当场发现**：模块网格、信号流、钢琴卷帘、播放器和启动页现在都有一份「应该长什么样」的基线，深色/浅色、手机/桌面共 20 张；任何改动只要让其中一屏看起来不一样，就会在发布前报错，并留下「原来的样子 / 现在的样子 / 差在哪」三张图。以后「这次发布是不是把哪个面板弄花了」不再靠人眼抽查。',
-        '**A broken layout is caught at once**: the module grid, signal flow, piano roll, player and start screen each have a recorded "what it should look like" baseline — 20 of them, across the dark and light palettes on a phone and a desktop. A change that makes any of those screens look different now fails before release and leaves the expected, actual and difference images behind. "Did this release smudge a panel?" is no longer answered by eye.',
-      ],
-    ],
-  },
-  {
-    version: '1.86.0',
-    date: '2026-09-12',
-    kind: 'feature',
-    items: [
-      [
-        '**速度与拍号（tempo map）**：播放器面板现在可以给一首曲子加**多段速度与拍号**——每段有自己的 BPM 与「几几拍」（2/4–7/4），从上一段结束处开始；每拍的长短、重音（每小节第一拍更响）、预备拍、量化网格与「小节.拍」读数全部跟着它走，所以 3/4 段里一小节就是三拍，而不是四拍。**小节数与拍号随曲目保存**，重开仍在；导出的 MIDI 会在正确的 tick 上写出 tempo 与拍号事件，用自家解析器往返可读回同一张表。',
-        '**Tempo and time signature map**: the player panel can now give a song **several tempo and signature sections** — each with its own BPM and time signature (2/4–7/4), starting where the previous one ends. The length of a beat, the accents (the first beat of a bar is louder), the count-in, the quantise grid and the “bar.beat” readout all follow it, so a bar in a 3/4 section is three beats rather than four. **Sections are saved with the song** and come back after a reload, and a MIDI export writes the tempo and signature events at the right ticks — our own parser reads the same map back.',
-      ],
-    ],
-  }
 ];
 
 /** The version this build reports. */

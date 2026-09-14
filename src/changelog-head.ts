@@ -6,6 +6,12 @@
  * which is exactly the budget the size gate is there to protect. The panel
  * that shows the history loads lazily; this is the one entry the banner reads,
  * and `changelog.test.ts` keeps it identical to `CHANGELOG[0]`.
+ *
+ * A release ends by rotating this file: the entry that was here moves into
+ * `CHANGELOG` (as a literal, right behind the head reference) and the oldest
+ * shipped entry moves to the front of `changelog-archive.ts`, so the shipped
+ * list stays at `SHIPPED_CHANGELOG_LIMIT`. `changelog.test.ts` fails if any of
+ * that is skipped, done twice, or done with a typo.
  */
 export interface Release {
   version: string;
@@ -16,13 +22,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '2.1.0',
-    date: '2026-09-14',
-    kind: 'fix',
+    version: '2.1.1',
+    date: '2026-09-15',
+    kind: 'feature',
     items: [
       [
-        '**内部重构：把音频测量的「尺子」抽成共用模块。** 这次没有任何声音或界面变化——但它是一个**给后续 AI 工具接口（P13）铺路**的准备动作：门禁脚本里那套在 Node 里跑真 wasm 的渲染引导、以及两把测量尺子（7 项 Blackman-Harris 与 Hann 窗探针），现在是一份**被门禁和将来的工具共用**的实现，不再是各写一份。验收标准是**门禁读数逐字节不变**（136 行输出哈希一致），也就是说这次改动**证明了它没有改变任何测量结果**。',
-        '**Internal refactor: the audio rulers became a shared module.** Nothing changed in the sound or the interface -- this is groundwork for the tool interface other agents will use (P13): the harness that boots the real wasm core in Node and the two measurement rulers (the 7-term Blackman-Harris scan and the Hann-window probe) are now one implementation that both the gates and the coming tools call, instead of two copies that could drift apart. The acceptance was that **not one gate reading moves** (all 136 output lines hash-identical), so this change proves it changed no measurement.',
+        '**内置了一个给其它 AI 用的离线接口（MCP）。** 外部的智能体现在可以查询参数与音色、读改整套音色（**夹取会如实报告**，不静默）、导入采样与波表，把一段演奏**渲染成 WAV**，并用**本应用自己那套交叉验证过的尺子**量出结构化数字（非谐波地板、THD、峰值、最大步进）——所以它可以对着真实门禁调音色，而不是凭感觉。另有**采样导入快约 1.7 倍**（4 秒样本 130 → 78 ms，音色逐位不变）。界面只有一处小变化：**更新记录面板改为只列最近 30 条**（更早的见项目仓库），顺带让整个应用小约 79 KB。',
+        '**An offline interface (MCP) for other AI agents.** An external agent can now read the parameter and patch tables, change a whole patch (clamps are **reported, not silent**), import samples and wavetables, render a performance to **WAV**, and measure it with **the same cross-checked rulers the app\'s own gates use** (non-harmonic floor, THD, peak, largest step) -- so it can tune toward a real gate instead of a feeling. Sample import is also **about 1.7x faster** (a 4 s sample: 130 ms to 78 ms, bit-identical audio). One small visible change: the **changelog panel now lists the most recent 30 releases** (earlier ones live in the repository), which takes about 79 KB off the app.',
       ],
     ],
   };

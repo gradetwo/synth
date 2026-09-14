@@ -158,8 +158,9 @@ describe('changelog data', () => {
   });
 
   it('ships exactly the cap behind the head, and keeps the rest in the archive', () => {
-    // `CHANGELOG` carries the head reference plus the newest `LIMIT` releases.
-    expect(CHANGELOG).toHaveLength(SHIPPED_CHANGELOG_LIMIT + 1);
+    // `CHANGELOG` is the head reference plus the newest `LIMIT - 1` releases:
+    // the cap counts what the panel lists, head included.
+    expect(CHANGELOG).toHaveLength(SHIPPED_CHANGELOG_LIMIT);
     expect(CHANGELOG_ARCHIVE.length).toBeGreaterThan(0);
     // The archive picks up exactly where the shipped list stops: its first
     // release is older than the last shipped one, and (below) it is the next
@@ -197,7 +198,7 @@ describe('changelog data', () => {
    * what keeps the payload bounded instead of "capped once, in P141".
    */
   it('refuses a shipped list above the cap', () => {
-    const releaseCount = CHANGELOG.length - 1;
+    const releaseCount = CHANGELOG.length;
     const over = releaseCount > SHIPPED_CHANGELOG_LIMIT;
     expect(
       over,
@@ -206,6 +207,7 @@ describe('changelog data', () => {
         : '',
     ).toBe(false);
     expect(releaseCount, 'the head entry is always shipped').toBeGreaterThan(0);
+    expect(releaseCount).toBe(SHIPPED_CHANGELOG_LIMIT);
   });
 
   /**

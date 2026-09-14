@@ -51,7 +51,7 @@ P6.4 花掉的 12 KB（两个默认关的效果 + 14.4 KB wasm）在本批**全�
 | `assets/lamejs-*.js` | 164.9 | 57.0 | 懒 | MP3 导出；门禁专门断言它不被 `index.html` 引用 |
 | `assets/vendor-react-*.js` | 139.4 | 44.6 | **是** | React + scheduler（`manualChunks`） |
 | `assets/index-*.css` | 101.8 | 19.4 | **是** | 全部应用 CSS（含 `@font-face`） |
-| `assets/Changelog-*.js` | 87.8 | 38.7 | 懒 | 更新记录全文（含历史），`App.tsx` 里 `lazy()` |
+| `assets/Changelog-*.js` | 33.5 | 16.4 | 懒 | 更新记录**最近 30 条**（P141 起；更早的 104 条在 `src/changelog-archive.ts`，不进 bundle） |
 | `assets/Guide-*.js` | 82.1 | 37.5 | 懒 | 指南正文，`lazy()` |
 | `assets/worklet-processor-*.js` | 23.9 | 7.1 | 启动时 | AudioWorklet，由引擎 `addModule`（非 `index.html` 引用） |
 | `assets/PlayerPanel-*.js` | 20.3 | 6.2 | 懒 | 播放器面板 |
@@ -209,3 +209,36 @@ PLAYWRIGHT_BROWSERS_PATH=$PWD/.pw-browsers npx playwright test e2e/performance.s
 - **首帧不等 chunk 的证据**：③是断言而非声明（首屏会渲染的文案全在 core 表内）；三个 gated 组件在表未到
   时渲染 `null`；`e2e/i18n.spec.ts` 的 reload 用例断言首帧就有 `Start Audio Engine` 与模块名；切换用例用
   MutationObserver 记录整段文本变更，断言**从未**出现 `player.*`/`settings.*` 之类的 key 名。
+
+## 十、P141（v2.1.0 后）：应用内更新记录封顶 30 条，dist 1540.9 KB
+
+**问题不是这一版变胖了，而是「每发一版都胖」。** `Changelog-*.js` 每加一条版本记录就 +≈1.2 KB，
+到 v2.1.0 时 dist 自己把自己顶过了 1619 KB 的线（`1619.5 / 1619.0 KB`，确定性红）。这条增长没有上限，
+所以「rebase 一版」只能买一版；用户拍板做成**有界**的。
+
+| | 前（v2.1.0） | 后 | Δ |
+| :-- | --: | --: | --: |
+| `Changelog-*.js` raw | 114 722 B | 34 253 B | **−80 469 B（−78.6 KB）** |
+| `Changelog-*.js` gzip | 38 633 B | 16 795 B | −21 838 B |
+| dist 总量 | 1619.5 KB | **1540.9 KB** | **−78.6 KB** |
+| 首屏 JS gzip | 125.1 KB | 125.1 KB | 0（懒 chunk，不进首屏） |
+| 最大 WASM gzip | 74.9 KB | 74.9 KB | 0（本批不碰引擎） |
+
+- **做法**：`src/changelog.ts` 只留最近 30 条（`CHANGELOG_HEAD` + 29 条），更早的条目**原样搬进**
+  `src/changelog-archive.ts`（拆分时 102 条，每发一版再进 1 条）。归档文件**不被任何运行时代码 import**
+  （有专门的测试扫 `src/` 断言零 importer），所以它不进 bundle。
+- **搬运是逐条校验的**：测试用 TypeScript 解析器读出**上一个 release tag** 的完整历史，断言
+  「发运列表 + 归档 == 那份历史，逐条逐字段、顺序一致，新 head 在最前」——丢条目、改文案、换顺序、手抄
+  出错都会红。
+  ⚠️ 参照物**不能是 `HEAD`**：发布提交本身就是加条目的那个提交，用 `HEAD` 会让这条自证在它被提交的瞬间
+  变红（p141 第一版就是这样，合并后才暴露；已改成取最新 tag）。
+- **增长从此有界**：新版本进 `changelog.ts`、最老的那条进归档。`SHIPPED_CHANGELOG_LIMIT = 30`
+  是导出常量，`changelog.test.ts` 断言发运条数**恰好**等于它（**head 也算一条**，即面板正好列 30 条）——
+  直接往 `changelog.ts` 里追加一条就会红。
+- **界面**：面板底部新增一行（`changelog.archive`，中英双语，走既有 `DOCS_STRINGS` 懒表），说明更早的
+  更新记录见项目仓库；样式与页脚同一套。
+- **preflight 覆盖全集**：`scripts/release.mjs` 现在把 head + 发运 + 归档三个文件当一份文本读，
+  「版本唯一且 newest-first」依旧覆盖全部 132 条，搬运丢条目或乱序都会在发布前被拦下。
+- **阈值**：本批**没有改** `scripts/verify-budget.mjs` 或本文第一节的阈值（只有父代理做记账 rebase）。
+  按同一形状（实测 + ~3.9 KB）下一次 rebase 后 dist 线约 **1545 KB**。
+
