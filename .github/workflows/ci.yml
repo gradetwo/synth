@@ -93,6 +93,13 @@ jobs:
       - name: MCP tool server golden session
         run: npm run mcp -- --self-test
 
+      # P13.5: the two LLM-interface documents are a contract, so a gate checks
+      # they do not drift from the tool registry and the code's own limits and
+      # error codes. No browser, no dist — it only reads the docs and the
+      # registry (and runs before the Chromium install below).
+      - name: LLM interface docs vs the live registry
+        run: npm run verify:llm-docs
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
