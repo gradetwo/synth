@@ -9,7 +9,7 @@
 - 公版判定按「作者去世 ≥ 70 年」（欧盟/中国取较宽的通行标准）：本批保留与新增的
   作曲家最晚为 Erik Satie（1925 年去世，1996 年起公版）与 Edvard Grieg（1907 年去世）。
 - 传统民谣（无特定作者、19 世纪前已在流传）按公版处理，但**不把原创作品冒充民谣**。
-- 原创作品在 `source.kind` 里写 `original`，credit 写 `GS-1 original · GS-1 原创`。
+- 原创作品在 `source.kind` 里写 `original`，credit 写 `GS-1`（界面上的类型标签已经是「原创作品 / Original work」，credit 只是署名）。
 
 ## 移除的 9 首（在版权保护期内）
 
