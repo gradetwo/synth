@@ -1212,55 +1212,79 @@ export function FxGraphEditor({ onClose }: { onClose: () => void }) {
             >
               <svg className="fxg-wires" width={canvasSize.w} height={canvasSize.h}>
                 {wires.map((wire) => (
-                  <path
-                    key={wire.key}
-                    className={`fxg-wire${selectedWire === wire.key ? ' selected' : ''}`}
-                    data-wire={`${wire.slot}:${wire.which}`}
-                    d={wirePath(wire.fromX, wire.fromY, wire.toX, wire.toY)}
-                    // A click picks the connection so its gain can be set here;
-                    // the ✕ on the chip is what deletes it, so a stray click
-                    // cannot unwire a patch (it used to).
-                    onClick={() =>
-                      setSelectedWire((current) => (current === wire.key ? null : wire.key))
-                    }
-                    // A wire is a control, not decoration: it takes focus so a
-                    // keyboard user can pick it and then set its gain in the
-                    // chip that appears (whose slider is focusable).
-                    role="button"
-                    tabIndex={0}
-                    aria-pressed={selectedWire === wire.key}
-                    aria-label={`${sourceLabel(wire.src)} → ${t('fxg.node')} ${wire.slot + 1} ${t('fxg.input')} ${wire.which + 1}, ${t('fxg.gain')} ${Math.round(wire.gain * 100)}%`}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Enter' && event.key !== ' ') return;
-                      event.preventDefault();
-                      setSelectedWire((current) => (current === wire.key ? null : wire.key));
-                    }}
-                  />
+                  <g key={wire.key}>
+                    {/* The click target, drawn under the visible wire: that
+                        stroke is dashed, and on Gecko and WebKit a dash gap is
+                        dead canvas. See .fxg-wire-hit. */}
+                    <path
+                      className="fxg-wire-hit"
+                      d={wirePath(wire.fromX, wire.fromY, wire.toX, wire.toY)}
+                      aria-hidden="true"
+                      onClick={() =>
+                        setSelectedWire((current) => (current === wire.key ? null : wire.key))
+                      }
+                    />
+                    <path
+                      className={`fxg-wire${selectedWire === wire.key ? ' selected' : ''}`}
+                      data-wire={`${wire.slot}:${wire.which}`}
+                      d={wirePath(wire.fromX, wire.fromY, wire.toX, wire.toY)}
+                      // A click picks the connection so its gain can be set here;
+                      // the ✕ on the chip is what deletes it, so a stray click
+                      // cannot unwire a patch (it used to).
+                      onClick={() =>
+                        setSelectedWire((current) => (current === wire.key ? null : wire.key))
+                      }
+                      // A wire is a control, not decoration: it takes focus so a
+                      // keyboard user can pick it and then set its gain in the
+                      // chip that appears (whose slider is focusable).
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={selectedWire === wire.key}
+                      aria-label={`${sourceLabel(wire.src)} → ${t('fxg.node')} ${wire.slot + 1} ${t('fxg.input')} ${wire.which + 1}, ${t('fxg.gain')} ${Math.round(wire.gain * 100)}%`}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return;
+                        event.preventDefault();
+                        setSelectedWire((current) => (current === wire.key ? null : wire.key));
+                      }}
+                    />
+                  </g>
                 ))}
                 {modWires.map((wire) => (
-                  <path
-                    key={`mod-${wire.edge}`}
-                    className={`fxg-wire mod${selectedMod === wire.edge ? ' selected' : ''}`}
-                    data-modwire={wire.edge}
-                    d={wirePath(wire.fromX, wire.fromY, wire.toX, wire.toY)}
-                    // Picking a modulation wire opens its depth chip; a click
-                    // never deletes it, like the audio wires.
-                    onClick={() =>
-                      setSelectedMod((current) => (current === wire.edge ? null : wire.edge))
-                    }
-                    role="button"
-                    tabIndex={0}
-                    aria-pressed={selectedMod === wire.edge}
-                    aria-label={`${FX_MOD_SRC_LABELS[wire.src]} → ${t('fxg.modTargetLabel', {
-                      node: (graphModTarget(wire.dst)?.node ?? 0) + 1,
-                      port: modPortLabel((graphModTarget(wire.dst)?.which ?? 0) as 0 | 1 | 2),
-                    })}, ${t('fxg.modDepth')} ${Math.round(wire.depth * 100)}%`}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Enter' && event.key !== ' ') return;
-                      event.preventDefault();
-                      setSelectedMod((current) => (current === wire.edge ? null : wire.edge));
-                    }}
-                  />
+                  <g key={`mod-${wire.edge}`}>
+                    {/* Same click target as the audio wires: the modulation
+                        wires are dashed, so their stroke alone is not clickable
+                        end to end outside Chromium. */}
+                    <path
+                      className="fxg-wire-hit"
+                      d={wirePath(wire.fromX, wire.fromY, wire.toX, wire.toY)}
+                      aria-hidden="true"
+                      onClick={() =>
+                        setSelectedMod((current) => (current === wire.edge ? null : wire.edge))
+                      }
+                    />
+                    <path
+                      className={`fxg-wire mod${selectedMod === wire.edge ? ' selected' : ''}`}
+                      data-modwire={wire.edge}
+                      d={wirePath(wire.fromX, wire.fromY, wire.toX, wire.toY)}
+                      // Picking a modulation wire opens its depth chip; a click
+                      // never deletes it, like the audio wires.
+                      onClick={() =>
+                        setSelectedMod((current) => (current === wire.edge ? null : wire.edge))
+                      }
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={selectedMod === wire.edge}
+                      aria-label={`${FX_MOD_SRC_LABELS[wire.src]} → ${t('fxg.modTargetLabel', {
+                        node: (graphModTarget(wire.dst)?.node ?? 0) + 1,
+                        port: modPortLabel((graphModTarget(wire.dst)?.which ?? 0) as 0 | 1 | 2),
+                      })}, ${t('fxg.modDepth')} ${Math.round(wire.depth * 100)}%`}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return;
+                        event.preventDefault();
+                        setSelectedMod((current) => (current === wire.edge ? null : wire.edge));
+                      }}
+                    />
+                  </g>
                 ))}
 {armed?.moved ? (
                   <path
