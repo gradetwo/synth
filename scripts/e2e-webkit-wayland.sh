@@ -5,6 +5,14 @@
 #   ./scripts/e2e-webkit-wayland.sh --all               # everything
 #   ./scripts/e2e-webkit-wayland.sh e2e/fxgraph.spec.ts # what to run
 #
+# The default here is the *core* subset, the quick local look. The nightly's
+# default is wider (core + visual + audio) and lives in scripts/nightly-e2e.mjs;
+# run `npm run nightly` for that. `--all` includes e2e/visual.spec.ts, which is
+# smoke-only on this engine — it renders every surface and compares no baseline,
+# because the baselines exist for Chromium on Linux only (see the spec's header
+# and docs/notes/compat.md §4). GS1_VISUAL_SMOKE says so explicitly; comparing
+# would write a batch of software-rendered `-webkit-linux` baselines instead.
+#
 # Why Weston rather than Xvfb: WebKitGTK composites through the display server,
 # and on this machine Xvfb renders it at roughly 0.7 fps against Weston's 1.8 —
 # both far too slow for Playwright, which waits for two stable frames per click.
@@ -60,4 +68,6 @@ echo "[wayland] renderer: $(ls /dev/dri 2>/dev/null | head -1 || echo 'software 
 PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$root/.pw-browsers}" \
 WAYLAND_DISPLAY=wayland-gs1 \
 XDG_RUNTIME_DIR="$runtime" \
+GS1_VISUAL=1 \
+GS1_VISUAL_SMOKE=1 \
   npx playwright test "${suite[@]}" --project=webkit --workers=1 --headed "${args[@]}"

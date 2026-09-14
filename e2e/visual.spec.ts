@@ -18,6 +18,20 @@ import { expect, test, type Page } from '@playwright/test';
  *    meters) are masked out. Their content is asserted elsewhere by tests that
  *    read the numbers behind them; here they would only add noise.
  *
+ * There is a third mode, for the nightly's WebKit/Firefox coverage
+ * (`GS1_VISUAL_SMOKE=1`, set by `scripts/nightly-e2e.mjs`): **render every
+ * surface, compare nothing.** The baselines are named for the engine and the
+ * host — Playwright's template is `{arg}{-projectName}{-snapshotSuffix}` with
+ * `snapshotSuffix` = the platform — so WebKit would look for
+ * `*-webkit-linux.png` and Firefox for `*-firefox-linux.png`, and neither
+ * exists or should: they would encode this box's font stack and software
+ * rendering, and the point of the nightly is "do the surfaces draw on that
+ * engine at all". A missing baseline is not a skip either — with the default
+ * `updateSnapshots: "missing"` Playwright *writes* one and reports the test
+ * failed — so the smoke takes the screenshots, asserts each is a real raster of
+ * a plausible size, and deliberately does not touch the thresholds or the
+ * baselines. The comparison itself stays covered by Chromium.
+ *
  * The service worker is blocked on purpose: it caches the *previous* build, so
  * a suite that ran through it would be comparing a fresh baseline against a
  * stale page for one run after every rebuild (observed, with the accent
@@ -27,10 +41,17 @@ import { expect, test, type Page } from '@playwright/test';
  * paints a change into a live page and expects the comparison to reject it.
  */
 
-const RUN = process.env.GS1_VISUAL === '1';
+const RUN = process.env.GS1_VISUAL === '1' || process.env.GS1_VISUAL_SMOKE === '1';
 
 /** Bumping baselines: a passing `--update-snapshots` means nothing was compared. */
 const UPDATING = process.env.GS1_VISUAL_UPDATE === '1';
+
+/** Render-only (WebKit/Firefox nightly): no baseline is read or written. */
+const SMOKE = process.env.GS1_VISUAL_SMOKE === '1';
+
+if (SMOKE && UPDATING) {
+  throw new Error('GS1_VISUAL_SMOKE and GS1_VISUAL_UPDATE are mutually exclusive: the smoke records nothing');
+}
 
 /** Animated-by-the-driver regions: asserted by their own tests, masked here. */
 const ANIMATED = [
@@ -64,7 +85,28 @@ test.describe.configure({ mode: 'serial' });
 
 type Device = 'desktop' | 'phone';
 
+/** IHDR width/height, or null when the buffer is not a PNG. */
+function pngSize(png: Buffer): { width: number; height: number } | null {
+  if (png.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') return null;
+  return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
+}
+
 async function shot(page: Page, locator: string, name: string, masks: string[] = []) {
+  if (SMOKE) {
+    // The smoke's verdict is "this surface rasterised on this engine", not
+    // "it looks like Chromium's": see the file header for why the baselines
+    // are not comparable here. A degenerate raster still fails — 8×8 is below
+    // every real surface (the smallest is the oversampling toggle cell, 40×17)
+    // and above "an element that did not render".
+    const target = page.locator(locator);
+    await expect(target).toBeVisible();
+    const size = pngSize(await target.screenshot({ animations: 'disabled', caret: 'hide', scale: 'css' }));
+    const got = size ? `${size.width}×${size.height}` : 'not a PNG';
+    expect(size, `${name}: ${got}`).not.toBeNull();
+    expect(size!.width, `${name}: rasterised to ${got}`).toBeGreaterThanOrEqual(8);
+    expect(size!.height, `${name}: rasterised to ${got}`).toBeGreaterThanOrEqual(8);
+    return;
+  }
   await expect(page.locator(locator)).toHaveScreenshot(name, {
     ...SHOT,
     mask: [...ANIMATED, ...masks].map((selector) => page.locator(selector)),
@@ -407,11 +449,11 @@ test.describe('iPhone 390×844 · P11.3 surfaces', () => {
  * obviously wrong colour into a live page, ask for the same comparison the
  * suite just made, and require it to be *rejected*.
  *
- * Skipped while recording: `--update-snapshots` rewrites baselines instead of
- * comparing them, which would overwrite the real one with the perturbation.
+ * Skipped while recording (`--update-snapshots` rewrites baselines instead of
+ * comparing them) and in smoke mode (nothing is compared there to prove).
  */
 test.describe('self-check', () => {
-  test.skip(UPDATING, '录制基线时不比较，自证放到普通运行里做');
+  test.skip(UPDATING || SMOKE, '录制基线时不比较；冒烟模式不比基线，自证的是比对机制本身');
   test.use({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, serviceWorkers: 'block' });
 
   /**

@@ -147,6 +147,17 @@ jobs:
   # The scheduled run: the same engines, the whole suite, plus the long
   # benchmark. It reports rather than blocks — a nightly that goes red for a
   # flaky click teaches everyone to ignore it — but its artefacts are kept.
+  #
+  # The two engines do not run the same set, on purpose. WebKit takes `--all`;
+  # Firefox takes the nightly subset (core + visual + audio, see the header of
+  # `scripts/nightly-e2e.mjs`), because the full Firefox suite already runs in
+  # `e2e-engines` on the same schedule and a second one would only be slower.
+  # Neither step writes `docs/notes/nightly.md`: this workspace is thrown away,
+  # so the record is the local/systemd run's job.
+  #
+  # On this runner there is no weston, so the script's `auto` display resolves to
+  # `xvfb` and WebKit runs headed under it; Firefox runs headless. Both are
+  # recorded in the log line and (locally) in the table's `显示` column.
   nightly:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
@@ -174,11 +185,11 @@ jobs:
       - name: Install Playwright WebKit + Firefox
         run: npx playwright install --with-deps webkit firefox
 
-      - name: Browser E2E (WebKit, headed under Xvfb)
+      - name: Browser E2E (WebKit, whole suite, headed under Xvfb)
         run: npm run nightly -- --engines=webkit --all
 
-      - name: Browser E2E (Firefox)
-        run: npm run nightly -- --engines=firefox
+      - name: Browser E2E (Firefox, nightly subset)
+        run: npm run nightly -- --engines=firefox --subset=nightly
 
       - name: Long sustained-load benchmark
         run: npm run bench:long
