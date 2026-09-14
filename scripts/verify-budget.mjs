@@ -317,13 +317,18 @@ const BUDGETS = {
   // Measured: `Changelog-*.js` 112.0 -> 33.5 KB, dist total 1619.6 -> 1540.9 KB
   // (-78.7 KB), with the whole 132-release history still in the repository and
   // `verify:release` still asserting uniqueness/order across both files.
+  // The v2.1.1 release then measured **1540.2 KB** with its own entry in place --
+  // slightly *below* the pre-release build, because the new note is shorter than
+  // the 2.1.0 one it replaced and the rotation moved an entry out to the archive.
+  // So the per-release cost is not even monotone any more; ~9 KB is plenty.
   //
   // 1550 is "measured + ~9 KB", and the margin is deliberately larger than the
-  // 0.15 % the earlier notes used: a release entry is not optional and this one
-  // has to fit a new head (~1.4 KB) *plus* the outgoing head moving from
-  // `changelog-head.ts` into the shipped list (~1.3 KB) *minus* the oldest entry
-  // dropping out (~0.9 KB) -- about 1.9 KB per release, so ~4 releases of room
-  // rather than the 0.1 KB the old line left. The growth is bounded now: the
+  // 0.15 % the earlier notes used: a release entry is not optional and a rotation
+  // adds a new head (~1-1.4 KB) plus the outgoing head moving from
+  // `changelog-head.ts` into the shipped list (~1.3 KB) minus the oldest entry
+  // dropping out (~0.9 KB) -- up to ~1.9 KB per release, so 1550 leaves several
+  // releases of room rather than the 0.1 KB the old line left. The growth is
+  // bounded now: the
   // shipped list is a fixed 30 and adding a release only rotates it.
   total: 1550 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
