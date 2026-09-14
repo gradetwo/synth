@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.110.0',
+    version: '1.111.0',
     date: '2026-09-14',
-    kind: 'feature',
+    kind: 'fix',
     items: [
       [
-        '**启动更快**：首屏要下载的 JavaScript 少了约 **11 KB**（面板文案改为打开面板时才加载），第一次打开和弱网下最明显。面板文案没到之前不会闪出占位键名，切换语言也不会先显示另一种语言再纠正。声音引擎与上一版**逐字节相同**。发布流程另加一道门禁：首屏可交互时间超标会直接中止发布（内部）。',
-        '**Starts faster.** The first screen downloads about **11 KB** less JavaScript (panel copy now loads when its panel opens), which shows up most on the first visit and on slow connections. A panel never flashes placeholder key names before its copy arrives, and switching language never paints one language and then corrects itself. The audio engine is **byte-for-byte** the previous build. Publishing also gained a gate that aborts a release when first-interactive time regresses (internal).',
+        '**内部维护版：声音与界面没有任何变化。** 新增了波表/采样音源在高音区的回归门禁，并如实登记一个**已知边界**：这类音色在高音区的非谐波能量高于普通振荡器路径（要修就得改变它们的音色，所以留到单独一批再动）。引擎与上一版**逐字节相同**。',
+        '**Internal maintenance release: nothing changed in the sound or the interface.** Added a regression gate for the wavetable and sampler sources in the high register, and recorded a **known boundary**: up there those sources carry more non-harmonic energy than the ordinary oscillator path does (fixing it means changing how they sound, so it is left to a batch of its own). The engine is **byte-for-byte** the previous build.',
       ],
     ],
   };
