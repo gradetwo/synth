@@ -151,7 +151,9 @@ function run(cmd, args, { capture = false, env = {} } = {}) {
  * The one thing a rollback cannot do by itself, said out loud every time.
  *
  * This is not decoration: the update banner is raised by the *service worker*
- * finding a new worker, and the banner's headline is the running build's own
+ * finding a new worker; since P12.6 its version comes from a handshake with the
+ * waiting worker (so it names what the button installs), while the description
+ * line is still the running build's own
  * `CHANGELOG_HEAD` — so a client on the rolled-back-from build is told
  * "v<its own version> is ready", i.e. it advertises the version we just
  * removed, while the activation actually lands on the rollback target. See
@@ -165,9 +167,16 @@ function pwaNote(entry) {
   log(`[rollback]   · a session whose page is still the newer build and is never reloaded: the rolled-back sw.js`);
   log(`[rollback]     (${entry.swCache}) is a different worker, so the browser installs it as *waiting* and the update`);
   log(`[rollback]     banner appears; tapping 立即更新 activates v${entry.version} and reloads once.`);
-  log('[rollback]   · on that banner the version comes from the *running* bundle, so a client on the newer build is');
-  log('[rollback]     told "v<newer> · …" — the very version being rolled back — while the action lands on the');
-  log(`[rollback]     rollback target v${entry.version}. Do not read the banner label as the version it will install.`);
+  // P12.6 (v2.0.2) fixed what this bullet used to warn about: the banner's
+  // version now comes from a handshake with the *waiting* worker, so it names
+  // the version the button will install. The banner's *description line* is
+  // still the running build's changelog entry, so a client on the newer build
+  // sees "v<target> · <newer build's note>" -- the version is right, the prose
+  // is the one it is leaving. Updating the note here is the parent's job:
+  // p126 was not allowed to touch this file.
+  log(`[rollback]   · on that banner the version is the one the waiting worker reports (v${entry.version}), i.e. what`);
+  log('[rollback]     the button will install, not the build the page is running (P12.6). The description line under');
+  log('[rollback]     it still comes from the *running* bundle, so treat the prose as stale, not the version.');
   log('[rollback]   · offline clients keep their own build until they are online again; nothing server-side reaches them.');
   log(`[rollback]   · there is no push channel here, so "everyone is back on v${entry.version}" is only true of new`);
   log('[rollback]     visitors plus whoever reloads or taps the banner. See docs/notes/release.md.');
