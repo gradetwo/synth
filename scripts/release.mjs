@@ -26,12 +26,26 @@
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  compareVersions,
+  defaultStore,
+  formatStore,
+  indexHashOf,
+  keepVersionsFromEnv,
+  planPrune,
+  readManifest,
+  readStoreSchema,
+  recordVersion,
+  retainVersion,
+  sortVersions,
+  swCacheOf,
+} from './lib/retained.mjs';
+import { cloudflareToken, resolveSite } from './lib/release-env.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const site = process.env.GS1_SITE ?? 'https://synth.wangda.today';
+const site = resolveSite();
 const args = process.argv.slice(2);
 
 /**
@@ -92,33 +106,12 @@ function run(cmd, cmdArgs, { capture = false, env = {}, mutates = false, echo = 
 
 const git = (cmdArgs, opts) => run('git', cmdArgs, { capture: true, ...opts }).trim();
 
-/** Cloudflare token: the environment first, then the shell profile, like the docs do. */
-function cloudflareToken() {
-  if (process.env.CLOUDFLARE_API_TOKEN) return process.env.CLOUDFLARE_API_TOKEN;
-  for (const profile of ['.zshrc', '.bashrc', '.profile']) {
-    let text;
-    try {
-      text = readFileSync(resolve(homedir(), profile), 'utf8');
-    } catch {
-      continue;
-    }
-    const match = text.match(/^\s*export\s+CLOUDFLARE_API_TOKEN=(.*)$/m);
-    if (match) return match[1].trim().replace(/^["']|["']$/g, '');
-  }
-  return '';
-}
-
-/** Numeric compare for x.y.z, so pre-release strings never sort as newer. */
-function compareVersions(a, b) {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < 3; i += 1) {
-    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
-  }
-  return 0;
-}
-
-const indexHash = (html) => html.match(/assets\/index-([A-Za-z0-9_-]+)\.js/)?.[1] ?? '';
+/**
+ * The shell fingerprint, the version compare and the token reader now live in
+ * `scripts/lib/` because `rollback.mjs` has to answer the same questions about
+ * the same bytes; keeping two copies is how the two answers drift apart.
+ */
+const indexHash = indexHashOf;
 
 async function liveIndexHash() {
   const url = `${site}/?cb=${Date.now()}${Math.floor(Math.random() * 1000)}`;
@@ -258,6 +251,71 @@ function preflight() {
   if (bad.length) fail(`preflight: ${bad.map((c) => c.name).join(', ')}`);
 }
 
+// ------------------------------------------------------- retained versions
+
+/**
+ * Copy this release into `release/retained/` and prune the window (P12.4).
+ *
+ * Called only after the live check proved that production is serving these
+ * bytes. `recordVersion` is the one place that deletes anything, and it never
+ * deletes the version it is recording or the current one.
+ */
+function retainRelease(distHash) {
+  const store = defaultStore(root);
+  const keep = keepVersionsFromEnv();
+  const tarPath = resolve(root, 'release', `gs1-synth-${version}.tar.gz`);
+  const before = readManifest(store, { keep });
+  const entry = retainVersion({
+    store,
+    version,
+    distDir: resolve(root, 'dist'),
+    tarPath,
+    storeSchema: readStoreSchema(root),
+  });
+  if (entry.indexHash !== distHash) fail(`retain: pinned ${entry.indexHash} but deployed ${distHash}`);
+  const { manifest, pruned } = recordVersion({
+    store,
+    entry,
+    action: 'release',
+    from: before.current?.version ?? null,
+    keep,
+    log: (m) => log(`[release]   ${m}`),
+  });
+  log(
+    `[release]   v${entry.version} retained (shell ${entry.indexHash}, sw ${entry.swCache}, ${(
+      entry.siteBytes / 1024
+    ).toFixed(0)} KB, snapshot ${entry.tar})`,
+  );
+  log(
+    `[release]   store keeps ${manifest.versions.length}/${keep}: ${sortVersions(manifest.versions)
+      .map((e) => `v${e.version}`)
+      .join(', ')}`,
+  );
+  if (pruned.length) log(`[release]   dropped ${pruned.map((e) => `v${e.version}`).join(', ')} — no longer rollback-able`);
+}
+
+/** The same decision, printed instead of taken (`--dry-run`). */
+function planRetention(distHash) {
+  const store = defaultStore(root);
+  const keep = keepVersionsFromEnv();
+  const manifest = readManifest(store, { keep });
+  log(formatStore(manifest).replace(/^/gm, '[release] '));
+  const swCache = swCacheOf(readFileSync(resolve(root, 'dist/sw.js'), 'utf8'));
+  const candidate = { version, indexHash: distHash, swCache, storeSchema: readStoreSchema(root), retainedAt: new Date().toISOString() };
+  const { kept, pruned } = planPrune(
+    [...manifest.versions.filter((e) => e.version !== version), candidate],
+    keep,
+    { current: candidate },
+  );
+  log(`[release]   would retain v${version} (shell ${distHash}, sw ${swCache})`);
+  log(
+    `[release]   would keep ${kept.length}/${keep}: ${sortVersions(kept)
+      .map((e) => `v${e.version}`)
+      .join(', ')}`,
+  );
+  log(pruned.length ? `[release]   would drop ${pruned.map((e) => `v${e.version}`).join(', ')}` : '[release]   would drop nothing');
+}
+
 // ------------------------------------------------------------------ main
 
 async function main() {
@@ -348,6 +406,22 @@ async function main() {
       }
     }
     if (!match) fail(`live check: ${site} never served assets/index-${distHash}.js`);
+  }
+
+  // Retention is its own decision, after the deploy branch above: a version is
+  // worth keeping only once production serves it, and a dry run may only print
+  // what it would keep.
+  if (flags.dryRun) {
+    step('retain the release artefacts (dry run)');
+    planRetention(distHash);
+  } else if (!flags.skipDeploy) {
+    // Only now — deployed, live and hash-verified — is the release worth
+    // keeping, and only now may the oldest release be dropped. A failed release
+    // must not prune the window it never joined.
+    step('retain the release artefacts');
+    retainRelease(distHash);
+  } else {
+    log('[release]   (--skip-deploy: nothing was deployed, so nothing is retained)');
   }
 
   if (!flags.dryRun) {
