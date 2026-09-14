@@ -285,3 +285,18 @@ fps 守卫会得到「idle 61 但 playback 15」这种**纯争用**的读数并�
 
 **规矩**：`release:fast` 之前不要紧接重活；跑完重活等负载降到个位数（`cat /proc/loadavg`）再发，或让完整 `release` 先跑 app 套件（它要 5–6 分钟，正好把负载耗掉）。
 判据：如果 `idle-with-engine` 高而 `playback`/`graph-edit` 塌，那是争用；两者一起低才是真回归。
+
+## WebKit 的归属：以 **20 分钟**为界（用户 2026-09-14 定）
+**规则**：**WebKit 总耗时 > 20 分钟 ⇒ 不进常规门禁**（`verify` / `release*` / `ci.yml` 的常规路径），**只留慢轨**（nightly、CI 的 `e2e-engines` 作业、或专门的全面回归扫描）。
+
+**已有实测**（本机，`--workers=1`，帧无关交互生效后）：
+
+| 范围 | 耗时 | 结论 |
+| :--- | ---: | :--- |
+| headless 整包（v2.0.3，9 failed） | **42.7 min** | 超界 ⇒ 慢轨 |
+| headless 核心子集（8 spec / 38 用例） | **22.7 min** | 超界 ⇒ 慢轨 |
+| Weston GL（40 min 上限只到 11 passed） | **≥40 min** | 超界 ⇒ 慢轨 |
+| 单条用例（如 `fxgraph` 的调制线） | 40 s | 可用于**定点**排查，不构成门禁 |
+
+**这条只决定「进不进常规门禁」，不决定「真缺口要不要修」**：若某条失败被判定为**产品缺口**（例如 Safari 下 marquee 拖拽不生效），它**必须修**，只是验证留在慢轨。
+判据（怎么读慢轨的 WebKit 结果）：先看 `idle-with-engine` 与 `playback`/`graph-edit` 是否**一起**塌——**一起低是真回归，只有后者塌是主机争用**；再对失败的每条区分「引擎差异 / 产品缺口 / 需合成器（对比度、`locator.screenshot`）」。
