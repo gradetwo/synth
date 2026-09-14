@@ -170,11 +170,11 @@ reload 后 `installUserSample()` 做的事一样。
 （清空 patch/采样/波表 + 换一个新 wasm 实例），所以第二遍不会继承第一遍的 sample pool 或当前
 patch；`npm run mcp -- --self-test` 的第二遍才有意义。
 
-**黄金会话**：21 次调用，覆盖全部 14 个工具，其中 8 次是变异/观察（`patch.set`（夹取）→
-`patch.get` → `patch.random` → `patch.get` → `patch.set{presetId}` → `preset.apply` →
-`patch.get` → `sample.import` → `wavetable.import` → `render`（无 patch，吃会话状态）→
-`preset.save` → `patch.set{patch}` → `patch.get`）。两遍的规范化 JSON `sha256` 相同，
-WAV 与 `.gs1.json` 的字节也相同。
+**黄金会话**：21 次调用，覆盖全部 14 个工具。P13.2 的 8 次之后，P13.3 追加 13 次——
+**8 次变异**（`patch.set`（夹取）、`patch.random`、`patch.set{presetId}`、`preset.apply`、
+`sample.import`、`wavetable.import`、`preset.save`、`patch.set{patch}`）与 **5 次观察**
+（4 次无参数 `patch.get` + 1 次无 patch 的 `render`，后者吃会话状态）。两遍的规范化 JSON
+`sha256` 相同，WAV 与 `.gs1.json` 的字节也相同。
 
 ### 拒绝路径（输入 → 结构化错误）
 
