@@ -19,7 +19,7 @@
 | 体积 | dist **≤1550 KB**（v2.1.1 实测 **1540.2**，P141 把线从 1619 **下调**了 69 KB）、首屏 JS **≤126 KB** gzip（实测 125.3）、CSS **≤21 KB**（20.3）、最大 WASM gzip **≤75 KB**（**74.9**，P9.10 用 `#[inline(never)]` 买回） |
 | 启动 / 性能 | v2.1.1 发布跑：首屏可交互 **581 ms**（预算 3200）、fps idle **61.3** / playback **62.5** / graph-edit **61.3**；安静窗口 bench `p50 1111 µs (41.7%)`、`bench --long p50 1215 µs`、wasm memory **15.1 MB**（上限 32）、arena 余 **8471 KB** |
 | 相容红线 | `test:dsp` **`rms 0.06147`**、`verify:dsp:2x` **`0.061703`**、`verify:presets` 与 `verify:presets:2x` 都是 **`91 presets unchanged · ABI 8`** 一字不动；零分配 `gs_alloc_violations()==0`；`PARAM_COUNT` **224**；ABI **8** |
-| 已完成 | P5–P12 全部交付（P12.3 分享协作、P12.5 无障碍**按用户决定不做**）；**P13.1–P13.3、P9.10 已在 v2.1.1 发布**；P13.4 进行中、P13.5 待做；源码里 **无 TODO/FIXME 残留** |
+| 已完成 | P5–P12 全部交付（P12.3 分享协作、P12.5 无障碍**按用户决定不做**）；**P13.1–P13.3、P9.10 已在 v2.1.1 发布**；**P13.4 已合并（待随 v2.1.2 发布）**；P13.5 待做；源码里 **无 TODO/FIXME 残留** |
 
 ### 已记录的技术债与已知边界（本计划的输入）
 
@@ -422,7 +422,7 @@
 | **P13.1 抽尺子** | `scripts/lib/render-core.mjs` + `scripts/lib/audio-ruler.mjs`；门禁改为调用它们 | **门禁读数逐字节不变**（`verify:audio` 每条、`test:dsp` 0.030735、`verify:dsp:2x` 0.030852 一字不动）；纯重构，**不接受任何数字变化** |
 | **P13.2 只读+渲染+测量** | `mcp/server.mjs` + `gs1.describe`/`params.list`/`presets.list`/`patch.get`/`render`/`analyze`/`gate` + `npm run mcp` | 工具级单测 + 黄金会话（同调用两次逐字节相同）+ 手写 JSON-RPC 的 `initialize`/`tools/list`/`tools/call` 有测试 + **`dependencies` 仍为空** |
 | **P13.3 操作类** | `patch.set`/`patch.random`/`sample.import`/`wavetable.import`/preset 套用保存 | 覆盖「夹取要报告」「装不下返回 `noRoom`」「坏文件结构化拒绝」；patch 往返一致 |
-| **P13.4 浏览器层 + 范例** | `gs1.ui.*`（Playwright，复用 `e2e/fixtures.ts` 帧无关交互）+ 实战范例 | 范例**真跑过**：agent 用这套工具把某个 patch 的 ≥1 kHz 地板改进 ≥20 dB 并贴前后 `analyze` JSON |
+| **P13.4 浏览器层 + 范例** | ✅ `gs1.ui.*`（Playwright，复用抽出来的 `e2e/interact.mjs`）+ 实战范例 | 范例**真跑过**：`crushlead` 只改 `fxCrushBits 6→4`，≥1 kHz Hann 地板 **−4.02 → −64.88 dB（60.86 dB）**，前后 JSON/分享码/调用序列都在 `docs/LLM-INTERFACE.md` §4.5 且可重放；截图 1440×900 与桌面基线同尺寸 |
 | **P13.5 文档与发现** | `docs/LLM-INTERFACE.md` 补齐工具契约/限制/示例；`docs/notes/mcp.md` 记设计与坑 | 一个外部 agent 能只读这两个文件就接上（自查清单） |
 
 **非目标（第一版）**：不接声卡（只离线渲染）、不联网、不接受任意代码/表达式、**永不部署**。
@@ -459,7 +459,7 @@
 | 18 | **P13.1 抽尺子（为 LLM 接口共用一份测量实现）** ✅ 门禁读数逐字节不变 | P9/P10 定型 | 中 | ✅ v2.1.0 |
 | 19 | **P13.2 MCP 只读+渲染+测量** ✅ 7 个工具、54 条测试、黄金会话逐字节相同、目录驱动注册表、`npm run mcp` 与 CI/verify-ci 同步；**零新增运行时依赖** | P13.1 | 中 | ✅ **v2.1.1** |
 | 20 | **P13.3 MCP 操作类（patch/sample/preset）** ✅ 7 个工具、变异工具会如实报告夹取/拒绝；MCP 测试共 **88** 条、黄金会话 21 次调用两遍哈希相同 | P13.2 | 中 | ✅ **v2.1.1** |
-| 21 | **P13.4 MCP 浏览器层 + 实战范例** | P13.2 | 中 | v2.1.3 |
+| 21 | **P13.4 MCP 浏览器层 + 实战范例** ✅ 5 个 `gs1.ui.*` 工具（独立入口 `npm run mcp:ui`、只用 4796、只连 127.0.0.1、白名单 spec）；**帧无关交互抽成 `e2e/interact.mjs` 与 E2E 共用**，顺带修掉 `force` 从不被读的真缺陷（删掉那 5 行 ⇒ 5 条单测 30 s 超时变红）；**范例真跑**：`crushlead` 只改 `fxCrushBits 6→4`，≥1 kHz Hann 地板 **-4.02 → -64.88 dB（60.86 dB）** | P13.2 | 中 | v2.1.2 |
 | 22 | **P13.5 LLM 接口文档与发现** | P13.2 | 小 | v2.1.4 |
 | 23 | **P9.10 采样导入提速（每抽头 clamp 提出内循环，逐位相同；§一.29）** ✅ 安静主机 4 s 导入 **130 → 78 ms**（1.68×），`test:dsp` / 91 指纹 / 导入→渲染 sha256 全部一字不动；`#[inline(never)]` 把 wasm gzip 从超线 92 B 买回（76 717 B，余 83 B） | P9.8 | 小 | ✅ **v2.1.1** |
 | 24 | **p141 更新记录上限化（买回 dist 体积；§一.39②）** ✅ dist **−79.4 KB**，线 1619 → **1550（下调）** | — | 小 | ✅ **v2.1.1** |
