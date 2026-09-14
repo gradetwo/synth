@@ -35,6 +35,13 @@ for (const ref of refs) {
 }
 
 const sw = readFileSync(join(dist, 'sw.js'), 'utf8');
+// The update banner names the version the waiting worker installs, which means
+// the generated worker has to carry it and answer `GET_VERSION` (P12.6). A
+// `gen-sw.mjs` that stopped emitting either would leave the banner with no
+// version at all — silent, not red — so the deployment gate checks both here.
+const pkgVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+check(`sw.js carries the release version (${pkgVersion})`, sw.includes(`const VERSION = '${pkgVersion}'`));
+check('sw.js answers the version handshake', sw.includes("'GET_VERSION'") && sw.includes("type: 'VERSION'"));
 const precacheMatch = sw.match(/const PRECACHE = (\[[\s\S]*?\]);/);
 check('sw.js declares a precache list', Boolean(precacheMatch));
 if (precacheMatch) {
