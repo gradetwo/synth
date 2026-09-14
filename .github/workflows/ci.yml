@@ -87,6 +87,12 @@ jobs:
       - name: DSP regression baseline (2x oversampling)
         run: npm run verify:dsp:2x
 
+      # P13.2: the tool server is a gate too. This runs the same golden session
+      # the tools' tests do — every P13.2 tool called twice, compared
+      # byte-for-byte — through the `npm run mcp` entry point itself.
+      - name: MCP tool server golden session
+        run: npm run mcp -- --self-test
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 

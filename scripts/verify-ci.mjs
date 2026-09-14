@@ -96,6 +96,7 @@ const required = [
   ['sustained-load benchmark', 'npm run verify:bench'],
   ['DSP regression baseline', 'npm run test:dsp'],
   ['2x oversampling DSP baseline', 'npm run verify:dsp:2x'],
+  ['MCP tool server golden session', 'npm run mcp -- --self-test'],
   ['Chromium E2E', 'npm run test:e2e'],
   ['performance E2E (isolated single worker)', 'npm run test:perf'],
 ];
