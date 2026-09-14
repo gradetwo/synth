@@ -277,3 +277,11 @@ worktree 隔离了**文件**，没有隔离**端口**：E2E 的 `vite preview` �
 规则：每条并行轨道给自己一个端口，跑 E2E 时用 `GS1_E2E_PORT=<自己的端口>` ——
 慢轨 4783、p116 用 4791、p124 用 4787、主树/发布用 **4795**。发布前先 `ss -ltn | grep <port>` 确认没被占，
 占了就换一个；**不要去杀别人的进程**。
+
+## `release:fast --skip-e2e` 的性能门禁跑在「你刚跑完的东西」后面（2026-09-14 实测）
+`release:fast` = `--skip-verify --skip-e2e`：它**先**跑 `e2e/performance.spec.ts`（启动预算 + 三条 fps 守卫），**再**打包部署。
+所以在它之前如果你刚跑过 `npm run build`（含两个核的 `wasm-opt`，约 40–90 s 满载），**1 分钟 load average 还没衰减**，
+fps 守卫会得到「idle 61 但 playback 15」这种**纯争用**的读数并判红——同一天同一份代码在安静主机上是 playback **60.0**。
+
+**规矩**：`release:fast` 之前不要紧接重活；跑完重活等负载降到个位数（`cat /proc/loadavg`）再发，或让完整 `release` 先跑 app 套件（它要 5–6 分钟，正好把负载耗掉）。
+判据：如果 `idle-with-engine` 高而 `playback`/`graph-edit` 塌，那是争用；两者一起低才是真回归。
