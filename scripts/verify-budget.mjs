@@ -306,7 +306,26 @@ const BUDGETS = {
   // 75 KB with effectively no headroom and the next batch that needs wasm bytes
   // -- P9.10's clamp hoisting is the one already queued -- has to buy them back
   // or re-base with its own numbers.
-  total: 1619 * 1024,
+  // **p141 capped the in-app changelog at 30 releases, and this line went *down*
+  // 1619 -> 1550 KB.** The 1619 line existed because the release history grew by
+  // ~1.2 KB per release for ever, and it broke on the v2.1.0 tag itself:
+  // `dist total 1619.6 / 1619.0`, with `Changelog-*.js` up 113 366 -> 114 644 B
+  // while both wasm cores were byte-identical (the third full sweep found it,
+  // §一.39②). A re-base would have bought exactly one release, so the payload was
+  // bought back instead: `src/changelog.ts` now ships the newest 30 entries and
+  // ``src/changelog-archive.ts`` keeps the other 102 out of the bundle entirely.
+  // Measured: `Changelog-*.js` 112.0 -> 33.5 KB, dist total 1619.6 -> 1540.9 KB
+  // (-78.7 KB), with the whole 132-release history still in the repository and
+  // `verify:release` still asserting uniqueness/order across both files.
+  //
+  // 1550 is "measured + ~9 KB", and the margin is deliberately larger than the
+  // 0.15 % the earlier notes used: a release entry is not optional and this one
+  // has to fit a new head (~1.4 KB) *plus* the outgoing head moving from
+  // `changelog-head.ts` into the shipped list (~1.3 KB) *minus* the oldest entry
+  // dropping out (~0.9 KB) -- about 1.9 KB per release, so ~4 releases of room
+  // rather than the 0.1 KB the old line left. The growth is bounded now: the
+  // shipped list is a fixed 30 and adding a release only rotates it.
+  total: 1550 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   //
   // **P11.2 (i18n split) settled the P10.2 debt and moved this line down
