@@ -95,12 +95,14 @@ export const FLOOR_BINS = 8;
 /**
  * The share of a settled render's power that is *not* on the harmonic grid of
  * `f0`, in dB. The window is a 7-term Blackman-Harris over the whole render,
- * zero-padded to the next power of two; eight bins either side of every
- * harmonic are excluded. At four seconds a bin is 0.25 Hz and the window's own
- * main lobe is +-1.75 Hz, so the exclusion covers the lobe and no line power
- * can be mistaken for off-grid energy.
+ * zero-padded to the next power of two; `bins` bins either side of every
+ * harmonic are excluded (the gate's own ±8; P13.2's `gs1.gate` can ask for a
+ * different width, which is why it is a parameter with the gate's value as the
+ * default and not a second function). At four seconds a bin is 0.25 Hz and the
+ * window's own main lobe is +-1.75 Hz, so the exclusion covers the lobe and no
+ * line power can be mistaken for off-grid energy.
  */
-export function offGridFloor(samples, f0) {
+export function offGridFloor(samples, f0, bins = FLOOR_BINS) {
   const N = samples.length;
   let nfft = 1;
   while (nfft < N) nfft <<= 1;
@@ -110,7 +112,7 @@ export function offGridFloor(samples, f0) {
   fftInPlace(re, im);
   const half = nfft >> 1;
   const df = SR / nfft;
-  const exHz = (FLOOR_BINS * SR) / N;
+  const exHz = (bins * SR) / N;
   const excluded = new Uint8Array(half);
   for (let k = 1; k * f0 < SR / 2 + exHz; k++) {
     const centre = k * f0;
