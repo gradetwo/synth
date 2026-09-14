@@ -13,9 +13,11 @@
  * the history is visible in git.
  */
 import { existsSync, appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// P14.2: the load probe is shared with `verify-audio.mjs` and `src/fuzz.test.ts`
+// so the three gates cannot disagree about the same host. Moved verbatim.
+import { hostLoad, cpuProbe, PROBE_REFERENCE_US, PROBE_LOADED_FACTOR } from './lib/host-load.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const wasmPath = resolve(root, 'src/generated/synth_core.wasm');
@@ -119,65 +121,10 @@ function windowedMedianP99(times, radius = 16) {
   return sorted[Math.floor(sorted.length * 0.99)];
 }
 
-/**
- * How busy the host is, relative to its cores.
- *
- * The numbers here are wall-clock times of a real-time workload, so they are
- * only meaningful on a machine that is not oversubscribed. Run on a loaded
- * host — another container, a build, a thermal throttle — and every block
- * "misses the deadline" while the DSP has not changed at all, which is exactly
- * what a gate must not report as a regression. When that is the case the timing
- * checks are reported as inconclusive, and the correctness ones still run.
- */
-function hostLoad() {
-  try {
-    const [one, , ] = readFileSync('/proc/loadavg', 'utf8').trim().split(/\s+/);
-    const cpus = os.cpus().length || 1;
-    // Half the cores, not three quarters. The line is where wall-clock numbers
-    // stop being decidable, and it was measured: the same 16-voice scene reads
-    // p50 1169 µs (44 %) at load ~2 on this 8-core box and 1621 µs (61 %) at
-    // load 5.8 — a 38 % swing from the host alone, which is the size of the
-    // regression this gate exists to catch. At 72 % occupancy the number simply
-    // is not about the DSP, so the timing checks say so instead of guessing.
-    return { load: Number(one), cpus, busy: Number(one) > cpus * 0.5 };
-  } catch {
-    return { load: 0, cpus: 1, busy: false };
-  }
-}
-
-/**
- * A DSP-independent probe of how much CPU this process is actually getting.
- *
- * P9.1b replaced the old `mean > 450 µs` heuristic with this, because that
- * number was calibrated when the whole engine measured ~250 µs on an idle host:
- * once the band-limited oscillators pushed the same scene to ~1400 µs, the gate
- * read the engine's own legitimate cost as "host is oversubscribed" and
- * silently downgraded every timing assertion to `skipped` (caught by the parent
- * in `.tmp/p91b-bench-long2.log`: `PASS (correctness only)` at loadavg 2.7/8).
- * A gate that stops gating when the workload gets heavier is worse than no gate.
- *
- * The probe is a fixed loop with no wasm and no allocation, so its wall time
- * tracks the scheduler and the clock, not the DSP. `PROBE_REFERENCE_US` is what
- * it measures on this machine when idle; several times that means the process is
- * being starved (or throttled) and wall-clock DSP timings cannot be trusted. The
- * engine's own cost never enters this decision.
- */
-const PROBE_REFERENCE_US = 1600;
-const PROBE_LOADED_FACTOR = 4;
-function cpuProbe() {
-  const runs = [];
-  for (let r = 0; r < 7; r++) {
-    const t0 = process.hrtime.bigint();
-    let x = 1.0;
-    for (let i = 0; i < 300_000; i++) x = x * 1.0000001 + 0.0000001;
-    if (!Number.isFinite(x)) throw new Error('probe went non-finite');
-    runs.push(Number(process.hrtime.bigint() - t0) / 1000);
-  }
-  // The minimum, not the mean: this probe answers "how fast *can* this process
-  // run", and a scheduler slice landing mid-loop only ever makes a run slower.
-  runs.sort((a, b) => a - b);
-  return runs[0];
-}
+// `hostLoad()` and `cpuProbe()` (with `PROBE_REFERENCE_US` /
+// `PROBE_LOADED_FACTOR`) moved to `scripts/lib/host-load.mjs` in P14.2, so that
+// `verify-audio.mjs` and `src/fuzz.test.ts` judge the same host with the same
+// code. Their comments travelled with them; nothing here changed.
 
 const failures = [];
 const check = (name, ok, detail = '') => {
