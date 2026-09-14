@@ -7,7 +7,7 @@
 
 import { getLang } from '@/i18n';
 import { midiPlayer } from './player';
-import { DEMO_SONGS, specToSong } from './songs';
+import { DEMO_SONGS, specToSong, type SongSource } from './songs';
 import { normalizeClips, withClips } from './clips';
 import { normalizeTakes } from './takes';
 import type { MidiSong } from './smf';
@@ -29,6 +29,12 @@ export interface Track {
   song: MidiSong;
   group: TrackGroup;
   /**
+   * Where the track comes from and under what licence (P10.5). Built-ins carry
+   * their spec's source; an imported file names itself; an older stored track
+   * that predates the field is read as a user track rather than dropped.
+   */
+  source?: SongSource;
+  /**
    * Per-layer mute/solo/level for a multi-track song. A mix is part of the
    * song you loaded, not of this listening session, so it is stored with it.
    */
@@ -39,6 +45,27 @@ export interface Track {
     offset?: number;
     pan?: number;
   }[];
+}
+
+/** A stored `source` is data from disk: keep it only if it is the right shape. */
+function validSource(value: unknown): value is SongSource {
+  if (!value || typeof value !== 'object') return false;
+  const source = value as SongSource;
+  const kind = source.kind as string;
+  return (
+    (kind === 'public-domain' || kind === 'original' || kind === 'user') &&
+    typeof source.credit === 'string'
+  );
+}
+
+/**
+ * Every track that reaches the library gets a source, even one the caller did
+ * not label: a shared arrangement arrives through `put()` without one, and a
+ * row with no provenance is exactly what this batch set out to remove.
+ */
+function withSource(track: Track): Track {
+  if (validSource(track.source)) return track;
+  return { ...track, source: { kind: 'user', credit: '' } };
 }
 
 export function trackTitle(track: Track): string {
@@ -52,6 +79,7 @@ function builtinTracks(): Track[] {
     composer: spec.composer,
     song: specToSong(spec),
     group: 'builtin' as const,
+    source: spec.source,
   }));
 }
 
@@ -151,7 +179,7 @@ function readStoredTracks(): Track[] {
                   : 0,
             }))
         : undefined;
-      out.push({ ...track, song, mix, group: track.id.startsWith('clip') ? 'clip' : 'imported' });
+      out.push(withSource({ ...track, song, mix, group: track.id.startsWith('clip') ? 'clip' : 'imported' }));
     }
     return out;
   } catch {
@@ -250,13 +278,14 @@ export class MidiLibrary {
 
   /** Add or replace an imported file / recording (never auto-plays). */
   put(track: Track): string {
-    this.tracks = [...this.tracks.filter((tr) => tr.id !== track.id), track];
-    this.currentId = track.id;
-    midiPlayer.load(track.song);
-    this.applyMix(track);
+    const stored = withSource(track);
+    this.tracks = [...this.tracks.filter((tr) => tr.id !== stored.id), stored];
+    this.currentId = stored.id;
+    midiPlayer.load(stored.song);
+    this.applyMix(stored);
     this.persist();
     this.emit();
-    return track.id;
+    return stored.id;
   }
 
   /** Put a song's stored layer mix back onto the player. */
@@ -293,6 +322,8 @@ export class MidiLibrary {
       composer: current?.composer ?? 'GS-1',
       song,
       group: 'clip',
+      // An edit of a track is the player's own work, whatever it started from.
+      source: { kind: 'user', credit: '' },
       // The arrangement you were listening to comes along with the copy.
       mix:
         layers.length > 1
