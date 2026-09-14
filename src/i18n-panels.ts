@@ -429,6 +429,9 @@ export const DOCS_STRINGS: StringTable = {
   'changelog.title': ['更新记录', 'Changelog'],
   'changelog.current': ['当前版本', 'current'],
   'changelog.footer': ['更新记录随应用离线保存；部署新版本后这里会列出对应的改动。', 'The changelog ships with the app and works offline; each deployment lists its changes here.'],
+  // P141: the panel ships the newest 30 releases only, so the older ones have
+  // to stay discoverable without shipping their text.
+  'changelog.archive': ['更早的更新记录见项目仓库（docs 与 git 历史）。', 'Earlier releases live in the project repository (docs and git history).'],
   'guide.toc': ['目录', 'Contents'],
   'guide.footer': ['按 Esc 或点击空白处关闭 · 全部内容随应用离线可用', 'Press Esc or click outside to close · fully offline'],
 
