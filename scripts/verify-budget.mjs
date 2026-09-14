@@ -243,14 +243,31 @@ const BUDGETS = {
   //     delta.
   //   * the remainder is the hashed-name and service-worker churn every build
   //     carries.
-  // 1562 is the ceiling this batch was authorised to, and it is "measured +
-  // ~6.1 KB": the whole point of the authorisation was to cover a feature that
+  // 1562 is the ceiling the P10.2 batch was authorised to, and it is "measured
+  // + ~6.1 KB": the whole point of the authorisation was to cover a feature that
   // adds a UI row, a model module and ten bilingual strings, and the release
   // entry that follows this batch has to fit inside it too. The previous
   // "measured + ~1.3 KB" shape is deliberately *not* kept here -- there was not
   // 6.3 KB of headroom to do it in, and the honest version is to name the number
   // the feature actually cost.
-  total: 1562 * 1024,
+  //
+  // **P9.7 (wavetable/sampler interpolation) rebased this 1562 -> 1568 KB, and
+  // the trade is declared rather than hidden.** The batch buys a real audio
+  // result -- the five factory wavetables above 1 kHz went from -25.8...-46.7 dB
+  // of non-harmonic energy to a worst case of -98.0 dB -- and it pays in wasm
+  // *raw* bytes: the two cores together grew 3 702 B (SIMD 216 239 -> 217 198,
+  // scalar 200 065 -> 202 808), which is the full extent of the overshoot. That
+  // is the longer mip levels the fix needs, the sampler's f64 read position and
+  // step, and the cubic interpolation. `dist total` sums raw bytes, so this line
+  // is the one that moves; measured 1564.6 KB against the old 1562.
+  // The line keeps the *same absolute margin* it had (1568 - 1564.6 = ~3.4 KB,
+  // against 1562 - 1558.3 = ~3.7 KB) so it still absorbs a release's changelog
+  // and ordinary build churn, and anything larger still has to be declared.
+  // What the user actually downloads barely moves: the largest wasm **gzip**
+  // went 74.3 -> 74.5 KB (inside the unchanged 75 KB line) and first-screen JS
+  // and CSS are byte-for-byte unchanged. The next batch that needs size has to
+  // buy this back rather than raise the line again.
+  total: 1568 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   //
   // **P11.2 (i18n split) settled the P10.2 debt and moved this line down
