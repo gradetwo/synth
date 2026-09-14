@@ -676,3 +676,111 @@ delta，且 fraction ≈ 0.999 处插值一个 ν=1/4 正弦必须在 −60 dB �
 - 级 8（速率 128–256×，比 C9 还高）的表只有 93.75 Hz 的内容；这只在键盘之外出现，任何门禁
   范围都不覆盖它。
 - 16 抽头读的 CPU 只在采样器音色上出现；慢轨的 fps 门禁是它的落点。
+
+## P9.10 导入提速：把「每抽头 clamp」提出内循环（逐位相同）
+
+P9.8 记账留给下一批的那约 1.9× 在这里兑现。**只动实现，不动抽头数**：`chain_taps` 仍是
+早期 192 / 后期 96（§一.25 的 192 → 128 是换带宽的交易，本批明确排除），所以音频输出**逐位不变**。
+
+### 改了什么
+
+`low_pass_into` / `low_pass_decimate_into` 的内层循环原来是：
+
+```rust
+for (tap, weight) in weights.iter().take(count).enumerate() {
+    let at = (base + tap as isize).clamp(0, input.len() as isize - 1) as usize;
+    acc += input[at] * weight;
+}
+```
+
+每抽头两次 `clamp` 比较加一次切片边界检查，还把循环内部暴露给不了优化器。clamp 定义的区间是
+**连续**的，于是把它按段提出去，两个函数共享一个 `#[inline] low_pass_at(input, weights, base)`：
+
+- **前缀**：`tap < lead = (-base).clamp(0, count)`，每个抽头都读 `input[0]`；
+- **主体**：`lead <= tap < tail = (last + 1 - base).clamp(0, count)`，源指针落在 `input` 内，
+  直接 `&input[(base + lead)..]` 与 `&weights[lead..tail]` 做 `zip`——无 clamp、无逐抽头边界检查，
+  是内部输出（表两端各 `count / 2` 个之外的全部）走的唯一路径；
+- **后缀**：`tap >= tail`，每个抽头都读 `input[last]`。
+
+`low_pass_decimate_into` 的 `base` 仍是 `(index * 2) - center`（隔点抽取）。
+
+### 为什么逐位相同
+
+**抽头仍按 `0..count` 顺序访问、贡献同样的值**（`input[0]`、`input[base + tap]`、`input[last]`），
+所以浮点加法**发生的顺序一字不变**，`acc` 的每一个中间值都与旧循环相同——这是逐位相同，不是近似。
+（`clamp` 只选地址，不参与算术；编译器不许重排浮点加法。）`crates/synth-core/src/dsp/sampler.rs`
+的两条单测用 `to_bits()` 钉住这件事。
+
+### Rust 逐位单测（覆盖表）
+
+`the_hoisted_edge_clamp_is_bit_identical_to_the_clamped_loop`：新实现 vs **内联复刻的旧 clamp 循环**，
+`to_bits()` 逐元素比对（`low_pass_into` 与 `low_pass_decimate_into` 各一遍）：
+
+| 维度 | 取值 |
+| :--- | :--- |
+| `len` | 32 / 64 / `MIN_LEVEL_LEN`(256) / 263 / 1024 / 4096 |
+| cutoff | `LEVEL_NYQUIST`(0.25) / `LEVEL_NYQUIST * 0.5`(0.125) |
+| taps | `chain_taps(0)`=192（早段）/ `chain_taps(3)`=96（后段） |
+| 输入 | `wrapping_mul` LCG（无 `rand`） |
+| 比对 | `to_bits()` 逐元素相等 |
+
+32 / 64 比核短，几乎每个输出都吃前缀或后缀；256 起是常规情形。另有一条
+`the_edge_runs_read_the_first_and_last_sample` 用 8 抽头小核、4 采样输入、`base ∈ {-7,-1,0,1,3,9}`
+（两端 clamp / 单端 clamp / 内部）直接钉 `low_pass_at` 的边界。
+
+### 真 wasm A/B 计时（同机同探针 best-of-5，只计 `gs_sample_import`）
+
+探针 `.tmp/p910-cost.mjs`，两个核都用**同一个 node 进程外的 harness**、字节内嵌的改前/改后
+`synth_core.wasm`，逐轮交替（BEFORE→AFTER→BEFORE→AFTER…）以抵消主机漂移。
+
+| 样本 | 改前（旧 clamp 循环） | 改后（clamp 外提） | 轮内比值 |
+| :--- | ---: | ---: | ---: |
+| 32768 点 | 37.1 / 29.3 / 29.8 ms（min 29.3） | 17.7 / 15.9 / 19.0 ms（min 15.9） | 2.10× / 1.84× / 1.57× |
+| 1 s（48000 点） | 50.8 / 87.1 / 51.7 ms（min 50.8） | 41.8 / 22.9 / 27.5 ms（min 22.9） | 1.22× / 3.80× / 1.88× |
+| 4 s（192000 点） | 323.3 / 260.0 / 408.8 ms（min 260.0） | 174.7 / 120.1 / 171.8 ms（min 120.1） | 1.85× / 2.17× / 2.38× |
+
+- **比值按轮内成对算**，因为这台主机的绝对值在同一份代码上就能差 2–3 倍（P9.8 §代价 已记这条；
+  本会话在**同一份改前 wasm** 上读到过 4 s = 231.7 / 239.0 / 260.0 ms，而更早一次是 511.5 ms）。
+  跨会话不能比，只有轮内成对可信。
+- 结论：**4 s 约 1.9×（轮内 1.85 / 2.17 / 2.38），与 P9.8 反推的「clamp 约值 1.9×」一致**；
+  32768 点也稳定约 1.6–2.1×。1 s 那一档在改后落进了 41.8/22.9/27.5，离散最大，不作强结论。
+
+### 逐位不变的端到端证据
+
+- `test:dsp` **0.06147**（改前 = 改后）；`verify:dsp:2x` **0.061703**（改前 = 改后）。
+- `verify:presets` **91 presets unchanged · ABI 8**（改前 = 改后）；`verify:presets:2x` 同。
+- `verify:audio`：**135 条 `✓` 的正文改前/改后逐行相同**——把唯一一条与 CPU 速度有关的
+  `worst-case block fits the budget` 那一行的百分比归一化后 `diff` 为空。采样器四条地板读数
+  一字不动：高音 **−86.4 / −90.1 / −92.7**、键盘顶端最差 **−81.0**、低音最差 **−81.9**、
+  第二把尺子 **−90.1 / −147.9**。（这条门禁在**改前也 FAIL**：`141% of 2667 µs`，改后 `157%`，
+  是主机速度问题，不是本批引入的；除它之外 135 条全绿。）
+- **导入 → 渲染 sha256**（`.tmp/p910-import-render-hash.mjs`：确定性 4 s / 48 kHz 单声道 WAV →
+  `gs_sample_import` → 5 个音的固定乐句、160 块立体声 f32 全字节喂 SHA-256）：
+  改前 = 改后 = `c600335d…dda094a`，`import code 0`，WAV 本身 `fcaee2d8…687ca2`。
+
+### 体积（如实申报，阈值未动）
+
+`node zlib level 9`（门禁同款口径，不写文件名/mtime）：
+
+| 核 | 改前 raw | 改后 raw | Δ | 改前 gzip9 | 改后 gzip9 | Δ |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| SIMD `synth_core.wasm` | 217 264 | 217 971 | +707 | 76 775 | **76 892** | **+117** |
+| scalar `synth_core_scalar.wasm` | 203 281 | 203 996 | +715 | 73 976 | **74 127** | **+151** |
+
+- **SIMD gzip 76 892 B > `wasm: 75 * 1024 = 76 800 B`，超 92 字节**（改前 76 775 B 余 25 B）。
+  这是父代理要记账的 rebase，本批不动 `scripts/verify-budget.mjs`。
+- 口径提醒：**别用 `gzip -9 -c file`**，它把原文件名/mtime 写进头部，同内容不同路径能差 9–11 字节；
+  用 `node -e "console.log(require('zlib').gzipSync(require('fs').readFileSync(process.argv[1])).length)"`。
+
+### 自证（全部还原）
+
+1. **后缀边界写错**（`tail = count` 而不是 `(last + 1 - base).clamp(..)`）→ 两条单测**红**：
+   `low_pass_into differs at len 32 cutoff 0.25 taps 192`、`base -1`。还原后 17 passed 绿。
+2. **累加顺序写错**（后缀提到主体之前，值相同、顺序不同）→ 逐位单测**红**
+   （`differs at len 32 cutoff 0.25 taps 192`），而纯值测试不会红——证明这条测试检验的是**位**，
+   不是「差不多」。
+
+### 未竟
+
+- 只剩 4 s 那一档稳定拿到约 1.9×；1 s 档离散大，要更硬的数字得在安静主机上重测。
+- 抽头数（192/96）与滤波器形状一字未动；§一.25 的 128 仍是待拍板的声学交易。
