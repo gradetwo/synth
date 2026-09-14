@@ -68,7 +68,17 @@ npm run release -- --check           # 只做发布前校验（`npm run verify` 
 整链 `verify`。
 
 **发布（快轨）**：`npm run release:fast -- <version>`（即 `release.mjs --skip-verify --skip-e2e`）——
-preflight → package → deploy → 线上哈希核对 → tag，几分钟内完成。前提是快轨已绿、工作树干净。
+preflight → package → **产物门禁** → deploy → 线上哈希核对 → tag，几分钟内完成。前提是快轨已绿、工作树干净。
+
+> **产物门禁不许跳（2026-09-15 补）**：`--skip-verify` 只该跳过**慢**链。`scripts/release.mjs` 现在在
+> `npm run package` **之后无条件**跑 `verify:ci`、`verify:dist`、`verify:budget`——它们量的是**刚构建出来的
+> `dist/`**（秒级、确定性、不需要浏览器、与负载无关），所以它们属于「发布」而不属于「慢」。
+> 这条洞是 **v2.1.0** 撞出来的：那个 tag 的 `dist total` 是 **1619.6 KB / 线 1619.0**（更新记录 chunk 自己涨的），
+> 而 `release:fast` 既没跑 `verify` 也没跑体积门禁 ⇒ **发布路径对「产物超线」完全无感**，CI 会在第 10 步红。
+> 同一版还暴露了链的**第一步**：clippy 1.98 把 `approx_constant` 变成 deny-by-default，打中 `sampler.rs` 里
+> 一条测试断言的 `0.7071` ⇒ `verify:clippy` EXIT=101。**工具链升级会让老代码变红**，而 CI 用
+> `dtolnay/rust-toolchain@stable`、仓库没有 `rust-toolchain.toml`：要么钉版本，要么把
+> `rustc/clippy --version` 打进 CI 日志（**未做，登记在 §一.39①**）。
 
 **慢轨（每 3–4 个版本一次）**：另开一个 agent 在**安静主机**上做全面回归 —— 完整 `npm run verify`、
 全量 E2E（app 套件 + 隔离的 perf 套件）、视觉基线、**WebKit 与 Firefox**（`npm run nightly -- --all`；
@@ -79,6 +89,16 @@ CI 侧同样只在 schedule 的 `nightly` 作业里跑）、
 
 这样分工的前提是**快轨必须真的跑**：慢轨是补网，不是替代品。任何一批如果连定向门禁都没跑就发布，
 那就不是快轨而是没有轨。
+
+> **慢轨自身的两条诚实性修复（2026-09-15）**，起因都是「把启动失败写成了测试失败」：
+> ① `scripts/nightly-e2e.mjs` 现在识别「套件根本没启动」（**没有任何一条用例给出裁决** + 非零退出：
+> 端口被残留的 preview 占着、浏览器没装、没有 display），并在**空闲端口重试一次**，而不是把
+> `0 passed / 0 failed` 记成 `❌ fail`（§一.20④）；`--self-test` 用真实 Playwright 输出把这套判断钉住。
+> ② `PLAYWRIGHT_BROWSERS_PATH` **只在目录存在时才钉**（worktree 里通常没有 `.pw-browsers`，浏览器在
+> `~/.cache/ms-playwright`），并且**缺浏览器会在启动前具名报错**——第三次全面回归为此白跑了一整轮 Firefox：
+> 它把「浏览器没装」报成了 **141 条用例失败**，与真红完全无法区分（§一.35②）。
+> ③ 顺带记一条：**`npm run nightly` 不是只读命令**，它会写受版本控制的 `docs/notes/nightly.md`；
+> 在冻结 worktree 里跑完记得还原（第三次回归就是这么做的）。
 
 ## 保留 N 个版本：`release/retained/`（P12.4）
 
