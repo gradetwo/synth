@@ -61,7 +61,9 @@ export default {
       layer: {
         render: 'wasm core in Node (scripts/lib/render-core.mjs)',
         rulers: 'scripts/lib/audio-ruler.mjs',
-        excludes: 'AudioWorklet, AudioParam automation, Web Audio graph (browser layer is P13.4)',
+        excludes:
+          'AudioWorklet, AudioParam automation and the Web Audio graph — those are the browser layer, ' +
+          'a separate entry point ("npm run mcp:ui", tools in mcp/ui/tools/, port 4796)',
       },
     };
   },
