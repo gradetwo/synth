@@ -59,6 +59,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
   NOTES_PATH,
@@ -132,8 +133,26 @@ if (!(subsetName in SUBSETS)) {
 }
 const subset = [...new Set(SUBSETS[subsetName])];
 const update = flag('update');
-const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH || join(root, '.pw-browsers');
-const env = { ...process.env, PLAYWRIGHT_BROWSERS_PATH: browsersPath };
+/**
+ * Where the browsers live.
+ *
+ * Pinning `PLAYWRIGHT_BROWSERS_PATH` to `.pw-browsers` inside the worktree is
+ * right when that directory exists (it is what an isolated checkout sets up),
+ * but the checkout usually has none: Playwright's own default is
+ * `~/.cache/ms-playwright`, and pointing the variable at a directory that does
+ * not exist turns "the browser is not here" into *141 test failures* — which
+ * reads exactly like a product regression and cost the second sweep a full
+ * Firefox pass (§一.35②, still live when the third sweep ran it).
+ *
+ * So: an explicit variable wins, the worktree copy wins only if it is there,
+ * and otherwise the variable is left unset for Playwright to resolve. Whatever
+ * it resolves to, a browser that is not installed is now a named error before
+ * anything is launched, not a wall of red.
+ */
+const localBrowsers = join(root, '.pw-browsers');
+const pinnedBrowsers = process.env.PLAYWRIGHT_BROWSERS_PATH || (existsSync(localBrowsers) ? localBrowsers : null);
+const env = { ...process.env };
+if (pinnedBrowsers) env.PLAYWRIGHT_BROWSERS_PATH = pinnedBrowsers;
 
 mkdirSync(logDir, { recursive: true });
 
@@ -163,6 +182,27 @@ if (display !== 'auto') {
 for (const engine of engines) {
   if (!['chromium', 'webkit', 'firefox'].includes(engine)) die(`unknown engine "${engine}"`);
 }
+/**
+ * A browser that is not installed is a launch problem, and it has to be said
+ * before Playwright runs: an unset `PLAYWRIGHT_BROWSERS_PATH` used to point at a
+ * `.pw-browsers` that was not there, and the suite reported it as 141 failed
+ * tests. Naming the path (and the fix) costs one line and saves a sweep.
+ */
+{
+  const browsersRoot =
+    pinnedBrowsers ??
+    (process.platform === 'win32'
+      ? join(process.env.LOCALAPPDATA ?? '', 'ms-playwright')
+      : join(homedir(), '.cache', 'ms-playwright'));
+  const installed = existsSync(browsersRoot) ? readdirSync(browsersRoot) : [];
+  const missing = engines.filter((engine) => !installed.some((entry) => entry.startsWith(engine)));
+  if (missing.length) {
+    die(
+      `no ${missing.join(', ')} browser under ${browsersRoot} — run "npx playwright install ${missing.join(' ')}", ` +
+        'or point PLAYWRIGHT_BROWSERS_PATH at the directory that has it',
+    );
+  }
+}
 if (engines.includes('webkit') && chosen === 'headless') {
   console.error(
     '[nightly] WebKit headless: interactions work through e2e/fixtures.ts, but the visual subset reads pixels and ' +
@@ -189,6 +229,124 @@ const run = (command, commandArgs, options = {}) => {
   const result = spawnSync(command, commandArgs, { cwd: root, env, encoding: 'utf8', ...options });
   return { code: result.status ?? 1, out: `${result.stdout ?? ''}${result.stderr ?? ''}` };
 };
+
+/**
+ * Messages that mean "the suite never started", as opposed to "a test failed".
+ *
+ * The nightly's job is to be the record, and the first version of this wrote a
+ * port conflict down as `❌ fail — 0 passed, 0 failed (5s)`, which reads like a
+ * product regression and sent a whole sweep chasing it (§一.20④). Playwright
+ * fails a handful of ways before a single test runs, and every one of them
+ * leaves the same signature: no test result at all.
+ */
+const LAUNCH_FAILURE_SIGNATURES = [
+  /EADDRINUSE/,
+  /is already used/,
+  /reuseExistingServer/,
+  /Executable doesn't exist/,
+  /Host system is missing dependencies/,
+  /Looks like you launched a headed browser/,
+  /browserType\.launch/,
+];
+
+/**
+ * Did the run fail *before* any test produced a verdict?
+ *
+ * `passed === 0 && failed === 0` with a non-zero exit is the invariant: a real
+ * test failure always reports at least one, and Playwright prints no summary at
+ * all when it never reached the suite. The signature list only sharpens the
+ * message — the decision does not depend on recognising a particular one, so a
+ * launch failure nobody has seen before still gets its retry.
+ */
+export function looksLikeLaunchFailure(out, { passed, failed, exited }) {
+  if (passed > 0 || failed > 0) return false;
+  if (exited === 0) return false;
+  if (/No tests found/i.test(out)) return false;
+  return true;
+}
+
+/** Why we think it was a launch failure, for the log line. */
+export const launchFailureReason = (out) =>
+  LAUNCH_FAILURE_SIGNATURES.find((pattern) => pattern.test(out))?.source ?? 'no test ran';
+
+/**
+ * The first port at or above `start` that nothing is listening on, or `null`.
+ *
+ * The probe runs in a child process because this whole file is built on
+ * `spawnSync`: a synchronous bind is the one thing Node does not offer from
+ * here. `127.0.0.1` is what the preview server binds, so that is what is
+ * tested.
+ */
+export function findFreePort(start, tries = 10) {
+  const probe = `
+    const net = require('node:net');
+    const [start, tries] = process.argv.slice(1).map(Number);
+    const attempt = (port) => new Promise((resolve) => {
+      if (port >= start + tries) return resolve(null);
+      const server = net.createServer();
+      server.once('error', () => resolve(attempt(port + 1)));
+      server.once('listening', () => server.close(() => resolve(port)));
+      server.listen(port, '127.0.0.1');
+    });
+    attempt(start).then((port) => { console.log(port ?? ''); process.exit(port ? 0 : 1); });
+  `;
+  const result = spawnSync(process.execPath, ['-e', probe, String(start), String(tries)], { encoding: 'utf8' });
+  const port = Number((result.stdout ?? '').trim());
+  return result.status === 0 && Number.isInteger(port) && port > 0 ? port : null;
+}
+
+// `nightly-report.mjs --self-test` verifies the table; this verifies the one
+// piece of judgement the nightly makes about Playwright's output, with the
+// strings that actually produced the wrong row.
+if (flag('self-test')) {
+  const cases = [
+    {
+      name: 'a port conflict is a launch failure',
+      out: 'Error: http://localhost:4783 is already used, make sure that nothing is running on the port/url or set reuseExistingServer:true in config.webServer.',
+      verdict: { passed: 0, failed: 0, exited: 1 },
+      expected: true,
+    },
+    {
+      name: 'EADDRINUSE is a launch failure',
+      out: 'Error: listen EADDRINUSE: address already in use 127.0.0.1:4783',
+      verdict: { passed: 0, failed: 0, exited: 1 },
+      expected: true,
+    },
+    {
+      name: 'an unknown launch failure is still a launch failure',
+      out: 'Error: something nobody has seen before',
+      verdict: { passed: 0, failed: 0, exited: 1 },
+      expected: true,
+    },
+    {
+      name: 'real test failures are not',
+      out: '  1 failed\n    [chromium] › e2e/roll.spec.ts:181:3 › drag\n  130 passed (12.0m)',
+      verdict: { passed: 130, failed: 1, exited: 1 },
+      expected: false,
+    },
+    {
+      name: 'a green run is not',
+      out: '  130 passed (12.0m)',
+      verdict: { passed: 130, failed: 0, exited: 0 },
+      expected: false,
+    },
+    {
+      name: 'an empty selection is not',
+      out: 'No tests found',
+      verdict: { passed: 0, failed: 0, exited: 1 },
+      expected: false,
+    },
+  ];
+  let bad = 0;
+  for (const entry of cases) {
+    const got = looksLikeLaunchFailure(entry.out, entry.verdict);
+    const ok = got === entry.expected;
+    if (!ok) bad += 1;
+    console.log(`  ${ok ? '✓' : '✗'} ${entry.name}${ok ? '' : ` — expected ${entry.expected}, got ${got}`}`);
+  }
+  console.log(`[nightly] self-test ${bad ? `FAIL — ${bad} case(s)` : 'PASS'}`);
+  process.exit(bad ? 1 : 0);
+}
 
 /**
  * The display path an engine gets, and the command that gives it one. Both are
@@ -252,6 +410,55 @@ function localDay(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+/**
+ * The port `playwright.config.ts` will bind, read out of it rather than copied:
+ * the two have to agree, and the only way to be sure is to parse the one that
+ * actually listens.
+ */
+const DEFAULT_PORT = (() => {
+  const config = readFileSync(join(root, 'playwright.config.ts'), 'utf8');
+  return Number(/process\.env\.GS1_E2E_PORT\s*\?\?\s*(\d+)/.exec(config)?.[1] ?? 4783);
+})();
+
+/**
+ * Launch one engine's suite with the display path it needs, and clean up the
+ * compositor afterwards. Split out of the loop so a retry can run the same
+ * thing again with a different port.
+ */
+function launchEngine(engine, cmd, runEnv, initialHow) {
+  let how = initialHow;
+  if (engine === 'webkit' && chosen === 'weston') {
+    const weston = startWeston();
+    if (weston.failed) {
+      console.error('[nightly] weston did not come up; running WebKit headless');
+      how = 'headless';
+      return { result: run('npx', cmd, { env: runEnv }), how };
+    }
+    runEnv.XDG_RUNTIME_DIR = weston.runtime;
+    runEnv.WAYLAND_DISPLAY = weston.socket;
+    try {
+      return { result: run('npx', [...cmd, '--headed'], { env: runEnv }), how };
+    } finally {
+      try {
+        process.kill(-weston.pid, 'SIGTERM');
+      } catch {
+        try {
+          process.kill(weston.pid, 'SIGTERM');
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+  }
+  if (engine === 'webkit' && chosen === 'xvfb') {
+    return { result: run('xvfb-run', ['-a', 'npx', ...cmd, '--headed'], { env: runEnv }), how };
+  }
+  if (engine === 'webkit' && chosen === 'desktop') {
+    return { result: run('npx', [...cmd, '--headed'], { env: runEnv }), how };
+  }
+  return { result: run('npx', cmd, { env: runEnv }), how };
+}
+
 const stamp = localDay();
 const rows = [];
 let failures = 0;
@@ -260,49 +467,45 @@ try {
   for (const engine of engines) {
     const logPath = join(logDir, `${stamp}-${engine}.log`);
     const cmd = commandFor(engine);
-    const runEnv = envFor(engine);
-    const started = Date.now();
-    /** The display path this engine actually got, for the log and the record. */
+    // The port is machine-wide, not per-worktree (`playwright.config.ts`), so a
+    // preview server another run left behind makes this one fail before a single
+    // test starts. Retry once on a free port rather than writing that down as an
+    // engine failure — the record is the point of this script.
+    const basePort = Number(env.GS1_E2E_PORT ?? DEFAULT_PORT);
+    let runEnv = envFor(engine);
     let how = howFor(engine);
     let result;
-    if (engine === 'webkit' && chosen === 'weston') {
-      const weston = startWeston();
-      if (weston.failed) {
-        console.error('[nightly] weston did not come up; running WebKit headless');
-        how = 'headless';
-        result = run('npx', cmd, { env: runEnv });
-      } else {
-        runEnv.XDG_RUNTIME_DIR = weston.runtime;
-        runEnv.WAYLAND_DISPLAY = weston.socket;
-        try {
-          result = run('npx', [...cmd, '--headed'], { env: runEnv });
-        } finally {
-          try {
-            process.kill(-weston.pid, 'SIGTERM');
-          } catch {
-            try {
-              process.kill(weston.pid, 'SIGTERM');
-            } catch {
-              /* already gone */
-            }
-          }
-        }
+    let passed = 0;
+    let failed = 0;
+    let seconds = 0;
+    const logs = [];
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const started = Date.now();
+      how = howFor(engine);
+      ({ result, how } = launchEngine(engine, cmd, runEnv, how));
+      seconds = Math.round((Date.now() - started) / 1000);
+      passed = Number(/ (\d+) passed/.exec(result.out)?.[1] ?? 0);
+      failed = Number(/ (\d+) failed/.exec(result.out)?.[1] ?? 0);
+      logs.push(
+        attempt === 1
+          ? result.out
+          : `\n\n===== retry on port ${runEnv.GS1_E2E_PORT} (${launchFailureReason(result.out)}) =====\n\n${result.out}`,
+      );
+      if (attempt === 2 || !looksLikeLaunchFailure(result.out, { passed, failed, exited: result.code })) break;
+      const next = findFreePort(basePort + 1);
+      if (next === null) {
+        console.error(`[nightly] ${engine}: the suite never started and no free port was found near ${basePort}`);
+        break;
       }
-    } else if (engine === 'webkit' && chosen === 'xvfb') {
-      result = run('xvfb-run', ['-a', 'npx', ...cmd, '--headed'], { env: runEnv });
-    } else if (engine === 'webkit' && chosen === 'desktop') {
-      result = run('npx', [...cmd, '--headed'], { env: runEnv });
-    } else {
-      result = run('npx', cmd, { env: runEnv });
+      console.error(
+        `[nightly] ${engine}: the suite never started (${launchFailureReason(result.out)}) after ${seconds}s — retrying on port ${next}`,
+      );
+      runEnv = { ...runEnv, GS1_E2E_PORT: String(next) };
     }
     console.log(
       `[nightly] ${engine}: ${how} · subset=${subsetName} (${subset.length || 'all'} files) · npx ${cmd.join(' ')}`,
     );
-    const seconds = Math.round((Date.now() - started) / 1000);
-    writeFileSync(logPath, result.out);
-
-    const passed = Number(/ (\d+) passed/.exec(result.out)?.[1] ?? 0);
-    const failed = Number(/ (\d+) failed/.exec(result.out)?.[1] ?? 0);
+    writeFileSync(logPath, logs.join(''));
     const status = result.code === 0 ? 'pass' : 'fail';
     if (result.code !== 0) failures += 1;
     console.log(`[nightly] ${engine}: ${status} — ${passed} passed, ${failed} failed (${seconds}s) · ${logPath}`);

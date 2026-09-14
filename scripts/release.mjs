@@ -380,6 +380,23 @@ async function main() {
   step('package release artefacts');
   run('npm', ['run', 'package']);
 
+  // The gates the *payload we just built* can break, and the reason a fast
+  // release is still a checked release.
+  //
+  // v2.1.0 shipped 0.6 KB over the dist budget exactly by skipping these:
+  // `release:fast` is preflight → package → deploy, so `--skip-verify` took the
+  // cheap, deterministic, browser-free size and wiring gates down with the slow
+  // chain it was meant to skip. The tag was red — `verify:budget` is required by
+  // `npm run verify`, by `ci.yml` and by `verify-ci.mjs` — and nothing in the
+  // release path could notice (§一.39).
+  //
+  // They are run unconditionally rather than only under `--skip-verify`: they
+  // measure the artefact, not the source tree, so they belong after `package`
+  // either way, and a second few seconds is cheaper than a release that has to
+  // be rolled back over a number the build itself printed.
+  step('payload gates (they measure what was just built)');
+  for (const gate of ['verify:ci', 'verify:dist', 'verify:budget']) run('npm', ['run', gate]);
+
   const distHash = indexHash(readFileSync(resolve(root, 'dist/index.html'), 'utf8'));
   if (!distHash) fail('package: no assets/index-*.js hash in dist/index.html');
   log(`[release]   built index hash ${distHash}`);

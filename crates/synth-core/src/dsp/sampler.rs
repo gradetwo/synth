@@ -1032,7 +1032,14 @@ mod tests {
                 .sqrt() as f32;
             if reference == 0.0 {
                 reference = rms;
-                assert!((reference - 0.7071).abs() < 0.02, "the loop should be a unit sine: {reference}");
+                // The RMS of a unit sine. Written as the constant rather than
+                // `0.7071`: clippy's `approx_constant` lint is deny-by-default
+                // since 1.98 and turned this line into a hard `verify:clippy`
+                // failure in *this* test (the sweep found it, §一.39).
+                assert!(
+                    (reference - core::f32::consts::FRAC_1_SQRT_2).abs() < 0.02,
+                    "the loop should be a unit sine: {reference}"
+                );
             }
             // The windowed sinc is flat to a hundredth of a dB in band and the
             // chain filters pass 1 kHz at every level, so the level must not move
