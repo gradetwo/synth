@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '2.0.7',
+    version: '2.1.0',
     date: '2026-09-14',
     kind: 'fix',
     items: [
       [
-        '**修好一批「选了却没用上」的音色与效果。** 浏览器里有一层参数范围挡在引擎前面：选**波表**会被悄悄换成噪声、选 **SEM / 共振峰 / 梳状**滤波会被换成陷波、效果槽里选**瞬态整形**实际跑的是 EQ。受影响的工厂音色共 **10 条**（4 条波表、`graphswell`、`phonk`、`robotvoice` 与 3 条 SEM 铺底）。现在这些选择真正到达引擎了——`wtorgan` 之类从「与噪声无法区分」变成正常的波表音色。另加了两道门禁（数据门禁 + 真浏览器 E2E）确保不会再发生。',
-        '**A batch of choices that were selected but never reached the engine.** A parameter range in the browser sat in front of the core: picking a **wavetable** was quietly replaced by noise, a **SEM, formant or comb** filter became a notch, and choosing **transient shaping** for an effect slot actually ran the EQ. Ten factory patches were affected -- four wavetables, `graphswell`, `phonk`, `robotvoice` and the three SEM pads. Those choices now arrive: `wtorgan` and friends went from "indistinguishable from noise" to a proper wavetable tone. Two new gates (a data check and a real-browser test) keep this from happening again.',
+        '**内部重构：把音频测量的「尺子」抽成共用模块。** 这次没有任何声音或界面变化——但它是一个**给后续 AI 工具接口（P13）铺路**的准备动作：门禁脚本里那套在 Node 里跑真 wasm 的渲染引导、以及两把测量尺子（7 项 Blackman-Harris 与 Hann 窗探针），现在是一份**被门禁和将来的工具共用**的实现，不再是各写一份。验收标准是**门禁读数逐字节不变**（136 行输出哈希一致），也就是说这次改动**证明了它没有改变任何测量结果**。',
+        '**Internal refactor: the audio rulers became a shared module.** Nothing changed in the sound or the interface -- this is groundwork for the tool interface other agents will use (P13): the harness that boots the real wasm core in Node and the two measurement rulers (the 7-term Blackman-Harris scan and the Hann-window probe) are now one implementation that both the gates and the coming tools call, instead of two copies that could drift apart. The acceptance was that **not one gate reading moves** (all 136 output lines hash-identical), so this change proves it changed no measurement.',
       ],
     ],
   };
