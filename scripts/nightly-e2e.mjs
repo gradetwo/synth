@@ -41,12 +41,20 @@
  * the nightly's job (it gates every commit), but `--engines=chromium` works and
  * then the visual spec compares against its real baselines.
  *
- * Headed on a compositor is not a preference: headless WebKit on Linux never
- * fires requestAnimationFrame, so Playwright's pre-click stability check waits
- * for ever and every click times out. Weston's headless backend is the standard
- * local path now — measured 1.8 fps against Xvfb's 0.7 on this machine, and it
- * uses the GPU when `/dev/dri` is there (see docs/notes/compat.md). Xvfb stays
- * as a fallback, and a real desktop session is fastest of all.
+ * Headed on a compositor is still the default, but the reason is narrower than
+ * this comment used to claim. Headless WebKitGTK on Linux *does* fire
+ * requestAnimationFrame -- a blank page reaches ~55 fps here -- it just cannot
+ * rasterise this app cheaply, so the app page produces ~0 frames/s and
+ * Playwright's frame-based actionability waits crawl (every `locator.click()`
+ * took 8-30 s; the measurements are in docs/notes/compat.md §3). The test-side
+ * fixture `e2e/fixtures.ts` replaces those frame-gated interactions for WebKit,
+ * and the non-pixel subsets now run headless in minutes (core subset: 35 passed
+ * / 3 failed in 23 min). What still needs a compositor is anything that reads
+ * pixels: `locator.screenshot()` never returns without frames, so the visual
+ * subset must stay on Weston. Weston's headless backend is the standard local
+ * path — measured 1.8 fps against Xvfb's 0.7 on this machine, and it uses the
+ * GPU when `/dev/dri` is there (see docs/notes/compat.md). Xvfb stays as a
+ * fallback, and a real desktop session is fastest of all.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -156,7 +164,10 @@ for (const engine of engines) {
   if (!['chromium', 'webkit', 'firefox'].includes(engine)) die(`unknown engine "${engine}"`);
 }
 if (engines.includes('webkit') && chosen === 'headless') {
-  console.error('[nightly] WebKit headless never fires requestAnimationFrame — clicks will time out (see docs/notes/compat.md)');
+  console.error(
+    '[nightly] WebKit headless: interactions work through e2e/fixtures.ts, but the visual subset reads pixels and ' +
+      'needs a real frame clock — locator.screenshot() will hang without a compositor (see docs/notes/compat.md)',
+  );
 }
 
 /**
