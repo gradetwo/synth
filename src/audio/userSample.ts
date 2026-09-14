@@ -93,7 +93,10 @@ export async function importUserSample(file: File): Promise<UserSample> {
 
   const result = await engine.importSample(samples, decoded.sampleRate);
   if (result.code > 0) {
-    const code = result.code === 1 ? 'short' : result.code === 3 ? 'notFinite' : 'silent';
+    // 4 is the core's "the mipmap does not fit the arena" (P9.8): the sample is
+    // refused, not truncated, and the picker shows `smp.err.noRoom`.
+    const code =
+      result.code === 1 ? 'short' : result.code === 3 ? 'notFinite' : result.code === 4 ? 'noRoom' : 'silent';
     throw new WaveImportError(code, 'sample refused by the core');
   }
   current = { name: file.name, samples: new Float32Array(samples), sampleRate: decoded.sampleRate };
