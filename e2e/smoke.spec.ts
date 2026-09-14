@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 /**
  * Browser smoke test: boots the built PWA, starts the audio engine, plays a

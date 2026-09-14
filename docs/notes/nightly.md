@@ -21,7 +21,9 @@
 
 `显示` 是这次实际走的显示路径：`weston`（headless Weston，本机默认）、`xvfb`（回退）、
 `desktop`（真实会话，`--display=desktop`）、`headless`（没有显示服务器；Chromium/Firefox 用它，
-WebKit 在 headless 下完全不触发 rAF）。它决定耗时与稳定性，所以跨显示的通过率对比只是近似。
+WebKit 在 headless 下交不出应用页的帧——不是不触发 rAF，见 `docs/notes/compat.md` §3.1；
+`e2e/fixtures.ts` 让按帧的交互不再等帧，但读像素的视觉子集仍要有合成器）。它决定耗时与稳定性，
+所以跨显示的通过率对比只是近似。
 
 | 日期 | 内核 | 显示 | 结果 | 通过 | 失败 | 通过率 | 用时 |
 | :--- | :--- | :--- | :--- | ---: | ---: | ---: | ---: |
