@@ -16,6 +16,13 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = resolve(root, 'dist');
 
+// The release version, baked into the worker so the update banner can name the
+// build it is about to install. The content hash below says *that* two builds
+// differ; it cannot say which release either one is, and the page has no other
+// way to ask the waiting worker (`registration.waiting.scriptURL` is always the
+// same `sw.js`).
+const appVersion = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version;
+
 function walk(dir) {
   const out = [];
   for (const entry of readdirSync(dir)) {
@@ -47,6 +54,7 @@ const precache = precacheFiles.map((f) => `./${f.rel}`);
 const totalKb = precacheFiles.reduce((sum, f) => sum + statSync(f.abs).size, 0) / 1024;
 
 const sw = `/* GROOVE SYNTH GS-1 service worker — generated, do not edit. */
+const VERSION = '${appVersion}';
 const CACHE = 'gs1-${version}';
 const PRECACHE = ${JSON.stringify(precache, null, 2)};
 
@@ -65,7 +73,20 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
+  const data = event.data;
+  if (!data) return;
+  if (data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
+  // The update banner asks the *waiting* worker what it carries, over a port
+  // the page transfers with the message. The running page cannot answer this
+  // itself: after a rollback its own version is the one being replaced, so a
+  // banner built from it would name the wrong release. A page that never gets
+  // an answer shows no version rather than that one.
+  if (data.type === 'GET_VERSION' && event.ports && event.ports[0]) {
+    event.ports[0].postMessage({ type: 'VERSION', version: VERSION });
+  }
 });
 
 /**
@@ -150,4 +171,4 @@ self.addEventListener('fetch', (event) => {
 `;
 
 writeFileSync(join(dist, 'sw.js'), sw);
-console.log(`[sw] dist/sw.js — cache gs1-${version}, ${precache.length} files, ${totalKb.toFixed(1)} KB`);
+console.log(`[sw] dist/sw.js — v${appVersion}, cache gs1-${version}, ${precache.length} files, ${totalKb.toFixed(1)} KB`);

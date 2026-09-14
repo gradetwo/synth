@@ -34,6 +34,47 @@ export function applyUpdate() {
   waiting.postMessage({ type: 'SKIP_WAITING' });
 }
 
+/** How long the banner waits for the waiting worker to name itself. */
+const VERSION_TIMEOUT_MS = 1500;
+
+/**
+ * The version of the build the waiting worker will install.
+ *
+ * `registration.waiting.scriptURL` is always the same `sw.js`, so the only
+ * source for this is the worker itself: `scripts/gen-sw.mjs` bakes the
+ * `package.json` version into the generated file, which answers `GET_VERSION`
+ * over the `MessageChannel` port transferred with the message. The *running*
+ * bundle's `CHANGELOG_HEAD` must not be used instead — after a rollback it names
+ * the version being rolled back, while the button installs the rollback target.
+ *
+ * Any failure or timeout resolves to `null`, and the banner then shows no
+ * version at all rather than a wrong one.
+ */
+export function waitingVersion(): Promise<string | null> {
+  const worker = pending?.waiting;
+  if (!worker) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    // Both paths can fire; whichever does first cancels the other (a settled
+    // promise would ignore the second resolve anyway, this just stops the work).
+    const finish = (value: string | null) => {
+      clearTimeout(timer);
+      channel.port1.onmessage = null;
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), VERSION_TIMEOUT_MS);
+    channel.port1.onmessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; version?: unknown } | null;
+      finish(data?.type === 'VERSION' && typeof data.version === 'string' ? data.version : null);
+    };
+    try {
+      worker.postMessage({ type: 'GET_VERSION' }, [channel.port2]);
+    } catch {
+      finish(null);
+    }
+  });
+}
+
 /**
  * Ask the browser for a fresh build right now.
  *
