@@ -745,6 +745,61 @@ export const DEMO_SONGS: SongSpec[] = [
     ['Am', 'E7', 'Am', 'E7', 'Am', 'E7', 'Am', 'Am'],
     { per: 2, pattern: 'pulse', passes: 5 },
   ),
+  withAccompaniment(
+    'saints',
+    ['圣者的行进', 'When the Saints Go Marching In'],
+    'Traditional American',
+    pd('美国传统灵歌'),
+    108,
+    'c4/1 e4/1 f4/1 g4/3 c4/1 e4/1 f4/1 g4/3 c4/1 e4/1 f4/1 g4/2 e4/2 c4/1 e4/1 d4/3 ' +
+      'e4/1 e4/1 d4/1 c4/3 c4/1 e4/1 g4/1 g4/3 f4/1 f4/1 e4/1 d4/1 c4/2 c4/1 e4/1 g4/1 g4/3',
+    ['C', 'C', 'C', 'F', 'C', 'C', 'G7', 'C', 'C', 'C', 'G7', 'C'],
+    { pattern: 'stride', passes: 3, octave: 1 },
+  ),
+  withAccompaniment(
+    'sakura',
+    ['樱花', 'Sakura Sakura'],
+    'Traditional Japanese',
+    pd('日本传统民谣（江户时代）'),
+    80,
+    'a4/1 a4/1 b4/1 a4/1 b4/1 b4/1 a4/2 b4/1 b4/1 c5/1 b4/1 c5/1 c5/1 b4/2 ' +
+      'a4/1 a4/1 b4/1 a4/1 b4/1 b4/1 a4/2 b4/1 a4/1 f4/1 e4/1 f4/1 e4/2',
+    ['Am', 'Am', 'Em', 'Am', 'Am', 'Em', 'Am', 'F'],
+    { per: 4, pattern: 'harp', passes: 3, octave: 1 },
+  ),
+  withAccompaniment(
+    'bachminuet',
+    ['G大调小步舞曲', 'Minuet in G'],
+    'C. Petzold',
+    pd('BWV Anh. 114'),
+    120,
+    'd5/1 g4/0.5 a4/0.5 b4/0.5 c5/0.5 d5/1 g4/1 g4/1 e5/1 c5/0.5 d5/0.5 e5/0.5 f#5/0.5 g5/1 g4/1 g4/1 ' +
+      'c5/0.5 d5/0.5 c5/0.5 b4/0.5 a4/1 b4/0.5 c5/0.5 b4/0.5 a4/0.5 g4/1 a4/1 b4/1',
+    ['G', 'G', 'D7', 'D7', 'G', 'G', 'C', 'C', 'G', 'D7'],
+    { per: 2, pattern: 'alberti', passes: 5, octave: 1 },
+  ),
+  withAccompaniment(
+    'frere',
+    ['雅克兄弟', 'Frère Jacques'],
+    'Traditional French',
+    pd('法国传统轮唱曲'),
+    100,
+    'c4/1 d4/1 e4/1 c4/1 c4/1 d4/1 e4/1 c4/1 e4/1 f4/1 g4/2 e4/1 f4/1 g4/2 ' +
+      'g4/0.5 a4/0.5 g4/0.5 f4/0.5 e4/1 c4/1 g4/0.5 a4/0.5 g4/0.5 f4/0.5 e4/1 c4/1 c4/1 g3/1 c4/2 c4/1 g3/1 c4/2',
+    ['C', 'C', 'C', 'C', 'C', 'C', 'G7', 'C'],
+    { per: 4, pattern: 'pulse', passes: 3, octave: 1 },
+  ),
+  withAccompaniment(
+    'londonderry',
+    ['伦敦德里小调', 'Londonderry Air'],
+    'Traditional Irish',
+    pd('爱尔兰传统民谣'),
+    72,
+    'd4/1.5 e4/0.5 f4/2 f4/1.5 g4/0.5 a4/3 a4/1.5 g4/0.5 f4/2 e4/1.5 d4/0.5 e4/3 ' +
+      'f4/1.5 e4/0.5 d4/2 f4/1.5 a4/0.5 g4/3 f4/1.5 e4/0.5 d4/2 d4/1.5 e4/0.5 f4/3',
+    ['D', 'D', 'G', 'D', 'A7', 'D', 'D', 'G', 'D', 'A7', 'D', 'D'],
+    { per: 3, pattern: 'broken', passes: 2, octave: 1 },
+  ),
   arpeggioExercise(),
   scaleExercise(),
 ];
