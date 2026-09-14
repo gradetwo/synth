@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures';
+import { hostAudioUnavailableReason } from './audio-host';
 
 /**
  * The monitor readout with nothing playing.
@@ -11,6 +12,11 @@ test('idle meter is stable and reads silence', async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/');
+  // A key can only move the meter if the engine runs, and the engine can only
+  // run where the host has an audio device. Skip with the reading otherwise:
+  // the alternative is asserting the host's missing sound card as a product red.
+  const hostSkip = await hostAudioUnavailableReason(page);
+  test.skip(hostSkip !== null, hostSkip ?? undefined);
   await page.getByRole('button', { name: /启动音频引擎/ }).click();
   await page.waitForTimeout(1200);
 

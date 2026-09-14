@@ -1,4 +1,5 @@
 import { expect, test, type Page } from './fixtures';
+import { hostAudioUnavailableReason } from './audio-host';
 
 /**
  * The P12.2 showcase patches, from the browser's side.
@@ -41,6 +42,10 @@ test.describe('P12.2 showcase presets', () => {
 
   test('every showcase preset loads and is audible', async ({ page }) => {
     await boot(page);
+    // Audibility needs a running engine, which needs a host with an audio
+    // device; without one every preset reads as silent. Skip with the reading.
+    const hostSkip = await hostAudioUnavailableReason(page);
+    test.skip(hostSkip !== null, hostSkip ?? undefined);
     const meter = page.locator('.vu-meter');
     const name = page.locator('.preset-name');
     const key = page.locator('.bkey').nth(4);

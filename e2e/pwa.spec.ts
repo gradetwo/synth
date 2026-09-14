@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { hostAudioUnavailableReason } from './audio-host';
 import { readFileSync } from 'node:fs';
 
 const APP_VERSION = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string })
@@ -37,6 +38,10 @@ test('boots with a service worker controlling the page', async ({ page }) => {
   // Wait for the worker to take control, then reload as a returning user would.
   await page.waitForFunction(() => navigator.serviceWorker?.controller != null, null, { timeout: 30_000 });
   await page.reload();
+  // A note can only produce audio on a host with an audio device; skip with the
+  // reading rather than report the missing sound card as a product red.
+  const hostSkip = await hostAudioUnavailableReason(page);
+  test.skip(hostSkip !== null, hostSkip ?? undefined);
   await page.getByRole('button', { name: /启动音频引擎/ }).click();
   await page.waitForTimeout(1200);
 

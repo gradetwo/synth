@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures';
+import { hostAudioUnavailableReason } from './audio-host';
 
 /**
  * Starting the engine.
@@ -54,6 +55,12 @@ test('a resume that is never answered still leaves a usable app', async ({ page 
 test('the gate stays up until the graph exists, and a reload is never a dead end', async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto('/');
+  // `引擎状态 running` needs a host that can run a context at all; on a machine
+  // with no audio device Firefox never leaves `suspended` (see
+  // `e2e/audio-host.ts`). Skip with the reading rather than report the host's
+  // missing sound card as a product red.
+  const hostSkip = await hostAudioUnavailableReason(page);
+  test.skip(hostSkip !== null, hostSkip ?? undefined);
   await page.waitForTimeout(1500);
 
   // A context exists (preload creates it) but nothing is playing yet: the gate
