@@ -7,16 +7,19 @@
 > + 核对线上资源 + 中文文档/更新记录同步**；**音频批次必须同时有时域与频域断言**；**工程/质量批次必须自证有效**
 > （故意改坏一处必须让门禁变红，并把证据写进文档）。
 
-## 一、现状（v1.97.0）
+## 一、现状（**v2.1.0**；以下数字第三/第四次全面回归实测，2026-09-14）
+
+> 这一节原来停在 v1.97.0，里面的红线（`0.030806/0.030946`、81 条指纹）与体积线早就过期了，
+> 第三次全面回归把它逐条抓了出来（见 §一.39）。**每次发布都要顺手改这里**，否则下一个人会拿旧数字当基线。
 
 | 维度 | 现状 |
 | :--- | :--- |
-| 版本 | **v1.97.0** 已上线并核对（`assets/index-9ryIP6UT.js` ↔ 本地 `dist/index.html`） |
-| 门禁 | Rust **207** · Vitest **391** · Chromium E2E **124 passed** · `verify` 全绿（含 clippy/wasm/ci/release/dist/budget/audio/presets/bench/dsp/2×dsp） |
-| 体积 | dist **≤1672 KB**、首屏 JS **134 KB** gzip、CSS **21 KB**、最大 WASM **70 KB**（阈值均已收紧） |
-| 启动 | 首屏可交互实测 **2096 ms（单跑）/ 2450 ms（并行套件）**，E2E 阈值 3200 ms |
-| 相容红线 | `test:dsp` `rms 0.030806`、81 个预设指纹、2× 指纹 `0.030946` 一字不动；零分配 `gs_alloc_violations()==0`；arena 4770 KB free |
-| 已完成 | P5.1–P5.4、P6.1–P6.5、P7.1–P7.3、P8.1–P8.6 全部交付；源码里 **无 TODO/FIXME 残留** |
+| 版本 | **v2.1.0** 已上线并核对：线上 44/44 文件与本地 `dist/`（以及 `release/gs1-synth-2.1.0-dist.zip`）**逐字节相同**（`assets/index-GZMzj-mR.js` ↔ `3b1e9b0b…`） |
+| 门禁 | Rust **231** · Vitest **538**（+P13.2 的 54 条 MCP 用例）· Chromium E2E **149 passed / 1 failed（环境假红）· 10 skipped** · MCP 黄金会话逐字节相同 · `node scripts/nightly-e2e.mjs --self-test` PASS |
+| 体积 | dist **≤1619 KB**（实测 1619.6，**红**——更新记录 chunk 每版 +1.2 KB，p141 正在把它上限化）、首屏 JS **≤126 KB** gzip（实测 125.1）、CSS **≤21 KB**（20.3）、最大 WASM gzip **≤75 KB**（P9.10 后用 `#[inline(never)]` 买回，实测 **76 717 B = 74.92 KB**，余 ~83 B） |
+| 启动 / 性能 | 安静窗口：bench `p50 1111 µs (41.7%)` timing judged · `bench --long` `p50 1215 µs` · perf 6 passed · wasm memory **15.1 MB**（上限 32）· arena 余 **8471 KB** |
+| 相容红线 | `test:dsp` **`rms 0.06147`**、`verify:dsp:2x` **`0.061703`**、`verify:presets` 与 `verify:presets:2x` 都是 **`91 presets unchanged · ABI 8`** 一字不动；零分配 `gs_alloc_violations()==0`；`PARAM_COUNT` **224**；ABI **8** |
+| 已完成 | P5–P12 全部交付（P12.3 分享协作、P12.5 无障碍**按用户决定不做**）；P13.1（v2.1.0）、P13.2（MCP 只读+渲染+测量）、P9.10（导入提速 1.7×）已合并待发 v2.1.1；源码里 **无 TODO/FIXME 残留** |
 
 ### 已记录的技术债与已知边界（本计划的输入）
 
@@ -83,6 +86,7 @@
    同一轮还两次踩到**体积线压线**（v2.0.5 发布时 `initialJs 124.7 → 125.05 KB`、`total 1614 → 1615`，是**发布自己的更新记录**把线顶破的）⇒ v2.0.5 记账式 rebase `initialJs 125 → 126`、`total 1614 → 1619`，**wasm 75.0 未动**（两个修复都没让它涨，P9.10 要用自己数字申报）。
 
 34. **整机比满幅低约 13 dB（用户 2026-09-14 报告「默认输出比其它软件轻」）——设计使然，但从未做满幅归一化**：真 wasm 实测（`.tmp/loudness-probe.mjs`）：**满幅正弦**（osc level 1.0、滤波全开、sustain 1）只到 **−13.4 dBFS**，6 音和弦 −13.0，**全默认单音 −20.0**；`gs_limit_reduction()` 恒为 **1.00（限幅器从不动作）**。根因在 `crates/synth-core/src/engine.rs` 的 **`const VOICE_GAIN: f32 = 0.22`**（= −13.2 dB，与实测吻合），它的注释写明这是**有意的**——「让密集和弦（相位去相关后和约 √N）仍待在限幅器的线性区」——代价就是**整机从未归一化到满幅**。**这不是 bug，是一个产品取舍**；修它要动 `VOICE_GAIN`（或预设响度归一化目标，现在是 ≈ −40.9 dBFS RMS），两者都会**改变 `test:dsp` 0.030735 与全部 91 条预设指纹**（相容红线级，需用户拍板 + 记账式重录），并且限幅器一旦开始动作会改变密集素材的动态/音色。**已开测量轨道 `p-loud`**（只出选项表与推荐，不改行为）。
+   **✅ 后续：用户拍板，第 36 条已把 `VOICE_GAIN` 改成 `0.44`（+6.0 dB，v2.0.6）**——所以本条里的 `0.22`、`−13.4 dBFS`、`0.030735` 都是**改动前**的历史读数，当前红线是 `0.061470`（见 §一 现状表与 §六.3）。**别拿本条的数字当基线。**
 
 35. **慢轨第二次扫描（v2.0.3）的完整判决与后续**：两个真红都已修（`crushbass` 见第 30 条、`clips.spec` 见第 31 条，均在 **v2.0.5**）；另发现**一条 CI 级缺陷已被父代理当场修掉**：`npm run verify` 与 `.github/workflows/ci.yml` 都把 `npm test` 排在 `build` 之前，而 `src/generated/*.wasm` 是 gitignore 的构建产物 ⇒ **干净 worktree / 新 runner 必红**（16 个文件 `Failed to resolve import "@/generated/synth_core.wasm?url"`）。自证：删掉 wasm 后「先测」= 7/26 文件红；「先 build」= **26 文件 / 163 用例全绿**。修复提交 `0a5aca3`（`verify` 链与 CI 步骤顺序对调）。
    **其它发现（已登记，未做）**：①**WebKit headless 9 条红**（`clips` 已修）⇒ **已在 v2.1.0 之后逐条归因**（轨道 `p-webkit9`，结论见第 38 条）；②**weston lane 产能与误报**：38 条约需 ~2.5 h（40 min 只到 11 passed），且新 worktree 里 `PLAYWRIGHT_BROWSERS_PATH` 默认指向不存在的 `$root/.pw-browsers` 时会把「浏览器启动失败」报成 38 条用例失败；③Firefox `export:12` 的 MP3 下载 200 s 超时待确认；④`timeout … npm run <script>` 的 SIGTERM **不传播**给 npm 子进程（上限形同虚设）；⑤停 lane 后残留的 `vite preview` 会占端口，让下一条 `test:visual` 启动即失败。
@@ -101,6 +105,25 @@
    口径 `GS1_E2E_PORT=4852 npx playwright test e2e/{clips,flow,player,pwa,roll,takes}.spec.ts --project=webkit --workers=1 --retries=0`（**相关 6 spec 子集 50 条，不是整包**）。跑到 **38/50** 被中断：日志存活 **19.1 min**、38 条自报合计 642 s，其余约 8 min 是 webServer/context/WebKit 启动开销。对照 v2.0.3 整包 42.7 min ⇒ **整包必然仍 >20 min ⇒ 按用户判据 WebKit 不进常规门禁，只留慢轨/CI**（这条结论就此写死，不再重复取舍）。
    **逐条归因**：`clips:127` **已绿**（28.7 s）、`flow:115` 本次也绿。`flow:251`（含手机版 `flow:289`）偏移 **7.0099 px = 14.02/2**，正好是**经典滚动条的一半**；`.flow-params` 是 `fixed + translate(-50%,-50%)`，相对布局视口（`clientWidth`）居中是对的，是**用例拿 `window.innerWidth` 当参照错了**；且 Chromium headless 默认 `--hide-scrollbars`（已在 `playwright-core` 源码核对）、真 Safari 是 overlay（0 px）⇒ **参照系/环境，不是产品缺口**。`roll:181`（2.0 min 超时）是**测试基建缺口**：spec 本就写 `click({force:true})`，而 `e2e/fixtures.ts` 的帧无关点击**根本没读 `options.force`**，照样循环做 `elementFromPoint` 命中测试直到 120 s 超时 ⇒ **修法极小且不是放宽阈值**。`player:153`：320 px 下 `scrollWidth - clientWidth = 10`（Chromium 绿）⇒ **疑真产品缺口**（窄屏溢出），探针已备好待定位元素。`flow:363` fill 0.842 vs `>0.85`（差 1%）；`pwa:100` 是 `page.reload: WebKit encountered an internal error`（引擎差异/已知 flaky）。`takes:207` **与 marquee 无关**（失败点是 `:226` 录音后 note 数 2→1）：`overdubTake → mergeNotes` 对同音高且 start 差 ≤ `TAKE_RESTRIKE=0.05 s` 会并轨替换（有单测、是有意设计），而 `recorder` 用 `performance.now()` 记 start ⇒ **用例场景依赖 50 ms 墙钟边界**（床铺音恰是 D4，首录也是 62）。`roll:573`（marquee 本尊）**未跑到** ⇒ 还不能断言 Safari 拖不动 marquee。
    **两件待处理**：①~~`ci.yml` 的 `e2e-engines` 与 20 min 判据冲突~~ **✅ 已做（2026-09-14，父代理）**：**删除** `e2e-engines` 作业（它每次 push/PR 阻塞式跑整包 WebKit），两个慢引擎改由 **schedule 触发的 `nightly` 作业**各跑一遍 `--all`（Firefox 从 `--subset=nightly` 升为 `--all`，**覆盖率零损失**）；`scripts/verify-ci.mjs` 同时改：新增「慢引擎只许出现在 schedule 作业里」（把 `--project=webkit` 加回 push 作业会当场红）与「`nightly` 必须对两个引擎都跑 `--all`」（防止删作业变成静默的覆盖率损失），并删掉原先硬断言必须保留 `e2e-engines` 的两条。**三条自证**：往 verify 作业插一行 `--project=webkit` ⇒ `✗ the "verify" job runs the slow engines only on the schedule`；追加一个 `e2e-engines:` 作业 ⇒ `✗ no push-triggered cross-engine job`；把 Firefox 改回 `--subset=nightly` ⇒ `✗ it runs both engines over the whole suite`；还原后 `verify:ci` 绿。文档同步：`DEPLOY.md`、`docs/notes/release.md`（20 分钟那节）、`docs/notes/compat.md`。②`e2e/fixtures.ts` 的 `force` 缺口与 `flow:251` 的参照系修正都是**非阈值**的测试基建修复，等 WebKit 轨道重启时一起做（每条仍要「修前红 / 修后绿 + Chromium 不回归」）。
+
+39. **第三次全面回归（冻结 v2.1.0，2026-09-14）——两条确定性真红 + 一批「门禁在骗人」**（报告：`.tmp/sweep-v2.1.0-report.md`，589 行）
+   **背景**：距上次全面回归（v2.0.3）已发 5 版，按用户「几次版本发布后彻底测一次」的指示开了慢轨轨道；冻结 tag `v2.1.0`（`5852687`），干净树自证通过，收尾时 worktree 未被弄脏（`docs/notes/nightly.md` 被 nightly 写过，已还原——**提醒：nightly 不是只读命令**）。
+   **两条确定性真红（与负载无关）**：
+   - **① `verify:clippy` EXIT=101——`verify` 链第一步就断。** clippy **1.98** 把 `approx_constant` 变成 deny-by-default（不带任何 `-D` 也红），打中 `crates/synth-core/src/dsp/sampler.rs` 测试里的 `assert!((reference - 0.7071).abs() < 0.02)`（单位正弦 RMS）。代码来自 v2.1.0 之前的 `5421198`，**是工具链升级让老代码变红**；CI 用 `dtolnay/rust-toolchain@stable` 且无 `rust-toolchain.toml` ⇒ CI 同样会红在第一步。**✅ 已修（父代理，`d5b8679`）**：改用 `core::f32::consts::FRAC_1_SQRT_2`；`verify:clippy` 由 101 转 0。**未做**：把 `rustc/clippy --version` 打进 CI 日志（`@stable` 不钉版本，这类事会复发）。
+   - **② `verify:budget` EXIT=1——`dist total 1619.6 / 预算 1619.0 KB`，tag 自身超线 0.6 KB。** 归因：v2.0.7→v2.1.0 的 `Changelog-*.js` **113 366 → 114 644 B（+1 278）**、`index-*.js` −58 B、两个 wasm 逐字节未变 ⇒ **这一版自己的更新记录把线顶破**（与 §一.33 的 v2.0.5 同类，但那次的洞更大：`release:fast` 完全跳过整条 `verify`）。
+     **根因是结构性的**：更新记录每发一版 +≈1.2 KB，rebase 只能撑一版。**用户 2026-09-14 拍板 A 方案**：**应用内只保留最近约 30 条更新记录**，更早的搬到 `src/changelog-archive.ts`（不进 bundle），界面写明「更早的见项目仓库」⇒ 预计 dist **−≈78 KB**，且增长**永久有界**。**轨道 `p141` 正在做**，父代理负责把 dist 线**下调**并记账。
+   **③ 已顺带堵掉的两个洞（父代理，`d5b8679`）**：`scripts/release.mjs` 现在在 `package` 之后**无条件**跑 `verify:ci`/`verify:dist`/`verify:budget`（它们量的是刚构建出来的产物，秒级、确定性、不需要浏览器）——`--skip-verify` 再也不能把体积门禁一起跳过去；`scripts/nightly-e2e.mjs` 现在把「套件根本没启动」（端口被残留 preview 占、缺浏览器、没有 display）识别出来并在**空闲端口重试一次**，而不是写成一格 `❌ fail — 0 passed, 0 failed`；`PLAYWRIGHT_BROWSERS_PATH` 只在目录存在时才钉住，缺浏览器改成**启动前具名报错**（第三次回归为此白跑了一整轮 Firefox：把「浏览器没装」报成 **141 条用例失败**，与真红无法区分）。
+   **④ Firefox 新增 6 条红（v2.0.3 清单之外，Chromium 同批全绿，`--retries=0` 可复现）**：`boot:54`、`fm:33`、`i18n:83`、`meter:10`、`preset-audition:42`、`pwa:33`；其中 4 条共同签名是 **headless Firefox 里 `AudioContext` 没被 resume 到 `running`**（读到「引擎状态 suspended」、电平表恒 `— · —`），而 `playwright.config.ts` **只给 chromium/perf 传了 `--autoplay-policy=user-gesture-required`，firefox project 没有**（Firefox 对应的是 `firefoxUserPrefs` 里的 `media.autoplay.*`）。**登记待立批**：给 firefox project 加等价 pref，然后**用真 Firefox 复跑那 4 条**证明转绿（另 2 条 `fm:33`/`i18n:83` 签名不同，需单独定位）。
+   **⑤ 门禁/测试基建缺陷（与真回归同等价值，轨道 `p142` 正在修）**：
+   - **`verify-audio.mjs` 里藏着一个计时门禁却没有负载探针**（16 声部满链、`<60% of 2667 µs`）：load 16–21 读 **232%/149%/155% 红**，安静窗口（load1=1.00）读 **26% PASS**；**失败时不打印 perBlockUs、不打印 load、不给跳过路径**。这正是它连续误导三个 agent + 一次全面回归的原因。
+   - **`src/fuzz.test.ts` 的 4000 ms 预算**同样无探针：load 16–21 读 4050/4252/6001/7945 ms（红），安静窗口读 **442/656/452/328 ms**；成功时也不打印余量。
+   - 因此本轮所有「Vitest 6 红」「`verify:audio` 红」「`test:e2e player:45` 60 s 超时」「visual self-check 红」**全部判为环境假红**（安静窗口逐条转绿：perf 6 passed、bench timing judged `p50 1111 µs (41.7%)`、`bench --long p50 1215 µs`、`player:45` 单跑 13.8 s 绿、visual self-check 单跑 18.7 s 绿）。
+   - **`test:visual` 的 self-check 用例起点不干净**：整套串行跑红（15% 像素差）、单跑绿；48 张主基线本身全绿 ⇒ 是「机制自证」用例被前面用例改过的应用状态污染。**登记待立批**（给它干净起点或独立 context）。
+   - **`playwright.config.ts` 没配 `retries`**：贴 60 s 线的用例（`player:45`，同 spec 邻居整套里 49.7 s）在慢主机上直接红。**登记待立批**，但**不许靠重试掩盖**——要么降低套件争用，要么明确「这条在慢主机上属于计时项」。
+   **⑥ 体积余量告警（已解决一半）**：SIMD wasm gzip 当时只剩 **18 字节**（76 775 / 76 800）。P9.10 的改动一度把它顶到 76 892（超 92 B）；**父代理把 `low_pass_at` 改成 `#[inline(never)]`**（少一份内联副本）后 **76 717 B = 74.92 KB，余 83 B**，**没有动阈值**，且速度红利仍在（同机同探针 4 s 导入 130 → 78 ms）。
+   **⑦ 本轮确认无问题的部分**（也要记，免得下一个人重查）：线上 `synth.wangda.today` 与最新 tag 的 dist **44/44 文件 sha256 逐字节一致**（含 `sw.js`、`index.html`、懒 chunk），本地 `dist/` 与 `release/gs1-synth-2.1.0-dist.zip` 解包后 44 文件全同，三个产物 `sha256sum -c` 全 OK，`retained/` 五个快照齐全，线上 TTFB 0.67–0.91 s；`test:rust` **231 passed**、`verify:presets(:2x)` **91 unchanged · ABI 8**、`test:dsp 0.06147`、`verify:dsp:2x 0.061703`、`test:wasm` PASS（零分配、ABI 8）、`PARAM_COUNT 224`、`nightly-report --self-test` 12/12、`rollback --self-test` 32/32。
+   **⑧ 覆盖缺口**：**WebKit 本轮未做**（用户指示 + 整包 42.7 min）；§一.38 的三条待处理项（`flow:251` 参照系、`roll:181` 的 `force` 缺口、`player:153` 疑真产品缺口）仍未验证。全部渲染/性能结论在**软件渲染**下取得（沙箱 tmpfs 盖住 `/dev/dri`，不是没有 GPU）。
+   **⑨ 文档一致性抽查（第 11 项，6 条旧值）**：本轮已修 §一 现状表（v1.97.0 → v2.1.0）、§六.2 的链序（`build` 必须在 `test` 前）、§六.3 的相容红线（`0.030735/0.030852/81` → `0.061470/0.061703/91`）、§一.34 的 `VOICE_GAIN 0.22`（已由 §一.36 改成 0.44）。复核对的部分：§一.11 的参数编号重叠算式逐条成立、§一.12/20⑦「48 张基线不在 CI」至今成立、源码无 TODO/FIXME。
 
 ## 二、四个方向
 
@@ -413,11 +436,13 @@
 | 16 | P12.2 内容包 ✅ **10 条新预设**（SEM 双滤波/位粉碎/过采样/图内调制）+ **5 首公版曲**（20→25）+ 试听门禁；指纹 81 → **91**（既有 81 条逐字节未变）；**压缩工厂表把空间买回来**（dist 反降 0.2 KB） | P9 | 中 | ✅ v2.0.2 |
 | 17 | P12.4 分发与回滚 ✅ **随并行轨道提前交付**：保留 N=5（`release/retained/`，逐文件 sha256 + tar 快照）、`rollback` 默认 dry-run、演练脚本、storeSchema 倒退闸；横幅标签错位见 §一.17 | P11 | 中 | ✅ v1.113.0 |
 | 18 | **P13.1 抽尺子（为 LLM 接口共用一份测量实现）** | P9/P10 定型 | 中 | v2.1.0 |
-| 19 | **P13.2 MCP 只读+渲染+测量** | P13.1 | 中 | v2.1.1 |
-| 20 | **P13.3 MCP 操作类（patch/sample/preset）** | P13.2 | 中 | v2.1.2 |
+| 19 | **P13.2 MCP 只读+渲染+测量** ✅ 已合并（7 个工具、54 条测试、黄金会话逐字节相同、目录驱动注册表、`npm run mcp` 与 CI/verify-ci 同步；**零新增运行时依赖**） | P13.1 | 中 | v2.1.1 |
+| 20 | **P13.3 MCP 操作类（patch/sample/preset）** 🔄 进行中 | P13.2 | 中 | v2.1.2 |
 | 21 | **P13.4 MCP 浏览器层 + 实战范例** | P13.2 | 中 | v2.1.3 |
 | 22 | **P13.5 LLM 接口文档与发现** | P13.2 | 小 | v2.1.4 |
-| 23 | **P9.10 采样导入提速（把每抽头 clamp 提出内循环，逐位相同；§一.29）** | P9.8 | 小 | v2.1.1（与 P13.2 同批合并） |
+| 23 | **P9.10 采样导入提速（把每抽头 clamp 提出内循环，逐位相同；§一.29）** ✅ 已合并（4 s 导入 **130 → 78 ms**，`test:dsp`/91 指纹/导入→渲染 sha256 全部一字不动；用 `#[inline(never)]` 把 gzip 从超线 92 B 买回到 **余 83 B**） | P9.8 | 小 | v2.1.1 |
+| 24 | **p141 更新记录上限化（买回 dist 体积；§一.39②）** 🔄 进行中 | — | 小 | v2.1.1 |
+| 25 | **p142 计时判据统一 + 读数可见（§一.20①②⑤）** 🔄 进行中 | — | 小 | v2.1.1 |
 
 > **并行开发（2026-09-14 起，用户指示）**：多个 agent 在各自 worktree/分支上并行开发、由父代理合并后发布，所以**版本号的「批次」映射关系不再严格**——版本列是**预计**，实际以发布顺序为准（同一次发布可能合并了多批，例如 v1.113.0 = P9.7 + P11.6 + P12.4）。规则见 `/.tmp/parallel-dev.md`。
 
@@ -444,8 +469,9 @@
 ## 六、每批的完成定义（Definition of Done）
 
 1. **实现**（含注释说明「为什么」）+ **单元测试**（音频批次还要真 wasm 门禁）+ **E2E**（用户可见改动必须有）。
-2. `npm run verify` **全绿**（clippy → Rust → Vitest → lint → build → wasm → ci → release → dist → budget → audio → presets → bench → dsp → dsp:2x）。
-3. **相容红线**：`test:dsp` **0.030735**、81 个预设指纹（`verify:presets`）与 2× 指纹（`verify:presets:2x`，两者都是 `81 presets unchanged · ABI 8`）、`verify:dsp:2x` **0.030852**，除非本批有意改变并显式重录（附理由）。
+2. `npm run verify` **全绿**（实际链序：clippy → `test:rust` → **build** → `test` → lint → `test:wasm` → ci → release → dist → budget → audio → presets → presets:2x → bench → dsp → dsp:2x → `mcp --self-test`）。
+   **`build` 必须排在 `test` 前面**：`src/generated/*.wasm` 是 gitignore 的构建产物，干净 worktree 上先测必红（§一.35，修复提交 `0a5aca3`）。
+3. **相容红线**：`test:dsp` **0.061470**、`verify:dsp:2x` **0.061703**、`verify:presets` 与 `verify:presets:2x` 都是 **`91 presets unchanged · ABI 8`**，除非本批有意改变并显式重录（附理由）。
 4. **小步提交**（功能 / 文档+版本 分开）+ `npm run package` + `npm run release -- <version>`。
 5. **线上核对**：用 `https://synth.wangda.today/` 比对 `assets/index-*.js` 指纹，并在线上 bundle 里查本批文案。
 6. **中文同步**：更新记录（中英成对）、`docs/NEXT-PLAN-2.md` 状态、`docs/ROADMAP.md` 队列行、必要的 `docs/notes/*`（含实测数字与「自证」证据）。

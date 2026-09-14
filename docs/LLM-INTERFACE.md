@@ -51,7 +51,7 @@
  └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**关键点：不新增音频代码。** 第 4 层的两件事今天**已经存在**，只是长在 `scripts/verify-audio.mjs`（2286 行）里。
+**关键点：不新增音频代码。** 第 4 层的两件事今天**已经存在**，只是当年长在 `scripts/verify-audio.mjs`（P13.1 抽尺子前 2814 行，抽完 **2294 行**）里。
 所以第一批（P13.1）是**抽取**，不是新写：把尺子与渲染引导抽成 `scripts/lib/`，让**门禁与 MCP 共用同一份实现**——
 否则「工具量出来的数」与「门禁量出来的数」迟早会分叉，那这套接口就没有意义了。
 
@@ -64,7 +64,7 @@
 | :--- | :--- | :--- |
 | `gs1.describe` | — | 版本、ABI、`PARAM_COUNT`、渲染采样率、arena 容量与余量、可用波形/滤波类型/效果种类（枚举与 id） |
 | `gs1.params.list` | `{ filter?: string }` | `[{ id, key, nameZh, nameEn, min, max, default, unit, discrete }]`（**从 `params.ts`/`params.rs` 的同一张表派生**，不做第二份清单） |
-| `gs1.presets.list` | — | `[{ id, name, tags }]`（81 条工厂预设定） |
+| `gs1.presets.list` | — | `[{ id, name, tags }]`（**91** 条工厂预设定） |
 | `gs1.songs.list` | — | `[{ id, title, composer, source:{kind,credit} }]`（含 v2.0.0 的来源/许可） |
 | `gs1.fxGraph.describe` | — | 节点种类、每个节点的槽位语义、调制目标（供 agent 构图） |
 
@@ -119,8 +119,8 @@
 
 | 批 | 内容 | 验收 |
 | :--- | :--- | :--- |
-| **P13.1 抽尺子** | 把 `verify-audio.mjs` 的渲染引导与测量抽成 `scripts/lib/render-core.mjs` + `scripts/lib/audio-ruler.mjs`；门禁改为调用它们 | **门禁输出逐字节不变**（`verify:audio` 的每条读数、`test:dsp` 0.030735、`verify:dsp:2x` 0.030852 一字不动）；`verify` 绿。**这是纯重构，不接受任何数字变化** |
-| **P13.2 只读 + 渲染 + 测量** ✅ 2026-09-15 | `mcp/server.mjs` + `mcp/tools/*.mjs`（**目录驱动**：新增工具＝加一个文件，不动共享清单）+ `gs1.describe`/`params.list`/`presets.list`/`patch.get`/`render`/`analyze`/`gate` + `npm run mcp`（stdio / `--http` 回环 / `--self-test`） | ✅ 工具级单测 53 条：schema、参数校验、20 条拒绝路径、手写 JSON-RPC 的 `initialize`/`tools/list`/`tools/call`（含 `-32700`/`-32601`/`-32602` 错误帧）、黄金会话、共用实现、依赖自证。**黄金会话**：7 次调用（覆盖全部 7 个工具）跑两遍 `sha256` 相同、WAV 字节相同。**与门禁共用**：`gs1.gate` 的地板与 `offGridFloor(renderFloor(...))`（`verify-audio.mjs` P9.1a 的原调用）`toBe` 全等，四个波形逐一比对。**依赖**：`dependencies` 与 v2.1.0 清单一字不差——本仓库该字段本来就不是空对象（6 条：lamejs、两个 fontsource、playwright、react、react-dom），本批**没有新增任何条目**，尤其没有 `@modelcontextprotocol/sdk`（协议手写，esbuild 读取 app TS 但它是既有 devDependency）。`npm run mcp -- --self-test` 已同步进 `.github/workflows/ci.yml`、`scripts/verify-ci.mjs` 与 `verify` 链。实现说明见 `docs/notes/mcp.md` |
+| **P13.1 抽尺子** | 把 `verify-audio.mjs` 的渲染引导与测量抽成 `scripts/lib/render-core.mjs` + `scripts/lib/audio-ruler.mjs`；门禁改为调用它们 | **门禁输出逐字节不变**（`verify:audio` 的每条读数、`test:dsp` **0.061470**、`verify:dsp:2x` **0.061703**、两侧 `91 presets unchanged · ABI 8` 一字不动）；`verify` 绿。**这是纯重构，不接受任何数字变化** |
+| **P13.2 只读 + 渲染 + 测量** ✅ 2026-09-14（v2.1.1）| `mcp/server.mjs` + `mcp/tools/*.mjs`（**目录驱动**：新增工具＝加一个文件，不动共享清单）+ `gs1.describe`/`params.list`/`presets.list`/`patch.get`/`render`/`analyze`/`gate` + `npm run mcp`（stdio / `--http` 回环 / `--self-test`） | ✅ 工具级单测 **54 条**：schema、参数校验、20 条拒绝路径、手写 JSON-RPC 的 `initialize`/`tools/list`/`tools/call`（含 `-32700`/`-32601`/`-32602` 错误帧）、黄金会话、共用实现、依赖自证。**黄金会话**：7 次调用（覆盖全部 7 个工具）跑两遍 `sha256` 相同、WAV 字节相同。**与门禁共用**：`gs1.gate` 的地板与 `offGridFloor(renderFloor(...))`（`verify-audio.mjs` P9.1a 的原调用）`toBe` 全等，四个波形逐一比对。**依赖**：`dependencies` 与 v2.1.0 清单一字不差——本仓库该字段本来就不是空对象（6 条：lamejs、两个 fontsource、playwright、react、react-dom），本批**没有新增任何条目**，尤其没有 `@modelcontextprotocol/sdk`（协议手写，esbuild 读取 app TS 但它是既有 devDependency）。`npm run mcp -- --self-test` 已同步进 `.github/workflows/ci.yml`、`scripts/verify-ci.mjs` 与 `verify` 链。实现说明见 `docs/notes/mcp.md` |
 | **P13.3 操作类** | `patch.set`/`patch.random`/`sample.import`/`wavetable.import`/`songs.list`/preset 套用与保存 | 单测覆盖「夹取要报告」「装不下返回 noRoom」「坏文件返回结构化拒绝」；patch 往返与 `patch.get` 一致 |
 | **P13.4 浏览器层 + 范例** | `gs1.ui.*`（Playwright 驱动，复用帧无关交互）+ `docs/LLM-INTERFACE.md` 补「实战范例」一节 | 范例必须是**真跑过**的：让一个 agent 用这套工具把某个 patch 的 ≥1 kHz 非谐波地板改进 ≥20 dB，并贴出前后 `analyze` 的 JSON；`ui.screenshot` 能出图且与视觉基线同尺寸 |
 
@@ -144,4 +144,4 @@ P13.3 才能「改」；P13.4 是给需要看界面的 agent 的，最重、最�
 - 依赖：**P13.1 依赖 P9.x/P10.x 全部已交付**（尺子已定型：双尺子、1/N²、P9.6 钉相位、P9.8 的拒绝码）。
   如果 P12.1/P12.2/P12.6 还没做，P13 **可以并行**——它的足迹是 `scripts/lib/`、`mcp/`、`docs/`，
   与「教学内容/内容包/SW 握手」都不重叠。
-- 版本：P13.1 起从 v2.0.x 继续累加（**不影响 v2.0.0 里程碑已达成的事实**）。
+- 版本：P13.1 起从 v2.1.x 继续累加（**不影响 v2.0.0 里程碑已达成的事实**）。
