@@ -44,6 +44,33 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      // The app suite's budget, raised from the default 60 s for the same
+      // reason WebKit (120 s) and Firefox (90 s) below have one: this box is
+      // shared, and a busy host stretches *every* step of a test, boot
+      // included. It is a budget, not an assertion -- every assertion is
+      // unchanged, and a broken locator still fails, because it never appears
+      // however long we wait. No `retries` here on purpose: a retry would turn
+      // a real one-in-three flake into a green line (the plan forbids masking
+      // this way, §一.39⑤), while a budget only decides how long a *hung* step
+      // may wait.
+      //
+      // Measured on `e2e/player.spec.ts:45` with the renderer throttled through
+      // CDP (`Emulation.setCPUThrottlingRate`) on a quiet host, which is the
+      // reproducible stand-in for a loaded one:
+      //
+      //   1x  20.0 s   (60 s budget: fine)
+      //   4x  40.8 s
+      //   6x  41.7 s
+      //   8x  `Test timeout of 60000ms exceeded`
+      //
+      // That test no longer carries three guessed sleeps (it waits on the
+      // transport's own clock now) and passes at 8x, but it still measures
+      // 48.6 s at 4x and 54.0 s at 6x -- i.e. on a host six times slower than
+      // this one the fixed test spends 90 % of a 60 s budget. The same full
+      // suite (160 tests, 4 workers, load 8 -> 17) has `preset-audition:42` at
+      // 48.7 s and `player:45` at 34.9 s, so 60 s leaves a loaded host no room
+      // at all. 90 s is the Firefox number for exactly this reason.
+      timeout: 90_000,
       // `e2e/boot.spec.ts` needs Chrome's real autoplay policy: it is the case
       // where a context comes back already running but with no graph. WebKit
       // refuses the flag, so it lives here rather than in the spec.
