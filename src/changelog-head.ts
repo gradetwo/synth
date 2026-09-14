@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '1.113.0',
+    version: '2.0.0',
     date: '2026-09-14',
-    kind: 'sound',
+    kind: 'feature',
     items: [
       [
-        '**高音区更干净。** 波表音色在高音区原本有一层"沙"——那是插值读表的折回成分（非谐波能量 −26…−47 dB），现在**最差 −98 dB**；导入的采样音色也一并更干净（−30 → −33 dB，这条受录音自身带宽限制，已如实记录）。用到波表的 4 个工厂预设音色会有轻微变化，其余 77 个在百分之一 dB 以内，默认音色不受影响。内部同时加入了发布版本保留 + 一键回滚，以及 nightly 的平台矩阵报告（对使用者不可见）。',
-        '**Cleaner high notes.** Wavetable voices carried a layer of grit up high -- the folded-back products of reading the tables with interpolation, at -26...-47 dB of non-harmonic energy -- and that now measures a worst case of **-98 dB**. Imported samples are cleaner too (-30 -> -33 dB, limited by the recording\'s own bandwidth, which is written down honestly). Four factory presets that use wavetables change slightly, the other 77 stay within a hundredth of a dB, and the default voice is untouched. Internally this also brings release retention with one-command rollback and a nightly platform-matrix report, neither visible in the app.',
+        '**v2.0.0：创作与工作流二期完成。** 现在可以同时保存**多套工程**（切换、复制、打标签、快照恢复），并把它们导入导出成 `.gs1proj` 文件；存储空间不足时操作会被取消，而**当前正在做的东西不会丢**。内置曲库**清掉了全部仍在版权保护期内的曲目**（换成公版作品或本站原创编配），每首曲子都标注**来源与许可**；导入自己的 MIDI 或工程文件时，若文件损坏会**说明具体是哪一种问题**。',
+        '**v2.0.0: the writing-and-workflow phase is done.** You can keep **several projects** side by side -- switch, duplicate, tag, restore a snapshot -- and import or export them as `.gs1proj` files; if storage runs out the operation is cancelled and **your current work is kept**. The built-in library **no longer contains any in-copyright works** (they are replaced with public-domain pieces or arrangements of our own), every track now shows its **source and licence**, and importing your own MIDI or project file says **which** kind of damage made it refuse.',
       ],
     ],
   };
