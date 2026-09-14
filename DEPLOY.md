@@ -186,4 +186,16 @@ CMD ["nginx", "-g", "daemon off;"]
 
 本地只需 `npm run verify` + `npm run test:e2e` + `npm run test:perf`：`npm run verify` 里含 `verify:ci`，
 它会检查上面的门禁没有被误删，也检查慢引擎（WebKit/Firefox）**只**出现在 schedule 触发的作业里
-（往 push 触发的作业里加 `--project=webkit` 会当场判红）。WebKit/Firefox 的浏览器二进制需要系统库，本机没有安装，因此以 CI 为准。
+（往 push 触发的作业里加 `--project=webkit` 会当场判红）。
+
+**本机其实装了两个引擎**（浏览器在 `~/.cache/ms-playwright`，第三次全面回归跑过 Firefox 155 与 WebKit），
+所以慢轨**可以在本机复现**，不必只信 CI：
+
+```
+npm run nightly -- --engines=firefox --all      # 约 27 min
+npm run test:e2e:webkit:wayland                 # WebKit，headless Weston
+```
+
+⚠️ **worktree 里没有 `.pw-browsers/`**：不要手动把 `PLAYWRIGHT_BROWSERS_PATH` 指到那里——那会把
+「浏览器没装」报成上百条用例失败。`scripts/nightly-e2e.mjs` 现在只在目录真的存在时才钉住它，
+缺浏览器会在启动前具名报错（这条是第三次全面回归用一整轮 Firefox 换来的，见 `docs/NEXT-PLAN-2.md` §一.39③）。
