@@ -32,47 +32,123 @@ Chromium 下同一个上下文往往自己就变成 `running`，所以本地 Chr
 
 ## 3. WebKit（Safari 内核）本机现状
 
-依赖装好后 WebKit 能跑起来：单独跑 `e2e/fxgraph.spec.ts`、`e2e/smoke.spec.ts` 之类的用例可以通过，
-但整包连跑（24 个用例的抽样）出现 23 个超时。超时的形态一致：Playwright 报 “attempting click action …”
-之后一直不返回，而页面快照显示点击其实已经生效（例如预设抽屉已经打开）。也就是说 **WebKit 下点击之后
-主线程会有一次很长的停顿**，怀疑与 AudioWorklet 渲染线程抢 CPU（或 WebKit 的自动播放/音频线程调度）有关，
-需要单独用一个快速开关（例如不启动引擎只测 UI）来隔离，暂记为待查。
+### 3.1 更正：headless 下 rAF 是会触发的（2026-09-14 重测）
 
-**真正的根因（2026-09-11，实测帧率）**：本机 WebKit 只有**约 1 fps**——有头 + Xvfb 下 2.7 秒里只跑到 2 帧
-（最坏帧间隔 1.9 s）；同机 Chromium 是 2.2 秒 12 帧。Playwright 每次点击都要等「两帧之间元素稳定」，
-所以**每次点击天然要花 1–4 秒**，慢的用例撞上 45 s 超时就成了「失败」。这与页面代码无关：
-前端做了两处优化（按需 chunk 预取、遮罩 memo 化减少重渲染）后，WebKit 下打开预设库仍是约 8 s，
-因为瓶颈是帧率而不是渲染量。
+本节早先写的「headless WebKit 里 `requestAnimationFrame` **完全不触发**（实测 500 ms 内 0 帧）」
+**是错的**：它把「应用页没有帧」误当成了「内核不触发 rAF」。本轮用同一个探针重测
+（Playwright 1.63 / WebKit 26.6，本机 headless，除注明外都是 1.5 s 窗口）：
 
-**更早的定位（headless）**：headless WebKit 里 `requestAnimationFrame` **完全不触发**（实测 500 ms 内 0 帧）。
-Playwright 的点击前「稳定性」检查要等两帧，所以每个需要该检查的点击都会一直等下去——这就是那 23 个用例
-超时的原因，与页面代码无关。验证方法：`page.evaluate` 里数 500 ms 的 rAF 回调帧数，headless 为 0。
+| 页面 | rAF 帧数 |
+| :--- | ---: |
+| `about:blank` | 55–57 |
+| 静态 `data:` 页 | 42–55 |
+| 一个 div + `box-shadow` | **1** |
+| 一个 div + `filter: blur(4px)` | **1**（且主线程被占 5.6 s） |
+| 应用页（启动遮罩可见） | **0**（3.5 s 窗口，`setTimeout` 同期跑了 110 次） |
+| 应用页 + 载入时就把 `#root` 设成 `display:none` | **82** |
+| 应用页 + 把所有 JS 请求 abort | **93** |
 
-**可用跑法**：`xvfb-run -a npm run test:e2e:webkit:headed`（有头 + 虚拟显示，rAF 恢复）。有头模式下点击正常，
-用例会走到真实差异上（例如 `smoke` 的「折叠模块」在 WebKit 下没生效、导出渲染较慢），这些属于待逐个核对的差异。
+结论：**headless WebKitGTK 会触发 rAF，但它没有合成器、只能软件光栅化**；只要页面需要真的画出来
+（本应用 1500–2300 个节点 + 7 个 canvas），它一帧都交不出来（内核上限是 55 fps 级的，见
+`ui-frame-cost.md` 的空白页数字）。主线程是好的：同一时刻 `setTimeout` 仍能跑 ~50 次/秒，
+`page.mouse.click()` 也能立刻生效；把 `#root` 从载入起就 `display:none`（不做布局/绘制）帧率立刻
+回到 55 fps。**帧钟是按页面隔离的**：应用页死掉之后，同一个 browser 里新开的页面照样 55–59 fps。
 
-**性能实测（2026-09-11，同一台机器，同一份 dist）**：打开预设库（81 张卡片）——
-Chromium：点击耗时 160 ms、抽屉可见 +19 ms；WebKit 有头：**点击耗时 5.4 s**、抽屉可见 +490 ms。
-WebKit 在这台机器上比 Chromium 慢一个数量级，慢的主要是「首次加载 + 解析按需 chunk + 渲染 81 张卡片」这一段。
-因此 WebKit 项目在 `playwright.config.ts` 里单独给了 `timeout: 120s / expect: 20s / retries: 1`：
-默认的 45 s 会把「慢」变成「失败」，那种失败说明不了产品问题。
+排除过的其它解释：关掉 SW（`serviceWorkers: 'block'`）、abort `sw.js`、abort wasm、abort 字体、
+stub 掉 `AudioContext`、把 `box-shadow`/`filter`/`backdrop-filter`/渐变/圆角/动画全部用载入期 CSS
+关掉（已核对 `getComputedStyle` 确认生效）、`WEBKIT_DISABLE_COMPOSITING_MODE` /
+`WEBKIT_FORCE_COMPOSITING_MODE` / `WEBKIT_DISABLE_DMABUF_RENDERER` / `LIBGL_ALWAYS_SOFTWARE` /
+`GDK_BACKEND=broadway` —— 全都还是 0 帧。只要应用真的可见地画出来，headless 就交不出帧。
 
-**当前本地结果（核心子集，`--headed` + Xvfb + 单 worker，25 项）**：官方记录见 `docs/notes/nightly.md`；
-最好的一次 18 passed / 7 failed（失败里有两个是当时的**测试自身缺陷**：Chromium 专用启动参数让 WebKit 直接
-启不起来、FX 模块被浮动键盘挡住——两个都已修）。单独跑各文件时：`fxgraph` 4/4、`boot+smoke+share+responsive`
-11/12、`responsive`/`touch`/`text-fit` 全绿。**单文件跑通过、整包连跑仍会因 1 fps 撞超时**，这就是本机现状。
+### 3.2 卡点是 Playwright 的 actionability；而 init script 够不着它
 
-**早期记录（16 项的核心子集）**：13 项通过——
-iPhone/iPad 六种视口、触屏手势、中英文排版都通过；3 项失败全部是「点击一直等不到渲染线程回应」
-（reload 后点启动键、点预设库等）。也就是说：**手机上真正相关的用例已经能在本机跑通**，
-剩下的失败是这台 Linux 机器上 WebKit 的帧/主线程调度问题。
+Playwright 每次点击前要等元素的盒子「连续两帧不变」（stable）。帧率 ~0 ⇒ 每次 `locator.click()`
+都等到超时：实测 8–30 s，`boot.spec.ts` 两个用例 2.4 min。卡点就是这一条，报错原文是
+`waiting for element to be visible, enabled and stable`（元素其实是 visible + enabled 的）。
+对照：`page.mouse.click(x, y)` 不做这些检查，同一元素 **40–220 ms** 就能点到。
 
-**第二个坑：装饰性动画 vs Playwright 的「稳定性」检查（已修）**。即使有头模式，WebKit 下点击一个带动画的
-界面（启动页呼吸动画、示波器、脉冲提示等）时，Playwright 会一直等「两帧之间盒子不变」，实测**等到 90 s 超时**；
-把 `prefers-reduced-motion: reduce` 打开后同一个点击 6.3 s 完成、面板正常出现。因此 `playwright.config.ts` 里
-WebKit / Firefox 两个项目显式设了 `reducedMotion: 'reduce'`：应用本身尊重这个偏好，测试要断言的是行为而不是动画。
+**但是**「用 `page.addInitScript` 注入 rAF 兜底」**不能**解决它（这是本轮最重要的否定结论）。
+Playwright 的注入脚本跑在 **`__playwright_utility_world__` 隔离世界**里
+（`playwright-core/lib/coreBundle.js` 里 Chromium/Firefox/WebKit 三处都是这个常量），它用的是那个
+世界里的原生 `requestAnimationFrame`；主世界的 init script 改不到它。实测证据：注入兜底后主世界
+rAF 从 0 回到 36–54 fps，主世界里该按钮 `visible`、`enabled`、**连续两帧盒子完全相同**、
+`elementFromPoint` 命中，而 `locator.click()` 仍然一直等到超时。`page.clock.install()` 同样不行
+（实测一样超时）。所以「rAF 兜底」这条路在本机是死的——它只能救**应用自己**的 rAF 循环，
+救不了 Playwright 的等待。
 
-**第三个坑：`reload()` 后渲染线程长时间不回应（已绕开）**。WebKit 下「页面重载 + 音频引擎重启」之后，
+其余「按帧等待」的动词也一并实测过：`scrollIntoViewIfNeeded()`（8 s 超时）、`hover()`、
+`dblclick()`、`tap()` 都是按帧的；`boundingBox()` 也要 14.2 s（所以「改用 `page.mouse.click`」
+不能只把 `click()` 换掉，取坐标本身也会卡；`click({ force: true })` 也还要 5.5 s）。
+不按帧的：`isEnabled()` 12 ms、`isVisible()` 7 ms、`locator.evaluate()` 33 ms、
+`getAttribute()` 22 ms、`press()` 29 ms、`fill()` 61 ms、`selectOption()` 17 ms、
+`waitFor({ state: 'visible' })` 19 ms。断言（`expect(locator).*`）走的是定时器轮询，不受影响。
+
+### 3.3 采用的办法：帧无关的交互（`e2e/fixtures.ts`，仅 WebKit）
+
+`e2e/fixtures.ts` 在 WebKit 下把按帧等待的几个动词（`click` / `dblclick` / `hover` / `tap` /
+`check` / `uncheck` / `scrollIntoViewIfNeeded`）换成帧无关实现：
+
+1. `waitFor({ state: 'visible' })` —— Playwright 自己的可见性等待，定时器驱动，实测 19 ms；
+2. `isEnabled()`（12 ms）；
+3. 一次 DOM `scrollIntoView`（只在元素出屏时做）；
+4. `locator.evaluate()` 读盒子（33 ms，**不带** auto-wait）；
+5. `elementFromPoint` 命中测试（「元素真的能收到指针事件」；每次重试都重新读一次盒子，因为
+   正在滑入的面板会移动），失败就重试到用例超时；
+6. `page.mouse.click(x, y)`（或 `touchscreen.tap`）派发真实事件。
+
+保留的是**可见性、启用状态、命中测试**这三项与帧无关的可操作性检查，丢掉的只有定义上就依赖动画帧
+的那两项（stability、按帧的滚动等待）。**断言一个都没改，阈值一个都没放宽。** 实测同一批点击
+39–57 ms。`locator.click()` 的 `position` / `button` / `clickCount` / `modifiers` / `delay` /
+`force` / `trial` / `timeout` 都照常处理，超时默认沿用用例超时（与 Playwright 的 `actionTimeout`
+默认一致），没有另设更短的封顶。
+
+同时注入 `e2e/raf-fallback.init.js`：它**不改变** Playwright 的等待（做不到，见 3.2），但让
+**应用自己**的 rAF 循环（播放器、节拍器、`animationBus` 上的画布）在合成器饿死时仍然有帧可跑。
+两个开关互相独立：`GS1_E2E_FRAME_FREE_CLICKS=1/0`、`GS1_E2E_RAF_FALLBACK=1/0`；默认都只对
+WebKit 生效。Chromium/Firefox 的路径不变：补丁按用例重新检查引擎，同一个 worker 进程里跑别的
+project 会退回原生实现。
+
+### 3.4 结果（headless，`--workers=1`，`--retries=0`，核心子集 8 个 spec / 38 个用例）
+
+| | 之前 | 之后 |
+| :--- | :--- | :--- |
+| `boot.spec.ts` | 2 passed / 2.4 min | 2 passed / 1.2 min（用例 1：56.3 s → 6.6 s） |
+| 核心子集 | 30 min 只跑到第 5 个 spec，反复 20 s 级超时，最后被 kill | **35 passed / 3 failed / 22.7 min** |
+
+3 个失败逐个核对过（把 `GS1_E2E_FRAME_FREE_CLICKS=0` 关掉、用原先那条慢路径单独重跑同样 3 个用例）：
+
+- `fxgraph.spec.ts`「pulls a modulation wire, sees the change, and keeps it across a fresh load」：
+  `[data-mod-edit="0"]` 不出现。**关掉本改动后同样失败**（1.1 min）⇒ 与本批无关，是 WebKit 自身差异。
+- `theme.spec.ts`「filled controls keep their contrast in light mode」与「auto follows the system live,
+  and the choice persists」：**关掉本改动后通过**（各 1.1 min）。原因不是点击实现，而是**headless
+  下没有渲染更新**：`page.emulateMedia()` 改了颜色偏好后，WebKit 要等一次渲染更新才会重新求值
+  媒体查询，而这一页永远不产生帧。独立探针（完全不点任何东西）复现的形态是
+  `emulateMedia(dark)` 之后 `data-theme` 先变 `dark`、1.5 s 后又退回 `light` —— 应用侧这套
+  「跟随系统」的逻辑在媒体查询不会重新求值时会来回摆。慢路径之所以通过，只是因为它的点击慢到
+  足以等到那几次稀有的真实帧。这两条**需要在有合成器的环境（Weston/Xvfb）上跑**。
+- 另外 `theme.spec.ts:137` 与 `:192` 的失败都落在**同一条**「媒体查询不会重新求值」上，不是两条
+  独立的缺陷。
+
+### 3.5 边界：读像素的事仍然必须有合成器
+
+- `locator.screenshot()` 在 headless WebKit 下**不返回**（实测 20 s 超时）；`page.screenshot()`
+  能出图但要 4–5 s（`fullPage` 4.0 s）。所以 `e2e/visual.spec.ts` 仍然只能跑在 Weston/Xvfb 上，
+  基线比对更不能在 headless 下做。
+- `e2e/performance.spec.ts` 量的是帧率，headless 下没有意义（它本来也只在 chromium project 里）。
+- 帧无关的交互**不验证「元素连续两帧不动」**：正在滑入/动画中的元素，实现每次重试都会重新读盒子，
+  但「两帧不动」这条在 headless 下无从验证。真实差异仍然要靠 Weston 那一遍。
+
+### 3.6 历史坑（仍然有效）
+
+**装饰性动画 vs Playwright 的「稳定性」检查（已修）**。即使有头模式，WebKit 下点击一个带动画的
+界面（启动页呼吸动画、示波器、脉冲提示等）时，Playwright 会一直等「两帧之间盒子不变」，实测**等到
+90 s 超时**；把 `prefers-reduced-motion: reduce` 打开后同一个点击 6.3 s 完成、面板正常出现。因此
+`playwright.config.ts` 里 WebKit / Firefox 两个项目显式设了 `reducedMotion: 'reduce'`：应用本身尊重
+这个偏好，测试要断言的是行为而不是动画。（注意这条和 3.1 是两件事：动画导致的「不稳定」在
+Chromium 上同样会让点击超时——实测一个无限平移的按钮在两个内核上都点不中——那是 Playwright 的
+正常语义。）
+
+**第二个坑：`reload()` 后渲染线程长时间不回应（已绕开）**。WebKit 下「页面重载 + 音频引擎重启」之后，
 点击会长时间卡在 “performing click action”（实测 120 s 超时）；把持久化用例改成**新开一个页面重新加载**
 （`page.context().newPage()` + `goto`，状态只来自 localStorage）后立即通过。同一改动在 Chromium/Firefox 上等价
 （它们本来就用 reload 验同一件事），所以 `e2e/fxgraph.spec.ts` 用它做「重开后仍在」的回归。
@@ -81,8 +157,9 @@ WebKit / Firefox 两个项目显式设了 `reducedMotion: 'reduce'`：应用本�
 写入 → 一个动作触发几十轮重绘，WebKit 下尤其慢。现在 `store.setParams([...])` 把一批参数作为**一次变更**提交，
 重绘与存储各一次。
 
-实践建议：本地用 `npm run nightly`（默认 WebKit，子集是核心 + 视觉冒烟 + 音频，Weston 有头，见
-`docs/notes/nightly.md`）；`--core` 只跑核心子集，`--all` 跑全量；整包的判据仍然放在 CI。
+实践建议：本地 WebKit 仍然优先 `npm run nightly`（Weston 有头，见 `docs/notes/nightly.md`），因为它要跑视觉
+子集；只想跑核心/音频子集时 headless 现在也能用了（`GS1_E2E_PORT=4797 npx playwright test --project=webkit
+--workers=1`），`e2e/fixtures.ts` 会自动接管 WebKit 的按帧交互。
 
 ## 4. 夜间跑（C1 的落地形态，P11.6 扩了覆盖率与记录）
 
@@ -160,6 +237,11 @@ WebKitGTK 的合成要走显示服务器，帧率直接决定 Playwright 能不�
 Chromium 空闲 7.5 → 28–33 fps，音频运行中 → 60.8 fps，本机全量 E2E 从 8.7 分钟降到约 4.2 分钟。
 详见 `docs/notes/ui-frame-cost.md`。所以「换显示服务器」不是必需的，Weston 的价值在于 WebKit 需要合成器
 （headless 下 0 帧），以及有 `/dev/dri` 时能走 GPU。
+
+**更正（2026-09-14，见 §3.1）**：WebKit headless 的「0 帧」是**应用页**的 0 帧，不是内核不触发 rAF
+（空白页实测 55–58.7 fps）。同一份测量在 §3.1 重做过一遍：headless 的 WebKitGTK 就是没法把这一页
+软件光栅化到能出帧，所以「每次点击等两帧」在那里永远等不到；帧无关的交互（§3.3）绕过了这一点，
+但读像素的用例（`locator.screenshot()`）仍然必须有合成器。
 
 结论：本机 WebKit 慢的根因是**软件渲染**（叠加当时的应用页每帧成本），不是 Xvfb 本身；换显示服务器只能好一倍，
 仍然不够。
