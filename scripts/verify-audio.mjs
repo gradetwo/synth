@@ -72,6 +72,13 @@ const P = {
 const WAVE_TYPES = { lp: 0, hp: 1, bp: 2, notch: 3, sem: 6 };
 const WAVE = { sine: 0, triangle: 1, saw: 2, square: 3, pulse: 4, noise: 5, wavetable: 8, sample: 9 };
 
+/**
+ * How many `gs_note_on` calls this process has made. `gs_init` does not reset
+ * the engine's phase counter, so the Nth note-on always starts on the same
+ * phases -- which is what lets P9.6 pin one exact, known-bad phase below.
+ * Every `gs_note_on` in this file must increment this.
+ */
+let noteOns = 0;
 const failures = [];
 const report = [];
 
@@ -97,7 +104,10 @@ function engine(params, notes = []) {
     if (!Number.isInteger(id)) throw new Error(`bad parameter id in the gate: ${id}`);
     ex.gs_set_param(id, value);
   }
-  for (const [note, velocity] of notes) ex.gs_note_on(note, velocity);
+  for (const [note, velocity] of notes) {
+    ex.gs_note_on(note, velocity);
+    noteOns++;
+  }
   return ex;
 }
 
@@ -2047,6 +2057,7 @@ const ALIAS_SKIP = 400; // let the attack and the limiter settle (P9.1a: was 240
     };
     capture(AT_ON - 2);
     ex.gs_note_on(84, 1);
+    noteOns++;
     capture(AT_RELEASE - AT_ON);
     ex.gs_all_notes_off();
     capture(BLOCKS - AT_RELEASE);
@@ -2124,6 +2135,7 @@ const ALIAS_SKIP = 400; // let the attack and the limiter settle (P9.1a: was 240
     engine([...flat, [P.OSC1_PITCH, pitch(PROBE)], ...extra]);
     quietMatrix();
     ex.gs_note_on(84, 1);
+    noteOns++;
     const out = [];
     for (let b = 0; b < 260; b++) {
       ex.gs_process(BLOCK);
@@ -2273,6 +2285,93 @@ const ALIAS_SKIP = 400; // let the attack and the limiter settle (P9.1a: was 240
       `${lo.toFixed(1)}...${hi.toFixed(1)} dB at C7, spread ${(hi - lo).toFixed(2)} dB (was 0.00 dB before P9.1b)`,
     );
   }
+}
+
+/** P9.6: the absolute phase seed this gate pins, the time-domain bound it
+ * holds, and how many fresh scenes the cheap backstop sweep renders. */
+const P96_SEED = 707;
+const P96_STEP_BOUND = 0.13;
+const P96_SWEEP = 24;
+
+/** Worst sample-to-sample step in a rendered frame. */
+function worstStepOf(frames) {
+  let step = 0;
+  for (let i = 1; i < frames.length; i++) {
+    const d = Math.abs(frames[i] - frames[i - 1]);
+    if (d > step) step = d;
+  }
+  return step;
+}
+
+// ------------------- P9.6: the BLEP wrap that lands on the table's node
+//
+// P9.1b's band-limited oscillator writes its corrections with a float table
+// walk (`t += GS_BLEP_R` in `sync_emit`). The walk's ULP at `t ~ 4096` is
+// 4.88e-4, so a wrap whose correction tap sits within half an ULP below the
+// residual's jump rounds *onto* the node: the P9.1c fix keys on
+// `i == GS_BLEP_OFF - 1`, no longer matches, the tap reads the right-hand
+// limit instead of the left one, and one oversampled sample gets a full-step
+// wrong correction. The window is `xw < ~2e-6` of a sample wide, so it is rare
+// -- 1 of 150 fresh C7-saw scenes through the factory filter read about
+// -44 dB where the other 149 read -110...-114 -- and, crucially, *which*
+// scene is hit changes with the phase sequence. Any check that merely samples
+// start phases can miss it, and one did: the plan's `res = 0` scan read 0/150
+// while `res = 0.05` read 1/150 on the *same* phases, and that sampling
+// artefact is what made the outlier look like a resonance problem.
+//
+// So this section pins one concrete phase instead of hoping. `gs_init` does
+// not reset the engine's phase counter, so the Nth `gs_note_on` of a process
+// always starts on the same phase; N is the only thing that moves (the
+// sections above ran some number of them), so the section walks the counter to
+// the pinned *absolute* seed with cheap release-cycle note-ons and then
+// measures that one scene. Phase 707 is an empirically confirmed trigger: it
+// read -44.8 dB before the fix and -112 dB after it, on the shipped wasm.
+{
+  const hz = 440 * 2 ** ((96 - 69) / 12);
+
+  // Cheap backstop: a short natural sweep, time domain only. A normal wrap
+  // through the factory filter steps by about 0.106.
+  let swept = 0;
+  for (let i = 0; i < P96_SWEEP; i++) {
+    swept = Math.max(swept, worstStepOf(renderFloor([[P.OSC1_WAVE, WAVE.saw]], 96)));
+  }
+  check(
+    'no fresh C7 saw scene through the factory filter clicks',
+    swept < P96_STEP_BOUND,
+    `worst adjacent step ${swept.toFixed(4)} over ${P96_SWEEP} scenes (bound ${P96_STEP_BOUND})`,
+  );
+
+  // Walk the phase counter to the pinned seed. Note-ons cost a block each, not
+  // a scene, so this is cheap; the release cycle keeps the voices free.
+  const need = P96_SEED - 1 - noteOns;
+  check(
+    'the pinned P9.6 phase is still reachable',
+    need >= 0,
+    `${noteOns} note-ons have already fired, so phase ${P96_SEED} is behind us`,
+  );
+  ex.gs_set_param(P.ENV_RELEASE, 0.005);
+  ex.gs_set_param(P.FX_REVERB_ON, 0);
+  ex.gs_set_param(P.FX_DELAY_ON, 0);
+  for (let k = 0; k < need; k++) {
+    ex.gs_note_on(96, 1);
+    noteOns++;
+    ex.gs_all_notes_off();
+    ex.gs_process(BLOCK);
+  }
+  const pinned = renderFloor([[P.OSC1_WAVE, WAVE.saw]], 96); // note-on #P96_SEED
+  noteOns++;
+  const pinnedDb = offGridFloor(pinned, hz);
+  check(
+    `the pinned P9.6 phase (note-on ${P96_SEED}) stays on its harmonic grid`,
+    pinnedDb < -95,
+    `phase ${P96_SEED} reads ${pinnedDb.toFixed(1)} dB (bound -95; this exact phase read -44.8 dB before the fix, and it does not move when the factory resonance does)`,
+  );
+  const pinnedStep = worstStepOf(pinned);
+  check(
+    `the pinned P9.6 phase does not click`,
+    pinnedStep < P96_STEP_BOUND,
+    `phase ${P96_SEED} steps by ${pinnedStep.toFixed(4)} (bound ${P96_STEP_BOUND}; the milder round of this bug stepped 0.154 on other phases)`,
+  );
 }
 
 // ------------------------- P9.5: the wavetable and sampler above 1 kHz

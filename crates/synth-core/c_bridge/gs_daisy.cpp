@@ -241,6 +241,9 @@ __attribute__((noinline))
 static void sync_emit(float *acc, int head, double x, float amp, int slope) {
     const float *tab = slope ? g_blamp : g_blep;
     float t = ((float)(-GS_BLEP_N + 1) - (float)x + (float)GS_BLEP_N) * (float)GS_BLEP_R;
+    // P9.6: where tap 0 really sits, in double. `t` itself is that same value
+    // rounded to float, and the walk below rounds again on every step.
+    const double t0_exact = (1.0 - x) * (double)GS_BLEP_R;
     int idx = (head + 1) & (GS_SYNC_RING - 1);
     const bool jumped = !slope;
     for (int k = 0; k < 2 * GS_BLEP_N; ++k, t += (float)GS_BLEP_R) {
@@ -248,7 +251,34 @@ static void sync_emit(float *acc, int head, double x, float amp, int slope) {
         if (i > 0 && i < GS_BLEP_M - 1) {
             const float f = t - (float)i;
             float v = tab[i] + f * (tab[i + 1] - tab[i]);
-            if (jumped && i == GS_BLEP_OFF - 1) v += f;
+            // One unsigned range test keeps the hot walk exactly as cheap as it
+            // was: the only two table cells that can sit on the residual's jump
+            // are `GS_BLEP_OFF - 1` and `GS_BLEP_OFF`, and everything below is
+            // off the branch predictor's hot path.
+            if (jumped && (unsigned)(i - (GS_BLEP_OFF - 1)) <= 1u) {
+                // P9.1c: the one cell that spans the residual's jump is
+                // `i == GS_BLEP_OFF - 1`, where the continuous band-limited
+                // step runs to `tab[i + 1] + 1`, hence the `+ f`.
+                if (i == GS_BLEP_OFF - 1) v += f;
+                // P9.6: *the float walk can round that same tap onto the node.*
+                // Taps really sit at `t0_exact + GS_BLEP_R * k`, but
+                // `t += GS_BLEP_R` accumulates in float and the ULP at
+                // t ~ 4096 is 4.88e-4, so a tap whose true position is within
+                // half an ULP below the jump rounds *up* onto `GS_BLEP_OFF`.
+                // `i == GS_BLEP_OFF - 1` then no longer matches and the code
+                // read the right-hand limit `tab[OFF] = -0.498` where the left
+                // one `tab[OFF] + 1 = +0.502` belongs -- a full-step correction
+                // error at one tap. The condition below is the *exact* "this tap
+                // is left of the jump" test, so it never fires for a tap that
+                // genuinely sits on or right of the node (e.g. `x == 1`, whose
+                // tap 32 lands there exactly). The window is `xw < 1.9e-6` wide,
+                // which is why the outlier is rare: measured on the shipped
+                // wasm, C7 saw through the factory filter read -43.9 dB on 1/150
+                // fresh scenes (the other 149: -110...-114), and its raw
+                // oscillator stepped 1.906 where a normal wrap steps 1.071.
+                else if (t0_exact + (double)GS_BLEP_R * (double)k < (double)GS_BLEP_OFF)
+                    v += 1.0f;
+            }
             acc[idx] += amp * v;
         }
         idx = (idx + 1) & (GS_SYNC_RING - 1);
