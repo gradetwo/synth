@@ -129,6 +129,23 @@
    **⑧ 覆盖缺口**：**WebKit 本轮未做**（用户指示 + 整包 42.7 min）；§一.38 的三条待处理项（`flow:251` 参照系、`roll:181` 的 `force` 缺口、`player:153` 疑真产品缺口）仍未验证。全部渲染/性能结论在**软件渲染**下取得（沙箱 tmpfs 盖住 `/dev/dri`，不是没有 GPU）。
    **⑨ 文档一致性抽查（第 11 项，6 条旧值）**：本轮已修 §一 现状表（v1.97.0 → v2.1.0）、§六.2 的链序（`build` 必须在 `test` 前）、§六.3 的相容红线（`0.030735/0.030852/81` → `0.061470/0.061703/91`）、§一.34 的 `VOICE_GAIN 0.22`（已由 §一.36 改成 0.44）。复核对的部分：§一.11 的参数编号重叠算式逐条成立、§一.12/20⑦「48 张基线不在 CI」至今成立、源码无 TODO/FIXME。
 
+40. **MCP 接口（P13.2/P13.3）登记的三条边界**（都不是缺陷，但下一个人会撞到）
+   - **`gs1.sample.import` 的 `noRoom`（返回码 4）在 12 MiB arena 下真实不可达**：仓库自己的 Rust 测试
+     `the_longest_mipmap_fits_the_arena` 就断言最长 mipmap < arena/2，P13.3 的探针（98304 样本 IR + 4 s 采样）
+     跑完仍余 7.9 MB。所以「装不下要如实透出 code 4」这条**用单一注入缝测**（只替换「决定判定的那一次 core 调用」），
+     同一条测试再用真 core 跑一遍断言 `code === 0`，并在 `mcp/lib/import.mjs` 的注释与 `docs/notes/mcp.md` 里写明。
+     **要真触发它**只能临时改 `ARENA_SIZE` 重建 wasm（属另一批）。
+   - **`gs1.patch.random` 的配方是从 `src/state/store.ts` 的 `randomize()` 转写**（UI 用全局 `Math.random()`，
+     运行时无法重放）。P13.3 用 mulberry32 驱动，并有一条测试**从源码里抽出 `randomize()` 的 id 集合**比对
+     （id 漂移会红），但**分布改变需要人工同步**。以后动 `randomize()` 的人要连带看 `mcp/lib/random.mjs`。
+   - **`gs1.analyze` 量的是「你给的那段音频」**（含调制与混响能量），门禁口径的**振荡器地板**要用 `gs1.gate`；
+     `gs1.render` v1 **只渲染 instance A**（结果里 `layersRendered: "instance A only"` 注明）。
+   - **`gs1.songs.list` 与 `gs1.preset.apply/save` 的名字是任务书定的**，`docs/LLM-INTERFACE.md` §4.1/§4.2 原来
+     没列全（`songs.list` 被列在只读类而 P13.2 没交付；`preset.apply/save` 根本没行）。已在文档里补齐并注明出处；
+     **P13.5 已经接手把整篇文档对齐实现**，本条的结论直接进那份文档。
+   - **MCP 的 `dependencies` 判定口径**：本仓库的 `dependencies` **本来就不是空对象**（6 条），
+     所以 P13.2/P13.3 的验收是「**与基线一字不差**」（有测试断言），不是「空对象」。任务书写错过一次，记在这里免得再犯。
+
 ## 二、四个方向
 
 | 方向 | 目标 | 为什么现在做 | 批次 |
