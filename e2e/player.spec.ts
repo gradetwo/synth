@@ -323,6 +323,7 @@ test.describe('player library compliance', () => {
   test('labels every track with its source and licence', async ({ page }) => {
     await boot(page);
     await page.locator('.player-open').click();
+    await expect(page.locator('.player.open')).toBeVisible();
     const rows = page.locator('.player-track');
     const count = await rows.count();
     expect(count).toBeGreaterThanOrEqual(16);
@@ -346,6 +347,7 @@ test.describe('player library compliance', () => {
   test('refuses a damaged file with a visible reason', async ({ page }) => {
     await boot(page);
     await page.locator('.player-open').click();
+    await expect(page.locator('.player.open')).toBeVisible();
     const input = page.locator('.player input[type=file]');
 
     // Not a MIDI file at all.
