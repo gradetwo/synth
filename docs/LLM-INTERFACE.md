@@ -354,7 +354,7 @@ gs1.1.eyJzIjo0LCJ2IjpbMC43NSwxLDIsMCw4LDAuNywwLjUsMSwzLDAsLTksMC4zNSwwLjUsMCw2NT
 
 `gs1.ui.open` 的默认视口就是 `e2e/visual.spec.ts` 的 desktop `test.use({viewport:{width:1440,height:900}})`、`deviceScaleFactor:1`，截图用 `scale:'css'`（与视觉基线同一个 `SHOT` 配置），所以**默认全视口截图与 20 张 desktop 基线同尺寸**；结果里的 `baseline.matches === true` 就是这个断言，`ui:smoke` 里也有一条 check。
 
-> 诚实说明：尺寸一致，**像素不保证一致**。视觉基线是**启动门出现时**的截图，`ui.open` 拿到的是「外壳已挂载、启动门还在」的同一状态（`gateCleared:false`），但基线本身的容差（1 % 像素、5 % 颜色距离）和字体光栅是 `e2e/visual.spec.ts` 自己的事；`gs1.ui.gate {spec:"visual"}` 才是跑那套比对的地方。
+> 诚实说明：尺寸一致，**像素不保证一致**。视觉基线是**启动门出现时**的截图，`ui.open` 拿到的是「外壳已挂载、启动门还在」的同一状态（`gateCleared:false`），但基线本身的容差（1 % 像素、5 % 颜色距离）和字体光栅是 `e2e/visual.spec.ts` 自己的事；`gs1.ui.gate {spec:"visual"}` 才是跑那套比对的地方。**本层只断言尺寸**：`gs1.ui.open`（默认，什么都不点）截的确实是启动门那一屏，但「像素相同」这句话留给视觉套件说。
 
 #### 4.5.7 这个范例没做到的部分
 

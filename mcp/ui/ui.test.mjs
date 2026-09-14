@@ -24,7 +24,9 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ERRORS, errorPayload } from '../lib/errors.mjs';
 import { validate } from '../lib/validate.mjs';
+import { dispatch } from '../protocol.mjs';
 import { loadTools } from '../registry.mjs';
+import { loadLayer } from './server.mjs';
 import { loadUiTools, uiToolFiles } from './registry.mjs';
 import { BrowserSession } from './lib/session.mjs';
 import { startPreview, previewPort, DEFAULT_PORT, E2E_PORT } from './lib/preview.mjs';
@@ -309,6 +311,58 @@ describe('F. gs1.ui.gate is whitelisted', () => {
       else process.env.GS1_MCP_UI_PORT = previous;
     }
   });
+});
+
+describe('G. the layer speaks the protocol: the five tools are dispatchable', () => {
+  beforeAll(() => {
+    if (!process.env.GS1_MCP_UI_PORT) process.env.GS1_MCP_UI_PORT = String(DEFAULT_PORT);
+  });
+
+  it('registers all 19 tools and refuses a bad argument through `tools/call`', async () => {
+    const { tools, ctx, offline, ui } = await loadLayer({ log: false });
+    try {
+      expect(offline.size).toBe(14);
+      expect(ui.size).toBe(5);
+      expect(tools.size).toBe(19);
+
+      const call = (name, args) =>
+        dispatch(tools, ctx, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, { log: false });
+
+      // A tool rejection is a *successful* JSON-RPC response with isError.
+      const external = await call('gs1.ui.open', { url: 'https://example.com/' });
+      expect(external.error).toBeUndefined();
+      expect(external.result.isError).toBe(true);
+      expect(external.result.structuredContent.error.code).toBe(ERRORS.UI_URL);
+
+      // A malformed argument never reaches the handler.
+      const badSpec = await call('gs1.ui.gate', { spec: 'nope' });
+      expect(badSpec.result.isError).toBe(true);
+      expect(badSpec.result.structuredContent.error.code).toBe(ERRORS.SCHEMA);
+
+      // A verb that needs a page says so, without a browser existing.
+      const noPage = await call('gs1.ui.text', {});
+      expect(noPage.result.isError).toBe(true);
+      expect(noPage.result.structuredContent.error.code).toBe(ERRORS.UI_SESSION);
+
+      // Nothing started a browser or a server along the way.
+      expect(ctx.ui.server).toBe(null);
+      expect(ctx.ui.browser).toBe(null);
+    } finally {
+      await ctx.ui.close();
+    }
+  }, 60_000);
+
+  it('refuses to start when GS1_MCP_UI_PORT points at the E2E suite', async () => {
+    const previous = process.env.GS1_MCP_UI_PORT;
+    process.env.GS1_MCP_UI_PORT = String(E2E_PORT);
+    try {
+      const error = await rejection(loadLayer({ log: false }));
+      expect(error.code).toBe(ERRORS.RANGE);
+      expect(error.e2ePort).toBe(E2E_PORT);
+    } finally {
+      process.env.GS1_MCP_UI_PORT = previous ?? String(DEFAULT_PORT);
+    }
+  }, 60_000);
 });
 
 describe('G. the preview server is loopback-only and refuses the E2E port', () => {
