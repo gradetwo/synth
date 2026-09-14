@@ -540,6 +540,88 @@ export const DRAWER_STRINGS: StringTable = {
   'drawer.updateUnsupported': ['离线模式不可用', 'Update check unavailable'],
 };
 
+/**
+ * Project management copy (P10.4). Its own table for the same reason as the
+ * others: the panel is a lazy chunk and every one of these keys is read only
+ * after it opens.
+ *
+ * Two families are built dynamically from the *reason* a call failed
+ * (`project.bad.*` for an unreadable file, `project.fail.*` for a refused
+ * write), which is what keeps one message per failure mode without a parallel
+ * switch in the component; `state/projects.test.ts` asserts that every reason
+ * the model can return has copy here.
+ */
+export const PROJECT_STRINGS: StringTable = {
+  'project.title': ['工程', 'Projects'],
+  'project.open': ['工程管理', 'Projects'],
+  'project.hint': [
+    '一个工程 = 一整套工作区：音色、编排（曲目/录音/片段）、用户预设、场景与面板布局。语言、主题、CC 映射等个人设置不随工程切换。',
+    'A project is a whole workspace: timbre, arrangement (tracks, takes, clips), user presets, scenes and panel layout. Personal settings — language, theme, CC map — do not travel with it.',
+  ],
+  'project.new': ['新建', 'New'],
+  'project.defaultName': ['工程 {n}', 'Project {n}'],
+  'project.rename': ['重命名', 'Rename'],
+  'project.duplicate': ['复制', 'Duplicate'],
+  'project.tags': ['标签', 'Tags'],
+  'project.tagsHint': ['逗号分隔，最多 8 个', 'Comma separated, up to 8'],
+  'project.export': ['导出', 'Export'],
+  'project.delete': ['删除', 'Delete'],
+  'project.switch': ['切换', 'Switch'],
+  'project.save': ['保存', 'Save'],
+  'project.cancel': ['取消', 'Cancel'],
+  'project.active': ['当前', 'Current'],
+  'project.damaged': ['内容已损坏', 'Unreadable'],
+  'project.empty': [
+    '还没有工程。点「新建」把当前工作区存成第一个工程。',
+    'No projects yet — press New to keep this workspace as the first one.',
+  ],
+  'project.created': ['已新建工程 · {name}', 'Project created · {name}'],
+  'project.renamed': ['已重命名', 'Renamed'],
+  'project.duplicated': ['已复制工程', 'Project duplicated'],
+  'project.deleted': ['已删除工程', 'Project deleted'],
+  'project.exported': ['已导出 · {name}.gs1proj', 'Exported · {name}.gs1proj'],
+  'project.switched': ['已切换到 {name}', 'Switched to {name}'],
+  'project.switchDegraded': [
+    '已切换，但存储写满：新工作区只存在于本次会话，请立刻导出',
+    'Switched, but storage is full: the new workspace lives in this session only — export it now',
+  ],
+  'project.snapshot': ['快照', 'Snapshots'],
+  'project.snapshotHint': [
+    '快照是工程内的时间点副本；恢复算一个撤销步（Ctrl/Cmd+Z 可退回）。',
+    'A snapshot is a point in time inside the project; restoring it is one undo step (Ctrl/Cmd+Z goes back).',
+  ],
+  'project.snapshotName': ['快照名（可留空）', 'Snapshot name (optional)'],
+  'project.snapshotSave': ['存快照', 'Save snapshot'],
+  'project.snapshotSaved': ['已保存快照 · {name}', 'Snapshot saved · {name}'],
+  'project.snapshotRestore': ['恢复', 'Restore'],
+  'project.snapshotRestored': [
+    '已恢复快照 · 可按 Ctrl/Cmd+Z 撤销',
+    'Snapshot restored · Ctrl/Cmd+Z undoes it',
+  ],
+  'project.snapshotDelete': ['删除快照', 'Delete snapshot'],
+  'project.snapshotNone': ['还没有快照', 'No snapshots yet'],
+  'project.import': ['导入 .gs1proj', 'Import .gs1proj'],
+  'project.imported': ['已导入工程 · {name}', 'Project imported · {name}'],
+  'project.bad.truncated': ['文件不是完整的 JSON（可能被截断）', 'That file is not complete JSON — it may be truncated'],
+  'project.bad.format': ['不是 GS-1 工程文件（.gs1proj）', 'Not a GS-1 project file (.gs1proj)'],
+  'project.bad.version': ['工程文件来自更新的版本，请先更新应用', 'That project file comes from a newer version — update the app first'],
+  'project.bad.missing': ['工程文件缺少必需内容（音色或布局）', 'That project file is missing the timbre or the layout'],
+  'project.fail.quota': [
+    '存储空间不足，操作已取消（当前工作没有丢）',
+    'Not enough storage: the action was cancelled and nothing was lost',
+  ],
+  'project.fail.unavailable': ['浏览器存储不可用（隐私模式？）', 'Browser storage is unavailable (private mode?)'],
+  'project.fail.readonly': [
+    '工程列表由更新版本写入，本版本只读（原文件已另存为 .newer）',
+    'The project list was written by a newer build: this one is read-only (the original is kept as .newer)',
+  ],
+  'project.fail.limit': ['工程数量已达上限（24）', 'Project limit reached (24)'],
+  'project.fail.missing': ['找不到这个工程', 'No such project'],
+  'project.fail.active': ['当前工程不能删除，先切换到别的工程', 'The current project cannot be deleted — switch first'],
+  'project.fail.damaged': ['这个工程的内容读不出来', 'That project’s document could not be read'],
+  'project.fail.same': ['已经在这个工程里', 'That project is already open'],
+};
+
 function once(load: () => void): () => Promise<void> {
   let done = false;
   return () => {
@@ -557,6 +639,7 @@ export const loadDocsStrings = once(() => registerStrings(DOCS_STRINGS));
 export const loadFlowStrings = once(() => registerStrings(FLOW_STRINGS));
 export const loadSettingsStrings = once(() => registerStrings(SETTINGS_STRINGS));
 export const loadDrawerStrings = once(() => registerStrings(DRAWER_STRINGS));
+export const loadProjectStrings = once(() => registerStrings(PROJECT_STRINGS));
 
 export const STRING_LOADERS: ReadonlyArray<() => Promise<void>> = [
   loadDrawerStrings,
@@ -568,4 +651,5 @@ export const STRING_LOADERS: ReadonlyArray<() => Promise<void>> = [
   loadAudioStrings,
   loadDocsStrings,
   loadFlowStrings,
+  loadProjectStrings,
 ];
