@@ -16,13 +16,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '2.0.6',
+    version: '2.0.7',
     date: '2026-09-14',
-    kind: 'sound',
+    kind: 'fix',
     items: [
       [
-        '**整体响了约 6 dB（大致 4 倍功率）。** 以前这台合成器明显比别的软件轻——即使振荡器开满、滤波全开，峰值也只到 −19 dBFS，限幅器几乎从不工作；现在同样设置是 −13 dBFS，工厂音色、默认音色与随机音色一起抬升。代价如实说明：把**极端**素材（十几个声部全开、主音量也拉满）推得更狠时，软削波会多一些（实测 1.5% 的采样点）。想更响需要改输出级设计，而不是继续加增益——实测 +9 dB 会让 2× 抗混叠余量真的劣化。另有几条**位粉碎**类工厂音色听感会变，因为它们现在才真正开始量化。',
-        '**Everything is about 6 dB louder -- roughly four times the power.** The instrument used to sit well below other software: with the oscillators at full and the filter wide open, peaks reached only -19 dBFS and the limiter almost never worked. At the same settings it now reaches -13 dBFS, and factory, default and random patches move together. One honest cost: pushing **extreme** material (a dozen voices wide open with the master up) soft-limits a little more, measured at 1.5% of samples. Going further would need an output-stage redesign rather than more gain -- +9 dB was measured to erode the 2x anti-alias margin. A few **bit-crusher** factory patches also change audibly, because they only now start quantising.',
+        '**修好一批「选了却没用上」的音色与效果。** 浏览器里有一层参数范围挡在引擎前面：选**波表**会被悄悄换成噪声、选 **SEM / 共振峰 / 梳状**滤波会被换成陷波、效果槽里选**瞬态整形**实际跑的是 EQ。受影响的工厂音色共 **10 条**（4 条波表、`graphswell`、`phonk`、`robotvoice` 与 3 条 SEM 铺底）。现在这些选择真正到达引擎了——`wtorgan` 之类从「与噪声无法区分」变成正常的波表音色。另加了两道门禁（数据门禁 + 真浏览器 E2E）确保不会再发生。',
+        '**A batch of choices that were selected but never reached the engine.** A parameter range in the browser sat in front of the core: picking a **wavetable** was quietly replaced by noise, a **SEM, formant or comb** filter became a notch, and choosing **transient shaping** for an effect slot actually ran the EQ. Ten factory patches were affected -- four wavetables, `graphswell`, `phonk`, `robotvoice` and the three SEM pads. Those choices now arrive: `wtorgan` and friends went from "indistinguishable from noise" to a proper wavetable tone. Two new gates (a data check and a real-browser test) keep this from happening again.',
       ],
     ],
   };
