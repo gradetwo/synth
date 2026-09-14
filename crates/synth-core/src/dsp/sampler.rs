@@ -682,15 +682,10 @@ fn read_wrapped(table: &[f32], kernel: &[f32], low: usize, high: usize, blend: f
 /// to unity gain at DC.
 fn low_pass_into(input: &[f32], cutoff: f32, taps: usize, out: &mut [f32]) {
     let (weights, count) = low_pass_taps(cutoff, taps);
+    let weights = &weights[..count];
     let center = count / 2;
     for (index, slot) in out.iter_mut().enumerate() {
-        let base = index as isize - center as isize;
-        let mut acc = 0.0f32;
-        for (tap, weight) in weights.iter().take(count).enumerate() {
-            let at = (base + tap as isize).clamp(0, input.len() as isize - 1) as usize;
-            acc += input[at] * weight;
-        }
-        *slot = acc;
+        *slot = low_pass_at(input, weights, index as isize - center as isize);
     }
 }
 
@@ -699,16 +694,59 @@ fn low_pass_into(input: &[f32], cutoff: f32, taps: usize, out: &mut [f32]) {
 /// only the survivors halves the work and needs no scratch buffer.
 fn low_pass_decimate_into(input: &[f32], cutoff: f32, taps: usize, out: &mut [f32]) {
     let (weights, count) = low_pass_taps(cutoff, taps);
+    let weights = &weights[..count];
     let center = count / 2;
     for (index, slot) in out.iter_mut().enumerate() {
-        let base = (index * 2) as isize - center as isize;
-        let mut acc = 0.0f32;
-        for (tap, weight) in weights.iter().take(count).enumerate() {
-            let at = (base + tap as isize).clamp(0, input.len() as isize - 1) as usize;
-            acc += input[at] * weight;
-        }
-        *slot = acc;
+        *slot = low_pass_at(input, weights, (index * 2) as isize - center as isize);
     }
+}
+
+/// One filtered output: the kernel `weights` centred on `base` (in input
+/// samples), with the same edge clamp the chain has always had.
+///
+/// The clamp used to sit *inside* the tap loop (`input[(base + tap).clamp(..)]`),
+/// which costs two compares and a slice bounds check per tap and hides the
+/// loop's interior from the optimiser. The regions the clamp defines are
+/// contiguous, so P9.10 hoists them out of the loop instead: a prefix of taps
+/// that all read `input[0]`, a body whose taps all land inside `input`, and a
+/// suffix that all read the last sample. For an interior output both edge runs
+/// are empty and the body is a plain slice `zip` — the loop that does nearly
+/// all of the mipmap's work. The clamped path only remains on the `count / 2`
+/// outputs at each end of a table.
+///
+/// **The taps are still visited in the same order (`0..count`) and contribute
+/// the same values (`input[0]`, `input[base + tap]`, `input[last]`), so the
+/// additions happen in the same sequence and the result is bit-identical to the
+/// clamped loop — not an approximation.** That is the property the
+/// `hoisted_edge_clamp` test below pins with `to_bits`.
+#[inline]
+fn low_pass_at(input: &[f32], weights: &[f32], base: isize) -> f32 {
+    let count = weights.len();
+    let last = input.len() as isize - 1;
+    // `lead` is the first tap whose source is inside `input`, `tail` the first
+    // whose source is past the end. `lead <= tail` always, and both are `0` /
+    // `count` for an interior output.
+    let lead = (-base).clamp(0, count as isize) as usize;
+    let tail = (last + 1 - base).clamp(0, count as isize) as usize;
+    let mut acc = 0.0f32;
+    // Below the start: every tap reads sample 0.
+    let first = input[0];
+    for weight in &weights[..lead] {
+        acc += first * weight;
+    }
+    // Inside: a contiguous slice, no clamp and no per-tap bounds check.
+    if lead < tail {
+        let body = &input[(base + lead as isize) as usize..];
+        for (value, weight) in body.iter().zip(&weights[lead..tail]) {
+            acc += value * weight;
+        }
+    }
+    // Past the end: every tap reads the last sample.
+    let end = input[last as usize];
+    for weight in &weights[tail..] {
+        acc += end * weight;
+    }
+    acc
 }
 
 /// Coefficients of the mip chain's low-pass, normalised to unity gain at DC.
@@ -1119,5 +1157,103 @@ mod tests {
         // And the tone itself is gone from that level.
         let through = magnitude_at(&out, 14_000.0);
         assert!(through < naive_alias * 0.25, "the top octave should be attenuated: {through}");
+    }
+
+    /// Deterministic pseudo-random input, so a failure is reproducible without
+    /// pulling `rand` into the core crate. `wrapping_mul` LCG, normalised to
+    /// roughly ±1: full-precision mantissas matter, because the point of the
+    /// test is that no bit moves.
+    fn noise(len: usize) -> Vec<f32> {
+        let mut state = 0x1234_5678u32;
+        (0..len)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                ((state >> 8) as f32 / (1u32 << 23) as f32) * 2.0 - 1.0
+            })
+            .collect()
+    }
+
+    /// The clamped tap loop P9.10 replaced, inline — the oracle for the bits.
+    /// `step` is 1 for the full-rate filter and 2 for the decimator.
+    fn clamped_filter(input: &[f32], cutoff: f32, taps: usize, step: usize) -> Vec<f32> {
+        let (weights, count) = low_pass_taps(cutoff, taps);
+        let center = count / 2;
+        let mut out = vec![0.0f32; input.len() / step];
+        for (index, slot) in out.iter_mut().enumerate() {
+            let base = (index * step) as isize - center as isize;
+            let mut acc = 0.0f32;
+            for (tap, weight) in weights.iter().take(count).enumerate() {
+                let at = (base + tap as isize).clamp(0, input.len() as isize - 1) as usize;
+                acc += input[at] * weight;
+            }
+            *slot = acc;
+        }
+        out
+    }
+
+    /// P9.10 hoisted the per-tap edge clamp out of the tap loop. The output has
+    /// to be the same float, not a close one: the taps are still accumulated in
+    /// the same order with the same edge values, so every bit must match —
+    /// including the short inputs where the kernel is clamped at one or both
+    /// ends, and both tap counts the import path actually asks for
+    /// (`chain_taps`: 192 for the early steps, 96 for the late ones).
+    #[test]
+    fn the_hoisted_edge_clamp_is_bit_identical_to_the_clamped_loop() {
+        let bits = |values: &[f32]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+
+        // 32 and 64 are shorter than the kernel, so almost every output uses at
+        // least one edge run; MIN_LEVEL_LEN and up are the ordinary case.
+        for len in [32, 64, MIN_LEVEL_LEN, MIN_LEVEL_LEN + 7, 1_024, 4_096] {
+            let input = noise(len);
+            for cutoff in [LEVEL_NYQUIST, LEVEL_NYQUIST * 0.5] {
+                for taps in [chain_taps(0), chain_taps(3)] {
+                    let mut filtered = vec![0.0f32; len];
+                    low_pass_into(&input, cutoff, taps, &mut filtered);
+                    assert_eq!(
+                        bits(&filtered),
+                        bits(&clamped_filter(&input, cutoff, taps, 1)),
+                        "low_pass_into differs at len {len} cutoff {cutoff} taps {taps}"
+                    );
+
+                    // `len / 2`, exactly as the chain sizes the decimated slot.
+                    let mut decimated = vec![0.0f32; len / 2];
+                    low_pass_decimate_into(&input, cutoff, taps, &mut decimated);
+                    assert_eq!(
+                        bits(&decimated),
+                        bits(&clamped_filter(&input, cutoff, taps, 2)),
+                        "low_pass_decimate_into differs at len {len} cutoff {cutoff} taps {taps}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The two edge runs are the whole point, so pin them from the other side:
+    /// an input of a single distinct value with zeros on either side must
+    /// reproduce the kernel's own DC gain at the edges (all-clamped) and its
+    /// flat interior. A mixed-up `lead`/`tail` would still "filter", just with
+    /// the wrong taps — this catches it as a numeric difference rather than a
+    /// panic.
+    #[test]
+    fn the_edge_runs_read_the_first_and_last_sample() {
+        let count = 8usize;
+        let weights: Vec<f32> = (0..count).map(|i| (i + 1) as f32).collect();
+        let input = [1.0f32, 2.0, 3.0, 4.0];
+        let expected = |base: isize| {
+            let mut acc = 0.0f32;
+            for (tap, weight) in weights.iter().enumerate() {
+                let at = (base + tap as isize).clamp(0, input.len() as isize - 1) as usize;
+                acc += input[at] * weight;
+            }
+            acc
+        };
+        // Both ends clamped, one end clamped, and fully interior.
+        for base in [-7isize, -1, 0, 1, 3, 9] {
+            assert_eq!(
+                low_pass_at(&input, &weights, base).to_bits(),
+                expected(base).to_bits(),
+                "base {base}"
+            );
+        }
     }
 }
