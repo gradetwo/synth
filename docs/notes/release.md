@@ -68,7 +68,9 @@ npm run release -- --check           # 只做发布前校验（`npm run verify` 
 preflight → package → deploy → 线上哈希核对 → tag，几分钟内完成。前提是快轨已绿、工作树干净。
 
 **慢轨（每 3–4 个版本一次）**：另开一个 agent 在**安静主机**上做全面回归 —— 完整 `npm run verify`、
-全量 E2E（app 套件 + 隔离的 perf 套件）、视觉基线、nightly 引擎、以及一段时间的连续观察；
+全量 E2E（app 套件 + 隔离的 perf 套件）、视觉基线、**WebKit 与 Firefox**（`e2e-engines` / nightly 子集）、
+以及一段时间的连续观察；
+> **Firefox / WebKit 只在慢轨测**（用户 2026-09-14 明确指示）：日常批次只跑 chromium，不碰 firefox/webkit project，也不跑 nightly。
 它**只报告**，发现的问题回头**单独立批**修。慢轨与开发**解耦**：它慢它的，迭代继续。
 
 这样分工的前提是**快轨必须真的跑**：慢轨是补网，不是替代品。任何一批如果连定向门禁都没跑就发布，
