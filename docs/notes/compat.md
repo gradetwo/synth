@@ -188,3 +188,35 @@ Xvfb（`test:e2e:webkit:headed`）只在 Weston 不可用时作为回退。
    但会把新清单推上去），几秒后即一致。
 2. 核对方式：`curl -s "https://synth.wangda.today/?cb=$RANDOM" | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'`
    与 `grep -o 'assets/index-[A-Za-z0-9_-]*\.js' dist/index.html` 对比，两边一致才算部署成功。
+
+## 8. 虚线描边的命中测试在 Gecko/WebKit 上会「漏」（v2.0.1，fxwire 轨道实测）
+
+**现象**：`e2e/fxgraph.spec.ts` 的「拉调制线」用例在 **Firefox 与 WebKit 上确定性失败、Chromium 通过**，
+自 P7.2（v1.101.0）起就如此。它让 CI 的 `e2e-engines` 长期带着一个假红——**跨引擎信号因此失去意义**。
+
+**真因不是「点到了包围盒中心之外」**（那条被点线的包围盒中心恰好就是曲线中点，三引擎几何完全一致），
+而是 **`stroke-dasharray: 5 3`**：命中测试跟随**画出来的**描边，而虚线间隙是死画布。
+
+| 引擎 | 同一点 `elementFromPoint` | 同一点的真实事件 | `dasharray:none` 后 |
+| :--- | :--- | :--- | :--- |
+| Chromium | `path.fxg-wire mod` | 命中（它把**整条路径**当命中区） | 命中 |
+| Firefox | `div.fxg-canvas`（未命中） | 未命中 | **命中** |
+| WebKit | `path.fxg-wire mod`（**说命中了**） | **五个事件 target 全是 `div.fxg-canvas`** | **命中** |
+
+**WebKit 的坑**：它的 `elementFromPoint` **忽略** dash，而事件命中**不忽略**——两者不一致，
+所以**不能拿 `elementFromPoint` 当判据**，必须看真实事件。
+**加宽也没用**：虚线保持 `5 3`、线宽加到 12 px，Firefox 的中点依然点空（间隙横跨整个线宽）。
+
+**修法（产品侧）**：每条 wire 在可见路径**之下**加一条同曲线的**实心透明 2 px 命中笔画**（`.fxg-wire-hit`），
+共享同一个 `onClick`；它 `aria-hidden`、**不带** `data-wire`/`data-modwire`（否则 `toHaveCount(1)` 类断言会翻倍）。
+**刻意保持 2 px 不加宽**：实测 12 px 会让相邻 wire **互相抢点击**（点 wire0 的中点选中了 edge 1，删错边）。
+若要真做成手指友好的宽命中区，正确做法是「在候选里取最近的那条 wire」，而不是简单加宽。
+
+**验证**：Firefox `--retries=0` **2/2 绿**；Chromium 整个 `fxgraph.spec.ts` **16/16** 不回归；
+WebKit 功能上 2/2 绿（600 s 诊断预算下），但**仓库现有 120 s/用例预算在本机不够**——本机无 `/dev/dri`、
+软件渲染 ~1.8 fps，该用例约需 162 s，而**修复前 WebKit 也是顶满 120 s 才失败**，所以这不是本批引入的预算问题。
+**没有**改 `playwright.config.ts` 的 timeout 去制造绿灯。
+
+**同类风险扫描**：全量 grep `click({ force: true })` 后，真正点 SVG **描边**的只有 3 处，全在 `fxgraph.spec.ts`
+（`:93` 音频线是实线所以未暴露、`:411`/`:439` 是调制虚线），均已被同一修法覆盖；其余 force 点击的目标都是 HTML。
+**教训**：给 SVG 描边做点击目标时，**不要依赖 dash 的可见段**；要么用实心透明命中笔画，要么自己算最近路径。
