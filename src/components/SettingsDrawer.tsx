@@ -11,7 +11,7 @@
  * shows "平均律" does not need 380px of width to look tidy.
  */
 
-import { useRef, useState } from 'react';
+import { lazy, Suspense, useRef, useState } from 'react';
 import { store } from '@/state/store';
 import { checkForUpdate } from '@/pwa/register';
 import { TEMPERAMENTS } from '@/audio/tuning';
@@ -31,6 +31,16 @@ import { canVibrate, haptic, HAPTIC } from '@/hooks/useInputMode';
  * strings in the entry chunk for the same answer.
  */
 const SETTINGS_SENTINEL = ['settings.title'];
+
+/**
+ * The project manager — its row and its panel — is a lazy chunk of its own
+ * (P10.4): the list, the snapshots and the `.gs1proj` import/export live behind
+ * one row in the workspace section, and neither their code nor their copy
+ * belongs on the first screen. The row owns the panel, so nothing about it has
+ * to be hoisted into the eager shell; the copy it needs is registered by its own
+ * chunk before the row renders.
+ */
+const ProjectsRow = lazy(() => import('@/components/Projects'));
 
 
 
@@ -173,6 +183,10 @@ export function SettingsDrawer({
                   {t('fxg.open')}
                 </button>
               </div>
+
+              <Suspense fallback={null}>
+                <ProjectsRow onOpen={onClose} />
+              </Suspense>
             </section>
 
             <section className="settings-section" data-section="instances">
