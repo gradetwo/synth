@@ -275,7 +275,9 @@ impl Sample {
     /// One-time analysis: called when a file is imported, never from `process`.
     /// The whole mipmap is one `try_reserve_exact` of [`mipmap_samples`], and a
     /// sample the arena cannot hold comes back as [`SampleError::NoRoom`] instead
-    /// of aborting the module. A refusal leaves the sample already loaded alone.
+    /// of aborting the module — with the sample already loaded left alone, since
+    /// that is decided before the pool is touched. A file rejected for its own
+    /// content (silent, short, not finite) clears the sampler.
     pub fn load(&mut self, samples: &[f32], source_rate: f32, engine_rate: f32) -> Result<(), SampleError> {
         if samples.len() < MIN_BASE_SAMPLES / 4 {
             return Err(SampleError::TooShort);
@@ -294,6 +296,11 @@ impl Sample {
         // One block for every table. An existing pool is reused when it is
         // already big enough, otherwise a fresh exact-size block replaces it —
         // the old one goes back to the arena before the new one is asked for.
+        //
+        // The tables are invalidated *after* the pool is secured, so a refusal
+        // leaves the loaded sample alone, and *before* anything else can fail
+        // (the silence check below), so a rejected import cannot leave `tables`
+        // pointing into a pool that has since changed length.
         let needed = mipmap_samples(base_len);
         if self.pool.capacity() < needed {
             let Some(fresh) = try_vec(needed) else {
@@ -305,6 +312,7 @@ impl Sample {
             self.pool.resize(needed, 0.0);
         }
         self.count = 0;
+        self.tables = [Table::EMPTY; TABLE_COUNT];
 
         // Level 0: the resampled, DC-free, peak-normalised base.
         {
@@ -826,6 +834,26 @@ mod tests {
         // And it grows with the sample, not with the ceiling: a 0.25 s import is
         // not charged for 4 s.
         assert!(mipmap_bytes(12_000) * 4 < need);
+    }
+
+    /// A refusal must not leave the sampler half-loaded. `load` swaps the pool
+    /// before it can know the new sample is usable, so the tables have to be
+    /// invalidated with it; otherwise importing a short silent file over a long
+    /// sample leaves `tables` pointing past the end of the shrunk pool and the
+    /// next render reads out of bounds.
+    #[test]
+    fn a_rejected_import_does_not_leave_a_stale_mipmap() {
+        let mut sample = Sample::new();
+        sample.load(&sine(220.0, 192_000, SR), SR, SR).expect("long sample");
+        assert_eq!(sample.base_len(), MAX_BASE_SAMPLES);
+        assert_eq!(sample.load(&[0.0; 4_800], SR, SR).err(), Some(SampleError::Silent));
+        assert!(!sample.is_loaded(), "a rejected import must not leave the old mipmap dangling");
+        assert_eq!(sample.base_len(), 0, "the tables must be invalidated with the pool");
+        assert_eq!(sample.level_len(0), 0);
+        let mut state = ReadState::new();
+        let mut out = vec![1.0f32; 512];
+        sample.render(0, &mut out, 1.0, &SampleParams::new(), &mut state);
+        assert!(out.iter().all(|value| *value == 0.0));
     }
 
     /// The decimator's job: content in level 0's top octave must not survive
