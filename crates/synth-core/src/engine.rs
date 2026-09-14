@@ -1064,15 +1064,20 @@ impl Engine {
 
     /// Analyse a staged sample. `source_rate` is the rate it was recorded at, so
     /// it can be resampled to the engine's. Returns 0 on success or the numeric
-    /// [`SampleError`] code (1 = too short, 2 = silent, 3 = not finite).
+    /// [`SampleError`] code (1 = too short, 2 = silent, 3 = not finite, 4 = the
+    /// arena cannot hold the sample's mipmap).
+    ///
+    /// The staged samples are analysed in place: the import path does not copy
+    /// them, so a 4 s file costs the mipmap and nothing more.
     pub fn import_sample(&mut self, len: usize, source_rate: f32) -> i32 {
         let len = len.min(self.sample_scratch.len());
-        let samples = self.sample_scratch[..len].to_vec();
-        match self.user_sample.load(&samples, source_rate, self.sample_rate) {
+        let engine_rate = self.sample_rate;
+        match self.user_sample.load(&self.sample_scratch[..len], source_rate, engine_rate) {
             Ok(()) => 0,
             Err(SampleError::TooShort) => 1,
             Err(SampleError::Silent) => 2,
             Err(SampleError::NotFinite) => 3,
+            Err(SampleError::NoRoom) => 4,
         }
     }
 
@@ -4124,8 +4129,11 @@ fn render_wave(
                 let level = sample.level_for(rate);
                 // f64 step: see `ReadState`. The increment is tiny next to the
                 // position it advances, so rounding it to f32 would re-introduce
-                // the loop-rate sidebands a sample at a time.
-                let step = (freq as f64 / root as f64) / (1usize << level) as f64;
+                // the loop-rate sidebands a sample at a time. The divisor is the
+                // level's own decimation, not `2^level`: P9.8's levels are longer
+                // than their index implies (see `sampler::level_shift`).
+                let step = (freq as f64 / root as f64)
+                    / (1usize << crate::dsp::sampler::level_shift(level)) as f64;
                 sample.render(level, out, step, &sampler, sample_state);
                 unsafe {
                     gs_voice_osc_delay_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32)

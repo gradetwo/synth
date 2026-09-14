@@ -7,18 +7,30 @@
 //! at 32 kHz, above Nyquist, folding back to 16 kHz.
 //!
 //! The fix is the one the wavetable oscillator already uses: keep a **mipmap**
-//! of the sample. Level `k` is the sample low-passed to `rate / 2^(k+1)` and
-//! decimated by `2^k`, so it can be played at any rate up to `2^k` without
-//! folding. A note four times the root pitch reads level 2, which simply has no
-//! content left to fold.
+//! of the sample. Level `k` holds the sample low-passed to `rate / 2^(k+1)`, so
+//! it can be played at any rate up to `2^k` without folding, and loop points are
+//! stored as fractions of the sample so they land in the same place on every
+//! level.
 //!
-//! Levels are built with a short windowed-sinc decimator rather than an FFT: the
+//! P9.8 changed what "level" means. A level used to be the sample decimated by
+//! `2^k`, which leaves its content at 0.44 of its own Nyquist no matter what:
+//! the read step of `rate / 2^k` then handed the interpolator a signal at the
+//! worst frequency it could be at, and the four-point Lagrange chord error came
+//! out around -33 dB. A level is now **as long as its band allows**: content at
+//! `SR / 2^(k+1)` is stored at `SR / 2^(k-3)`, so it sits at 1/16 of the level's
+//! Nyquist and the error falls with ν⁴. Levels 1..=3 (rates up to 8×) all read
+//! one full-length table band-limited to `SR/16`; each later level halves both
+//! the rate and the band. Building those tables is a sharp low-pass per level,
+//! which is why the chain is filtered with 192 taps of Blackman-windowed sinc
+//! rather than the old short half-band filters — see [`LEVEL_NYQUIST`].
+//!
+//! Levels are built with a windowed-sinc decimator rather than an FFT: the
 //! sample is seconds long, not 2048 points, and this runs once when a file is
 //! imported. Loop points are stored as fractions of the sample so they land in
 //! the same place on every level.
 
 /// Longest sample the engine will hold: 4 s at 48 kHz. It is a memory ceiling
-/// (the mipmap costs about twice the sample) as much as a musical one.
+/// (the mipmap costs about three times the sample) as much as a musical one.
 pub const MAX_BASE_SAMPLES: usize = 192_000;
 /// Samples a file can hold after resampling to the engine rate.
 pub const MIN_BASE_SAMPLES: usize = 64;
@@ -26,20 +38,69 @@ pub const MIN_BASE_SAMPLES: usize = 64;
 pub const LEVELS: usize = 9;
 /// Shortest mip level (a few hundred samples still loop smoothly).
 pub const MIN_LEVEL_LEN: usize = 256;
-/// Taps in the decimation filter, by level. The first levels carry the audible
-/// band, so they get a long Blackman-windowed sinc (a narrow transition and a
-/// deep stopband); by level 4 the content is up at a few kHz where a short
-/// filter is plenty, and the levels are short enough that length would cost
-/// real time.
-const fn taps_for(level: usize) -> usize {
-    if level <= 2 {
-        64
-    } else if level <= 4 {
-        32
+
+/// Where the content of a mip level sits inside that level's own band, as a
+/// fraction of its Nyquist (P9.8).
+///
+/// P9.7 fixed the *interpolator* (f32 position → f64, linear → cubic) and left
+/// the sampler at −33 dB because a mip level built by plain decimation always
+/// holds content right up to its own Nyquist: 0.44 of it with the 0.22-cutoff
+/// half-band filter, whatever the level. The read step of `rate / 2^k` samples
+/// then hands the interpolator a signal at the worst possible frequency, and a
+/// four-point Lagrange chord error at ν = 0.44 is a train of images about 30 dB
+/// down.
+///
+/// Making the level *longer for the same content* moves ν down: a level whose
+/// band is `SR / 2^(k+1)` stored at `SR / 2^(k-3)` samples keeps ν at 1/16, and
+/// the chord error falls with ν⁴. That is this constant. It is the sampler's
+/// version of P9.7's "every wavetable level is full length": here the length is
+/// only what the alias-free band allows, because the sample itself supplies the
+/// bandwidth and the table has to be filtered down to it.
+///
+/// The value is not free: level *k* has to be decimated by `2^(k-3)`, so levels
+/// 1..=3 (rates up to 8×) read a full-length table band-limited to `SR/16`
+/// (3 kHz at 48 kHz). Below the range this batch is judged on — the P9.1b line
+/// is ≥ 1 kHz — that is a real bandwidth loss when a sample is played an octave
+/// or two up, and it is the honest price of reaching −60 dB with a four-point
+/// interpolator. Measured: 192 taps of Blackman-windowed sinc at this cutoff
+/// put the whole chain 68 dB down or better on the P9.5 ruler (see
+/// `docs/notes/band-limited-oscillators.md` §P9.8).
+pub const LEVEL_NYQUIST: f32 = 0.0625;
+/// Taps in each mip-chain low-pass. The transition has to be sharp: content just
+/// above a level's band is what folds when that level is read at the top of its
+/// rate range, and only the *filter* can remove it. 192 taps of Blackman are
+/// where the measured floor stops improving (see §P9.8).
+const CHAIN_TAPS: usize = 192;
+/// Longest filter this module will build.
+const MAX_TAPS: usize = 192;
+
+/// The table level `level` reads. Level 0 is the full-band base; levels 1..=3
+/// only need `SR/16`, which is exactly what the first chain entry holds at full
+/// length; level `k >= 4` reads chain entry `k - 3`.
+const fn table_for(level: usize) -> usize {
+    if level == 0 {
+        0
+    } else if level <= 3 {
+        1
     } else {
-        16
+        level - 2
     }
 }
+
+/// Samples a level's table holds per output sample at playback rate 1: the table
+/// is decimated by `2^level_shift(level)` relative to the engine rate, so the
+/// read step for a rate is `rate / 2^level_shift(level)`.
+pub const fn level_shift(level: usize) -> usize {
+    let table = table_for(level);
+    if table == 0 {
+        0
+    } else {
+        table - 1
+    }
+}
+
+/// Tables the mip chain can hold: the base plus chain entries 0..=5.
+const TABLE_COUNT: usize = table_for(LEVELS - 1) + 1;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SampleError {
@@ -49,6 +110,10 @@ pub enum SampleError {
     NotFinite,
     /// Nothing left after DC removal.
     Silent,
+    /// The arena cannot hold the sample's mipmap. Refused with a reason rather
+    /// than truncated: a short chain would silently play the wrong level, and
+    /// with it the wrong band.
+    NoRoom,
 }
 
 /// How playback behaves at the end of the sample.
@@ -119,45 +184,98 @@ impl ReadState {
     }
 }
 
+/// One mip table inside [`Sample::pool`].
+#[derive(Clone, Copy)]
+struct Table {
+    offset: u32,
+    len: u32,
+}
+
+impl Table {
+    const EMPTY: Self = Self { offset: 0, len: 0 };
+}
+
 pub struct Sample {
-    /// Level `k` is the sample decimated by `2^k`; empty until something is
-    /// loaded.
-    levels: Vec<Vec<f32>>,
+    /// Every mip table back to back, so one exact-size allocation covers the
+    /// whole mipmap. Table 0 is the full-band base; table 1 is that base
+    /// low-passed to [`LEVEL_NYQUIST`] at full length; table `1 + i` is table `i`
+    /// low-passed again and halved. Levels map onto tables through [`table_for`],
+    /// so several levels share one. Empty until something is loaded.
+    ///
+    /// P9.8 made this a pool rather than a `Vec<Vec<f32>>`: the import path then
+    /// asks the arena for exactly [`mipmap_samples`] and nothing else, there is
+    /// no second copy of the sample and no half-built chain to clean up, and the
+    /// refusal in [`Sample::load`] is one `try_reserve_exact` on one block.
+    pool: Vec<f32>,
+    tables: [Table; TABLE_COUNT],
+    count: usize,
 }
 
 impl Sample {
     pub const fn new() -> Self {
-        Self { levels: Vec::new() }
+        Self { pool: Vec::new(), tables: [Table::EMPTY; TABLE_COUNT], count: 0 }
     }
 
+    /// Drop the sample and hand its memory back to the arena: the response
+    /// analyzer and the next import both want it.
     pub fn clear(&mut self) {
-        self.levels.clear();
+        self.pool = Vec::new();
+        self.tables = [Table::EMPTY; TABLE_COUNT];
+        self.count = 0;
     }
 
     pub fn is_loaded(&self) -> bool {
-        !self.levels.is_empty()
+        self.count > 0
     }
 
-    /// Length of the longest level, in samples.
+    /// Length of the base table, in samples (level 0 and the first chain entry
+    /// are both this long).
     pub fn base_len(&self) -> usize {
-        self.levels.first().map(|level| level.len()).unwrap_or(0)
+        self.tables[0].len as usize
+    }
+
+    /// Table a level reads, clamped to what the chain actually built. A sample
+    /// too short to decimate still plays: the level is the base, exactly as it
+    /// was before the chain existed.
+    fn table_index(&self, level: usize) -> usize {
+        let last = self.count.saturating_sub(1);
+        table_for(level.min(self.max_level())).min(last)
+    }
+
+    fn table(&self, level: usize) -> &[f32] {
+        let entry = self.tables[self.table_index(level)];
+        &self.pool[entry.offset as usize..entry.offset as usize + entry.len as usize]
+    }
+
+    /// Highest mip level the built chain can serve. Levels 0..=3 read chain
+    /// entry 0, and each further entry carries exactly one more level.
+    pub fn max_level(&self) -> usize {
+        match self.count {
+            0 | 1 => 0,
+            n => (n + 1).min(LEVELS - 1),
+        }
     }
 
     pub fn level_len(&self, level: usize) -> usize {
-        self.levels
-            .get(level.min(self.levels.len().saturating_sub(1)))
-            .map(|level| level.len())
-            .unwrap_or(0)
+        self.tables[self.table_index(level)].len as usize
     }
 
+    /// Number of mip levels the built chain can serve (1 when only the base fit).
     pub fn level_count(&self) -> usize {
-        self.levels.len()
+        if self.count == 0 {
+            0
+        } else {
+            self.max_level() + 1
+        }
     }
 
     /// Resample `samples` (recorded at `source_rate`) to the engine rate, remove
     /// DC, normalise to unit peak and build the mipmap.
     ///
     /// One-time analysis: called when a file is imported, never from `process`.
+    /// The whole mipmap is one `try_reserve_exact` of [`mipmap_samples`], and a
+    /// sample the arena cannot hold comes back as [`SampleError::NoRoom`] instead
+    /// of aborting the module. A refusal leaves the sample already loaded alone.
     pub fn load(&mut self, samples: &[f32], source_rate: f32, engine_rate: f32) -> Result<(), SampleError> {
         if samples.len() < MIN_BASE_SAMPLES / 4 {
             return Err(SampleError::TooShort);
@@ -169,39 +287,86 @@ impl Sample {
         let rate = if source_rate.is_finite() && source_rate > 1000.0 { source_rate } else { engine_rate };
         let ratio = (engine_rate.max(1000.0) / rate) as f64;
         let base_len = ((samples.len() as f64 * ratio).round() as usize).clamp(1, MAX_BASE_SAMPLES);
-        let mut base = vec![0.0f32; base_len];
-        for (index, slot) in base.iter_mut().enumerate() {
-            let position = index as f64 / ratio;
-            let first = (position.floor() as usize).min(samples.len() - 1);
-            let second = (first + 1).min(samples.len() - 1);
-            let fraction = (position - position.floor()) as f32;
-            *slot = samples[first] * (1.0 - fraction) + samples[second] * fraction;
-        }
         if base_len < MIN_BASE_SAMPLES {
             return Err(SampleError::TooShort);
         }
 
-        let mean = base.iter().map(|value| *value as f64).sum::<f64>() / base_len as f64;
-        for value in base.iter_mut() {
-            *value -= mean as f32;
+        // One block for every table. An existing pool is reused when it is
+        // already big enough, otherwise a fresh exact-size block replaces it —
+        // the old one goes back to the arena before the new one is asked for.
+        let needed = mipmap_samples(base_len);
+        if self.pool.capacity() < needed {
+            let Some(fresh) = try_vec(needed) else {
+                return Err(SampleError::NoRoom);
+            };
+            self.pool = fresh;
+        } else {
+            self.pool.clear();
+            self.pool.resize(needed, 0.0);
         }
-        let peak = base.iter().fold(0.0f32, |peak, value| peak.max(value.abs()));
-        if peak < 1e-5 {
-            return Err(SampleError::Silent);
+        self.count = 0;
+
+        // Level 0: the resampled, DC-free, peak-normalised base.
+        {
+            let base = &mut self.pool[..base_len];
+            for (index, slot) in base.iter_mut().enumerate() {
+                let position = index as f64 / ratio;
+                let first = (position.floor() as usize).min(samples.len() - 1);
+                let second = (first + 1).min(samples.len() - 1);
+                let fraction = (position - position.floor()) as f32;
+                *slot = samples[first] * (1.0 - fraction) + samples[second] * fraction;
+            }
+            let mean = base.iter().map(|value| *value as f64).sum::<f64>() / base_len as f64;
+            for value in base.iter_mut() {
+                *value -= mean as f32;
+            }
+            let peak = base.iter().fold(0.0f32, |peak, value| peak.max(value.abs()));
+            if peak < 1e-5 {
+                return Err(SampleError::Silent);
+            }
+            let gain = 1.0 / peak;
+            for value in base.iter_mut() {
+                *value *= gain;
+            }
         }
-        let gain = 1.0 / peak;
-        for value in base.iter_mut() {
-            *value *= gain;
+        self.tables[0] = Table { offset: 0, len: base_len as u32 };
+        self.count = 1;
+        if base_len < MIN_LEVEL_LEN {
+            return Ok(());
         }
 
-        self.levels.clear();
-        self.levels.push(base);
-        while self.levels.len() < LEVELS {
-            let next = decimate(self.levels.last().expect("just pushed"), self.levels.len() - 1);
-            if next.len() < MIN_LEVEL_LEN {
+        // Table 1 is the base low-passed once at `LEVEL_NYQUIST`; every later
+        // table filters the one before it at half the band and halves its rate,
+        // so each one keeps its content at `LEVEL_NYQUIST` of its own Nyquist.
+        // Each filter writes straight into the next slot of the pool: the input
+        // and the output ranges never overlap, so the mipmap needs no scratch.
+        let mut offset = base_len;
+        while self.count < TABLE_COUNT {
+            let step = self.count - 1;
+            let cutoff = if step == 0 { LEVEL_NYQUIST } else { LEVEL_NYQUIST * 0.5 };
+            let previous = self.tables[self.count - 1];
+            let (input_len, next_len) = if step == 0 {
+                (previous.len as usize, previous.len as usize)
+            } else {
+                (previous.len as usize, previous.len as usize / 2)
+            };
+            if next_len < MIN_LEVEL_LEN {
                 break;
             }
-            self.levels.push(next);
+            let start = previous.offset as usize;
+            let write = offset;
+            // Split the pool so the filter reads and writes disjoint slices.
+            let (head, tail) = self.pool.split_at_mut(write);
+            let input = &head[start..start + input_len];
+            let out = &mut tail[..next_len];
+            if step == 0 {
+                low_pass_into(input, cutoff, CHAIN_TAPS, out);
+            } else {
+                low_pass_decimate_into(input, cutoff, CHAIN_TAPS, out);
+            }
+            self.tables[self.count] = Table { offset: write as u32, len: next_len as u32 };
+            self.count += 1;
+            offset += next_len;
         }
         Ok(())
     }
@@ -210,13 +375,15 @@ impl Sample {
     /// still fits below Nyquist once multiplied by `rate`.
     ///
     /// Level `k` holds content up to `rate / 2^(k+1)`, so it survives playback
-    /// rates up to `2^k`; playing slower than the root never aliases.
+    /// rates up to `2^k`; playing slower than the root never aliases. A chain
+    /// that stopped early (a very short sample) clamps the level, which is all
+    /// the tables it has.
     pub fn level_for(&self, rate: f32) -> usize {
         if !(rate > 1.0) {
             return 0;
         }
         let steps = rate.log2().ceil().max(0.0);
-        (steps as usize).min(self.levels.len().saturating_sub(1))
+        (steps as usize).min(self.max_level())
     }
 
     /// Read one sample of `level` at `position` (in level samples), wrapping
@@ -225,9 +392,10 @@ impl Sample {
     /// Four-point (cubic Lagrange) interpolation rather than linear: at the
     /// rates an octave or two above the root the read step is a large fraction
     /// of a sample, and a chord's error is a train of high harmonics that folds
-    /// back. Measured on the P9.5 ruler, cubic buys a few dB over linear here.
+    /// back. P9.7 measured cubic a few dB better than linear here; P9.8's longer
+    /// levels are what let the chord error fall with the table's own band.
     fn read(&self, level: usize, position: f64) -> f32 {
-        let table = &self.levels[level];
+        let table = self.table(level);
         let len = table.len();
         let wrapped = position.rem_euclid(len as f64);
         let index = wrapped as usize;
@@ -248,9 +416,9 @@ impl Sample {
     /// Render a block into `out`.
     ///
     /// `step` is the position increment per output sample at this level
-    /// (`rate / 2^level`), so one rate works for every level. It is f64 for the
-    /// same reason the position is: rounding the increment to f32 would put the
-    /// same loop-rate error back a sample at a time.
+    /// (`rate / 2^level_shift(level)`), so one rate works for every level. It is
+    /// f64 for the same reason the position is: rounding the increment to f32
+    /// would put the same loop-rate error back a sample at a time.
     pub fn render(
         &self,
         level: usize,
@@ -324,57 +492,105 @@ impl Sample {
     }
 }
 
-/// Halve the sample rate with a Blackman-windowed sinc low-pass just below the
-/// new Nyquist, clamping at the edges so the first samples do not fade in.
-fn decimate(input: &[f32], level: usize) -> Vec<f32> {
-    let out_len = input.len() / 2;
-    let mut out = vec![0.0f32; out_len];
-    let (taps, count) = low_pass(level);
-    let taps = &taps[..count];
+/// A zeroed `Vec` of `len` f32, or `None` when the arena is exhausted. The
+/// mipmap is the one place in the engine that can ask for hundreds of kilobytes
+/// at once, so it is the one place that has to be able to say no: the default
+/// `vec!` would abort the module instead.
+fn try_vec(len: usize) -> Option<Vec<f32>> {
+    let mut out: Vec<f32> = Vec::new();
+    out.try_reserve_exact(len).ok()?;
+    out.resize(len, 0.0);
+    Some(out)
+}
+
+/// Samples every mip table of a `base_len`-sample import adds up to: the base,
+/// the full-length first chain entry, then a halving chain until a table would
+/// be shorter than [`MIN_LEVEL_LEN`]. This is the exact size of the pool
+/// [`Sample::load`] asks the arena for, so it is also the memory a sample costs.
+pub const fn mipmap_samples(base_len: usize) -> usize {
+    let mut total = base_len;
+    if base_len < MIN_LEVEL_LEN {
+        return total;
+    }
+    total += base_len;
+    let mut len = base_len;
+    let mut tables = 2;
+    while tables < TABLE_COUNT {
+        len /= 2;
+        if len < MIN_LEVEL_LEN {
+            break;
+        }
+        total += len;
+        tables += 1;
+    }
+    total
+}
+
+/// Bytes [`mipmap_samples`] is worth, for the capacity arithmetic in the docs
+/// and for the budget test below.
+pub const fn mipmap_bytes(base_len: usize) -> usize {
+    mipmap_samples(base_len) * core::mem::size_of::<f32>()
+}
+
+/// Low-pass `input` into `out`, which must be the same length, with a
+/// Blackman-windowed sinc at `cutoff` — a fraction of the input rate — clamping
+/// at the edges so the first samples do not fade in. Coefficients are normalised
+/// to unity gain at DC.
+fn low_pass_into(input: &[f32], cutoff: f32, taps: usize, out: &mut [f32]) {
+    let (weights, count) = low_pass_taps(cutoff, taps);
     let center = count / 2;
     for (index, slot) in out.iter_mut().enumerate() {
-        let base = (index * 2) as isize - center as isize;
+        let base = index as isize - center as isize;
         let mut acc = 0.0f32;
-        for (tap, weight) in taps.iter().enumerate() {
+        for (tap, weight) in weights.iter().take(count).enumerate() {
             let at = (base + tap as isize).clamp(0, input.len() as isize - 1) as usize;
             acc += input[at] * weight;
         }
         *slot = acc;
     }
-    out
 }
 
-/// Cutoff at 0.22 of the input rate: below the new Nyquist (0.25), which is
-/// where the transition has to start for the stopband to be down by the time it
-/// reaches it.
-const CUTOFF: f32 = 0.22;
-const MAX_TAPS: usize = 64;
+/// The same low-pass, but keeping only every second output sample: `out` holds
+/// `input.len() / 2` values, the decimation of the filtered signal. Computing
+/// only the survivors halves the work and needs no scratch buffer.
+fn low_pass_decimate_into(input: &[f32], cutoff: f32, taps: usize, out: &mut [f32]) {
+    let (weights, count) = low_pass_taps(cutoff, taps);
+    let center = count / 2;
+    for (index, slot) in out.iter_mut().enumerate() {
+        let base = (index * 2) as isize - center as isize;
+        let mut acc = 0.0f32;
+        for (tap, weight) in weights.iter().take(count).enumerate() {
+            let at = (base + tap as isize).clamp(0, input.len() as isize - 1) as usize;
+            acc += input[at] * weight;
+        }
+        *slot = acc;
+    }
+}
 
-/// Low-pass coefficients for the first decimation of a chain that starts at
-/// `level`, normalised to unity gain at DC.
-fn low_pass(level: usize) -> ([f32; MAX_TAPS], usize) {
-    let count = taps_for(level).min(MAX_TAPS);
-    let mut taps = [0.0f32; MAX_TAPS];
+/// Coefficients of the mip chain's low-pass, normalised to unity gain at DC.
+fn low_pass_taps(cutoff: f32, taps: usize) -> ([f32; MAX_TAPS], usize) {
+    let count = taps.clamp(3, MAX_TAPS);
+    let mut weights = [0.0f32; MAX_TAPS];
     let center = (count - 1) as f32 / 2.0;
     let mut sum = 0.0f32;
-    for (index, tap) in taps.iter_mut().take(count).enumerate() {
+    for (index, weight) in weights.iter_mut().take(count).enumerate() {
         let x = index as f32 - center;
         let sinc = if x.abs() < 1e-6 {
-            2.0 * CUTOFF
+            2.0 * cutoff
         } else {
-            (core::f32::consts::TAU * CUTOFF * x).sin() / (core::f32::consts::PI * x)
+            (core::f32::consts::TAU * cutoff * x).sin() / (core::f32::consts::PI * x)
         };
         let t = index as f32 / (count - 1) as f32;
         let window = 0.42 - 0.5 * (core::f32::consts::TAU * t).cos() + 0.08 * (2.0 * core::f32::consts::TAU * t).cos();
-        *tap = sinc * window;
-        sum += *tap;
+        *weight = sinc * window;
+        sum += *weight;
     }
     if sum.abs() > 1e-9 {
-        for tap in taps.iter_mut().take(count) {
-            *tap /= sum;
+        for weight in weights.iter_mut().take(count) {
+            *weight /= sum;
         }
     }
-    (taps, count)
+    (weights, count)
 }
 
 #[cfg(test)]
@@ -417,7 +633,7 @@ mod tests {
 
     fn render(sample: &Sample, rate: f32, params: SampleParams, frames: usize) -> Vec<f32> {
         let level = sample.level_for(rate);
-        let step = (rate / (1 << level) as f32) as f64;
+        let step = (rate / (1 << level_shift(level)) as f32) as f64;
         let mut state = ReadState::new();
         let mut out = vec![0.0f32; frames];
         sample.render(level, &mut out, step, &params, &mut state);
@@ -495,7 +711,7 @@ mod tests {
         // the rate must stay under the output Nyquist.
         for rate in [1.0f32, 1.3, 2.0, 3.0, 6.0, 12.0] {
             let level = sample.level_for(rate);
-            let step = (rate / (1 << level) as f32) as f64;
+            let step = (rate / (1 << level_shift(level)) as f32) as f64;
             let mut state = ReadState::new();
             let mut out = vec![0.0f32; 4_096];
             sample.render(level, &mut out, step, &SampleParams::new(), &mut state);
@@ -567,12 +783,49 @@ mod tests {
         let long = sine(220.0, 300_000, SR);
         let sample = load(&long);
         assert_eq!(sample.base_len(), MAX_BASE_SAMPLES);
-        assert!(sample.level_count() >= 2);
-        // Every level halves until it would be too short to loop.
+        assert_eq!(sample.level_count(), LEVELS);
+        // The chain halves until a table would be too short to loop.
         for level in 1..sample.level_count() {
             assert!(sample.level_len(level) >= MIN_LEVEL_LEN);
-            assert!(sample.level_len(level) < sample.level_len(level - 1));
+            assert!(sample.level_len(level) <= sample.level_len(level - 1));
         }
+    }
+
+    /// P9.8's whole point, pinned: every level's table is as long as its band
+    /// allows, so its content sits at [`LEVEL_NYQUIST`] of the table's Nyquist
+    /// rather than at the 0.44 the old decimate-by-`2^k` chain left it at.
+    #[test]
+    fn every_level_keeps_its_content_well_inside_its_own_band() {
+        let sample = load(&sine(220.0, 24_000, SR));
+        assert_eq!(sample.level_count(), LEVELS);
+        for level in 0..LEVELS {
+            let shift = level_shift(level);
+            assert_eq!(sample.level_len(level), 24_000 >> shift, "level {level} length");
+            if level == 0 {
+                continue;
+            }
+            // Table 1 upward holds `LEVEL_NYQUIST` of the rate it was built at,
+            // and level `k` is read at up to `2^k`, so its output content stops
+            // at the output Nyquist (the `<=` is tight for levels 3, 4 and 8).
+            let band = LEVEL_NYQUIST * SR / (1 << shift) as f32;
+            assert!(band * (1 << level) as f32 <= SR / 2.0 + 1e-3, "level {level} band {band}");
+        }
+        // Level 1 reads the same full-length table as level 3, which is the price
+        // this batch paid for -60 dB: band above `SR/16` is gone an octave up.
+        assert_eq!(sample.level_len(1), 24_000);
+        assert_eq!(sample.level_len(4), 12_000);
+    }
+
+    /// The memory an import costs is known before it is attempted, and the
+    /// longest sample the engine accepts still fits the arena — otherwise the
+    /// refusal in `load` would be the normal path rather than the edge.
+    #[test]
+    fn the_longest_mipmap_fits_the_arena() {
+        let need = mipmap_bytes(MAX_BASE_SAMPLES);
+        assert!(need < crate::alloc_arena::ARENA_SIZE / 2, "4 s mipmap needs {need} bytes");
+        // And it grows with the sample, not with the ceiling: a 0.25 s import is
+        // not charged for 4 s.
+        assert!(mipmap_bytes(12_000) * 4 < need);
     }
 
     /// The decimator's job: content in level 0's top octave must not survive
