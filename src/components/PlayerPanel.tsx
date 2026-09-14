@@ -3,6 +3,12 @@ import { getLang, t } from '@/i18n';
 // Register this panel's copy at module scope (P11.2); see `i18n.ts`.
 import { loadPlayerStrings } from '@/i18n-panels';
 void loadPlayerStrings();
+// The library's own copy (P10.5) lives in its own module so two UI tracks can
+// register strings without editing the shared panel table. Loading it here, at
+// module scope, means the source labels are registered before the first render
+// of this chunk rather than racing the boot preload.
+import { loadLibraryStrings } from '@/i18n.library';
+void loadLibraryStrings();
 import { noteName } from '@/audio/noteBus';
 import { toast } from './Toast';
 import { haptic, HAPTIC } from '@/hooks/useInputMode';
@@ -23,7 +29,9 @@ import { MIN_LENGTH, removeNote, rollToSeconds, updateNote, type RollDoc } from 
 import { clipsDuration, clipsOf, clipsOfLayer, expandClips } from '@/midi/clips';
 import { barBeatAt, secondsToBeats, tempoMapOf, withTempoMap, type TempoSegment } from '@/midi/tempo';
 import { rollSession, useRollSession } from '@/state/roll';
-import { midiLibrary, trackTitle, type TrackGroup } from '@/midi/library';
+import { midiLibrary, trackTitle, type Track, type TrackGroup } from '@/midi/library';
+import type { SongSource } from '@/midi/songs';
+import { parsePatchFile } from '@/state/patchfile';
 
 import { activeTakeOfLayer, layerFoldedIntoClips, takesOf, takesOfLayer } from '@/midi/take-edit';
 import type { MidiTake } from '@/midi/takes';
@@ -49,6 +57,23 @@ const barLabelOf = (map: TempoSegment[], time: number): string => {
 const fmtTime = (s: number) => {
   const total = Math.max(0, Math.round(s));
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+};
+
+/**
+ * The source/licence label shown on every row (P10.5). The licence class gets
+ * a bilingual label; `credit` names the piece or the imported file and is shown
+ * as-is (a file name is language-neutral). The literal `t()` calls are what the
+ * i18n guard scans, so the keys stay checked.
+ */
+const sourceLabel = (track: Track): string => {
+  const source: SongSource = track.source ?? { kind: 'user', credit: '' };
+  const kind =
+    source.kind === 'public-domain'
+      ? t('lib.source.publicDomain')
+      : source.kind === 'original'
+        ? t('lib.source.original')
+        : t('lib.source.user');
+  return source.credit ? `${kind} · ${source.credit}` : kind;
 };
 
 /**
@@ -424,22 +449,58 @@ export function PlayerPanel({
       : tracks;
   }, [tracks, query]);
 
+  /**
+   * Import a track. `.mid`/`.midi` go through the MIDI reader; `.gs1song` (and
+   * a `.gs1.json` the user picked by mistake) through the existing patch-file
+   * reader, because a long arrangement already travels as a share code in a
+   * box. Every refusal names its reason in the toast instead of quietly doing
+   * nothing — that is the visible half of "reject damaged input".
+   */
   const importFile = async (file: File) => {
+    const name = file.name;
     try {
-      const song = parseMidi(new Uint8Array(await file.arrayBuffer()), file.name.replace(/\.midi?$/i, ''));
-      if (song.notes.length === 0) throw new Error(t('player.emptyFile'));
-      const title = song.name || file.name;
-      midiLibrary.put({
-        id: `file:${file.name}:${Date.now()}`,
-        title: [title, title],
-        composer: t('player.importedBy'),
-        song,
-        group: 'imported',
-      })
-      store.mark();
-      toast(t('player.imported', { name: title, n: song.notes.length }));
+      if (/\.(mid|midi)$/i.test(name)) {
+        const song = parseMidi(new Uint8Array(await file.arrayBuffer()), name.replace(/\.midi?$/i, ''));
+        if (song.notes.length === 0) throw new Error(t('player.emptyFile'));
+        const title = song.name || name;
+        midiLibrary.put({
+          id: `file:${name}:${Date.now()}`,
+          title: [title, title],
+          composer: t('player.importedBy'),
+          song,
+          group: 'imported',
+          source: { kind: 'user', credit: name },
+        });
+        store.mark();
+        toast(t('player.imported', { name: title, n: song.notes.length }));
+        return;
+      }
+      if (/\.(gs1song|json)$/i.test(name)) {
+        const text = await file.text();
+        const parsed = parsePatchFile(text);
+        if (!parsed) {
+          let isJson = true;
+          try {
+            JSON.parse(text);
+          } catch {
+            isJson = false;
+          }
+          throw new Error(t(isJson ? 'lib.importUnknownFormat' : 'lib.importBadJson'));
+        }
+        if (parsed.kind === 'preset') throw new Error(t('lib.importNotASong'));
+        if (!store.importPresetFile(text)) throw new Error(t('lib.importDamagedSong'));
+        const imported = midiLibrary.getCurrent();
+        toast(
+          t('player.imported', {
+            name: imported ? trackTitle(imported) : name,
+            n: imported?.song.notes.length ?? 0,
+          }),
+        );
+        return;
+      }
+      throw new Error(t('lib.importUnknownFormat'));
     } catch (err) {
-      toast(t('player.importFailed', { msg: err instanceof Error ? err.message : String(err) }));
+      toast(t('lib.importFailed', { msg: err instanceof Error ? err.message : String(err) }));
     }
   };
 
@@ -483,7 +544,7 @@ export function PlayerPanel({
 
         <div className="player-actions">
           <button type="button" className="player-btn wide" onClick={() => fileRef.current?.click()}>
-            {t('player.import')}
+            {t('lib.import')}
           </button>
           <button
             type="button"
@@ -547,7 +608,7 @@ export function PlayerPanel({
         <input
           ref={fileRef}
           type="file"
-          accept=".mid,.midi,audio/midi,audio/x-midi"
+          accept=".mid,.midi,.gs1song,.json,audio/midi,audio/x-midi,application/json"
           hidden
           onChange={(event) => {
             const file = event.target.files?.[0];
@@ -1325,6 +1386,16 @@ export function PlayerPanel({
                       {track.composer} · {track.song.notes.length} {t('player.notes')} ·{' '}
                       {fmtTime(track.song.duration)}
                     </span>
+                    {/* Every row names its source and licence (P10.5): a
+                        built-in can be public domain or original, an imported
+                        file says so and carries its own file name. */}
+                    <span
+                      className="pt-source"
+                      data-kind={track.source?.kind ?? 'user'}
+                      title={t('lib.sourceHint')}
+                    >
+                      {sourceLabel(track)}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -1332,7 +1403,7 @@ export function PlayerPanel({
           })}
         </div>
 
-        <footer className="player-foot">{t('player.copyright')}</footer>
+        <footer className="player-foot">{t('lib.copyright')}</footer>
       </aside>
     </>
   );
