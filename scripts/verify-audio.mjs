@@ -1069,6 +1069,21 @@ function blockSteps(frames) {
   // Time domain alongside it: periodic at the master's rate (>= 0.999), bounded,
   // finite, and free of sample-to-sample steps large enough to be heard as a
   // click.
+  //
+  // The step bound is a multiple of the *scene's own peak*, not an absolute
+  // number. A click is a discontinuity, so what makes a step "large" is its
+  // size relative to the signal: this scene is one voice at a pinned level, and
+  // `gain = VOICE_GAIN * patch_gain` multiplies the whole waveform, so peak and
+  // worst step scale by exactly the same factor. The bound used to be the
+  // absolute `0.25`, which is a calibration at *one* bus gain, not a property
+  // of hard sync: at the reference gain (VOICE_GAIN 0.22) the saw scene peaks
+  // at 0.1355, so 0.25 was 1.84x its own peak. `1.8` reproduces that calibration
+  // and rounds toward strict -- at the reference gain the new bound is 0.2439
+  // (saw), 0.2107 (square) and 0.2194 (triangle), every one inside the old 0.25.
+  // The wavetable/sampler section below already uses the same peak-relative
+  // form (`pi * peak`, Bernstein's bound); this brings the hard-sync check in
+  // line with it so no future bus-gain change has to touch a gate.
+  const HARD_SYNC_STEP_RATIO = 1.8;
   for (const [name, wave] of [
     ['saw', WAVE.saw],
     ['square', WAVE.square],
@@ -1085,10 +1100,11 @@ function blockSteps(frames) {
       if (i > 0) jump = Math.max(jump, Math.abs(v - synced[i - 1]));
     }
     const corr = periodCorrelation(synced);
+    const stepBound = HARD_SYNC_STEP_RATIO * peak;
     check(
       `hard sync stays bounded, click-free and periodic (${name})`,
-      finite && peak <= 1.0 + 1e-6 && jump < 0.25 && corr > 0.999,
-      `peak ${peak.toFixed(3)}, largest step ${jump.toFixed(3)}, correlation ${corr.toFixed(4)}`,
+      finite && peak <= 1.0 + 1e-6 && jump < stepBound && corr > 0.999,
+      `peak ${peak.toFixed(4)}, largest step ${jump.toFixed(4)} < ${stepBound.toFixed(4)} (${HARD_SYNC_STEP_RATIO} x peak), correlation ${corr.toFixed(4)}`,
     );
   }
   // The sub oscillator: one sine an octave or two down.
@@ -2287,20 +2303,39 @@ const ALIAS_SKIP = 400; // let the attack and the limiter settle (P9.1a: was 240
   }
 }
 
-/** P9.6: the absolute phase seed this gate pins, the time-domain bound it
- * holds, and how many fresh scenes the cheap backstop sweep renders. */
+/** P9.6: the absolute phase seed this gate pins, the peak-relative time-domain
+ * bound it holds, and how many fresh scenes the cheap backstop sweep renders.
+ *
+ * The bound used to be the absolute `0.13`. That was a calibration at one bus
+ * gain, not a property of the oscillator: `gain = VOICE_GAIN * patch_gain`
+ * multiplies the whole frame, so peak and worst adjacent step move by exactly
+ * the same factor (measured x2.001 on the step and x2.001 on the peak when the
+ * +6 dB change was applied). At the reference gain
+ * (VOICE_GAIN 0.22) this C7 saw scene peaks at 0.1159, so 0.13 was 1.12x the
+ * scene's own peak -- and the milder round of the P9.6 bug stepped 0.154
+ * = 1.33x peak on other phases, which is what the line actually separates.
+ * `1.10` keeps that verdict (it is 0.1275 absolute at the reference gain, a
+ * shade *inside* the old 0.13) and makes the check independent of any future
+ * bus-gain change. */
 const P96_SEED = 707;
-const P96_STEP_BOUND = 0.13;
+const P96_STEP_RATIO = 1.1;
 const P96_SWEEP = 24;
 
-/** Worst sample-to-sample step in a rendered frame. */
+/** Worst sample-to-sample step in a rendered frame, alongside the frame's own
+ * peak and the step as a fraction of it. The ratio is the scale-free number;
+ * the absolute pair is printed so a failure is still readable. */
 function worstStepOf(frames) {
   let step = 0;
-  for (let i = 1; i < frames.length; i++) {
-    const d = Math.abs(frames[i] - frames[i - 1]);
-    if (d > step) step = d;
+  let peak = 0;
+  for (let i = 0; i < frames.length; i++) {
+    const a = Math.abs(frames[i]);
+    if (a > peak) peak = a;
+    if (i > 0) {
+      const d = Math.abs(frames[i] - frames[i - 1]);
+      if (d > step) step = d;
+    }
   }
-  return step;
+  return { step, peak, ratio: step / Math.max(peak, 1e-30) };
 }
 
 // ------------------- P9.6: the BLEP wrap that lands on the table's node
@@ -2330,15 +2365,16 @@ function worstStepOf(frames) {
   const hz = 440 * 2 ** ((96 - 69) / 12);
 
   // Cheap backstop: a short natural sweep, time domain only. A normal wrap
-  // through the factory filter steps by about 0.106.
-  let swept = 0;
+  // through the factory filter steps by about 0.106, or 0.92x its own peak.
+  let swept = { step: 0, peak: 1, ratio: 0 };
   for (let i = 0; i < P96_SWEEP; i++) {
-    swept = Math.max(swept, worstStepOf(renderFloor([[P.OSC1_WAVE, WAVE.saw]], 96)));
+    const scene = worstStepOf(renderFloor([[P.OSC1_WAVE, WAVE.saw]], 96));
+    if (scene.ratio > swept.ratio) swept = scene;
   }
   check(
     'no fresh C7 saw scene through the factory filter clicks',
-    swept < P96_STEP_BOUND,
-    `worst adjacent step ${swept.toFixed(4)} over ${P96_SWEEP} scenes (bound ${P96_STEP_BOUND})`,
+    swept.ratio < P96_STEP_RATIO,
+    `worst adjacent step ${swept.step.toFixed(4)} on a ${swept.peak.toFixed(4)} peak = ${(swept.ratio * 100).toFixed(1)}% of peak over ${P96_SWEEP} scenes (bound ${(P96_STEP_RATIO * 100).toFixed(0)}% of peak = ${(P96_STEP_RATIO * swept.peak).toFixed(4)} at this scene)`,
   );
 
   // Walk the phase counter to the pinned seed. Note-ons cost a block each, not
@@ -2366,11 +2402,11 @@ function worstStepOf(frames) {
     pinnedDb < -95,
     `phase ${P96_SEED} reads ${pinnedDb.toFixed(1)} dB (bound -95; this exact phase read -44.8 dB before the fix, and it does not move when the factory resonance does)`,
   );
-  const pinnedStep = worstStepOf(pinned);
+  const pinnedScene = worstStepOf(pinned);
   check(
     `the pinned P9.6 phase does not click`,
-    pinnedStep < P96_STEP_BOUND,
-    `phase ${P96_SEED} steps by ${pinnedStep.toFixed(4)} (bound ${P96_STEP_BOUND}; the milder round of this bug stepped 0.154 on other phases)`,
+    pinnedScene.ratio < P96_STEP_RATIO,
+    `phase ${P96_SEED} steps by ${pinnedScene.step.toFixed(4)} on a ${pinnedScene.peak.toFixed(4)} peak = ${(pinnedScene.ratio * 100).toFixed(1)}% of peak (bound ${(P96_STEP_RATIO * 100).toFixed(0)}% of peak; the milder round of this bug stepped 0.154 on other phases)`,
   );
 }
 
