@@ -2672,11 +2672,12 @@ quietly becoming a low-pass, not to forbid a stage two that has nowhere else to 
 > compressing by **3%**, which the spectral gate measures as **−46 dB** of harmonic content on a
 > sine. A filter should be **transparent until it is actually driven**.
 
-**关于 `PASSBAND_TRIM` 的一处内部不一致**（写文档时必须指出）：
-常数**当前是 `1.0`**，而它的注释描述的是被替换的 vendored 版本
+**关于 `PASSBAND_TRIM` 的一处内部不一致**（**已修**，见 §32.2 第 3 条）：
+常数**当前是 `1.0`**，而它的注释曾描述被替换的 vendored 版本
 「ran with a 0.5 passband gain, so every existing preset was balanced against a low-pass that sat
 about **4 dB** below unity」。
-数学上 $20\log_{10}(0.5) = -6.02$ dB，注释写 ~4 dB——**注释里的数字与 0.5 不相符**（见 §32）。
+数学上 $20\log_{10}(0.5) = -6.02$ dB，注释里的「~4 dB」与「0.5」不相符；
+`p-parammax` 已把注释改成 **6.02 dB**，常数仍是 `1.0`。
 
 **为什么自激不会发散**：
 
@@ -3092,7 +3093,7 @@ the effect section is **silent**, which is what an empty patch should be.」
 | :-- | :-- |
 | **图不能有反馈** | `graph_param_field` 的前向约束（设计选择，不是 bug） |
 | **图节点参数 id 与其它 id 重叠** | 见 §12.6（**已知未修**） |
-| **引擎里有一处陈旧注释声称图的 2× 是「关」的** | `engine.rs` 测试模块注释写「the graph's 2x node path is held *off*」，但 `node_oversampled` 返回 `Drive`、渲染路径走 `drive_oversampled_node`、且有断言「图 2× 使 alias floor 下降 ≥12 dB」的测试。**功能状态是「开（OVERSAMPLE 开时）」**，注释陈旧（见 §32） |
+| **引擎里有一处陈旧注释声称图的 2× 是「关」的**（**已修**） | `engine.rs` 测试模块注释曾写「the graph's 2x node path is held *off*」，但 `node_oversampled` 返回 `Drive`、渲染路径走 `drive_oversampled_node`、且有断言「图 2× 使 alias floor 下降 ≥12 dB」的测试。**功能状态是「开（OVERSAMPLE 开时）」**；`p-parammax` 已把注释改写为「开」（见 §32.2 第 1 条） |
 | 池满时静默直通 | 节点拿不到实例就直通；UI 用 `gs_delay_pool_used` / `gs_conv_pool_used` 显示剩余可分配量并 `disabled` 该选项 |
 | 3+3 池不可行 | 见 §19.5 的容量论证 |
 
@@ -4241,8 +4242,12 @@ CachyOS 基线不能判 Ubuntu runner」——所以 48 张基线**不进 CI**�
 
 > 这些**不是**本文档的猜测，而是写文档时逐项对照源码、笔记与基线后发现的**现存差异**。
 > 按「是否需要改动产品代码」分级。**本文档不改任何代码**，只记录。
+>
+> **后续更新**：`p-parammax` 批次（基于 v2.0.6）处理了 §32.1 与 §32.2 的第 1–6 条，
+> 并在下面的条目里标了「**已修**」与实测证据；§32.2 的第 7–8 条是**历史快照说明**
+> （记录的是不同批次时刻的数字，不是错误），§32.3 全部是「两处都对、语境不同」，均未改动。
 
-### 32.1 ⚠️ 需要产品决策：AudioParam 量程与引擎线格式枚举**不一致**
+### 32.1 ⚠️ 需要产品决策：AudioParam 量程与引擎线格式枚举**不一致**（**已修** · p-parammax）
 
 **发现**：`src/audio/worklet-processor.js` 的 AudioParam 表（`PARAMS`，200 项）
 给出的量程**窄于**引擎接受的线格式枚举：
@@ -4273,42 +4278,70 @@ const v = clamp(value, param.minValue, param.maxValue);   // ← 这里把 8 夹
 
 也就是说：**核心（wasm）能正确处理 wave 8/9 与 filter 4/5/6，但产品路径送不到**。
 
-**受影响的工厂预设**（从 `src/state/presets.ts` 解析）：
-`wtorgan` / `wtvocal` / `wtglass` / `wtmetal` 等写 `OSC1_WAVE = 8`；
-`semmorph` / `semparabass` / `semnotch` 与名为 `formant` 的预设写 `FILTER_TYPE` ≥ 4。
+**受影响的工厂预设**（从 `src/state/presets.ts` 逐条解析，`p-parammax` 复核后的完整名单）：
 
-**未验证的部分（诚实声明）**：我**没有**在浏览器里实测听感后果
-（本任务不需要跑 E2E/浏览器门禁）。因此：
+- 写 `OSC1_WAVE = 8`：**`wtorgan` / `wtvocal` / `wtglass` / `wtmetal` / `graphswell`**
+  （`wtmetal` 连 `OSC2_WAVE` 也是 8）。
+- 写 `FILTER_TYPE ≥ 4`：**`phonk`**（4 = comb）、**`robotvoice`**（5 = formant）、
+  **`semmorph` / `semparabass` / `semnotch`**（6 = sem）。
 
-- **已确认（纯代码级，不依赖浏览器）**：`src/audio/engine.ts` 的 `setParam`
-  在把值交给 AudioParam **之前**就用 `clamp(value, param.minValue, param.maxValue)` 钳位；
-  而 `param.minValue/maxValue` 来自 `worklet-processor.js` 的 `parameterDescriptors`，
-  即上表的 0..7 / 0..3。**这一步与浏览器行为无关**，是产品代码里的显式钳位。
-  同时我逐处确认了**不存在第二条发送路径**（实例 A 只经 `AudioParam`；
-  实例 B 走 `paramB` 消息，不经 AudioParam；worklet 的 `handleMessage` switch 里没有
-  「直接设参」的 type）。
-- **未验证（需要浏览器）**：实际听感后果。若钳位生效，`wtorgan` 的
-  `osc1Wave = 8` 会变成 **7 = brown noise**，`semmorph` 的 `filterType = 6` 会变成 **3 = notch**。
-  另外我也**没有**独立核实「浏览器是否还会再钳一次」这一层——
-  但上面的显式 JS 钳位已经足以让值到不了 8/9 与 4/5/6。
-- **建议的验证方式**：在浏览器里读回 `node.parameters.get('osc1Wave').value`，
-  或用一条把 `OSC1_WAVE` 设为 8 的 patch 看频谱仪是否呈现 wavetable 的谐波结构。
-- **推测的修法方向**（**不由本文档实施**）：把 `PARAMS` 表里这三项的 `maxValue`
-  放宽到枚举上界（7→9、3→6）；或为「超出 AudioParam 量程的离散参数」加一条消息路径
-  （与实例 B 的 `paramB` 同形）。
+（本文档早先的名单写「与名为 `formant` 的预设」——**那是错的**：预设 `formant`
+（Formant Lead）用的是 `FILTER_TYPE = 2`（band-pass），真正用共振峰滤波器的是 `robotvoice`；
+`graphswell` 当时也漏了。名单以这里为准。）
+
+**在浏览器里实证（p-parammax，Chromium + 真实页面）**：给真页面的
+`AudioWorkletNode` 的每个 AudioParam 按名字打标签、记录每一次写入，再套用工厂预设：
+
+| 观测（真页面） | 修复前 | 修复后 |
+| :-- | :-- | :-- |
+| `wtorgan` 实际写到 `osc1Wave` 的值 | **7**（= brown noise；预设里存的是 8） | **8** |
+| `semmorph` 实际写到 `filterType` 的值 | **3**（= notch；预设里存的是 6） | **6** |
+| 页面里读到的 `osc1Wave` 量程 | 0..7 | 0..**9** |
+| 页面里读到的 `filterType` 量程 | 0..3 | 0..**6** |
+| 对照：给 `masterVolume`（`maxValue = 1`）写 `value = 1.5` | 读回 **1** | 读回 **1** |
+
+最后一行回答了原来「浏览器是否还会再钳一次」的疑问：**会**。AudioParam 的 `value` setter
+按**标称范围**（即 `parameterDescriptors` 的 min/max）钳位；`masterVolume` 的 0..1 两版都是同一个值，
+所以这是与本次修改无关的对照。也就是说钳位有两层（`engine.ts` 的显式 clamp 与浏览器这一层），
+两层用的是**同一张描述符**：描述符窄于引擎枚举时，两层都会把 8 改写成 7。
+听感侧同样对得上：修复前 `wtorgan`（请求 wave 8）的输出与显式 brown noise（wave 7）
+无法区分，修复后 wavetable 才呈现谐波梳状结构。实测（同一页面、同一 C4、32768 点 FFT，
+「谐波梳比」= 前 30 次谐波能量 / 谐波中点能量）：
+修复前 `wtorgan` **12.0–12.7 dB**、显式 wavetable(8) **12.4–13.9 dB**、显式 brown noise **14.2–14.6 dB**（三者同一个噪声过程）；
+修复后 `wtorgan` **73.9–74.4 dB**、显式 wavetable(8) **88.4–88.9 dB**，而 brown noise 仍是 **10.7–12.6 dB**。
+
+**已修（p-parammax）**：把 `PARAMS` 表里 `osc1Wave`/`osc2Wave` 的 `maxValue` 由 7 放宽到 9、
+`filterType` 由 3 放宽到 6。横扫**全部离散 AudioParam** 时另发现一处同类不一致：
+`fxChain1..6` 的 `maxValue` 是 **8**，而 `FxKind::from_u32` 与 UI 的 `FX_KINDS`
+都接受 **9 = transient**（UI 里能选 TRANSIENT，送下去却成了 EQ），一并放宽到 9。
+**只改钳位边界，不改行为**：`setParam` 的 clamp 逻辑保留（它挡的是越界垃圾值），
+Rust 侧、预设指纹（`91 presets unchanged · ABI 8`）与音频基线均未变动。
+
+**新门禁（两层）**：
+
+- `src/audio/param-range.test.ts`：读 worklet **真正服务**的 `parameterDescriptors`，
+  逐条断言每个离散参数的 AudioParam 量程**包含**其 Rust 解码器接受的最大值
+  （`Wave` 0..9、`FilterType` 0..6、`FxKind` 0..9、`LfoWave`/`LfoTarget` 0..3、
+  graph src 0..7、mod dst 0..18、ovr target 0..24 …），并断言 `DISCRETE_PARAMS`
+  里每个 id 都在表中有范围说明。把 max 改回 7 / 3 / 8，门禁立刻变红。
+- `e2e/param-range.spec.ts`（chromium）：套用 `Wavetable Organ` 与 `SEM Morph Pad` 后，
+  在真页面里读**写入 AudioParam 的值**（8 与 6，而不是 UI 状态里的 8/6），
+  并检查描述符量程；UI 状态一直显示玩家选的值，所以只有看这条路径才有意义。
 
 ### 32.2 注释/文档与代码不一致（**不影响行为**，但会误导读者）
 
+> 第 1–6 条已由 `p-parammax` 批次修好（**只改注释/文案，不改行为**），见每行末尾的「**已修**」。
+
 | # | 位置 | 不一致 |
 | --: | :-- | :-- |
-| 1 | `crates/synth-core/src/engine.rs` 测试模块注释 | 写「the graph's 2x node path is **held \*off\*: measured through the real wasm it degrades rather than improves** … so the graph still renders at 1x」，但 `node_oversampled(kind) = matches!(kind, FxKind::Drive)`、渲染路径走 `drive_oversampled_node`，且有断言「图 2× 使 alias floor 下降 ≥12 dB」的测试。**功能状态是「开（`OVERSAMPLE` 开时）」，注释陈旧** |
-| 2 | `docs/notes/wasm-ladder-root-cause.md` 第 3 行 | 写「Scope: research only; **shipped DSP is unchanged**」，但同日提交 `a153d24` 已实施 root fix（去掉 NSDMI）并加 `verify-wasm.mjs` 门禁 |
-| 3 | `crates/synth-core/src/dsp/ladder.rs` `PASSBAND_TRIM` 注释 | 常数是 **1.0**，注释描述的是被替换的 vendored 版本「a 0.5 passband gain … about **4 dB** below unity」。（$20\log_{10}0.5 = -6.02$ dB；注释的「~4 dB」与「0.5」不相符。）**写文档时以常数 1.0 为准** |
-| 4 | `scripts/verify-presets.mjs` 文档串 | 写「**eighty** factory presets」，当前是 **91** |
-| 5 | `src/audio/preset-loudness.test.ts` 注释 | 写「Achieved **6.0 dB** (was **47**)」，而 +6 dB 之后 `docs/notes/loudness.md` 记录的实测 spread 是 **8.1 dB**（门禁仍 <9.0）。该注释是更早时期的记录 |
-| 6 | `src/audio/worklet-processor.js` 文件头 | 写「Keep in sync with `src/audio/params.ts` (id) and **`src/params.rs`**」，正确路径是 `crates/synth-core/src/params.rs` |
-| 7 | `docs/notes/oversampling.md` / `hard-sync-aliasing.md` | 仍引用 `81 presets unchanged` 与旧 rms（`0.030806` / `0.030735` / `0.030852`）。这些是**历史快照**，当前是 **91 条**与 `0.061470` / `0.061703` |
-| 8 | `docs/NEXT-PLAN-2.md` §一 | 同一份清单里同时出现「81 指纹」与「91 指纹」、「`rms 0.030806`」与「`0.030735`」——因为它们记录的是**不同批次时刻**的值 |
+| 1 | `crates/synth-core/src/engine.rs` 测试模块注释 | 写「the graph's 2x node path is **held \*off\*: measured through the real wasm it degrades rather than improves** … so the graph still renders at 1x」，但 `node_oversampled(kind) = matches!(kind, FxKind::Drive)`、渲染路径走 `drive_oversampled_node`，且有断言「图 2× 使 alias floor 下降 ≥12 dB」的测试。**功能状态是「开（`OVERSAMPLE` 开时）」，注释陈旧**。**已修**：注释改写成「路径是开的」，并保留两句说明——2× 使 alias floor 下降 ≥12 dB、与 chain 的 2× 对齐，开关关掉时是逐样本旧渲染 |
+| 2 | `docs/notes/wasm-ladder-root-cause.md` 第 3 行 | 写「Scope: research only; **shipped DSP is unchanged**」，但同日提交 `a153d24` 已实施 root fix（去掉 NSDMI）并加 `verify-wasm.mjs` 门禁。**已修**：改成「root fix 已在同日 `a153d24` 落地，shipped DSP 相对这份调查的起点**已经变了**」 |
+| 3 | `crates/synth-core/src/dsp/ladder.rs` `PASSBAND_TRIM` 注释 | 常数是 **1.0**，注释描述的是被替换的 vendored 版本「a 0.5 passband gain … about **4 dB** below unity」。（$20\log_{10}0.5 = -6.02$ dB；注释的「~4 dB」与「0.5」不相符。）**写文档时以常数 1.0 为准**。**已修**：注释改为 **6.02 dB**（`20 * log10(0.5)`），常数仍为 `1.0` |
+| 4 | `scripts/verify-presets.mjs` 文档串 | 写「**eighty** factory presets」，当前是 **91**。**已修**：改为「**ninety-one** factory presets」 |
+| 5 | `src/audio/preset-loudness.test.ts` 注释 | 写「Achieved **6.0 dB** (was **47**)」，而 +6 dB 之后 `docs/notes/loudness.md` 记录的实测 spread 是 **8.1 dB**（门禁仍 <9.0）。该注释是更早时期的记录。**已修**：改为「8.1 dB（+6 dB 之后），6.0 dB 是更早的快照，门禁 <9.0」 |
+| 6 | `src/audio/worklet-processor.js` 文件头 | 写「Keep in sync with `src/audio/params.ts` (id) and **`src/params.rs`**」，正确路径是 `crates/synth-core/src/params.rs`。**已修**：路径已改正（同一处还补了「量程必须覆盖引擎枚举」的说明） |
+| 7 | `docs/notes/oversampling.md` / `hard-sync-aliasing.md` | 仍引用 `81 presets unchanged` 与旧 rms（`0.030806` / `0.030735` / `0.030852`）。这些是**历史快照**，当前是 **91 条**与 `0.061470` / `0.061703`（**不修**：改历史快照会破坏它们的语境） |
+| 8 | `docs/NEXT-PLAN-2.md` §一 | 同一份清单里同时出现「81 指纹」与「91 指纹」、「`rms 0.030806`」与「`0.030735`」——因为它们记录的是**不同批次时刻**的值（**不修**） |
 
 ### 32.3 口径不同的数字（**两处都对，但语境不同**）
 
@@ -5138,15 +5171,15 @@ P9.3 的覆盖槽 + 覆盖槽调制总线**部分解决**了这个问题（4 个
 | 硬同步 44.1/96 kHz 的包络周期 | **没有定量解释**（模型与实测不符） |
 | `host` 与 `wasm` 在 2× 硬削波路径上差 16 dB 的**逐条**归因 | 笔记里是**定性判断**（指向 codegen / `f32::exp2` 末位差异），无反汇编/末位统计 |
 | VU 表在 (−48, −60] 区间的精确行为 | **未逐行验证** |
-| `ladder.rs` 注释「~4 dB」与 `PASSBAND_TRIM = 0.5` 的对应关系 | **注释与数学不符**（$20\log_{10}0.5 = −6.02$ dB）；当前常数是 1.0 |
-| `docs/notes/wasm-ladder-root-cause.md` 第 3 行「shipped DSP is unchanged」 | **过时**（同日提交已实施 root fix） |
-| `engine.rs` 测试模块注释「graph's 2x node path is held *off*」 | **陈旧**（代码与测试都表明它**开**） |
-| `verify-presets.mjs` 文档串「eighty factory presets」 | **过时**（当前 91） |
-| `preset-loudness.test.ts` 注释「Achieved 6.0 dB (was 47)」 | **过时**（+6 dB 后实测 8.1 dB，门禁 <9.0） |
+| `ladder.rs` 注释「~4 dB」与 `PASSBAND_TRIM = 0.5` 的对应关系 | **已修**（注释改成 −6.02 dB；常数是 1.0）（§32.2 第 3 条） |
+| `docs/notes/wasm-ladder-root-cause.md` 第 3 行「shipped DSP is unchanged」 | **已修**（改成 root fix 已在同日 `a153d24` 落地）（§32.2 第 2 条） |
+| `engine.rs` 测试模块注释「graph's 2x node path is held *off*」 | **已修**（注释改成「开」，与代码和测试一致）（§32.2 第 1 条） |
+| `verify-presets.mjs` 文档串「eighty factory presets」 | **已修**（改成 ninety-one；当前 91）（§32.2 第 4 条） |
+| `preset-loudness.test.ts` 注释「Achieved 6.0 dB (was 47)」 | **已修**（改成 +6 dB 后实测 8.1 dB，门禁 <9.0）（§32.2 第 5 条） |
 | 相位表 bug 的代价：**30 dB**（源码）vs **31 dB**（笔记） | 两处口径不同 |
 | `crushbass` 只抬 `PATCH_GAIN` 的 spread：**9.6 dB** vs **19.8 dB** | 两处笔记数字不同（结论一致：都破 9.0 线） |
 | +6 dB 后库中位 RMS：**−34.04** vs **−34.03** dB | 0.01 dB 舍入差 |
 | `wavetable.rs` 注释「worst factory bank … −105 dB」vs 门禁笔记实测 **−98.0 dB** | 口径/音符集可能不同，**未逐条对齐** |
 | 采样 mip 级长的公式：`SR / 2^(1+log2(1/ν)−k)` / `SR / 2^(k+1)` / `SR / 2^(k-1)` | **三处写法不一致，我未独立推导判定**（§15.3、§32.3） |
-| `osc1Wave`/`osc2Wave`/`filterType` 的 AudioParam 量程窄于引擎枚举 | **代码级已确认**（`engine.ts` 显式钳位）；**浏览器里的听感后果未验证**（§32.1） |
+| `osc1Wave`/`osc2Wave`/`filterType` 的 AudioParam 量程窄于引擎枚举 | **已修**（`p-parammax`：量程放宽到枚举上界；浏览器侧已实证修复前确实被钳到 7/3，并新增 `src/audio/param-range.test.ts` + `e2e/param-range.spec.ts`）（§32.1） |
 

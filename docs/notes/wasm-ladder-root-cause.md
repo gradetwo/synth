@@ -1,6 +1,9 @@
 # wasm ladder-filter block-boundary dropout — root cause
 
-Investigated: 2026-09-10. Scope: research only; shipped DSP is unchanged.
+Investigated: 2026-09-10. Scope: research on the day it was written — the root fix
+(remove the NSDMIs) then landed in the same-day commit `a153d24`, with
+`scripts/verify-wasm.mjs` as its gate, so the shipped DSP **is** changed relative
+to the state this investigation started from.
 
 ## TL;DR
 

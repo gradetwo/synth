@@ -4,7 +4,7 @@
  *
  * Two gates already watch the sound. `scripts/dsp-baseline.mjs` fingerprints
  * **one** fixed patch, and the loudness test watches how loud each preset is.
- * Between them, eighty factory presets could still break quietly: a filter
+ * Between them, ninety-one factory presets could still break quietly: a filter
  * envelope pointed at the wrong amount, a detune that became a ring modulation,
  * a wavetable index off by one — each one passes a loudness check, and the DSP
  * fingerprint is not looking at that patch.

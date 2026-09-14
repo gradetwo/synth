@@ -10,22 +10,35 @@
  *      Float32Array views every block so a `memory.grow` can never detach them.
  */
 
-/* Keep in sync with `src/audio/params.ts` (id) and `src/params.rs`. */
+/* Keep in sync with `src/audio/params.ts` (id) and
+ * `crates/synth-core/src/params.rs`. */
+/*
+ * `[name, id, default, min, max]`. The range is load-bearing twice over:
+ * `engine.ts` clamps every value to `[min, max]` before it writes the
+ * AudioParam, and the browser clamps to it again — so a max below the engine's
+ * enumeration does not "limit a knob", it silently substitutes a *different*
+ * algorithm (an `osc1Wave` of 8, the wavetable, arrived as 7 = brown noise
+ * until this table was widened). Every discrete entry's max is the highest id
+ * its Rust decoder accepts; `src/audio/param-range.test.ts` holds that line.
+ */
 const PARAMS = [
   ['masterVolume', 0, 0.75, 0, 1],
   ['osc1On', 1, 1, 0, 1],
-  ['osc1Wave', 2, 2, 0, 7],
+  // `Wave::from_u32`: 8 = wavetable, 9 = sample.
+  ['osc1Wave', 2, 2, 0, 9],
   ['osc1Pitch', 3, 0, -48, 48],
   ['osc1Detune', 4, 7, -100, 100],
   ['osc1Level', 5, 0.65, 0, 1],
   ['osc1Pw', 6, 0.5, 0.05, 0.95],
   ['osc2On', 7, 1, 0, 1],
-  ['osc2Wave', 8, 2, 0, 7],
+  // Same `Wave` wire order as `osc1Wave`.
+  ['osc2Wave', 8, 2, 0, 9],
   ['osc2Pitch', 9, 0, -48, 48],
   ['osc2Detune', 10, -6, -100, 100],
   ['osc2Level', 11, 0.55, 0, 1],
   ['osc2Pw', 12, 0.5, 0.05, 0.95],
-  ['filterType', 13, 0, 0, 3],
+  // `FilterType::from_u32`: 4 = comb, 5 = formant, 6 = sem.
+  ['filterType', 13, 0, 0, 6],
   ['filterCutoff', 14, 9000, 20, 20000],
   ['filterRes', 15, 0.25, 0, 1],
   ['filterDrive', 16, 0.15, 0, 1],
@@ -116,12 +129,13 @@ const PARAMS = [
   ['smpLoopEnd', 99, 1, 0, 1],
   ['fxReverbMode', 94, 0, 0, 1],
   ['fxConvTrim', 95, 1, 0, 4],
-  ['fxChain1', 82, 1, 0, 8],
-  ['fxChain2', 83, 2, 0, 8],
-  ['fxChain3', 84, 3, 0, 8],
-  ['fxChain4', 85, 4, 0, 8],
-  ['fxChain5', 86, 5, 0, 8],
-  ['fxChain6', 87, 6, 0, 8],
+  // `FxKind::from_u32`: 8 = eq, 9 = transient.
+  ['fxChain1', 82, 1, 0, 9],
+  ['fxChain2', 83, 2, 0, 9],
+  ['fxChain3', 84, 3, 0, 9],
+  ['fxChain4', 85, 4, 0, 9],
+  ['fxChain5', 86, 5, 0, 9],
+  ['fxChain6', 87, 6, 0, 9],
   ['fxParallel1', 88, 0, 0, 1],
   ['fxParallel2', 89, 0, 0, 1],
   ['fxParallel3', 90, 0, 0, 1],
