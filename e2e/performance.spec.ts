@@ -269,12 +269,22 @@ test.describe('interface frame cost', () => {
    * rather than three longer ones: a stall is a whole-window event, so more
    * windows is what finds a clean one, and five 800 ms windows cost less than
    * three of 1 200 ms.
+   *
+   * The *worst* window is returned and printed alongside the best (§一.20⑥).
+   * Best-of-five alone hid the dispersion: a real run read
+   * `graph-edit best 60.0 of [21.3, 32.5, 42.5, 33.8, 60.0]` — a pass whose
+   * worst window sat 1.3 fps above the floor. It is printed, never asserted: a
+   * busy host can starve any single 800 ms window, so a worst-window floor
+   * would be a false-red generator. `scripts/release.mjs` reads both numbers
+   * out of the line below and logs the worst as a `⚠` when it is under the
+   * floor.
    */
   const bestFps = async (page: Page, windowMs: number, tries: number) => {
     const samples: number[] = [];
     for (let i = 0; i < tries; i++) samples.push((await frames(page, windowMs)) / (windowMs / 1000));
     const best = Math.max(...samples);
-    return { best, all: samples.map((v) => v.toFixed(1)).join(', ') };
+    const worst = Math.min(...samples);
+    return { best, worst, all: samples.map((v) => v.toFixed(1)).join(', ') };
   };
 
   const startEngine = async (page: Page) => {
@@ -287,9 +297,12 @@ test.describe('interface frame cost', () => {
     test.setTimeout(120_000);
     await startEngine(page);
     await page.waitForTimeout(500);
-    const { best, all } = await bestFps(page, 800, 5);
-    console.log(`[fps] idle-with-engine best ${best.toFixed(1)} of [${all}] fps`);
-    expect(best, `interface ran at ${best.toFixed(1)} fps of [${all}]`).toBeGreaterThan(FPS_FLOOR);
+    const { best, worst, all } = await bestFps(page, 800, 5);
+    console.log(`[fps] idle-with-engine best ${best.toFixed(1)} worst ${worst.toFixed(1)} of [${all}] fps`);
+    expect(
+      best,
+      `interface ran at ${best.toFixed(1)} fps of [${all}] (worst ${worst.toFixed(1)})`,
+    ).toBeGreaterThan(FPS_FLOOR);
   });
 
   test('the page keeps its frame rate while a song plays', async ({ page }) => {
@@ -313,9 +326,12 @@ test.describe('interface frame cost', () => {
     await expect(play).toHaveClass(/on/);
     await page.waitForTimeout(700);
 
-    const { best, all } = await bestFps(page, 800, 5);
-    console.log(`[fps] playback best ${best.toFixed(1)} of [${all}] fps`);
-    expect(best, `playback ran at ${best.toFixed(1)} fps of [${all}]`).toBeGreaterThan(FPS_FLOOR);
+    const { best, worst, all } = await bestFps(page, 800, 5);
+    console.log(`[fps] playback best ${best.toFixed(1)} worst ${worst.toFixed(1)} of [${all}] fps`);
+    expect(
+      best,
+      `playback ran at ${best.toFixed(1)} fps of [${all}] (worst ${worst.toFixed(1)})`,
+    ).toBeGreaterThan(FPS_FLOOR);
   });
 
   test('the page keeps its frame rate while the graph is edited', async ({ page }) => {
@@ -342,11 +358,14 @@ test.describe('interface frame cost', () => {
         await page.waitForTimeout(60);
       }
     })();
-    const { best, all } = await bestFps(page, 800, 5);
+    const { best, worst, all } = await bestFps(page, 800, 5);
     await page.mouse.up();
     await dragged;
 
-    console.log(`[fps] graph-edit best ${best.toFixed(1)} of [${all}] fps`);
-    expect(best, `graph editing ran at ${best.toFixed(1)} fps of [${all}]`).toBeGreaterThan(FPS_FLOOR);
+    console.log(`[fps] graph-edit best ${best.toFixed(1)} worst ${worst.toFixed(1)} of [${all}] fps`);
+    expect(
+      best,
+      `graph editing ran at ${best.toFixed(1)} fps of [${all}] (worst ${worst.toFixed(1)})`,
+    ).toBeGreaterThan(FPS_FLOOR);
   });
 });

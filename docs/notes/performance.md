@@ -120,6 +120,28 @@ playback 的 5 个窗口从并行时的 13.8…20.0 收敛到 **37.5…52.5**，
 `graph-edit 56.3 [50.0, 47.5, 42.5, 53.8, 56.3]`），最后 `[release] PASS`（EXIT=0）。
 CI 与 release 现在调用同一对命令（`npm run test:e2e` + `npm run test:perf`）。
 
+## 最差窗也要看得见（§一.20⑥，v2.1.5）
+
+上面那些 `[fps]` 行**当时**只有 best 与五个窗口。best-of-5 仍然是判据，但「最差窗只比 floor 高 1.3」
+这样的事实只躺在方括号里，没人会去看。现在 spec 打印、`release.mjs` 解析并写进发布日志的都是
+**best 与 worst 两个数**：
+
+```
+[fps] playback best 52.5 worst 37.5 of [42.5, 52.5, 50.0, 37.5, 48.8] fps
+[release]   · playback best 52.5 worst 37.5 fps of [42.5, 52.5, 50.0, 37.5, 48.8]
+```
+
+**只打印，不判定**：floor 仍是 **20**，判据仍是 best-of-5。理由是这条门禁自己的设计前提——宿主负载
+只会让某一窗变慢、不会变快，所以任何单窗都可能被别的进程饿到 0；把「worst ≥ 20」变成断言就是一台
+新式假红机器（§一.15/§一.20① 的病根）。worst **低于** floor 时，发布日志会多一行
+`⚠ <load>: worst window … < floor … — printed, not asserted (§一.20⑥)`：它是**报告**，`release.mjs`
+不会因此失败。
+
+读取器（`scripts/lib/fps-windows.mjs`）对行的形状是**严格**的：一行以 `[fps]` 开头但解析不出
+`best … worst … of [...]`，`release.mjs` 直接判失败（`… have drifted`）——这样「spec 不再打印最差窗」
+不会读成「一切正常」。单测 `scripts/lib/fps-windows.test.mjs` 用「best 高、worst 低」的假输出钉住
+读取与打印两条路径，并用旧形状（没有 worst）证明它会被判为 malformed。
+
 ## 计时判据只有一份（P14.2）
 
 三处门禁都在读墙上时钟。第三次全面回归里它们**各判各的**，同一台机器上「谁算红」于是取决于撞上
