@@ -42,6 +42,17 @@ import { CHANGELOG_HEAD } from './changelog-head';
 export const CHANGELOG: Release[] = [
   CHANGELOG_HEAD,
   {
+    version: '2.1.1',
+    date: '2026-09-15',
+    kind: 'feature',
+    items: [
+      [
+        '**内置了一个给其它 AI 用的离线接口（MCP）。** 外部的智能体现在可以查询参数与音色、读改整套音色（**夹取会如实报告**，不静默）、导入采样与波表，把一段演奏**渲染成 WAV**，并用**本应用自己那套交叉验证过的尺子**量出结构化数字（非谐波地板、THD、峰值、最大步进）——所以它可以对着真实门禁调音色，而不是凭感觉。另有**采样导入快约 1.7 倍**（4 秒样本 130 → 78 ms，音色逐位不变）。界面只有一处小变化：**更新记录面板改为只列最近 30 条**（更早的见项目仓库），顺带让整个应用小约 79 KB。',
+        '**An offline interface (MCP) for other AI agents.** An external agent can now read the parameter and patch tables, change a whole patch (clamps are **reported, not silent**), import samples and wavetables, render a performance to **WAV**, and measure it with **the same cross-checked rulers the app\'s own gates use** (non-harmonic floor, THD, peak, largest step) -- so it can tune toward a real gate instead of a feeling. Sample import is also **about 1.7x faster** (a 4 s sample: 130 ms to 78 ms, bit-identical audio). One small visible change: the **changelog panel now lists the most recent 30 releases** (earlier ones live in the repository), which takes about 79 KB off the app.',
+      ],
+    ],
+  },
+  {
     version: '2.1.0',
     date: '2026-09-14',
     kind: 'fix',
@@ -350,17 +361,6 @@ export const CHANGELOG: Release[] = [
       [
         '**断网也能打开应用了**：以前在完全离线时重新打开会看到浏览器的错误页——缓存其实齐全、Service Worker 也在控制页面，只是缓存里那份首页带着「经过重定向」的标记，而浏览器的导航请求拒绝使用这种响应（在线时这条路早就处理过，离线那条没有）。现在离线会正常进入应用，离线启动音频引擎也能用（内核与 worklet 都在缓存里）。',
         '**The app opens with the network off**: reopening it offline used to land on the browser’s own error page — the cache was complete and the Service Worker was in control, but the cached shell carried a “came from a redirect” flag that a navigation request refuses to use (the online path already handled that; the offline one did not). It now opens offline, and the engine starts offline too: the core and the worklet are both in the cache.',
-      ],
-    ],
-  },
-  {
-    version: '1.88.0',
-    date: '2026-09-12',
-    kind: 'fix',
-    items: [
-      [
-        '**预设音色被悄悄改动会当场发现**：工厂库里的 81 个音色现在各有一份「音色指纹」（电平、峰值、左右平衡、24 个频段的频谱），任何一个音色的声音变了、变响了或没声了，都会在发布前被拦下并要求写明原因。以后你不会在一次更新之后发现某个音色变成了别的样子。',
-        '**A quietly changed preset is caught**: each of the 81 factory sounds now has a recorded tone fingerprint — level, peak, left/right balance and 24 frequency bands — so a sound that changed shape, changed level or went silent fails before release and has to be explained. You will not find out after an update that a patch turned into something else.',
       ],
     ],
   },

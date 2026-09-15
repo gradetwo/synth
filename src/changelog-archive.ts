@@ -29,6 +29,17 @@ export interface Release {
  */
 export const CHANGELOG_ARCHIVE: Release[] = [
   {
+    version: '1.88.0',
+    date: '2026-09-12',
+    kind: 'fix',
+    items: [
+      [
+        '**预设音色被悄悄改动会当场发现**：工厂库里的 81 个音色现在各有一份「音色指纹」（电平、峰值、左右平衡、24 个频段的频谱），任何一个音色的声音变了、变响了或没声了，都会在发布前被拦下并要求写明原因。以后你不会在一次更新之后发现某个音色变成了别的样子。',
+        '**A quietly changed preset is caught**: each of the 81 factory sounds now has a recorded tone fingerprint — level, peak, left/right balance and 24 frequency bands — so a sound that changed shape, changed level or went silent fails before release and has to be explained. You will not find out after an update that a patch turned into something else.',
+      ],
+    ],
+  },
+  {
     version: '1.87.0',
     date: '2026-09-12',
     kind: 'fix',

@@ -22,13 +22,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '2.1.1',
+    version: '2.1.2',
     date: '2026-09-15',
     kind: 'feature',
     items: [
       [
-        '**内置了一个给其它 AI 用的离线接口（MCP）。** 外部的智能体现在可以查询参数与音色、读改整套音色（**夹取会如实报告**，不静默）、导入采样与波表，把一段演奏**渲染成 WAV**，并用**本应用自己那套交叉验证过的尺子**量出结构化数字（非谐波地板、THD、峰值、最大步进）——所以它可以对着真实门禁调音色，而不是凭感觉。另有**采样导入快约 1.7 倍**（4 秒样本 130 → 78 ms，音色逐位不变）。界面只有一处小变化：**更新记录面板改为只列最近 30 条**（更早的见项目仓库），顺带让整个应用小约 79 KB。',
-        '**An offline interface (MCP) for other AI agents.** An external agent can now read the parameter and patch tables, change a whole patch (clamps are **reported, not silent**), import samples and wavetables, render a performance to **WAV**, and measure it with **the same cross-checked rulers the app\'s own gates use** (non-harmonic floor, THD, peak, largest step) -- so it can tune toward a real gate instead of a feeling. Sample import is also **about 1.7x faster** (a 4 s sample: 130 ms to 78 ms, bit-identical audio). One small visible change: the **changelog panel now lists the most recent 30 releases** (earlier ones live in the repository), which takes about 79 KB off the app.',
+        '**给外部 AI 的接口又长了一层：现在它也能「看」界面。** 在原来的离线工具之外多了一个可选的**浏览器层**：外部的智能体可以打开真实页面、点击、读文本、截图，并按白名单跑既有的视觉/性能/参数门禁——所以它不但能离线量音频，也能核实界面里到底发生了什么。**这台合成器本身没有任何变化。**',
+        '**The interface for other AI agents grew a browser layer.** Alongside the offline tools there is now an optional **browser layer**: an external agent can open the real page, click, read text, take screenshots and run the whitelisted visual/performance/parameter gates, so it can check what actually happens in the interface as well as measure audio offline. **The synth itself is unchanged.**',
       ],
     ],
   };
