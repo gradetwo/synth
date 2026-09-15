@@ -619,6 +619,15 @@ export function SignalFlow() {
   useEffect(() => midiPlayer.subscribe(setPlayer), []);
   useEffect(() => recorder.subscribe(setRec), []);
   useEffect(() => midiLibrary.subscribe(() => setTracksVersion((v) => v + 1)), []);
+  // The performance bar's track picker lists the built-in playlist, which is a
+  // lazy chunk (P9.26). This view is lazy too, so a visitor who stays on the
+  // module grid never pays for it; the `subscribe` above redraws the picker when
+  // the demos land, and a failed fetch leaves the user's own tracks selectable.
+  useEffect(() => {
+    void midiLibrary.loadBuiltins().catch(() => {
+      /* the picker keeps showing the user's own tracks */
+    });
+  }, []);
 
   // Continuous animation loop: reads the live analyser and redraws every node.
   useEffect(() => {

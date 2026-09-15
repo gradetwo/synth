@@ -5,55 +5,14 @@
  * never duplicates the full parameter set and future parameters keep working.
  */
 
-import {
-  DEFAULT_PARAMS,
-  DEFAULT_ROUTES,
-  Param,
-  type ModRoute,
-  type Wave,
-} from '@/audio/params';
+import { Param, type ModRoute, type Wave } from '@/audio/params';
+import type { Preset } from './preset-model';
 
-export type PresetCategory =
-  | 'ALL'
-  | 'LEAD'
-  | 'BASS'
-  | 'PAD'
-  | 'PLUCK'
-  | 'KEYS'
-  | 'FX'
-  | 'BASIC'
-  | 'USER';
-
-export const PRESET_CATEGORIES: PresetCategory[] = [
-  'ALL',
-  'LEAD',
-  'BASS',
-  'PAD',
-  'PLUCK',
-  'KEYS',
-  'FX',
-  'BASIC',
-  'USER',
-];
-
-export interface Preset {
-  id: string;
-  name: string;
-  tag: string;
-  cat: Exclude<PresetCategory, 'ALL'>;
-  wave: Wave;
-  params: Partial<Record<number, number>>;
-  routes?: ModRoute[];
-  /**
-   * The second layer, when the patch uses one. Optional and additive: a preset
-   * without it leaves the player's own layer alone.
-   */
-  params2?: Partial<Record<number, number>>;
-  /** How notes reached the two instances when the patch was saved. */
-  instanceMode?: 'single' | 'layer' | 'split';
-  splitNote?: number;
-  user?: boolean;
-}
+// The model lives in `preset-model.ts` so the first screen and the drawer shell
+// can render a category chip, merge a preset or name the boot patch without
+// fetching this table (see the note there). Re-exported here because this is
+// still where a preset comes from.
+export { PRESET_CATEGORIES, presetParams, presetRoutes, type Preset, type PresetCategory } from './preset-model';
 
 const P = Param;
 
@@ -721,15 +680,3 @@ export const FACTORY_PRESETS: Preset[] = [
  * in the patch's own pair list as `PATCH_GAIN`, right next to the parameters it
  * was measured against, and `presetParams` only has to merge over the defaults.
  */
-
-export function presetParams(preset: Preset): Record<number, number> {
-  const merged: Record<number, number> = { ...DEFAULT_PARAMS };
-  for (const [id, value] of Object.entries(preset.params)) {
-    if (typeof value === 'number') merged[Number(id)] = value;
-  }
-  return merged;
-}
-
-export function presetRoutes(preset: Preset): ModRoute[] {
-  return (preset.routes ?? DEFAULT_ROUTES).map((r) => ({ ...r }));
-}

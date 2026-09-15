@@ -1,20 +1,21 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_PARAMS, FX_KINDS, Param, fxKindToInt } from '@/audio/params';
+import { DEFAULT_PARAMS, FX_KINDS, Param, createDefaultState, fxKindToInt } from '@/audio/params';
 import { midiLibrary } from '@/midi/library';
+import { DEFAULT_PRESET } from './preset-model';
 import { FACTORY_PRESETS } from './presets';
-import { SynthStore, store } from './store';
+import { PresetsNotLoadedError, SynthStore, store } from './store';
 import { findFxTemplate, fxTemplateEntries, isFxTemplateParam } from './fxtemplates';
 import { decodePatch } from './share';
 import { unwrap, wrap } from './persist';
 
 describe('synth store', () => {
-  beforeEach(() => {
-    store.applyPresetById('init');
+  beforeEach(async () => {
+    await store.applyPresetById('init');
     for (const p of store.allPresets().filter((x) => x.user)) store.deletePreset(p.id);
   });
 
-  it('applies factory presets and reports the current preset', () => {
-    store.applyPresetById('pluck');
+  it('applies factory presets and reports the current preset', async () => {
+    await store.applyPresetById('pluck');
     expect(store.currentPreset()?.id).toBe('pluck');
     expect(store.getParam(Param.FILTER_CUTOFF)).toBe(5200);
     expect(store.getParam(Param.ENV_SUSTAIN)).toBe(0);
@@ -62,12 +63,12 @@ describe('synth store', () => {
     expect(before === 0 || before === 1).toBe(true);
   });
 
-  it('steps through the preset list in both directions', () => {
+  it('steps through the preset list in both directions', async () => {
     const first = store.currentPreset()?.id;
-    store.stepPreset(1);
+    await store.stepPreset(1);
     const second = store.currentPreset()?.id;
     expect(second).not.toBe(first);
-    store.stepPreset(-1);
+    await store.stepPreset(-1);
     expect(store.currentPreset()?.id).toBe(first);
   });
 
@@ -81,15 +82,15 @@ describe('synth store', () => {
     expect(store.getParam(Param.ENV_ATTACK)).toBeLessThanOrEqual(8);
   });
 
-  it('saves and deletes user presets', () => {
+  it('saves and deletes user presets', async () => {
     store.setParam(Param.FILTER_CUTOFF, 777);
     const saved = store.savePreset('TEST PATCH');
     expect(saved.user).toBe(true);
     expect(store.allPresets().some((p) => p.id === saved.id)).toBe(true);
     expect(store.currentPreset()?.id).toBe(saved.id);
 
-    store.applyPresetById('init');
-    store.applyPresetById(saved.id);
+    await store.applyPresetById('init');
+    await store.applyPresetById(saved.id);
     expect(store.getParam(Param.FILTER_CUTOFF)).toBe(777);
 
     store.deletePreset(saved.id);
@@ -158,9 +159,9 @@ describe('synth store', () => {
     expect(layout().collapsed.osc1).toBeUndefined();
   });
 
-  it('undoes and redoes preset changes', () => {
-    store.applyPresetById('init');
-    store.applyPresetById('acid');
+  it('undoes and redoes preset changes', async () => {
+    await store.applyPresetById('init');
+    await store.applyPresetById('acid');
     expect(store.getSnapshot().canUndo).toBe(true);
     store.undo();
     expect(store.getParam(Param.FILTER_CUTOFF)).toBe(18000);
@@ -169,8 +170,8 @@ describe('synth store', () => {
     expect(store.getParam(Param.FILTER_CUTOFF)).toBe(800);
   });
 
-  it('stores and recalls A/B patches', () => {
-    store.applyPresetById('init');
+  it('stores and recalls A/B patches', async () => {
+    await store.applyPresetById('init');
     store.selectSlot('b');
     expect(store.getSnapshot().activeSlot).toBe('b');
     store.setParam(Param.FILTER_CUTOFF, 4321);
@@ -201,10 +202,10 @@ describe('synth store', () => {
 });
 
 describe('effect-graph templates', () => {
-  it('applies a template and leaves every other parameter alone', () => {
+  it('applies a template and leaves every other parameter alone', async () => {
     const s = new SynthStore();
     s.resetLayout();
-    s.applyPresetById('init');
+    await s.applyPresetById('init');
     // Values on both sides of the whitelist boundary.
     s.setParams([
       [Param.FILTER_CUTOFF, 1234],
@@ -240,10 +241,10 @@ describe('effect-graph templates', () => {
     expect(after[Param.FILTER_CUTOFF]).toBe(1234);
   });
 
-  it('saves the current routing as a workspace template and recalls it', () => {
+  it('saves the current routing as a workspace template and recalls it', async () => {
     const s = new SynthStore();
     s.resetLayout();
-    s.applyPresetById('init');
+    await s.applyPresetById('init');
     s.setParams(
       [
         [Param.FX_GRAPH, 1],
@@ -308,10 +309,10 @@ describe('effect-graph templates', () => {
     expect(Param.FX_REVERB_MODE in list[0].params).toBe(false);
   });
 
-  it('keeps templates out of a share code while the graph travels as before', () => {
+  it('keeps templates out of a share code while the graph travels as before', async () => {
     const s = new SynthStore();
     s.resetLayout();
-    s.applyPresetById('init');
+    await s.applyPresetById('init');
     expect(s.applyFxTemplate('fxg:dual-delay')).toBe(true);
     const saved = s.saveFxTemplate('share test');
     const code = s.shareCode();
@@ -334,8 +335,8 @@ describe('effect-graph templates', () => {
 });
 
 describe('importing a patch file', () => {
-  beforeEach(() => {
-    store.applyPresetById('init');
+  beforeEach(async () => {
+    await store.applyPresetById('init');
   });
 
   it('applies a .gs1.json patch and reports success', () => {
@@ -370,8 +371,8 @@ describe('importing a patch file', () => {
 });
 
 describe('undo covers the whole document', () => {
-  it('undoes a module collapse', () => {
-    store.applyPresetById('init');
+  it('undoes a module collapse', async () => {
+    await store.applyPresetById('init');
     const before = store.getSnapshot().layout.collapsed.filter;
     store.toggleCollapsed('filter' as never);
     expect(store.getSnapshot().layout.collapsed.filter).not.toBe(before);
@@ -424,12 +425,12 @@ describe('undo covers the whole document', () => {
 });
 
 describe('the session starts consistent', () => {
-  it('restores the preset name together with the patch', () => {
+  it('restores the preset name together with the patch', async () => {
     // The patch is persisted; the displayed name used to be a hard default, so
     // opening the app showed one preset and played another.
     // Not the first factory preset: with the default the mismatch would be
     // invisible.
-    store.applyPresetById('wurli');
+    await store.applyPresetById('wurli');
     const id = store.getSnapshot().currentPresetId;
     const params = { ...store.getSnapshot().state.params };
 
@@ -514,5 +515,149 @@ describe('layered patches', () => {
     s.applyPreset(FACTORY_PRESETS[0]);
     expect(s.getSnapshot().state.params2[Param.OSC1_WAVE]).toBe(3);
     void DEFAULT_PARAMS;
+  });
+});
+
+/**
+ * The factory table is a lazy chunk (P9.26). These pin the *timing* rules: what
+ * a first frame can say without it, which paths are allowed to fetch it, and how
+ * a stored id behaves while it is missing.
+ *
+ * Every case builds its own `SynthStore` over a cleared `localStorage`, because
+ * the shared `store` singleton has had its table fetched by the suite above.
+ */
+describe('the lazy factory library', () => {
+  /** A stored document, as `commit()` writes one. */
+  const storedDoc = (presetId: string, presetName?: string) =>
+    JSON.stringify({
+      schema: 4,
+      data: {
+        ...createDefaultState(),
+        params: { ...DEFAULT_PARAMS },
+        presetId,
+        ...(presetName ? { presetName, presetTag: 'FUTURE BASS' } : {}),
+      },
+    });
+
+  it('names the boot patch and refuses a list until the table is fetched', () => {
+    localStorage.clear();
+    const s = new SynthStore();
+    expect(s.presetsLoaded).toBe(false);
+    // The first frame has something true to show (the boot patch) even though
+    // the table that names it has not been fetched.
+    expect(s.getSnapshot().currentPresetId).toBe(DEFAULT_PRESET.id);
+    expect(s.currentPresetLabel()).toEqual({ name: DEFAULT_PRESET.name, tag: DEFAULT_PRESET.tag });
+    // A caller that forgot to await gets a named error, not a short list.
+    expect(() => s.allPresets()).toThrow(PresetsNotLoadedError);
+  });
+
+  it('resolves a stored presetId and name before the table arrives, then agrees with it', async () => {
+    localStorage.clear();
+    const first = new SynthStore();
+    await first.ensurePresets();
+    // Not the boot patch: with the default the mismatch would be invisible.
+    const target = first.allPresets().find((preset) => preset.id === 'wurli')!;
+    first.applyPreset(target);
+
+    // A page reload: a fresh instance reading the same storage, with the table
+    // *not* fetched. The name has to come from the document.
+    const reloaded = new SynthStore();
+    expect(reloaded.presetsLoaded).toBe(false);
+    expect(reloaded.getSnapshot().currentPresetId).toBe(target.id);
+    expect(reloaded.currentPresetLabel().name).toBe(target.name);
+    expect(reloaded.getParam(Param.FILTER_CUTOFF)).toBeCloseTo(target.params[Param.FILTER_CUTOFF]!, 6);
+
+    // And the id still resolves to the same patch once the library is readable.
+    await reloaded.ensurePresets();
+    expect(reloaded.currentPreset()?.id).toBe('wurli');
+    expect(reloaded.currentPresetLabel().name).toBe(target.name);
+  });
+
+  it('falls back to the first factory patch when a stored id names nothing', async () => {
+    localStorage.clear();
+    localStorage.setItem('gs1:state:v1', storedDoc('no-such-preset', 'Ghost Patch'));
+    const s = new SynthStore();
+    // Taken on trust until the table can contradict it…
+    expect(s.getSnapshot().currentPresetId).toBe('no-such-preset');
+    expect(s.currentPresetLabel().name).toBe('Ghost Patch');
+    // …and then the rule `deletePreset` has always followed.
+    await s.ensurePresets();
+    expect(s.getSnapshot().currentPresetId).toBe(DEFAULT_PRESET.id);
+    expect(s.currentPresetLabel().name).toBe(DEFAULT_PRESET.name);
+  });
+
+  it('names a legacy stored id from the document when it was written without one', () => {
+    localStorage.clear();
+    localStorage.setItem('gs1:state:v1', storedDoc('init'));
+    const s = new SynthStore();
+    // No `presetName` in the document (a build before P9.26), so the boot
+    // constant stands in until something fetches the table.
+    expect(s.getSnapshot().currentPresetId).toBe('init');
+    expect(s.currentPresetLabel().name).toBe(DEFAULT_PRESET.name);
+  });
+
+  it('imports a patch file without fetching the factory library', () => {
+    localStorage.clear();
+    const s = new SynthStore();
+    const text = JSON.stringify({
+      format: 'gs1-preset',
+      name: 'From a file',
+      params: { [String(Param.FILTER_CUTOFF)]: 900 },
+    });
+    expect(s.importPresetFile(text)).toBe(true);
+    // A file patch is self-contained: it is applied, not looked up.
+    expect(s.presetsLoaded).toBe(false);
+    expect(s.getParam(Param.FILTER_CUTOFF)).toBe(900);
+    expect(s.currentPresetLabel().name).toBe('From a file');
+    expect(s.currentPreset()?.name).toBe('From a file');
+  });
+
+  it('steps through the list by fetching it, once, on the first press', async () => {
+    localStorage.clear();
+    const s = new SynthStore();
+    const before = s.getSnapshot().currentPresetId;
+    await s.stepPreset(1);
+    expect(s.presetsLoaded).toBe(true);
+    expect(s.getSnapshot().currentPresetId).not.toBe(before);
+    // The user's own presets come first, so stepping wraps into them too.
+    await s.stepPreset(-1);
+    expect(s.getSnapshot().currentPresetId).toBe(before);
+  });
+
+  /** The document half of a restore, as `loadLiveDocument` builds it. */
+  const doc = (s: SynthStore, currentPresetId: string, name?: string) => ({
+    state: createDefaultState(),
+    layout: s.getSnapshot().layout,
+    userPresets: [],
+    currentPresetId,
+    ...(name ? { currentPresetName: name, currentPresetTag: 'ACID HOUSE' } : {}),
+    clips: [],
+    currentClipId: '',
+  });
+
+  it('opens a project that names its patch without fetching the library', () => {
+    localStorage.clear();
+    const s = new SynthStore();
+    s.loadDocument(doc(s, 'acid', 'Acid 303 · 酸性贝斯'));
+    expect(s.presetsLoaded).toBe(false);
+    expect(s.getSnapshot().currentPresetId).toBe('acid');
+    expect(s.currentPresetLabel().name).toBe('Acid 303 · 酸性贝斯');
+  });
+
+  it('fetches the library for a project whose patch it cannot name', async () => {
+    localStorage.clear();
+    const s = new SynthStore();
+    // An older `.gs1proj`: the id travelled, the name did not.
+    s.loadDocument(doc(s, 'acid'));
+    // The switch itself does not wait for the chunk; the boot constant shows
+    // until it lands.
+    expect(s.currentPresetLabel().name).toBe(DEFAULT_PRESET.name);
+    await s.ensurePresets();
+    expect(s.presetsLoaded).toBe(true);
+    expect(s.currentPresetLabel().name).toBe(FACTORY_PRESETS.find((p) => p.id === 'acid')!.name);
+    // And an id the table does not have falls back to the first patch.
+    s.loadDocument(doc(s, 'gone'));
+    await s.ensurePresets();
+    expect(s.getSnapshot().currentPresetId).toBe(DEFAULT_PRESET.id);
   });
 });

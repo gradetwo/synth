@@ -242,3 +242,73 @@ PLAYWRIGHT_BROWSERS_PATH=$PWD/.pw-browsers npx playwright test e2e/performance.s
 - **阈值**：本批**没有改** `scripts/verify-budget.mjs` 或本文第一节的阈值（只有父代理做记账 rebase）。
   按同一形状（实测 + ~3.9 KB）下一次 rebase 后 dist 线约 **1545 KB**。
 
+## 十一、p926（v2.1.1 后）：工厂预设与内置曲库移出首屏，首屏 JS 125.3 → 113.5 KB
+
+**问题不是哪一版变胖，而是首屏装了什么。** `src/state/store.ts` 急切 import 了
+`state/presets.ts`（91 只工厂预设，45 KB 源文件）与 `midi/library.ts → midi/songs.ts`（内置曲库），
+两坨内容因此都进了 `index-*.js`：每加一条预设 ≈ 454 B raw / 83 B gzip，每首歌 ≈ 430 B raw
+（计划 §一.26）。v2.1.1 实测首屏 **125.3 / 126 KB**，只剩 0.7 KB —— 再加任何内容都必须先买回空间。
+
+| | 前（master） | 后 | Δ |
+| :-- | --: | --: | --: |
+| `assets/index-*.js` raw | 271 189 B | 226 121 B | **−45 068 B** |
+| `assets/index-*.js` gzip | 82 660 B | 70 627 B | **−12 033 B** |
+| 首屏 JS gzip（2 文件） | 125.3 KB | **113.5 KB** | **−11.8 KB** |
+| `assets/presets-*.js`（懒 chunk） | 无（在 `index` 里） | 32 152 B raw / 6 841 B gzip | 新增 |
+| `assets/songs-*.js`（懒 chunk） | 无（在 `index` 里） | 16 658 B raw / 5 474 B gzip | 新增 |
+| dist 总量 | 1540.2 KB | 1546.7 KB | **+6.5 KB** |
+| 首屏 CSS gzip | 20.3 KB | 20.4 KB | +0.1 KB |
+| 最大 WASM gzip | 74.9 KB | 74.9 KB | 0（本批不碰引擎） |
+
+`vendor-react`（45 647 B gzip）两版逐字节相同，首屏的 −11.8 KB 全部来自 `index-*.js`。
+dist 总量反向 +6.5 KB 是拆 chunk 的代价：两个新 chunk 的头部、`index` 里新增的加载/对账代码，
+以及共享的 `midi/clips` 等模块的第二次拷贝；1 550 KB 的 dist 线还剩 3.3 KB。
+
+- **什么时候加载（这是本批的核心，不是「挪个地方」）**：
+  - **工厂预设**：打开预设抽屉；顶栏「上一个/下一个预设」；以及任何**真的按 id 找预设**的路径 ——
+    工程/快照载入（`loadDocument`）、`localStorage` 的 `presetId` 需要校验时、`applyPresetById()`。
+  - **曲库**：打开播放器面板、信号流的曲目下拉、钢琴卷帘采纳当前曲目。
+  - **不在启动时 `import()`**：任何启动期的 `import()` 都只是把字节挪到另一个启动请求，本批明确不这么做。
+- **首屏仍然报得出音色名**：新模块 `src/state/preset-model.ts` 只装「模型」——`Preset` 接口、
+  `PRESET_CATEGORIES`、`presetParams`/`presetRoutes`、以及启动补丁的 `id/name/tag` 常量
+  （`DEFAULT_PRESET`）。它留在首屏；`presets.test.ts` 断言 `FACTORY_PRESETS[0]` **恰好**等于这个常量，
+  并断言两边对分类的看法一致，所以常量不会和表漂移。选中的名字随文档持久化
+  （`gs1:state:v1` 里的 `presetName`/`presetTag`），`.gs1proj` 也带这两个**可选**字段，
+  所以重载/载入工程都能在没有表的情况下显示正确的名字；旧文档没有名字时先用启动常量，
+  表到了之后 `reconcilePresetIdentity()` 校正；id 指不到任何预设就落回第一只工厂预设（既有规则）。
+- **失败要炸在调用点上**：`allPresets()` 在表没到时抛具名 `PresetsNotLoadedError`，**不**返回半份列表
+  ——漏改的调用方当场红，而不是画出一个空抽屉。唯一的产品调用点（`PresetDrawer`）先
+  `await store.ensurePresets()`；等待期抽屉显示加载行（`drawer.loading`），失败显示原因 + 重试
+  （`drawer.loadFailed`/`drawer.retry`）。播放器同理（`player.loading` 等）。两者都在 `i18n-panels.ts`
+  的懒表里，没有往 core 表塞新键。
+- **`store` API 的变化**：`applyPresetById` / `stepPreset` 变成 `Promise`（首次调用会取表）；
+  新增 `ensurePresets()`、`presetsLoaded`、`currentPresetLabel()`；
+  `currentPreset()` 在表没到时可能 `undefined`，所以顶栏改读 `currentPresetLabel()`（它有常量兜底）；
+  `Snapshot` 增加 `currentPresetName`/`currentPresetTag`；`HistoryEntry`/`ProjectDoc` 增加同名字段。
+  `midi/library.ts` 新增 `loadBuiltins()` / `builtinsLoaded`；`getCurrent()` 在选中的是**尚未取回的内置曲目**时
+  返回 `null`（而不是把别的用户曲目当当前曲目），曲目列表到位后再定。
+- **离线**：`scripts/gen-sw.mjs` 依旧预缓存除 `synth_core_scalar-*.wasm` 之外的所有产物，两个新 chunk
+  也在名单里（`presets-*.js` 第 22、`songs-*.js` 第 25，共 44 项），所以开过一次抽屉/播放器之后离线可用；
+  `e2e/pwa.spec.ts` 四条（含「关网从 precache 打开」）全绿。
+  ⚠️ **如实记录一个限制**：`install` 的 `cache.addAll` 与首屏**并发**，不是「首屏之后才下」——
+  首次访问时这两坨字节仍会被 Service Worker 在后台下载（首屏请求列表里没有它们，首屏 JS 线也不含它们，
+  但它们确实进了缓存）。所以**首访总下载量基本持平**（首屏少 11.8 KB，SW 后台多 12.3 KB）；
+  真正的赢面是首屏关键路径、首屏 JS 门禁、以及重复访问（命中缓存）。要让首访也不下载，
+  把这两个 chunk 加进 `gen-sw.mjs` 的 `DEFERRED` 即可，代价是「首访当场开抽屉且已离线」时抽屉不可用
+  —— 这是个需要记账的取舍，本批按任务书保持预缓存。
+- **顺手删掉一个死键**：顶栏不再需要 `preset.initName`（选中 id 指不到任何预设时的兜底），
+  现在它自己就能报出启动补丁的名字。按 P11.2 节的证据标准（`src/`、`e2e/`、`scripts/`、`mcp/`、
+  `index.html` 全部零引用）删掉这只 core 键。
+- **守卫**：新增 `e2e/lazy-chunks.spec.ts`。它按**内容**（`Acid 303` / `Londonderry Air`）而不是文件名
+  找出这两个 chunk，于是改哈希名、和别的懒模块合并、或把表塞回入口 chunk 都能被测到：
+  ①首屏（在启动手势之前，所以 idle 预热还没跑）的 `performance.getEntriesByType('resource')`
+  里没有它们，而页面确实加载了（`.start-overlay` 在）；②打开抽屉/播放器之后**请求到了**它们，
+  且列表真的渲染出内容（>20 张卡片 / ≥16 行曲目，不是「面板出现」）；③它们在 `dist/sw.js` 的预缓存
+  名单里，且真的进了 worker 缓存。
+- **自证（红/绿）**：把 `store.ts`/`library.ts` 改回 eager import、重建，第 ① 条立刻变红
+  （`Error: factory presets requested on the first screen`，`preset chunk(s): ['index-*.js']`
+  —— 哨兵字符串回到入口 chunk 本身）；还原后 4/4 绿。
+- **阈值**：本批**没有改** `scripts/verify-budget.mjs` 的任何阈值。父代理按上表把首屏线从 126 KB
+  **下调**（本批实测 113.5 KB，按既有「实测 + ~1.2 KB」形状约 **115 KB**），并记账 dist 总量
+  1546.7 KB。
+

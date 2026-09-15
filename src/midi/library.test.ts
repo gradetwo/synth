@@ -12,9 +12,17 @@ import type { MidiSong } from './smf';
 
 const KEY = 'gs1:library:v1';
 
-/** A fresh module reads storage in its constructor, like a page reload does. */
+/**
+ * A fresh module reads storage in its constructor, like a page reload does.
+ *
+ * The built-in playlist is a lazy chunk (P9.26), so "a page load" is now two
+ * steps: the constructor (the user's own tracks, from storage) and
+ * `loadBuiltins()` (the demos, from the build). Every case below asserts over
+ * the library as a visitor reaches it, which is the two together.
+ */
 async function loadLibrary() {
   const { midiLibrary } = await import('./library');
+  await midiLibrary.loadBuiltins();
   return midiLibrary;
 }
 
@@ -279,5 +287,62 @@ describe('stored arrangements', () => {
     // with — not silence, and not a crash.
     expect(stored.song.clips).toBeUndefined();
     expect(stored.song.notes).toEqual(song.notes);
+  });
+});
+
+/**
+ * The built-in playlist is a lazy chunk (P9.26). These pin the timing: no demo
+ * is built until it is asked for, the selection is kept across the gap, and a
+ * built-in id never resolves to a different track.
+ */
+describe('the lazy built-in playlist', () => {
+  it('builds no demo and reports no current track until it is fetched', async () => {
+    const { MidiLibrary } = await import('./library');
+    const library = new MidiLibrary();
+    expect(library.builtinsLoaded).toBe(false);
+    expect(library.getTracks()).toEqual([]);
+    // The default selection is a demo id, which is kept rather than replaced by
+    // whatever user track happens to be first.
+    expect(library.getCurrentId()).toBe('demo:arpeggio');
+    expect(library.getCurrent()).toBeNull();
+
+    await library.loadBuiltins();
+    expect(library.builtinsLoaded).toBe(true);
+    expect(library.getTracks().length).toBeGreaterThan(10);
+    expect(library.getCurrent()?.id).toBe('demo:arpeggio');
+  });
+
+  it('keeps a stored demo selection across the gap and falls back when it is gone', async () => {
+    localStorage.setItem(KEY, JSON.stringify(wrap({ tracks: [], currentId: 'demo:elise' })));
+    vi.resetModules();
+    const { MidiLibrary } = await import('./library');
+    const library = new MidiLibrary();
+    expect(library.getCurrentId()).toBe('demo:elise');
+    await library.loadBuiltins();
+    expect(library.getCurrent()?.id).toBe('demo:elise');
+
+    // A selection the build no longer ships falls back to the demo the app has
+    // always started on, exactly as it did when the list was built eagerly.
+    localStorage.setItem(KEY, JSON.stringify(wrap({ tracks: [], currentId: 'demo:removed' })));
+    vi.resetModules();
+    const { MidiLibrary: Fresh } = await import('./library');
+    const next = new Fresh();
+    await next.loadBuiltins();
+    expect(next.getCurrent()?.id).toBe('demo:arpeggio');
+  });
+
+  it('keeps the user’s own tracks in front of the demos and playable without them', async () => {
+    const { MidiLibrary } = await import('./library');
+    const library = new MidiLibrary();
+    library.put(track);
+    // The user's track is selectable before any demo exists.
+    expect(library.getCurrent()?.id).toBe(track.id);
+    expect(library.getTracks().map((entry) => entry.id)).toEqual([track.id]);
+
+    await library.loadBuiltins();
+    // Built-ins keep their old place: first, with the user's own after them.
+    expect(library.getTracks()[0].id.startsWith('demo:')).toBe(true);
+    expect(library.getTracks().at(-1)?.id).toBe(track.id);
+    expect(library.getCurrent()?.id).toBe(track.id);
   });
 });

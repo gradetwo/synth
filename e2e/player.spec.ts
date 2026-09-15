@@ -14,7 +14,9 @@ test.describe('player', () => {
     await expect(page.locator('.player.open')).toBeVisible();
 
     const tracks = page.locator('.player-track');
-    expect(await tracks.count()).toBeGreaterThanOrEqual(16);
+    // The built-in playlist is a lazy chunk (P9.26), so the panel can be open
+    // for a frame before the demos are in it: poll rather than read once.
+    await expect.poll(() => tracks.count()).toBeGreaterThanOrEqual(16);
     await expect(page.locator('.player-track', { hasText: '致爱丽丝', hasNotText: '八位机' })).toHaveCount(1);
     await expect(page.locator('.player-track', { hasText: '茉莉花' })).toHaveCount(1);
     await expect(page.locator('.player-track', { hasText: '音阶' })).toHaveCount(1);

@@ -56,9 +56,9 @@ export function TopBar({
   onView: (view: 'modules' | 'flow') => void;
 }) {
   // Called for its subscription: this bar has to re-render when the patch
-  // changes. `currentPreset()` also knows about an imported patch file, which is
-  // applied without joining the library — a plain lookup in `allPresets()`
-  // would leave the bar showing the patch it replaced.
+  // changes. The label is the store's copy of the current sound's name, which is
+  // always available — `currentPreset()` cannot be, because the factory library
+  // is a lazy chunk (P9.26) and a first frame has to name the boot patch.
   usePresetId();
   const theme = useTheme();
   const keyboardVisible = useKeyboardVisible();
@@ -67,7 +67,7 @@ export function TopBar({
   const activeSlot = useActiveSlot();
   const slotAFilled = useSlotFilled('a');
   const slotBFilled = useSlotFilled('b');
-  const preset = store.currentPreset();
+  const label = store.currentPresetLabel();
   const { device, width, height } = useViewport();
   const phone = device === 'phone';
   // Phones and portrait tablets keep a compact bar with a secondary-action
@@ -315,7 +315,9 @@ export function TopBar({
       </div>
 
       <div className="preset-ctrl">
-        <button type="button" className="nav-btn" title={t('top.prevPreset')} aria-label={t('top.prevPreset')} onClick={() => { haptic(); store.stepPreset(-1); }}>
+        {/* Stepping fetches the factory table on the first press (P9.26), so the
+            call is fire-and-forget: the bar shows the new patch when it lands. */}
+        <button type="button" className="nav-btn" title={t('top.prevPreset')} aria-label={t('top.prevPreset')} onClick={() => { haptic(); void store.stepPreset(-1); }}>
           ‹
         </button>
         <div
@@ -327,11 +329,11 @@ export function TopBar({
           onKeyDown={(e) => (e.key === 'Enter' ? onBrowse() : undefined)}
         >
           <div>
-            <span className="preset-tag">{preset?.tag ?? 'INIT'}</span>
+            <span className="preset-tag">{label.tag}</span>
           </div>
-          <div className="preset-name">{localizeName(preset?.name ?? t('preset.initName'))}</div>
+          <div className="preset-name">{localizeName(label.name)}</div>
         </div>
-        <button type="button" className="nav-btn" title={t('top.nextPreset')} aria-label={t('top.nextPreset')} onClick={() => { haptic(); store.stepPreset(1); }}>
+        <button type="button" className="nav-btn" title={t('top.nextPreset')} aria-label={t('top.nextPreset')} onClick={() => { haptic(); void store.stepPreset(1); }}>
           ›
         </button>
       </div>

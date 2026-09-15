@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PARAMS, Param } from '@/audio/params';
+import { DEFAULT_PRESET, PRESET_CATEGORIES } from './preset-model';
 import { FACTORY_PRESETS, presetParams, presetRoutes } from './presets';
 
 describe('preset library', () => {
@@ -8,6 +9,28 @@ describe('preset library', () => {
     for (const cat of ['LEAD', 'BASS', 'PAD', 'PLUCK', 'KEYS', 'FX', 'BASIC']) {
       const count = FACTORY_PRESETS.filter((p) => p.cat === cat).length;
       expect(count, cat).toBeGreaterThanOrEqual(5);
+    }
+  });
+
+  it('starts with the patch the lazy first screen names (P9.26)', () => {
+    // `preset-model.ts` stands in for the table until it is fetched, so the
+    // constant it holds has to be this exact patch — id, name and tag.
+    expect(FACTORY_PRESETS[0].id).toBe(DEFAULT_PRESET.id);
+    expect(FACTORY_PRESETS[0].name).toBe(DEFAULT_PRESET.name);
+    expect(FACTORY_PRESETS[0].tag).toBe(DEFAULT_PRESET.tag);
+  });
+
+  it('offers exactly the categories the drawer shell renders without it', () => {
+    // The chips come from `preset-model.ts` while the list is still arriving, so
+    // a category that only exists in the table would be unreachable, and one
+    // listed but never used would be an empty filter.
+    const used = new Set(FACTORY_PRESETS.map((p) => p.cat));
+    for (const category of PRESET_CATEGORIES) {
+      if (category === 'ALL' || category === 'USER') continue;
+      expect(used.has(category as never), category).toBe(true);
+    }
+    for (const category of used) {
+      expect(PRESET_CATEGORIES).toContain(category as never);
     }
   });
 

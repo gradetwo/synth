@@ -29,13 +29,18 @@ import {
   type Theme,
   type ViewMode,
 } from './layout';
+// The factory table itself is *not* imported here: `presets.ts` is a 10.2 KB
+// gzip chunk of patch data that a first visit never reads (P9.26). It arrives
+// through `ensurePresets()` when the drawer opens, the prev/next buttons are
+// used, or a stored id has to be resolved. Only the model and the identity of
+// the boot patch come from the first screen.
 import {
-  FACTORY_PRESETS,
+  DEFAULT_PRESET,
   presetParams,
   presetRoutes,
   type Preset,
   type PresetCategory,
-} from './presets';
+} from './preset-model';
 import { midiLibrary, trackTitle, type Track } from '@/midi/library';
 import { midiPlayer } from '@/midi/player';
 import { parseMidi, writeMidi, type MidiSong } from '@/midi/smf';
@@ -82,6 +87,15 @@ interface Snapshot {
   state: SynthState;
   layout: LayoutState;
   currentPresetId: string;
+  /**
+   * The current sound's display name and tag.
+   *
+   * They ride in the snapshot because the first screen has to name the patch
+   * before the factory library is fetched (P9.26): on a fresh install this is the
+   * boot constant, otherwise it is what the stored document carried.
+   */
+  currentPresetName: string;
+  currentPresetTag: string;
   userPresets: Preset[];
   canUndo: boolean;
   canRedo: boolean;
@@ -92,6 +106,21 @@ interface Snapshot {
   activeSlot: 'a' | 'b';
   slotFilled: { a: boolean; b: boolean };
   version: number;
+}
+
+/**
+ * Thrown by `allPresets()` before the factory library has been fetched.
+ *
+ * Deliberately an error and not an empty list: a caller that forgot to
+ * `await store.ensurePresets()` would otherwise paint an empty drawer (or a
+ * wrong count) and read like a data bug. A named throw makes the missing load
+ * the obvious thing at the call site.
+ */
+export class PresetsNotLoadedError extends Error {
+  constructor() {
+    super('factory presets are not loaded yet — await store.ensurePresets() first');
+    this.name = 'PresetsNotLoadedError';
+  }
 }
 
 function cloneState(state: SynthState): SynthState {
@@ -135,6 +164,13 @@ interface HistoryEntry {
   layout: LayoutState;
   userPresets: Preset[];
   currentPresetId: string;
+  /**
+   * The display name/tag, when the document carries them. Optional because a
+   * `.gs1proj` written before they were stored has only the id (see
+   * `adoptPresetIdentity`).
+   */
+  currentPresetName?: string;
+  currentPresetTag?: string;
   clips: Track[];
   currentClipId: string;
 }
@@ -190,7 +226,18 @@ export class SynthStore {
   private state: SynthState;
   private layout: LayoutState;
   private userPresets: Preset[];
-  private currentPresetId = FACTORY_PRESETS[0].id;
+  /**
+   * The factory table, or null until `ensurePresets()` has fetched it.
+   *
+   * Null is a distinct state from "empty": `allPresets()` throws on it so a
+   * caller cannot mistake "the chunk has not arrived" for "there are none".
+   */
+  private factoryPresets: Preset[] | null = null;
+  /** One in-flight fetch, shared by every caller of `ensurePresets()`. */
+  private presetsLoad: Promise<Preset[]> | null = null;
+  private currentPresetId: string = DEFAULT_PRESET.id;
+  private currentPresetName: string = DEFAULT_PRESET.name;
+  private currentPresetTag: string = DEFAULT_PRESET.tag;
   private transientPreset: Preset | null = null;
   private history: HistoryEntry[] = [];
   /** Parameter waiting for a CC, or null (transient: not part of the document). */
@@ -218,8 +265,8 @@ export class SynthStore {
         /* storage may be unavailable; nothing else to do */
       }
     }
-    const persisted = stored ? mergeKnown<SynthState & { presetId?: string }>(
-      { ...createDefaultState(), presetId: '' },
+    const persisted = stored ? mergeKnown<SynthState & { presetId?: string; presetName?: string; presetTag?: string }>(
+      { ...createDefaultState(), presetId: '', presetName: '', presetTag: '' },
       stored.data,
     ) : null;
     this.state =
@@ -231,8 +278,21 @@ export class SynthStore {
     // restored too: opening the app used to display the first factory preset
     // while the engine held last session's patch, and playing straight away
     // sounded like neither.
-    if (persisted?.presetId && this.allPresets().some((preset) => preset.id === persisted.presetId)) {
+    //
+    // The saved *name* is what makes that possible without the factory library
+    // (P9.26). A document written before the name was stored only carries the id,
+    // so a factory id falls back to the boot constant until `ensurePresets()`
+    // reads the table and corrects it — which is also the rule a id that names
+    // nothing has always followed.
+    const savedPreset = this.userPresets.find((preset) => preset.id === persisted?.presetId);
+    if (savedPreset) {
+      this.currentPresetId = savedPreset.id;
+      this.currentPresetName = savedPreset.name;
+      this.currentPresetTag = savedPreset.tag;
+    } else if (persisted?.presetId) {
       this.currentPresetId = persisted.presetId;
+      this.currentPresetName = persisted.presetName || DEFAULT_PRESET.name;
+      this.currentPresetTag = persisted.presetTag || DEFAULT_PRESET.tag;
     }
     this.scenes = normalizeScenes(unwrap(loadJson<unknown>(SCENES_KEY))?.data ?? null);
     this.snapshot = this.buildSnapshot();
@@ -248,6 +308,8 @@ export class SynthStore {
       state: this.state,
       layout: this.layout,
       currentPresetId: this.currentPresetId,
+      currentPresetName: this.currentPresetName,
+      currentPresetTag: this.currentPresetTag,
       userPresets: this.userPresets,
       midiLearn: this.midiLearn,
       scenes: this.scenes,
@@ -259,13 +321,33 @@ export class SynthStore {
     };
   }
 
+  /**
+   * Rebuild and announce the snapshot, without writing storage.
+   *
+   * Used when a change is *derived* rather than authored — reconciling the
+   * displayed preset identity once the factory table can contradict it. The next
+   * real commit persists whatever it settled on.
+   */
+  private publish() {
+    this.version += 1;
+    this.snapshot = this.buildSnapshot();
+    for (const fn of this.listeners) fn();
+  }
+
   private commit(): boolean {
     this.version += 1;
     this.snapshot = this.buildSnapshot();
     for (const fn of this.listeners) fn();
     return (
-      saveJson(STORAGE_KEY, wrap({ ...this.state, presetId: this.currentPresetId })) &&
-      saveJson(LAYOUT_KEY, wrap(this.layout))
+      saveJson(
+        STORAGE_KEY,
+        wrap({
+          ...this.state,
+          presetId: this.currentPresetId,
+          presetName: this.currentPresetName,
+          presetTag: this.currentPresetTag,
+        }),
+      ) && saveJson(LAYOUT_KEY, wrap(this.layout))
     );
   }
 
@@ -391,13 +473,105 @@ export class SynthStore {
 
   // ----------------------------------------------------------------- presets
 
+  /** Whether the factory library has been fetched (P9.26). */
+  get presetsLoaded(): boolean {
+    return this.factoryPresets !== null;
+  }
+
+  /**
+   * Fetch the factory preset library (`state/presets.ts`).
+   *
+   * A first visit never needs it: the boot patch is a constant, `applyPreset`
+   * works on any `Preset` it is handed, and a stored id only has to be
+   * *validated* once something is going to show the list. So the 10.2 KB gzip
+   * table arrives the first time one of these happens:
+   *
+   *   * the preset drawer is opened (its list is built from `allPresets()`);
+   *   * the top bar's prev/next buttons step through it;
+   *   * a project or snapshot is loaded whose selected patch is not one of the
+   *     presets that travelled with it and the drawing has to say which;
+   *   * `applyPresetById()` is asked for an id.
+   *
+   * A `.gs1.json` patch file is *not* on that list: it carries a complete patch
+   * and is applied as one, so importing a file never fetches the table.
+   *
+   * Idempotent, so a second caller joins the first fetch. A rejected fetch
+   * clears the memo so the next open retries instead of the drawer staying
+   * blank for the rest of the session.
+   */
+  async ensurePresets(): Promise<void> {
+    if (this.factoryPresets) return;
+    if (!this.presetsLoad) {
+      this.presetsLoad = import('./presets').then((module) => module.FACTORY_PRESETS);
+    }
+    let list: Preset[];
+    try {
+      list = await this.presetsLoad;
+    } catch (error) {
+      this.presetsLoad = null;
+      throw error;
+    }
+    if (this.factoryPresets) return;
+    this.factoryPresets = list;
+    this.reconcilePresetIdentity();
+    // Persist the corrected identity: a stored id that turned out to name
+    // nothing now reads back as the patch the bar is actually showing.
+    this.commit();
+  }
+
+  /**
+   * Point the displayed identity at the preset the id really names.
+   *
+   * Before the library arrives the id is taken on trust (see the constructor).
+   * Afterwards an id that names nothing falls back the way `deletePreset` always
+   * has: the first factory patch.
+   */
+  private reconcilePresetIdentity() {
+    const resolved =
+      this.transientPreset?.id === this.currentPresetId
+        ? this.transientPreset
+        : this.userPresets.find((preset) => preset.id === this.currentPresetId) ??
+          this.factoryPresets?.find((preset) => preset.id === this.currentPresetId);
+    if (resolved) {
+      this.currentPresetName = resolved.name;
+      this.currentPresetTag = resolved.tag;
+      return;
+    }
+    const first = this.factoryPresets?.[0];
+    this.currentPresetId = first?.id ?? DEFAULT_PRESET.id;
+    this.currentPresetName = first?.name ?? DEFAULT_PRESET.name;
+    this.currentPresetTag = first?.tag ?? DEFAULT_PRESET.tag;
+  }
+
+  /**
+   * The name and tag to show for the current sound.
+   *
+   * Always available, whether or not the factory library has been fetched: the
+   * snapshot's copy starts from the boot constant (or the stored document) and
+   * `ensurePresets()` corrects it. `currentPreset()` cannot promise that, which
+   * is why the top bar reads this instead.
+   */
+  currentPresetLabel(): { name: string; tag: string } {
+    return { name: this.currentPresetName, tag: this.currentPresetTag };
+  }
+
+  /**
+   * Every preset, the user's first.
+   *
+   * Throws `PresetsNotLoadedError` while the factory table is missing rather than
+   * returning just the user's own: a drawer built from the short list would look
+   * like a data bug, and the fix (`await store.ensurePresets()`) should be
+   * obvious at the call site.
+   */
   allPresets(): Preset[] {
-    return [...this.userPresets, ...FACTORY_PRESETS];
+    if (!this.factoryPresets) throw new PresetsNotLoadedError();
+    return [...this.userPresets, ...this.factoryPresets];
   }
 
   currentPreset(): Preset | undefined {
     return (
-      this.allPresets().find((p) => p.id === this.currentPresetId) ??
+      this.userPresets.find((p) => p.id === this.currentPresetId) ??
+      this.factoryPresets?.find((p) => p.id === this.currentPresetId) ??
       (this.transientPreset?.id === this.currentPresetId ? this.transientPreset : undefined)
     );
   }
@@ -421,14 +595,25 @@ export class SynthStore {
       };
     }
     this.currentPresetId = preset.id;
+    this.currentPresetName = preset.name;
+    this.currentPresetTag = preset.tag;
     engine.applyState(this.state, opts.immediate ?? true);
     this.recordHistory();
     this.commit();
   }
 
-  applyPresetById(id: string) {
+  /**
+   * Apply a preset by id, fetching the factory library if the id may name one.
+   *
+   * Asynchronous because of that fetch: resolving an id is one of the paths
+   * allowed to pull the table in. Returns whether the id named anything.
+   */
+  async applyPresetById(id: string): Promise<boolean> {
+    await this.ensurePresets();
     const preset = this.allPresets().find((p) => p.id === id);
-    if (preset) this.applyPreset(preset);
+    if (!preset) return false;
+    this.applyPreset(preset);
+    return true;
   }
 
   // ----------------------------------------------------------- share / files
@@ -562,13 +747,16 @@ export class SynthStore {
 
   /** Download the current patch as a `.gs1.json` file. */
   exportCurrentPreset() {
-    const preset = this.currentPreset();
-    const name = (preset?.name ?? 'GS1 Patch').split(' · ')[0].replace(/[^\w\u4e00-\u9fa5-]+/g, '_');
+    // The label is the fallback: unlike `currentPreset()`, it is right even when
+    // the factory library has not been fetched (P9.26). The drawer that offers
+    // this button has already fetched it, so the two agree in practice.
+    const name = this.currentPreset()?.name ?? this.currentPresetName;
+    const slug = (name || 'GS1 Patch').split(' · ')[0].replace(/[^\w\u4e00-\u9fa5-]+/g, '_');
     const layered = this.usesLayer();
     const payload = {
       format: 'gs1-preset',
       version: 1,
-      name: preset?.name ?? 'GS1 Patch',
+      name,
       params: this.state.params,
       routes: this.state.routes,
       // Same rule as a saved preset: the layer travels only when it is used.
@@ -580,7 +768,7 @@ export class SynthStore {
           }
         : {}),
     };
-    downloadText(`${name || 'gs1-patch'}.gs1.json`, JSON.stringify(payload, null, 2));
+    downloadText(`${slug || 'gs1-patch'}.gs1.json`, JSON.stringify(payload, null, 2));
   }
 
   /** Load a `.gs1.json` patch file, or a `.gs1song` arrangement file. */
@@ -593,7 +781,14 @@ export class SynthStore {
     return true;
   }
 
-  stepPreset(dir: 1 | -1) {
+  /**
+   * Step to the next/previous preset.
+   *
+   * Asynchronous for the same reason as `applyPresetById`: the first step on a
+   * session that has never shown the list has to fetch it first.
+   */
+  async stepPreset(dir: 1 | -1): Promise<void> {
+    await this.ensurePresets();
     const list = this.allPresets();
     const index = list.findIndex((p) => p.id === this.currentPresetId);
     const next = list[(index + dir + list.length) % list.length];
@@ -663,6 +858,8 @@ export class SynthStore {
     this.userPresets = [preset, ...this.userPresets];
     saveJson(USER_KEY, wrap(this.userPresets));
     this.currentPresetId = preset.id;
+    this.currentPresetName = preset.name;
+    this.currentPresetTag = preset.tag;
     this.mark();
     this.commit();
     return preset;
@@ -671,7 +868,15 @@ export class SynthStore {
   deletePreset(id: string) {
     this.userPresets = this.userPresets.filter((p) => p.id !== id);
     saveJson(USER_KEY, wrap(this.userPresets));
-    if (this.currentPresetId === id) this.currentPresetId = FACTORY_PRESETS[0].id;
+    if (this.currentPresetId === id) {
+      // Back to the first factory patch, the rule this has always followed. The
+      // library is loaded whenever this is reachable (the drawer deletes), and
+      // the boot constant stands in if it somehow is not.
+      const first = this.factoryPresets?.[0];
+      this.currentPresetId = first?.id ?? DEFAULT_PRESET.id;
+      this.currentPresetName = first?.name ?? DEFAULT_PRESET.name;
+      this.currentPresetTag = first?.tag ?? DEFAULT_PRESET.tag;
+    }
     this.mark();
     this.commit();
   }
@@ -685,6 +890,8 @@ export class SynthStore {
       layout: cloneLayout(this.layout),
       userPresets: this.userPresets.map((p) => ({ ...p })),
       currentPresetId: this.currentPresetId,
+      currentPresetName: this.currentPresetName,
+      currentPresetTag: this.currentPresetTag,
       clips: library.clips,
       currentClipId: library.currentId,
     };
@@ -725,12 +932,41 @@ export class SynthStore {
     this.layout = cloneLayout(entry.layout);
     setLang(this.layout.lang);
     this.userPresets = entry.userPresets.map((p) => ({ ...p }));
-    this.currentPresetId = entry.currentPresetId;
+    this.adoptPresetIdentity(entry.currentPresetId, entry.currentPresetName, entry.currentPresetTag);
     const presets = saveJson(USER_KEY, wrap(this.userPresets));
     const layout = saveJson(LAYOUT_KEY, this.layout);
     midiLibrary.restore(entry.clips, entry.currentClipId);
     engine.applyState(this.state, true);
     return this.commit() && presets && layout;
+  }
+
+  /**
+   * Name the patch a restored document selected.
+   *
+   * A user preset that travelled with the document resolves straight away. A
+   * factory id cannot be checked without the library, so the name the document
+   * carried is used in the meantime; `loadDocument` fetches the table when there
+   * is no such name, and `reconcilePresetIdentity()` corrects an id that turns
+   * out to name nothing. This is the same shape as the constructor's rule for a
+   * stored `presetId`: trust it first, correct once the table is readable.
+   */
+  private adoptPresetIdentity(id: string, name?: string, tag?: string) {
+    const user = this.userPresets.find((preset) => preset.id === id);
+    if (user) {
+      this.currentPresetId = user.id;
+      this.currentPresetName = user.name;
+      this.currentPresetTag = user.tag;
+      return;
+    }
+    if (!id) {
+      this.currentPresetId = DEFAULT_PRESET.id;
+      this.currentPresetName = DEFAULT_PRESET.name;
+      this.currentPresetTag = DEFAULT_PRESET.tag;
+      return;
+    }
+    this.currentPresetId = id;
+    this.currentPresetName = name || DEFAULT_PRESET.name;
+    this.currentPresetTag = tag || DEFAULT_PRESET.tag;
   }
 
   /**
@@ -744,6 +980,24 @@ export class SynthStore {
    */
   loadDocument(entry: HistoryEntry): boolean {
     const stored = this.restoreEntry(entry);
+    // One of the paths allowed to pull the factory table in (P9.26): a project
+    // or snapshot whose selected patch is not one of the presets that travelled
+    // with it can only be *named* by the library, and an id that no longer
+    // exists has to fall back the way a stored one does at boot. The fetch is
+    // fired after the document is live, so the switch never waits on a chunk.
+    const namesNothing =
+      !this.userPresets.some((preset) => preset.id === this.currentPresetId) &&
+      !entry.currentPresetName;
+    if (!this.factoryPresets && this.currentPresetId && namesNothing) {
+      void this.ensurePresets().catch(() => {
+        /* the constant stays up; opening the drawer retries the fetch */
+      });
+    } else if (this.factoryPresets) {
+      this.reconcilePresetIdentity();
+      // `restoreEntry` already committed; this republishes the corrected
+      // identity. The next real commit persists it.
+      this.publish();
+    }
     this.recordHistory();
     return stored;
   }

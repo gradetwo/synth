@@ -124,6 +124,10 @@ function baseDoc(): ProjectDoc {
       } satisfies Preset,
     ],
     currentPresetId: 'user-1',
+    // The name travels with the id so opening a project does not have to fetch
+    // the factory library to say which sound is selected (P9.26).
+    currentPresetName: 'Mine',
+    currentPresetTag: 'USER',
     scenes: [
       { id: 'scene-1', name: 'Live', workspace: { order: [...defaultLayout().order], collapsed: {}, keyboardVisible: true, view: 'modules', flowPos: {}, flowHidden: [], displayExpanded: null, autoCollapsed: [] } },
     ],
@@ -524,9 +528,26 @@ describe('the panel’s copy', () => {
 });
 
 describe('projects over the live store', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorage.clear();
-    store.applyPresetById('init');
+    await store.applyPresetById('init');
+  });
+
+  it('carries the selected patch’s name so opening it needs no factory lookup (P9.26)', () => {
+    const before = store.getSnapshot();
+    const doc = captureLiveDocument();
+    expect(doc.currentPresetId).toBe(before.currentPresetId);
+    expect(doc.currentPresetName).toBe(before.currentPresetName);
+    expect(doc.currentPresetTag).toBe(before.currentPresetTag);
+
+    // Select something else, then put the document back: the name comes back
+    // with the id, and nothing had to be fetched to know it.
+    store.applyPreset({ id: 'other', name: 'Other · 别的', tag: 'OTHER', cat: 'USER', wave: 'sine', params: {} });
+    expect(store.currentPresetLabel().name).toBe('Other · 别的');
+    expect(loadLiveDocument(doc)).toBe(true);
+    expect(store.getSnapshot().currentPresetId).toBe(before.currentPresetId);
+    expect(store.currentPresetLabel().name).toBe(before.currentPresetName);
+    expect(store.currentPresetLabel().tag).toBe(before.currentPresetTag);
   });
 
   it('switches the real workspace and restores a snapshot as one undo step', () => {
