@@ -17,6 +17,13 @@
  *   npm run nightly -- --update            # also append rows to docs/notes/nightly.md
  *   npm run nightly -- --dry-run           # print engine/display/subset and the command, launch nothing
  *
+ * Each engine's log is written while its suite runs, never after it exits:
+ * `.tmp/nightly/<date>-<engine>.log` grows in place (same path and name as
+ * before), `[nightly] <engine>: starting …` / `… finished — …` lines bracket
+ * it, and a killed run leaves the part it had already produced. `tail -f` on
+ * that file — or the terminal, where whole child lines are mirrored when it is
+ * a TTY — answers "where is it now, and how long has it been there".
+ *
  * Three subsets, because "cover more" and "finish locally" are different jobs:
  *
  *   core     the phone/tablet-first set: iPhone/iPad viewports, touch, text fit,
@@ -57,9 +64,20 @@
  * fallback, and a real desktop session is fastest of all.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 import {
   NOTES_PATH,
@@ -225,10 +243,129 @@ const envFor = (engine) => {
   return runEnv;
 };
 
+/**
+ * One engine's log file, written while the suite runs.
+ *
+ * The first version kept everything the child printed in memory and wrote it
+ * once the child had exited (`spawnSync`, then one `writeFileSync`). That made
+ * a two-hour `--all` run look exactly like a hung one: nothing on disk to
+ * `tail -f`, nothing left behind when the run was killed, and the systemd
+ * unit's `TimeoutStartSec=3h` unable to tell "slow" from "stuck" — which is why
+ * §一.18 could not measure the wall clock. Every chunk now goes to the fd as it
+ * arrives.
+ *
+ * `writeSync` on a plain fd is deliberate: there is no userland buffer to lose,
+ * so the partial log survives SIGTERM and SIGKILL alike. Whole lines are
+ * mirrored to an interactive terminal (`tee`); under systemd or CI the progress
+ * lines are the live view and the file is the artefact.
+ */
+function openEngineLog(path) {
+  const fd = openSync(path, 'w');
+  const partial = { stdout: '', stderr: '' };
+  const decoders = { stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8') };
+  return {
+    /** Append a `[nightly]` progress line — the file always carries them too. */
+    append(text) {
+      writeSync(fd, text);
+    },
+    /** Append one of the child's stdout/stderr chunks, and tee whole lines. */
+    write(chunk, which) {
+      writeSync(fd, chunk);
+      if (!process.stdout.isTTY) return;
+      const lines = (partial[which] + decoders[which].write(chunk)).split('\n');
+      partial[which] = lines.pop() ?? '';
+      for (const line of lines) process.stdout.write(`${line}\n`);
+    },
+    close() {
+      closeSync(fd);
+    },
+  };
+}
+
+/** The child a signal should stop; set by `run`, cleared when it settles. */
+let running = null;
+
+/**
+ * Run one command to completion, streaming its output into the engine log.
+ *
+ * The verdict is the one `spawnSync` gave: `code` is `status ?? 1`, so a child
+ * killed by a signal still counts as a failure, a spawn that never happened is
+ * `1` with empty output (which is what the launch-failure retry looks for), and
+ * `out` is the stdout-then-stderr concatenation the pass/fail and
+ * launch-failure regexes were written against. Only the *file* sees the
+ * interleaved stream a `tail -f` wants; the judgement sees the same string it
+ * always got.
+ */
 const run = (command, commandArgs, options = {}) => {
-  const result = spawnSync(command, commandArgs, { cwd: root, env, encoding: 'utf8', ...options });
-  return { code: result.status ?? 1, out: `${result.stdout ?? ''}${result.stderr ?? ''}` };
+  const { log = null, ...spawnOptions } = options;
+  return new Promise((done) => {
+    const child = spawn(command, commandArgs, {
+      cwd: root,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      ...spawnOptions,
+    });
+    const chunks = { stdout: [], stderr: [] };
+    let settled = false;
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      if (running?.child === child) running = null;
+      // Decode after concatenating, so a multibyte character split across two
+      // chunks decodes exactly as `spawnSync`'s single read would have.
+      done({
+        code,
+        out: Buffer.concat(chunks.stdout).toString('utf8') + Buffer.concat(chunks.stderr).toString('utf8'),
+      });
+    };
+    running = { child, log };
+    child.stdin?.end();
+    for (const which of ['stdout', 'stderr']) {
+      child[which].on('data', (chunk) => {
+        chunks[which].push(chunk);
+        log?.write(chunk, which);
+      });
+    }
+    child.on('error', () => finish(1));
+    child.on('close', (code) => finish(code ?? 1));
+  });
 };
+
+/**
+ * SIGTERM/SIGINT: say so in the log and stop the child.
+ *
+ * Nothing needs flushing — every chunk is already on disk because the writes
+ * are synchronous — but the child would otherwise outlive the runner and keep
+ * the preview server's port, which is how the next run fails with EADDRINUSE.
+ * Re-raising the signal keeps the caller's wait status what it was before this
+ * handler existed (death by signal, not a synthetic exit code), and systemd's
+ * `TimeoutStartSec` kill therefore still leaves the partial log behind.
+ */
+const signalHandlers = {};
+const stopOnSignal = (signal) => {
+  const current = running;
+  if (current) {
+    try {
+      current.log?.append(`\n[nightly] ${signal}: interrupted — the log above is what had run\n`);
+    } catch {
+      /* the log is best-effort once we are on the way out */
+    }
+    const { child } = current;
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+  process.removeListener(signal, signalHandlers[signal]);
+  process.kill(process.pid, signal);
+};
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  signalHandlers[signal] = () => stopOnSignal(signal);
+  process.on(signal, signalHandlers[signal]);
+}
 
 /**
  * Messages that mean "the suite never started", as opposed to "a test failed".
@@ -425,19 +562,19 @@ const DEFAULT_PORT = (() => {
  * compositor afterwards. Split out of the loop so a retry can run the same
  * thing again with a different port.
  */
-function launchEngine(engine, cmd, runEnv, initialHow) {
+async function launchEngine(engine, cmd, runEnv, initialHow, log) {
   let how = initialHow;
   if (engine === 'webkit' && chosen === 'weston') {
     const weston = startWeston();
     if (weston.failed) {
       console.error('[nightly] weston did not come up; running WebKit headless');
       how = 'headless';
-      return { result: run('npx', cmd, { env: runEnv }), how };
+      return { result: await run('npx', cmd, { env: runEnv, log }), how };
     }
     runEnv.XDG_RUNTIME_DIR = weston.runtime;
     runEnv.WAYLAND_DISPLAY = weston.socket;
     try {
-      return { result: run('npx', [...cmd, '--headed'], { env: runEnv }), how };
+      return { result: await run('npx', [...cmd, '--headed'], { env: runEnv, log }), how };
     } finally {
       try {
         process.kill(-weston.pid, 'SIGTERM');
@@ -451,12 +588,12 @@ function launchEngine(engine, cmd, runEnv, initialHow) {
     }
   }
   if (engine === 'webkit' && chosen === 'xvfb') {
-    return { result: run('xvfb-run', ['-a', 'npx', ...cmd, '--headed'], { env: runEnv }), how };
+    return { result: await run('xvfb-run', ['-a', 'npx', ...cmd, '--headed'], { env: runEnv, log }), how };
   }
   if (engine === 'webkit' && chosen === 'desktop') {
-    return { result: run('npx', [...cmd, '--headed'], { env: runEnv }), how };
+    return { result: await run('npx', [...cmd, '--headed'], { env: runEnv, log }), how };
   }
-  return { result: run('npx', cmd, { env: runEnv }), how };
+  return { result: await run('npx', cmd, { env: runEnv, log }), how };
 }
 
 const stamp = localDay();
@@ -478,34 +615,51 @@ try {
     let passed = 0;
     let failed = 0;
     let seconds = 0;
-    const logs = [];
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      const started = Date.now();
-      how = howFor(engine);
-      ({ result, how } = launchEngine(engine, cmd, runEnv, how));
-      seconds = Math.round((Date.now() - started) / 1000);
-      passed = Number(/ (\d+) passed/.exec(result.out)?.[1] ?? 0);
-      failed = Number(/ (\d+) failed/.exec(result.out)?.[1] ?? 0);
-      logs.push(
-        attempt === 1
-          ? result.out
-          : `\n\n===== retry on port ${runEnv.GS1_E2E_PORT} (${launchFailureReason(result.out)}) =====\n\n${result.out}`,
-      );
-      if (attempt === 2 || !looksLikeLaunchFailure(result.out, { passed, failed, exited: result.code })) break;
-      const next = findFreePort(basePort + 1);
-      if (next === null) {
-        console.error(`[nightly] ${engine}: the suite never started and no free port was found near ${basePort}`);
-        break;
+    // Opened before anything is launched, so the log answers "which engine, and
+    // since when" even if the browser never produces a line of its own.
+    const log = openEngineLog(logPath);
+    const progress = (message) => {
+      log.append(`${message}\n`);
+      console.log(message);
+    };
+    try {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const started = Date.now();
+        how = howFor(engine);
+        progress(
+          `[nightly] ${engine}: starting (attempt ${attempt}/2) · ${how} · ` +
+            `subset=${subsetName} (${subset.length || 'all'} files) · port=${runEnv.GS1_E2E_PORT ?? basePort}`,
+        );
+        ({ result, how } = await launchEngine(engine, cmd, runEnv, how, log));
+        seconds = Math.round((Date.now() - started) / 1000);
+        passed = Number(/ (\d+) passed/.exec(result.out)?.[1] ?? 0);
+        failed = Number(/ (\d+) failed/.exec(result.out)?.[1] ?? 0);
+        progress(
+          `[nightly] ${engine}: finished — ${result.code === 0 ? 'pass' : 'fail'} · ` +
+            `${passed} passed, ${failed} failed (${seconds}s)`,
+        );
+        if (attempt === 2 || !looksLikeLaunchFailure(result.out, { passed, failed, exited: result.code })) break;
+        const next = findFreePort(basePort + 1);
+        if (next === null) {
+          console.error(`[nightly] ${engine}: the suite never started and no free port was found near ${basePort}`);
+          break;
+        }
+        // The retry separator has to go in *before* the second attempt streams
+        // under it (the old code appended it after the fact); it names the port
+        // about to be used and the reason the first attempt gave, which is what
+        // the console line below says too.
+        log.append(`\n\n===== retry on port ${next} (${launchFailureReason(result.out)}) =====\n\n`);
+        console.error(
+          `[nightly] ${engine}: the suite never started (${launchFailureReason(result.out)}) after ${seconds}s — retrying on port ${next}`,
+        );
+        runEnv = { ...runEnv, GS1_E2E_PORT: String(next) };
       }
-      console.error(
-        `[nightly] ${engine}: the suite never started (${launchFailureReason(result.out)}) after ${seconds}s — retrying on port ${next}`,
-      );
-      runEnv = { ...runEnv, GS1_E2E_PORT: String(next) };
+    } finally {
+      log.close();
     }
     console.log(
       `[nightly] ${engine}: ${how} · subset=${subsetName} (${subset.length || 'all'} files) · npx ${cmd.join(' ')}`,
     );
-    writeFileSync(logPath, logs.join(''));
     const status = result.code === 0 ? 'pass' : 'fail';
     if (result.code !== 0) failures += 1;
     console.log(`[nightly] ${engine}: ${status} — ${passed} passed, ${failed} failed (${seconds}s) · ${logPath}`);

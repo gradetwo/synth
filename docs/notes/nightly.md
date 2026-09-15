@@ -19,6 +19,12 @@
 `--core` 只跑核心子集（本机快速看），`--all` 跑全量（CI 的 WebKit 作业用它）。文件清单是
 `scripts/nightly-e2e.mjs` 里的常量，本文件不复述，免得两处各说各话。
 
+日志是**边跑边写**的：每个引擎一份 `.tmp/nightly/<日期>-<内核>.log`，引擎一开始就在开头写下
+`[nightly] <内核>: starting …`（含显示路径、子集、端口），结束时再写一行耗时与计数。所以
+`tail -f .tmp/nightly/<日期>-<内核>.log` 在命令还没结束时就答得出「现在跑到哪、跑了多久」；
+被 SIGTERM 打断时，已经写下的部分留在原处。CI 的 `nightly` 作业把同一目录当 `nightly-logs`
+制品上传。
+
 `显示` 是这次实际走的显示路径：`weston`（headless Weston，本机默认）、`xvfb`（回退）、
 `desktop`（真实会话，`--display=desktop`）、`headless`（没有显示服务器；Chromium/Firefox 用它，
 WebKit 在 headless 下交不出应用页的帧——不是不触发 rAF，见 `docs/notes/compat.md` §3.1；
