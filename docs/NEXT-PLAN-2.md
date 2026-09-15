@@ -15,7 +15,7 @@
 | 维度 | 现状 |
 | :--- | :--- |
 | 版本 | **v2.1.1** 已上线并核对：部署时 `live BIF-uuaG == built BIF-uuaG`（一次命中）；`release/retained/` 保留 5 个（v2.1.1、v2.1.0、v2.0.7、v2.0.6、v2.0.5，v2.0.4 已按窗口淘汰） |
-| 门禁 | Rust **231**（+P9.10 的 2 条逐位单测，共 233）· Vitest **628 passed / 7 skipped**（64 文件；7 条 skip 是 fuzz 的计时项在宿主忙时**显式**报「没判」）· MCP 黄金会话 21 次调用两遍哈希相同 · Chromium E2E **149 passed / 1 failed（环境假红）· 10 skipped** · `nightly-e2e --self-test` PASS |
+| 门禁 | **合并 ffx + P13.4 + P13.5 + trel 之后整链 `npm run verify` PASS**（含 clippy/build/wasm/ci/release/dist/budget/audio/presets×2/bench/dsp/dsp:2x/mcp/llm-docs；`bench` 这次是 **timing judged 4 checks**、cpu probe 848 µs、load 2.8）× Rust **231**（+P9.10 的 2 条逐位单测，共 233）· Vitest **673 passed / 7 skipped**（64 文件；7 条 skip 是 fuzz 的计时项在宿主忙时**显式**报「没判」）· MCP 黄金会话 21 次调用两遍哈希相同 · Chromium E2E **149 passed / 1 failed（环境假红）· 10 skipped** · `nightly-e2e --self-test` PASS |
 | 体积 | dist **≤1550 KB**（v2.1.1 实测 **1540.2**，P141 把线从 1619 **下调**了 69 KB）、首屏 JS **≤126 KB** gzip（实测 125.3）、CSS **≤21 KB**（20.3）、最大 WASM gzip **≤75 KB**（**74.9**，P9.10 用 `#[inline(never)]` 买回） |
 | 启动 / 性能 | v2.1.1 发布跑：首屏可交互 **581 ms**（预算 3200）、fps idle **61.3** / playback **62.5** / graph-edit **61.3**；安静窗口 bench `p50 1111 µs (41.7%)`、`bench --long p50 1215 µs`、wasm memory **15.1 MB**（上限 32）、arena 余 **8471 KB** |
 | 相容红线 | `test:dsp` **`rms 0.06147`**、`verify:dsp:2x` **`0.061703`**、`verify:presets` 与 `verify:presets:2x` 都是 **`91 presets unchanged · ABI 8`** 一字不动；零分配 `gs_alloc_violations()==0`；`PARAM_COUNT` **224**；ABI **8** |
