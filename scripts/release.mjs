@@ -41,6 +41,7 @@ import {
   retainVersion,
   sortVersions,
   swCacheOf,
+  writeReleaseSums,
 } from './lib/retained.mjs';
 import { cloudflareToken, resolveSite } from './lib/release-env.mjs';
 import { fpsLogLines, readFpsLines } from './lib/fps-windows.mjs';
@@ -262,6 +263,13 @@ function preflight() {
 
 // ------------------------------------------------------- retained versions
 
+/** The three artefacts `npm run package` writes for this version, in its order. */
+const packagedArtifacts = () => [
+  resolve(root, 'release', `gs1-synth-${version}.zip`),
+  resolve(root, 'release', `gs1-synth-${version}-dist.zip`),
+  resolve(root, 'release', `gs1-synth-${version}.tar.gz`),
+];
+
 /**
  * Copy this release into `release/retained/` and prune the window (P12.4).
  *
@@ -446,6 +454,14 @@ async function main() {
     // must not prune the window it never joined.
     step('retain the release artefacts');
     retainRelease(distHash);
+    // `npm run package` wrote `release/SHA256SUMS` before retention, so the
+    // snapshot of *this* release was not in it yet. Re-run the same writer now
+    // that the store holds it (§一.20⑧): the manifest a rollback is verified
+    // against has to include the copy a rollback would actually read. Same
+    // function and same paths, so the result is the package step's file plus
+    // the new snapshot.
+    const sums = writeReleaseSums({ root, extra: packagedArtifacts() });
+    log(`[release]   release/SHA256SUMS covers ${sums.count} file(s) (this release + every retained snapshot)`);
   } else {
     log('[release]   (--skip-deploy: nothing was deployed, so nothing is retained)');
   }

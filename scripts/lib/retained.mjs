@@ -263,6 +263,85 @@ export function parseChecksums(text) {
 
 const sumsText = (files) => `${files.map((f) => `${f.sha256}  ${f.path}`).join('\n')}\n`;
 
+/** The top-level manifest: `release/SHA256SUMS`, written by `npm run package`. */
+export const releaseSumsPath = (releaseDir) => join(releaseDir, 'SHA256SUMS');
+
+/**
+ * Rewrite `release/SHA256SUMS` so it covers more than the release in flight
+ * (§一.20⑧).
+ *
+ * `scripts/package.mjs` used to list only the three artefacts it had just made,
+ * so the manifest forgot every earlier release the moment a new one was
+ * packaged — including the snapshots the rollback store exists to keep (P12.4
+ * had added `<store>/<v>/sha256.txt`, which pins that version's *site files*,
+ * but the top-level manifest still only ever described one version). This is
+ * the whole fix, in one function both callers share:
+ *
+ *   * `extra` — the artefacts of the release in flight, passed by `package.mjs`
+ *     (and again by `release.mjs` after retention, because by then the store
+ *     holds one more snapshot than it did when `package` ran), and
+ *   * every retained snapshot `<store>/<v>/gs1-synth-<v>.tar.gz` — the exact
+ *     bytes `materializeSite` would deploy on a rollback.
+ *
+ * Paths stay relative to the repository root, which is the shape the first
+ * version of this file used (`sha256sum -c release/SHA256SUMS` from the root),
+ * and `extra` keeps its caller's order, so the three lines a release writes
+ * today are byte-for-byte the lines it wrote before, with retained snapshots
+ * appended (oldest version first — `readdirSync` sorted).
+ *
+ * The old `release/gs1-synth-<v>.*` files of versions that have fallen out of
+ * the retention window are deliberately not listed: they are not rollback
+ * targets, and `release/` keeps hundreds of them (299 MB on the author's box).
+ *
+ * It verifies itself before returning (`verifyReleaseSums`), because a manifest
+ * is only useful if it describes the bytes next to it.
+ */
+export function writeReleaseSums({
+  root,
+  releaseDir = join(root, 'release'),
+  store = join(releaseDir, 'retained'),
+  extra = [],
+}) {
+  const artifacts = [...extra];
+  if (existsSync(store)) {
+    for (const entry of readdirSync(store, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!entry.isDirectory()) continue;
+      const dir = join(store, entry.name);
+      for (const file of readdirSync(dir).sort()) {
+        if (/^gs1-synth-.*\.tar\.gz$/.test(file)) artifacts.push(join(dir, file));
+      }
+    }
+  }
+  mkdirSync(releaseDir, { recursive: true });
+  const path = releaseSumsPath(releaseDir);
+  writeFileSync(path, sumsText(artifacts.map((file) => ({ sha256: sha256File(file), path: relative(root, file) }))));
+  const count = verifyReleaseSums({ root, path });
+  return { count, artifacts, path };
+}
+
+/**
+ * Re-hash everything a `SHA256SUMS` lists and throw on the first mismatch.
+ *
+ * An empty manifest throws rather than returning 0: "nothing was written" and
+ * "everything verified" must not be the same exit code (the same rule the rest
+ * of the release tooling follows). The unit test drives this with a tampered
+ * file, which is what makes the self-check in `writeReleaseSums` an assertion
+ * rather than a comment.
+ */
+export function verifyReleaseSums({ root, path }) {
+  const entries = parseChecksums(readFileSync(path, 'utf8'));
+  if (!entries.length) throw new Error(`release sums: ${path} is empty`);
+  for (const { sha256, path: rel } of entries) {
+    const full = resolve(root, rel);
+    if (!existsSync(full)) throw new Error(`release sums: ${rel} is listed but does not exist`);
+    const actual = sha256File(full);
+    if (actual !== sha256) {
+      throw new Error(`release sums: ${rel} does not match the manifest (${actual} != ${sha256})`);
+    }
+  }
+  return entries.length;
+}
+
 /**
  * Copy one release into the store.
  *

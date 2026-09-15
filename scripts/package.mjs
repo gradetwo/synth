@@ -5,16 +5,23 @@
  *   release/gs1-synth-<version>.zip       — contents at the web root (extract here)
  *   release/gs1-synth-<version>-dist.zip  — wrapper folder (dist/…)
  *   release/gs1-synth-<version>.tar.gz
- *   release/SHA256SUMS
+ *   release/SHA256SUMS                    — this release + every retained snapshot
+ *
+ * The checksum manifest is the one file here that is not about this release
+ * alone: `writeReleaseSums` (in `scripts/lib/retained.mjs`) also lists every
+ * `release/retained/<v>/gs1-synth-<v>.tar.gz`, because those are the bytes a
+ * rollback would deploy and the old inline version forgot them as soon as a new
+ * release was packaged (§一.20⑧).
  *
  * The ZIP writer is dependency-free (Node's zlib + CRC32).
  */
-import { createHash } from 'node:crypto';
 import { deflateRawSync, crc32 } from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { writeReleaseSums } from './lib/retained.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = resolve(root, 'dist');
@@ -141,12 +148,18 @@ execFileSync('tar', ['-czf', tarPath, '-C', dist, '.'], { stdio: 'inherit' });
 
 // ---------------------------------------------------------------- checksums
 const artifacts = [zipRoot, zipDist, tarPath];
-const sums = artifacts
-  .map((f) => `${createHash('sha256').update(readFileSync(f)).digest('hex')}  ${relative(root, f)}`)
-  .join('\n');
-writeFileSync(join(release, 'SHA256SUMS'), `${sums}\n`);
+// `writeReleaseSums` writes `release/SHA256SUMS` and covers *every* retained
+// rollback snapshot in addition to the three files above (§一.20⑧): the old
+// inline version listed only the newest release, so the manifest forgot the
+// store the moment a new release was packaged. It re-reads and re-hashes what it
+// wrote before returning, so a manifest that does not describe the bytes on disk
+// fails the package step instead of shipping.
+const { count: sumsCount } = writeReleaseSums({ root, extra: artifacts });
 
 console.log('\n[package] artifacts:');
 for (const f of [...artifacts, join(release, 'SHA256SUMS')]) {
   console.log(`  ${relative(root, f).padEnd(44)} ${(statSync(f).size / 1024).toFixed(1)} KB`);
 }
+console.log(
+  `[package] SHA256SUMS covers ${sumsCount} file(s): this release's artefacts + every retained snapshot`,
+);
