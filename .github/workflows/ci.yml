@@ -178,6 +178,13 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      # §一.39: this job pins `@stable` too, so a toolchain bump can break the
+      # nightly the same way it broke the verify job. Print the versions before
+      # anything that can fail, so a red nightly can be read against the
+      # toolchain that produced it (`scripts/verify-ci.mjs` asserts the step).
+      - name: Toolchain versions
+        run: rustc --version && cargo --version && node --version && npm --version
+
       - name: Install clang and Xvfb
         run: sudo apt-get update && sudo apt-get install -y clang llvm xvfb
 

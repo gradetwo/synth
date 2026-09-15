@@ -192,6 +192,14 @@ check('it runs both engines over the whole suite', wholeSuite >= 2,
   wholeSuite >= 2 ? '' : 'each engine needs an `--all` pass now that `e2e-engines` is gone');
 check('it runs the long benchmark', nightly.includes('npm run bench:long'));
 check('it keeps its logs', nightly.includes('nightly-logs'));
+// §一.39 again: the nightly installs `dtolnay/rust-toolchain@stable` too, so a
+// version bump can turn it red with no explanation in the log. The versions
+// have to be printed before anything that can die, for the same reason the
+// verify job prints them before clippy.
+check('nightly job logs the toolchain versions', nightly.includes('Toolchain versions'));
+for (const needle of ['rustc --version', 'cargo --version', 'node --version', 'npm --version']) {
+  check(`nightly job prints "${needle}"`, nightly.includes(needle));
+}
 
 // §一.12 / §一.20⑦: the visual baselines are a gate nobody ran, and they drifted
 // ten baselines out of date before P11.3 noticed. Both halves of the promise are
