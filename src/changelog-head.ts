@@ -22,13 +22,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '2.1.2',
+    version: '2.1.3',
     date: '2026-09-15',
     kind: 'feature',
     items: [
       [
-        '**给外部 AI 的接口又长了一层：现在它也能「看」界面。** 在原来的离线工具之外多了一个可选的**浏览器层**：外部的智能体可以打开真实页面、点击、读文本、截图，并按白名单跑既有的视觉/性能/参数门禁——所以它不但能离线量音频，也能核实界面里到底发生了什么。**这台合成器本身没有任何变化。**',
-        '**The interface for other AI agents grew a browser layer.** Alongside the offline tools there is now an optional **browser layer**: an external agent can open the real page, click, read text, take screenshots and run the whitelisted visual/performance/parameter gates, so it can check what actually happens in the interface as well as measure audio offline. **The synth itself is unchanged.**',
+        '**首屏更轻了：预设库与内置曲库改成「用到才下载」。** 以前无论你要不要打开它们，这两坨数据（91 条工厂预设 + 25 首内置曲目）都跟着首屏一起下载；现在它们在你**打开音色抽屉或播放器时**才取，首屏要下载的 JS 少了约 **12 KB**（gzip）。代价写清楚：首次打开这两个面板会有一瞬间的加载状态；**离线**且从未联网打开过它们时，会看到「加载失败 + 重试」。合成器的声音没有任何变化。',
+        '**A lighter first screen: the preset library and the built-in songs load only when you use them.** Both used to come down with the first screen whether you opened them or not (91 factory presets, 25 songs); they are fetched when you **open the preset drawer or the player**, which takes about **12 KB gzip** off what a first visit loads up front. The cost, stated plainly: the first open of those panels shows a brief loading state, and **offline** -- if you have never opened them online -- a "load failed / retry" line instead. The synth sounds exactly as before.',
       ],
     ],
   };
