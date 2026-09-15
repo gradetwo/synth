@@ -1962,7 +1962,7 @@ impl Engine {
         }
 
         // LFO direct target (mirrors the reference UI's LFO routing).
-        let mut pitch_mod = self.pitch_bend * params.pitch_bend_range + params.master_tune;
+        let mut pitch_mod = self.pitch_bend * params.pitch_bend_range;
         let mut pw_mod = 0.0f32;
         if depth > 0.0 {
             match params.lfo.target {
