@@ -23,7 +23,7 @@ export interface Release {
 
 export const CHANGELOG_HEAD: Release = {
     version: '2.1.5',
-    date: '2026-09-15',
+    date: '2026-09-16',
     kind: 'fix',
     items: [
       [
