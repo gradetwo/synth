@@ -336,6 +336,11 @@ test.describe('player keyboard shortcuts', () => {
     await expect(page.locator('.player.open')).toBeVisible();
     const play = page.locator('.player-play');
     await expect(play).toBeVisible();
+    // ...and the playlist is a second lazy chunk (P9.26): the transport has
+    // nothing to play until it arrives, so wait for the current track rather
+    // than just for the panel. Reading that as a failure would be reading the
+    // loading state as a missing feature.
+    await expect(page.locator('.player-track.current')).toHaveCount(1);
     await page.keyboard.press(' ');
     await expect(play).toHaveClass(/\bon\b/);
     await expect(page.locator('.player-track.current .pt-bars')).toHaveCount(1);
