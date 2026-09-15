@@ -7,19 +7,19 @@
 > + 核对线上资源 + 中文文档/更新记录同步**；**音频批次必须同时有时域与频域断言**；**工程/质量批次必须自证有效**
 > （故意改坏一处必须让门禁变红，并把证据写进文档）。
 
-## 一、现状（**v2.1.2**；数字来自 v2.1.2 的发布跑与第三次全面回归，2026-09-15）
+## 一、现状（**v2.1.3**；数字来自 v2.1.3 的发布跑与合并后的完整门禁，2026-09-15）
 
 > 这一节原来停在 v1.97.0，里面的红线（`0.030806/0.030946`、81 条指纹）与体积线早就过期了，
 > 第三次全面回归把它逐条抓了出来（见 §一.39）。**每次发布都要顺手改这里**，否则下一个人会拿旧数字当基线。
 
 | 维度 | 现状 |
 | :--- | :--- |
-| 版本 | **v2.1.2** 已上线并核对：部署时 `live DyXG5uEK == built DyXG5uEK`（一次命中），父代理又独立 curl 校验 `local == live`；`release/retained/` 保留 5 个（v2.1.2、v2.1.1、v2.1.0、v2.0.7、v2.0.6，v2.0.5 已按窗口淘汰） |
-| 门禁 | **合并 ffx + P13.4 + P13.5 + trel 之后整链 `npm run verify` PASS**（含 clippy/build/wasm/ci/release/dist/budget/audio/presets×2/bench/dsp/dsp:2x/mcp/llm-docs；`bench` 这次是 **timing judged 4 checks**、cpu probe 848 µs、load 2.8）× Rust **231**（+P9.10 的 2 条逐位单测，共 233）· Vitest **673 passed / 7 skipped**（64 文件；7 条 skip 是 fuzz 的计时项在宿主忙时**显式**报「没判」）· MCP 黄金会话 21 次调用两遍哈希相同 · Chromium E2E **149 passed / 1 failed（环境假红）· 10 skipped** · `nightly-e2e --self-test` PASS |
-| 体积 | dist **≤1550 KB**（v2.1.1 实测 **1540.2**，P141 把线从 1619 **下调**了 69 KB）、首屏 JS **≤126 KB** gzip（实测 125.3）、CSS **≤21 KB**（20.3）、最大 WASM gzip **≤75 KB**（**74.9**，P9.10 用 `#[inline(never)]` 买回） |
-| 启动 / 性能 | v2.1.2 发布跑：首屏可交互 **472 ms**（预算 3200）、fps idle **61.3**（五个窗口全是 61.3）/ playback **62.5** / graph-edit **61.3**；安静窗口 bench `p50 1111 µs (41.7%)`、`bench --long p50 1215 µs`、wasm memory **15.1 MB**（上限 32）、arena 余 **8471 KB** |
+| 版本 | **v2.1.3** 已上线并核对：部署时 `live BxC365Um == built BxC365Um`，父代理又独立 curl 校验 `local == live == assets/index-BxC365Um.js`，且线上 `sw.js` 与 `release/retained/2.1.3/sw.js` **逐字节相同**（缓存 pin `gs1-7fc8485f9aed` = 发布日志、含 2.1.3 版本握手）；`release/retained/` 保留 5 个（v2.1.3、v2.1.2、v2.1.1、v2.1.0、v2.0.7） |
+| 门禁 | **整链 `npm run verify` PASS**（clippy/build/wasm/ci/release/dist/budget/audio/presets×2/bench/dsp/dsp:2x/mcp/llm-docs），其中 `bench` 是 **timing judged 4 checks**；单元 **689 passed / 5 skipped**（66 文件）· Chromium E2E **154 passed** · 视觉 **10 passed / 48 基线** · MCP 黄金会话 21 次调用两遍逐字节相同 · `verify:llm-docs` PASS |
+| 体积 | dist **≤1550 KB**（v2.1.3 实测 **1546.1**）、首屏 JS **≤115 KB** gzip（实测 **113.3**；p926 把 `presets`/`songs` 改成按需加载后由 126 **下调** 11 KB）、CSS **≤21 KB**（20.4）、最大 WASM gzip **≤75 KB**（74.9） |
+| 启动 / 性能 | v2.1.3 发布跑：首屏可交互 **373 ms**（预算 3200，FCP 900 ms 以内）、fps idle **61.3**（五窗全同）/ playback / graph-edit 均 ≥60；安静窗口 `bench --long p50 1215 µs`、wasm memory **15.1 MB**（上限 32）、arena 余 **8471 KB** |
 | 相容红线 | `test:dsp` **`rms 0.06147`**、`verify:dsp:2x` **`0.061703`**、`verify:presets` 与 `verify:presets:2x` 都是 **`91 presets unchanged · ABI 8`** 一字不动；零分配 `gs_alloc_violations()==0`；`PARAM_COUNT` **224**；ABI **8** |
-| 已完成 | P5–P12 全部交付（P12.3 分享协作、P12.5 无障碍**按用户决定不做**）；**P13.1–P13.3、P9.10 已在 v2.1.1 发布**；**P13.4 已合并（待随 v2.1.2 发布）**；P13.5 待做；源码里 **无 TODO/FIXME 残留** |
+| 已完成 | **P5–P13 全部交付**（P12.3 分享协作、P12.5 无障碍按用户决定不做）；债单转成的批次 **P9.10 / p141 / p142 / p926 / ffx / trel** 也全部交付（v2.1.1–v2.1.3）；源码里 **无 TODO/FIXME 残留**；**剩余债见 §一，末条为终局清点口径** |
 
 ### 已记录的技术债与已知边界（本计划的输入）
 
