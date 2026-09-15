@@ -1118,6 +1118,12 @@ pub enum GraphParam {
 
 /// Decode a graph parameter id into (node index, field). `None` for every other
 /// parameter.
+///
+/// The six field bases are `FX_SLOTS` apart, so their half-open ranges tile
+/// `[FX_NODE_IN1, FX_NODE_OUT_GAIN + FX_SLOTS)` with no overlap and no gap: an
+/// id in that run is claimed by exactly one field and always resolves to a node
+/// inside `0..FX_SLOTS`. The id one past the run belongs to the parameter
+/// appended after it (`OSC_FM`) and gets `None` here.
 pub fn graph_param_field(param_id: u32) -> Option<(u32, GraphParam)> {
     let ranges: [(u32, GraphParam); 6] = [
         (id::FX_NODE_IN1, GraphParam::In1Src),
@@ -2190,5 +2196,246 @@ mod tests {
             assert_eq!(FilterType::from_u32(raw), kind);
             assert_eq!(kind.to_u32(), raw);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // The node-parameter id block (NEXT-PLAN-2 §一.11, P9.4).
+    //
+    // `graph_param_field` matches `base <= id < base + FX_SLOTS`, with the six
+    // field bases `101 / 107 / 113 / 119 / 125 / 131` and `FX_SLOTS = 6`. Those
+    // six half-open ranges tile `[101, 137)` exactly — adjacent, pairwise
+    // disjoint, no gap — so each id in the block is claimed by exactly one
+    // field and always decodes to a node inside `0..FX_SLOTS`. The `slot <
+    // FX_SLOTS` guard in `Params::set` is therefore defensive, not load-bearing:
+    // no id the host can write reaches it. The parameter appended after the
+    // block (`OSC_FM`, 137) is claimed by no field and takes the ordinary path.
+    //
+    // These tests pin that published mapping — one id is the wire format for a
+    // `.gs1proj`/share code/preset, so it cannot change without a migration.
+    // They exist so a future change to the block (or a new parameter landing
+    // inside it) has to be deliberate: without them a "fix" would silently
+    // re-point old files. See `docs/notes/node-param-ids.md`.
+    // ------------------------------------------------------------------
+
+    /// Walk every id in the node block and pin what the decoder answers. This is
+    /// the authority for the batch report's per-id table.
+    #[test]
+    fn graph_node_ids_resolve_to_their_documented_field() {
+        use GraphParam::{In1Gain, In1Src, In2Gain, In2Src, OutGain, ToOut};
+        // Field order is the order the block lays the fields out in.
+        let fields: [(GraphParam, u32); 6] = [
+            (In1Src, id::FX_NODE_IN1),
+            (In1Gain, id::FX_NODE_IN1_GAIN),
+            (In2Src, id::FX_NODE_IN2),
+            (In2Gain, id::FX_NODE_IN2_GAIN),
+            (ToOut, id::FX_NODE_TO_OUT),
+            (OutGain, id::FX_NODE_OUT_GAIN),
+        ];
+        // The block is exactly the six field ranges laid end to end.
+        for pair in fields.windows(2) {
+            assert_eq!(
+                pair[0].1 + FX_SLOTS as u32,
+                pair[1].1,
+                "field {} must start where {:?} ends",
+                pair[1].1,
+                pair[0].0
+            );
+        }
+        let lo = id::FX_NODE_IN1;
+        let hi = id::FX_NODE_OUT_GAIN + FX_SLOTS as u32;
+        assert_eq!(hi, id::OSC_FM, "the block ends where OSC_FM begins");
+        for param in lo..hi {
+            // Exactly one field claims the id: its own. (The `find` below is a
+            // uniqueness check as much as a lookup — `expect` fails if any id
+            // in the block belongs to no field.)
+            let (owner_slot, owner_field) = fields
+                .iter()
+                .find(|(_, b)| param >= *b && param < *b + FX_SLOTS as u32)
+                .map(|(f, b)| ((param - b) as usize, *f))
+                .expect("every id in the block is claimed by some field");
+            assert_eq!(
+                graph_param_field(param),
+                Some((owner_slot as u32, owner_field)),
+                "id {param} decodes to the one field that claims it"
+            );
+            assert!(
+                owner_slot < FX_SLOTS,
+                "id {param} must land on one of the six nodes"
+            );
+        }
+        // The boundary ids, which are also the proof that the ranges tile: each
+        // field's last id and the next field's first id are consecutive, and
+        // each decodes into its own field. The plan's two examples, measured,
+        // are wrong geometry: the block runs 101..136, so 35 (FX_DELAY_MIX) and
+        // 157 (FX_EQ_ON) are nowhere near it, and 132..136 are *vacant* ids, not
+        // OSC_FM..OSC1_SUB_LEVEL. See
+        // `node_block_does_not_shadow_any_ordinary_parameter`.
+        assert_eq!(graph_param_field(id::FX_NODE_IN1 + 5), Some((5, In1Src)));
+        assert_eq!(graph_param_field(id::FX_NODE_IN1 + 6), Some((0, In1Gain)));
+        assert_eq!(
+            graph_param_field(id::FX_NODE_IN1_GAIN + 5),
+            Some((5, In1Gain))
+        );
+        assert_eq!(
+            graph_param_field(id::FX_NODE_IN1_GAIN + 6),
+            Some((0, In2Src))
+        );
+        assert_eq!(graph_param_field(id::FX_NODE_IN2 + 5), Some((5, In2Src)));
+        assert_eq!(graph_param_field(id::FX_NODE_IN2 + 6), Some((0, In2Gain)));
+        assert_eq!(graph_param_field(id::FX_NODE_OUT_GAIN), Some((0, OutGain)));
+        assert_eq!(
+            graph_param_field(id::FX_NODE_OUT_GAIN + 1),
+            Some((1, OutGain))
+        );
+        assert_eq!(
+            graph_param_field(id::FX_NODE_OUT_GAIN + 5),
+            Some((5, OutGain))
+        );
+    }
+
+    /// Every id the host writes for a node field reaches *that* field. This is
+    /// the measurement that decides whether the host can configure all six
+    /// nodes, and it says yes — each of the 36 ids is claimed by exactly one
+    /// field, its own.
+    #[test]
+    fn every_node_field_id_reaches_its_own_field() {
+        use GraphParam::{In1Gain, In1Src, In2Gain, In2Src, OutGain, ToOut};
+        // Field order is the order the block lays the fields out in.
+        let fields: [(&str, u32, GraphParam); 6] = [
+            ("IN1", id::FX_NODE_IN1, In1Src),
+            ("IN1_GAIN", id::FX_NODE_IN1_GAIN, In1Gain),
+            ("IN2", id::FX_NODE_IN2, In2Src),
+            ("IN2_GAIN", id::FX_NODE_IN2_GAIN, In2Gain),
+            ("TO_OUT", id::FX_NODE_TO_OUT, ToOut),
+            ("OUT_GAIN", id::FX_NODE_OUT_GAIN, OutGain),
+        ];
+        let mut own_name = 0;
+        for (name, base, field) in fields {
+            for slot in 0..FX_SLOTS as u32 {
+                let param = base + slot;
+                assert_eq!(
+                    graph_param_field(param),
+                    Some((slot, field)),
+                    "id {param} ({name} of node {}) must decode to itself",
+                    slot + 1
+                );
+                own_name += 1;
+            }
+        }
+        assert_eq!(own_name, 36, "all 36 node field ids decode to themselves");
+        // 132..136 are vacant ids in the engine's table — the next parameter is
+        // 137 (OSC_FM) — which is why the JS node-out gains write a gain the
+        // graph reads while an unrelated parameter is never touched.
+        for slot in 1..FX_SLOTS as u32 {
+            let param = id::FX_NODE_OUT_GAIN + slot;
+            assert_eq!(graph_param_field(param), Some((slot, GraphParam::OutGain)));
+            assert!(param < id::OSC_FM, "132..136 sit before OSC_FM");
+        }
+    }
+
+    /// The block does **not** reach any ordinary parameter: its ids stop at 136
+    /// and the next parameter is 137. This is the fact the batch report's
+    /// "which host path misreads what" table rests on — the symptom is entirely
+    /// inside the graph, not a cross-feature collision.
+    #[test]
+    fn node_block_does_not_shadow_any_ordinary_parameter() {
+        // Every ordinary id the plan listed as colliding, checked directly:
+        // none of them is inside the block.
+        for (param, name) in [
+            (id::FX_DELAY_MIX, "FX_DELAY_MIX"),
+            (id::FX_PARALLEL5, "FX_PARALLEL5"),
+            (id::FX_PARALLEL6, "FX_PARALLEL6"),
+            (id::OSC_FM, "OSC_FM"),
+            (id::OSC_RING, "OSC_RING"),
+            (id::OSC1_SYNC, "OSC1_SYNC"),
+            (id::OSC1_SUB, "OSC1_SUB"),
+            (id::OSC1_SUB_LEVEL, "OSC1_SUB_LEVEL"),
+            (id::FX_EQ_ON, "FX_EQ_ON"),
+        ] {
+            assert_eq!(
+                graph_param_field(param),
+                None,
+                "{name} ({param}) must NOT be inside the node block"
+            );
+        }
+        // The block is one contiguous run: the id before it and the six ids
+        // after it belong to no node field, and the first id past the block is
+        // exactly the parameter appended after it.
+        assert_eq!(graph_param_field(id::FX_NODE_IN1 - 1), None);
+        assert_eq!(id::FX_NODE_IN1 - 1, id::FX_GRAPH);
+        assert_eq!(id::FX_NODE_OUT_GAIN + FX_SLOTS as u32, id::OSC_FM);
+        assert_eq!(graph_param_field(id::OSC_FM), None);
+        assert_eq!(
+            graph_param_field(id::OSC_FM - 1),
+            Some((5, GraphParam::OutGain))
+        );
+    }
+
+    /// Which state word each write lands on. Because the six field ranges tile
+    /// the block, every one of the 36 node ids writes its own field and no id
+    /// can reach another node or an ordinary parameter. The batch report's
+    /// per-id table is this test's content, one id at a time.
+    #[test]
+    fn node_field_ids_write_their_own_state() {
+        let mut p = Params::new();
+        // Fields in block order, each with its base id. Nodes 1..6 of all six
+        // fields: each id must land on its own field and node.
+        for slot in 0..FX_SLOTS {
+            let v1 = 0.11 + slot as f32 * 0.01;
+            p.set(id::FX_NODE_IN1 + slot as u32, v1);
+            assert_eq!(
+                p.fx.node_in[slot][0].src,
+                graph_src_code(v1),
+                "node {} IN1 src",
+                slot + 1
+            );
+            let v1g = 0.21 + slot as f32 * 0.01;
+            p.set(id::FX_NODE_IN1_GAIN + slot as u32, v1g);
+            assert_eq!(
+                p.fx.node_in[slot][0].gain,
+                v1g,
+                "node {} IN1 gain",
+                slot + 1
+            );
+            let v2 = 0.31 + slot as f32 * 0.01;
+            p.set(id::FX_NODE_IN2 + slot as u32, v2);
+            assert_eq!(
+                p.fx.node_in[slot][1].src,
+                graph_src_code(v2),
+                "node {} IN2 src",
+                slot + 1
+            );
+            let v2g = 0.41 + slot as f32 * 0.01;
+            p.set(id::FX_NODE_IN2_GAIN + slot as u32, v2g);
+            assert_eq!(
+                p.fx.node_in[slot][1].gain,
+                v2g,
+                "node {} IN2 gain",
+                slot + 1
+            );
+            p.set(id::FX_NODE_TO_OUT + slot as u32, 1.0);
+            assert!(p.fx.node_to_out[slot], "node {} TO_OUT", slot + 1);
+            let vog = 0.51 + slot as f32 * 0.01;
+            p.set(id::FX_NODE_OUT_GAIN + slot as u32, vog);
+            assert_eq!(p.fx.node_out_gain[slot], vog, "node {} OUT gain", slot + 1);
+        }
+        // The six OUT gain ids are six distinct fields, so no two of them can be
+        // two names for one state word — the collision the plan reported would
+        // show up here as a duplicate (field, slot) pair.
+        let mut owners = Vec::new();
+        for slot in 0..FX_SLOTS as u32 {
+            owners.push(graph_param_field(id::FX_NODE_OUT_GAIN + slot).expect("in the block"));
+        }
+        let mut unique = owners.clone();
+        unique.sort_by_key(|(slot, _)| *slot);
+        unique.dedup();
+        assert_eq!(unique.len(), FX_SLOTS, "each node has its own OUT gain id");
+        // And the ordinary parameters the plan named are reached by their own
+        // ids, unimpeded: no ordinary id is inside the block.
+        let mut s = Params::new();
+        s.set(id::FX_DELAY_MIX, 0.9);
+        s.set(id::OSC1_SUB_LEVEL, 0.9);
+        assert_eq!(s.fx.delay_mix, 0.9);
+        assert_eq!(s.osc[0].sub_level, 0.9);
     }
 }
