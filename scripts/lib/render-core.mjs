@@ -83,6 +83,8 @@ export const P = {
   FX_GRAPH: 100,
   OSC1_DETUNE: 4, OSC2_DETUNE: 10,
   OSC1_UNISON: 70, OSC2_UNISON: 72, OSC1_SPREAD: 71, OSC2_SPREAD: 73, MASTER_TUNE: 41,
+  /** id 78: the patch output gain, `0..8`; the limiter gate drives it. */
+  PATCH_GAIN: 78,
   /** P6.5: 2x oversampling of the drive/filter path. */
   OVERSAMPLE: 166,
   /**
