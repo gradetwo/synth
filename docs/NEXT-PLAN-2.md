@@ -1,4 +1,4 @@
-# 下一阶段开发 · 完善 · 改进计划（v2.0.4 起 · P10 已收官 · P12 已收官 · 1C 已落地）
+# 下一阶段开发 · 完善 · 改进计划（v2.0.4 起 · P10 已收官 · P12 已收官 · 1C 已落地 · v2.1.4 债单清账）
 
 > 接在 `docs/NEXT-PLAN.md`（v1.79.0–v1.97.0，14 个批次全部交付）之后。本文档规划 **P9–P12 四个方向、23 个批次**（**另加用户 2026-09-14 新立的 P13「给其它 AI/LLM 的接口」5 个批次**，见 §三 P13）
 > （原为 21 个；P9.1a 的实测发现把「硬同步重启对齐」立为新的 **P9.1c**，P9.1b 的实测发现把
@@ -14,12 +14,12 @@
 
 | 维度 | 现状 |
 | :--- | :--- |
-| 版本 | **v2.1.3** 已上线并核对：部署时 `live BxC365Um == built BxC365Um`，父代理又独立 curl 校验 `local == live == assets/index-BxC365Um.js`，且线上 `sw.js` 与 `release/retained/2.1.3/sw.js` **逐字节相同**（缓存 pin `gs1-7fc8485f9aed` = 发布日志、含 2.1.3 版本握手）；`release/retained/` 保留 5 个（v2.1.3、v2.1.2、v2.1.1、v2.1.0、v2.0.7） |
-| 门禁 | **整链 `npm run verify` PASS**（clippy/build/wasm/ci/release/dist/budget/audio/presets×2/bench/dsp/dsp:2x/mcp/llm-docs），其中 `bench` 是 **timing judged 4 checks**；单元 **689 passed / 5 skipped**（66 文件）· Chromium E2E **154 passed** · 视觉 **10 passed / 48 基线** · MCP 黄金会话 21 次调用两遍逐字节相同 · `verify:llm-docs` PASS |
-| 体积 | dist **≤1550 KB**（v2.1.3 实测 **1546.1**）、首屏 JS **≤115 KB** gzip（实测 **113.3**；p926 把 `presets`/`songs` 改成按需加载后由 126 **下调** 11 KB）、CSS **≤21 KB**（20.4）、最大 WASM gzip **≤75 KB**（74.9） |
-| 启动 / 性能 | v2.1.3 发布跑：首屏可交互 **373 ms**（预算 3200，FCP 900 ms 以内）、fps idle **61.3**（五窗全同）/ playback / graph-edit 均 ≥60；安静窗口 `bench --long p50 1215 µs`、wasm memory **15.1 MB**（上限 32）、arena 余 **8471 KB** |
+| 版本 | **v2.1.4** 已上线并核对：部署时 `live DxvYFUxW == built DxvYFUxW`，父代理再独立 curl 校验 `local == live == assets/index-DxvYFUxW.js`，且线上 `sw.js` 与 `release/retained/2.1.4/sw.js` **逐字节相同**（sha256 `e27a06a0…`、缓存 pin `gs1-accb42dfa74f`）；`release/retained/` 保留 5 个（v2.1.4、v2.1.3、v2.1.2、v2.1.1、v2.1.0；v2.0.7 按窗口淘汰） |
+| 门禁 | **整链 `npm run verify` PASS**（clippy/rust/build/unit/lint/wasm/ci/release/dist/budget/audio/presets×2/bench/dsp/dsp:2x/mcp/llm-docs）；单元 **693 passed / 4 skipped**（66 文件）· Chromium E2E **156 passed**（含本批新增的截断提示与实例显示 2 条）· MCP 黄金会话 21 次调用两遍逐字节相同 · `verify:audio` 的计时**已判**、`bench` 这次是 correctness-only（宿主 load 5.7）· `verify:llm-docs` PASS；**视觉本批未跑**（§一.12 的根因仍在：`test:visual` 不在 CI/发布链） |
+| 体积 | dist **≤1550 KB**（v2.1.4 实测 **1546.6**）、首屏 JS **≤115 KB** gzip（实测 **113.4**）、CSS **≤21 KB**（20.4）、最大 WASM gzip **≤75 KB**（74.9；前段抽头 192→128 后未涨） |
+| 启动 / 性能 | v2.1.4 发布跑：首屏可交互 **538 ms** of [993, 661, 538]（预算 3200，FCP 740 ms）、fps idle / playback / graph-edit 分别是 **61.3 / 61.3 / 61.3**（各自五窗最差 61.3 / 55.0 / 57.5，仍远高于 floor） |
 | 相容红线 | `test:dsp` **`rms 0.06147`**、`verify:dsp:2x` **`0.061703`**、`verify:presets` 与 `verify:presets:2x` 都是 **`91 presets unchanged · ABI 8`** 一字不动；零分配 `gs_alloc_violations()==0`；`PARAM_COUNT` **224**；ABI **8** |
-| 已完成 | **P5–P13 全部交付**（P12.3 分享协作、P12.5 无障碍按用户决定不做）；债单转成的批次 **P9.10 / p141 / p142 / p926 / ffx / trel** 也全部交付（v2.1.1–v2.1.3）；源码里 **无 TODO/FIXME 残留**；**剩余债见 §一，末条为终局清点口径** |
+| 已完成 | **P5–P13 全部交付**（P12.3 分享协作、P12.5 无障碍按用户决定不做）；债单转成的批次 **P9.10 / p141 / p142 / p926 / ffx / trel** 也全部交付（v2.1.1–v2.1.3）；**v2.1.4 又清掉 §一.8 / §一.20⑨ / §一.22 / §一.23（截断那半）/ §一.25**，§一.27 按用户 2026-09-15 的决定**暂时不做**；源码里 **无 TODO/FIXME 残留** |
 
 ### 已记录的技术债与已知边界（本计划的输入）
 
@@ -484,6 +484,7 @@
 | 26 | **p926 预设/曲库按需加载（§一.26 A、§一.7、§一.28）** ✅ 首屏 JS gzip **125.3 → 113.3 KB**，线 **126 → 115（下调）**；`allPresets()` 未加载时抛具名错误；`e2e/lazy-chunks.spec.ts` 钉住「首屏不请求这两个 chunk」；代价见 §一.41 | — | 中 | ✅ **v2.1.3** |
 | 27 | **ffx Firefox 6 条红（§一.39④）** ✅ 根因是**宿主没有音频后端**（产品零改动）；新增 `e2e/audio-host.ts` 用应用无关的裸 `AudioContext` 判定宿主并**显式 skip + 打印原因**；顺带修好 `fm:33`/`i18n:83`（等 `.start-overlay` 抬起） | — | 中 | ✅ **v2.1.2** |
 | 28 | **trel 两条慢轨门禁（§一.39⑤）** ✅ `test:visual` 自证的真因是 `captureBeyondViewport` 的**光栅竞态**（不是状态污染），加 `prime()` 修好；`player:45` 是**用例自己的预算**，改成等 transport 时钟 + 要求看到回绕，chromium 给 90 s 无 retries | — | 中 | ✅ **v2.1.2** |
+| 29 | **v2.1.4 债单五条（无独立批次名）** ✅ §一.22 核实为**早已由 1C 关闭**（每级带宽 12–24 kHz、地板 −81，未动任何阈值）；§一.23 的截断改成**可见提示**（保留截断、不改拒绝）；§一.25 前段抽头 **192 → 128**（交替 A/B 导入 **1.34×**，门禁逐行不变）；§一.8 图编辑器改跟**活动实例**（自证：旧代码下新 E2E 红）；§一.20⑨ `lint` 覆盖 **e2e/scripts/mcp**（首绿消掉 125 error，含 `P` 表 9 个重复键与一条死导入两条真缺陷） | — | 中 | ✅ **v2.1.4** |
 
 > **并行开发（2026-09-14 起，用户指示）**：多个 agent 在各自 worktree/分支上并行开发、由父代理合并后发布，所以**版本号的「批次」映射关系不再严格**——版本列是**预计**，实际以发布顺序为准（同一次发布可能合并了多批，例如 v1.113.0 = P9.7 + P11.6 + P12.4）。规则见 `/.tmp/parallel-dev.md`。
 
