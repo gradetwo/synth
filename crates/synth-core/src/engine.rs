@@ -1962,7 +1962,7 @@ impl Engine {
         }
 
         // LFO direct target (mirrors the reference UI's LFO routing).
-        let mut pitch_mod = self.pitch_bend * params.pitch_bend_range + params.master_tune;
+        let mut pitch_mod = self.pitch_bend * params.pitch_bend_range;
         let mut pw_mod = 0.0f32;
         if depth > 0.0 {
             match params.lfo.target {
@@ -6841,6 +6841,84 @@ mod tests {
         // Out-of-range keys are ignored rather than panicking.
         e.set_tuning_note(200, 50.0);
         assert_eq!(e.tuning_cents_at(200), 0.0);
+    }
+
+    /// `MASTER_TUNE` must move the *rendered* pitch by exactly the requested
+    /// number of semitones — once, when the note is tuned, not a second time in
+    /// the render block. The public `pitch_hz()` only covers the note-on
+    /// frequency, so the audio path needs its own measurement: note 69 (A4,
+    /// 440 Hz) rendered with master tune 0 / +1 / +12 / -12.
+    #[test]
+    fn master_tune_moves_the_rendered_pitch_once() {
+        let _guard = lock_engine();
+
+        /// Frequency from upward zero crossings of a clean sine, good to a
+        /// fraction of a Hz over half a second.
+        fn measured_hz(e: &mut Engine) -> f32 {
+            let frames = 24_000;
+            let mut buffer = vec![0.0f32; frames];
+            for chunk in buffer.chunks_mut(128) {
+                e.process(128);
+                chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+            }
+            let (mut crossings, mut first, mut last) = (0u32, None, 0usize);
+            for i in 1..frames {
+                if buffer[i - 1] < 0.0 && buffer[i] >= 0.0 {
+                    crossings += 1;
+                    if first.is_none() {
+                        first = Some(i);
+                    }
+                    last = i;
+                }
+            }
+            let span = (last - first.unwrap_or(0)) as f32;
+            if crossings < 2 || span <= 0.0 {
+                return 0.0;
+            }
+            (crossings - 1) as f32 * 48_000.0 / span
+        }
+
+        // One unmodulated sine so the zero crossings follow the pitch exactly.
+        let sine = |tune: f32| {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_ON, 1.0);
+            e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_CUTOFF, 18000.0);
+            e.set_param(id::FILTER_DRIVE, 0.0);
+            e.set_param(id::ENV_ATTACK, 0.001);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::LFO_ON, 0.0);
+            e.set_param(id::MASTER_VOLUME, 1.0);
+            e.set_param(id::MASTER_TUNE, tune);
+            for index in 0..crate::params::MOD_ROUTES {
+                e.set_route(index, 0, 0, 0.0, false);
+            }
+            e
+        };
+
+        for (tune, semitones) in [(0.0f32, 0.0f32), (1.0, 1.0), (12.0, 12.0), (-12.0, -12.0)] {
+            let mut e = sine(tune);
+            e.note_on(69, 1.0);
+            let hz = measured_hz(&mut e);
+            let once = 440.0 * 2.0f32.powf(semitones / 12.0);
+            let twice = 440.0 * 2.0f32.powf(2.0 * semitones / 12.0);
+            let measured = 12.0 * (hz / 440.0).log2();
+            assert!(
+                (hz / once - 1.0).abs() < 0.005,
+                "master tune {tune:+.0} semitones rendered {hz:.2} Hz, expected {once:.2} Hz \
+                 ({measured:+.3} semitones, wanted {semitones:+.0})"
+            );
+            if semitones != 0.0 {
+                assert!(
+                    (hz / twice - 1.0).abs() > 0.02,
+                    "master tune {tune:+.0} was applied twice: {hz:.2} Hz is the doubled \
+                     {twice:.2} Hz, once would be {once:.2} Hz"
+                );
+            }
+        }
     }
 
     /// MPE: bending one note must move that note and only that note. Measured
