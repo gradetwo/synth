@@ -42,6 +42,17 @@ import { CHANGELOG_HEAD } from './changelog-head';
 export const CHANGELOG: Release[] = [
   CHANGELOG_HEAD,
   {
+    version: '2.1.4',
+    date: '2026-09-15',
+    kind: 'fix',
+    items: [
+      [
+        '**两处「说错话」的地方修好了，采样导入也更快。** 在**音色 B（实例 2）**里改效果图时，画面以前会弹回实例 1 的值——现在图编辑器跟着你正在编辑的那一层走。导入**偏长的采样**时，现在会**明确告诉你已经截断**（以前是静默地只保留开头一段）。另外采样导入快了约 **35%**（4 秒样本 108 → 80 ms，同一台机器交替 A/B 测得），门禁里每一行采样读数都没有变化。',
+        '**Two things that showed you the wrong thing are fixed, and sample import is faster.** Editing the effect graph on **instance B** used to snap back to instance A\'s values -- the editor now follows the layer you are editing. Importing an **over-long sample** now **tells you it was truncated** instead of quietly keeping only the front of it. Sample import is also about **35% faster** (a 4 s sample: 108 ms to 80 ms, interleaved A/B on one machine), with every sampler gate reading unchanged.',
+      ],
+    ],
+  },
+  {
     version: '2.1.3',
     date: '2026-09-15',
     kind: 'feature',
@@ -348,17 +359,6 @@ export const CHANGELOG: Release[] = [
         '**Hard sync no longer has audible grit**: the synced oscillator now has its own band-limited implementation (naive shapes with BLEP/BLAMP corrections for both the phase wrap and the master restart, sharing one high-precision phase). Aliasing under sync drops from about −32/−34/−50 dB to **−69/−69/−77 dB** for saw, square and triangle (measured over an integer second with a rectangular window and exact bins) — roughly 28–37 dB lower — while the slave stays locked to the master’s period in the time domain (correlation above 0.9995). With sync **off** (the default) the render is sample-for-sample what it was.',
       ],
     ],
-  },
-  {
-      version: '1.91.0',
-      date: '2026-09-12',
-      kind: 'feature',
-      items: [
-        [
-          '**录音不再覆盖上一遍**：每次录完都成为一条独立的 take（内容 = 当前 take 或该层原有的音符 + 刚弹的），新的自动选中、旧的全部保留，随时切回去听。同一个音在 50 ms 内重复按算重击，替换而不是叠成双倍力度；每层最多 8 条，超出淘汰最旧的。切 take 立刻改变该层内容，播放、卷帘、MIDI/WAV/MP3 导出与分享码都跟着当前 take；分享码会带上全部 take，对方也能切。',
-          '**Recording no longer overwrites the last pass**: every finished recording becomes its own take (the selected take’s notes, or the layer’s, plus what you just played), the new one is selected and the old ones stay, so switching back to hear them is a click. The same key inside 50 ms counts as a re-strike and replaces the note instead of doubling its velocity into a flam, and a layer keeps up to eight takes, retiring the oldest. Switching a take changes the layer immediately, and playback, the roll, MIDI/WAV/MP3 export and the share link all follow the selected take; the link carries every take so the other side can switch too.',
-        ],
-      ],
   },
 ];
 
