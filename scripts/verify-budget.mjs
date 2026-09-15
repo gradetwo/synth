@@ -402,7 +402,28 @@ const BUDGETS = {
   // fail on the text describing it.
   // The lesson for the next batch is unchanged: this is the line a visitor
   // actually pays, so buy it back rather than raising it again.
-  initialJs: 126 * 1024,
+  // **p926 moved this line down 126 -> 115 KB by not shipping the content at all.**
+  // `src/state/presets.ts` (the 91-entry factory table) and `src/midi/library.ts`
+  // -> `songs.ts` (the 25 built-in songs) were both reached from `store.ts`, so
+  // every first visit downloaded them whatever the visitor did: measured 125.3 KB
+  // gzip at v2.1.2, against a line with ~0.7 KB of room, which turned every later
+  // content or copy change into a budget negotiation (see §一.26/§一.28).
+  //
+  // They are fetched on demand now: `ensurePresets()` when the preset drawer
+  // opens, when the prev/next buttons are used, or when a stored id has to be
+  // resolved; the song library when the player opens. `allPresets()` throws a
+  // named `PresetsNotLoadedError` before that fetch instead of returning an empty
+  // list, so a caller that forgets to await it fails loudly rather than painting
+  // an empty drawer. The first screen keeps only the model and the boot patch's
+  // identity, and the current preset's *name* travels in the saved document, so
+  // the top bar can name the sound before the table arrives.
+  //
+  // Measured: initial JS 125.3 -> **113.5 KB** gzip (-11.8 KB, -9.4 %), with the
+  // dist total up 6.5 KB raw (1540.2 -> 1546.7) because the two libraries are now
+  // chunks of their own. The initial-JS line is what a visitor pays before the
+  // first frame, so the trade goes the right way: 126 -> **115 KB**, i.e. measured
+  // plus ~1.5 KB, which is also the headroom the next copy batch gets.
+  initialJs: 115 * 1024,
   // Measured 19.7 KB gzip, 20.1 KB after P10.1, **20.2 KB** now: the new strip
   // row. Inside the line either way.
   initialCss: 21 * 1024,

@@ -369,6 +369,11 @@ test.describe('player library compliance', () => {
     await page.locator('.player-open').click();
     await expect(page.locator('.player.open')).toBeVisible();
     const rows = page.locator('.player-track');
+    // The built-in playlist is a lazy chunk (P9.26), so the panel can be open for
+    // a frame before the demos are in it: poll rather than read once. p926 fixed
+    // the sibling test this way and missed this one -- it passed on that branch
+    // and failed on the merged tree, which is what the merged run is for.
+    await expect.poll(() => rows.count()).toBeGreaterThanOrEqual(16);
     const count = await rows.count();
     expect(count).toBeGreaterThanOrEqual(16);
     // One label per row — the row is not a row without provenance (P10.5).
