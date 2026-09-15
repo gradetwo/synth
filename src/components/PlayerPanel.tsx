@@ -145,6 +145,16 @@ export function PlayerPanel({
    * take". The pair is dropped when either take is deleted or selected away.
    */
   const [ab, setAb] = useState<{ a: string; b: string } | null>(null);
+  /**
+   * How the built-in playlist is arriving.
+   *
+   * `midi/songs.ts` is a chunk of its own (P9.26), so the first open of this
+   * panel has a frame with the user's own tracks and no demos. The list says
+   * "loading" for it instead of looking like an empty library.
+   */
+  const [playlist, setPlaylist] = useState<'loading' | 'ready' | 'failed'>(
+    midiLibrary.builtinsLoaded ? 'ready' : 'loading',
+  );
   /** In-flight drag on a layer's mini timeline (the layer itself). */
   const drag = useRef<{ x: number; offset: number; width: number; duration: number; moved: boolean } | null>(
     null,
@@ -178,6 +188,24 @@ export function PlayerPanel({
       }),
     [],
   );
+  // The demo playlist is a lazy chunk (P9.26): fetch it the first time this
+  // panel is on screen. A failure says so and leaves the user's own tracks
+  // usable rather than throwing an unhandled rejection.
+  useEffect(() => {
+    if (!open || playlist === 'ready') return;
+    let live = true;
+    midiLibrary.loadBuiltins().then(
+      () => {
+        if (live) setPlaylist('ready');
+      },
+      () => {
+        if (live) setPlaylist('failed');
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, playlist]);
   useEffect(() => midiPlayer.subscribe(setPlayer), []);
   useEffect(() => recorder.subscribe(setRec), []);
   // Clip templates live in the workspace layout, so saving or deleting one has
@@ -1353,6 +1381,20 @@ export function PlayerPanel({
         ) : null}
 
         <div className="player-list">
+          {playlist === 'loading' ? (
+            <div className="player-status" role="status">
+              <span className="d-status-spin" aria-hidden="true" />
+              {t('player.loading')}
+            </div>
+          ) : null}
+          {playlist === 'failed' ? (
+            <div className="player-status" role="alert">
+              {t('player.loadFailed')}
+              <button type="button" className="d-reset" onClick={() => setPlaylist('loading')}>
+                {t('player.retry')}
+              </button>
+            </div>
+          ) : null}
           {groups.map((group) => {
             const items = filtered.filter((tr) => tr.group === group.key);
             if (items.length === 0) return null;

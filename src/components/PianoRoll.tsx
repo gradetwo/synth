@@ -185,6 +185,16 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
    *  A ref cannot be read while rendering, and this one bit is all the button
    *  needs to know — the clipboard's contents are read in the handler. */
   const [canPaste, setCanPaste] = useState(false);
+  /**
+   * Bumped whenever the library changes, so the adoption effect below can wait
+   * for the built-in playlist.
+   *
+   * The demos are a lazy chunk (P9.26): opening the roll before the player has
+   * fetched them used to be impossible, and now the first frame may have no
+   * current track at all. This redraws the adoption exactly once, when they
+   * arrive; a user track is already there and is adopted straight away.
+   */
+  const [libraryVersion, setLibraryVersion] = useState(0);
 
   const snapRef = useRef(snap);
   const zoomRef = useRef(zoom);
@@ -280,6 +290,33 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
     // The clipboard survives the dialog: closing and reopening the roll with a
     // copied figure still in it is what a user expects from copy/paste.
   }, [open]);
+
+  // The roll edits the library's current song, and that song may be a built-in
+  // whose playlist has not been fetched yet (P9.26). Fetch it here too, so the
+  // roll is usable straight from the top bar without a visit to the player.
+  useEffect(() => {
+    if (!open) return;
+    void midiLibrary.loadBuiltins().catch(() => {
+      /* a user track still opens; the player panel reports the failure itself */
+    });
+  }, [open]);
+
+  // Re-adopt once, if the open above found nothing: the playlist arrived after
+  // the frame that opened the editor. Once a track is on screen this is a no-op,
+  // so an edit in progress is never thrown away.
+  useEffect(() => {
+    if (!open || track) return;
+    const current = midiLibrary.getCurrent();
+    if (!current) return;
+    if (rollSession.getTrackId() !== current.id) rollSession.open(0);
+    // Same reason as the open effect above: this is the editor adopting the
+    // library's track, not a render-time derivation.
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
+    setTrack(current);
+    // `libraryVersion` is what re-runs this when the lazy playlist lands.
+  }, [open, track, libraryVersion]);
+
+  useEffect(() => midiLibrary.subscribe(() => setLibraryVersion((v) => v + 1)), []);
 
   const save = useCallback(() => {
     if (!track) return;

@@ -106,6 +106,16 @@ export interface ProjectDoc {
   layout: ProjectLayout;
   userPresets: Preset[];
   currentPresetId: string;
+  /**
+   * The selected patch's display name/tag (P9.26).
+   *
+   * Optional and additive: the factory library is a lazy chunk, so a document
+   * that carries the name can name its patch without fetching it. A document
+   * written before this field existed falls back to the library, which
+   * `loadDocument` fetches for exactly that case.
+   */
+  currentPresetName?: string;
+  currentPresetTag?: string;
   scenes: Scene[];
   /** Imported tracks and recordings; built-in demos come from the build. */
   clips: Track[];
@@ -319,6 +329,12 @@ export function normalizeProjectDoc(raw: unknown): ProjectDoc | null {
     // Scenes are validated by their own reader; junk becomes an empty list.
     scenes: doc.scenes === undefined ? [] : normalizeScenes(doc.scenes),
     currentPresetId: typeof doc.currentPresetId === 'string' ? doc.currentPresetId : '',
+    ...(typeof doc.currentPresetName === 'string' && doc.currentPresetName
+      ? { currentPresetName: doc.currentPresetName }
+      : {}),
+    ...(typeof doc.currentPresetTag === 'string' && doc.currentPresetTag
+      ? { currentPresetTag: doc.currentPresetTag }
+      : {}),
     clips,
     currentClipId: typeof doc.currentClipId === 'string' ? doc.currentClipId : '',
   };
@@ -749,6 +765,10 @@ export function captureLiveDocument(): ProjectDoc {
     layout: projectLayout(snapshot.layout),
     userPresets: snapshot.userPresets.map((preset) => ({ ...preset })),
     currentPresetId: snapshot.currentPresetId,
+    // Travels with the document so opening it does not have to fetch the factory
+    // library to say which sound is selected (P9.26).
+    currentPresetName: snapshot.currentPresetName,
+    currentPresetTag: snapshot.currentPresetTag,
     scenes: snapshot.scenes.map((scene) => ({ ...scene, workspace: { ...scene.workspace } })),
     clips: library.clips,
     currentClipId: library.currentId,
@@ -768,6 +788,8 @@ export function loadLiveDocument(doc: ProjectDoc): boolean {
     layout: { ...store.getSnapshot().layout, ...doc.layout },
     userPresets: doc.userPresets,
     currentPresetId: doc.currentPresetId,
+    currentPresetName: doc.currentPresetName,
+    currentPresetTag: doc.currentPresetTag,
     clips: doc.clips,
     currentClipId: doc.currentClipId,
   });

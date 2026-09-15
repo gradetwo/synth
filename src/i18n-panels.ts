@@ -222,6 +222,11 @@ export const PLAYER_STRINGS: StringTable = {
   'player.clearAB': ['清除 A/B 循环段', 'Clear the A/B loop'],
   'player.countIn': ['预备拍', 'Count-in'],
   'player.track': ['曲目', 'Track'],
+  // The built-in playlist is a lazy chunk (P9.26), so the first open has a frame
+  // before the demos are there.
+  'player.loading': ['正在载入内置曲库…', 'Loading the built-in songs…'],
+  'player.loadFailed': ['内置曲库未能载入，请检查网络后重试', 'The built-in songs could not load — check the network and retry'],
+  'player.retry': ['重试', 'Retry'],
   'player.record': ['录制', 'Record'],
   'player.stopRec': ['停止录制', 'Stop recording'],
   'player.importedBy': ['导入文件', 'Imported file'],
@@ -517,6 +522,11 @@ export const SETTINGS_STRINGS: StringTable = {
 export const DRAWER_STRINGS: StringTable = {
   'drawer.title': ['PRESET LIBRARY · 预设库', 'PRESET LIBRARY'],
   'drawer.search': ['搜索音色 / 风格 / 分类…', 'Search tone / style / category…'],
+  // The factory table is a lazy chunk of its own (P9.26), so the drawer has a
+  // frame between opening and having a list to draw.
+  'drawer.loading': ['正在载入预设库…', 'Loading the preset library…'],
+  'drawer.loadFailed': ['预设库未能载入，请检查网络后重试', 'The preset library could not load — check the network and retry'],
+  'drawer.retry': ['重试', 'Retry'],
   'drawer.loaded': ['已载入预设 <b>{name}</b>', 'Loaded preset <b>{name}</b>'],
   'drawer.delete': ['删除预设', 'Delete preset'],
   'drawer.deleted': ['已删除用户预设', 'User preset deleted'],

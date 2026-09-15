@@ -18,8 +18,9 @@ test.describe('drawers', () => {
     await page.waitForTimeout(400);
 
     // Every preset is rendered, and the library's own footer is just the patch
-    // file actions: three equal buttons and nothing else.
-    expect(await page.locator('.d-list .pcard').count()).toBeGreaterThan(20);
+    // file actions: three equal buttons and nothing else. The list arrives from
+    // a lazy chunk (P9.26), so poll instead of reading one count.
+    await expect.poll(() => page.locator('.d-list .pcard').count()).toBeGreaterThan(20);
     const actions = page.locator('.preset-actions > .d-reset');
     await expect(actions).toHaveCount(3);
     await expect(page.locator('.d-foot-actions > label')).toHaveCount(0);

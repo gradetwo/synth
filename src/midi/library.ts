@@ -3,11 +3,18 @@
  *
  * One shared instance so the player panel and the signal-flow performance bar
  * always see the same track list and transport state.
+ *
+ * The *built-in playlist itself* is a lazy chunk (P9.26): `midi/songs.ts` is
+ * 32 KB of authored score data (its emitted chunk is 16.7 KB raw / 5.5 KB gzip),
+ * and a first visit neither lists nor plays a demo. Only `loadBuiltins()` imports
+ * it, and only the panels that show a track list call it — so this module stays
+ * in the first screen while the songs do not.
  */
 
 import { getLang } from '@/i18n';
 import { midiPlayer } from './player';
-import { DEMO_SONGS, specToSong, type SongSource } from './songs';
+// Type-only: `songs.ts` is fetched by `loadBuiltins()`, never by importing this.
+import type { SongSource } from './songs';
 import { normalizeClips, withClips } from './clips';
 import { normalizeTakes } from './takes';
 import type { MidiSong } from './smf';
@@ -18,6 +25,14 @@ const KEY = 'gs1:library:v1';
 const MAX_STORED_TRACKS = 12;
 /** A track whose JSON is larger than this stays in memory for the session. */
 const MAX_STORED_BYTES = 512 * 1024;
+/**
+ * The demo the app has always started on.
+ *
+ * The selection is allowed to name a built-in before the playlist has arrived
+ * (`getCurrent()` returns null rather than an unrelated track), and this is the
+ * id `loadBuiltins()` falls back to when the stored one names nothing.
+ */
+const DEFAULT_BUILTIN_ID = 'demo:arpeggio';
 
 export type TrackGroup = 'builtin' | 'imported' | 'clip';
 
@@ -70,17 +85,6 @@ function withSource(track: Track): Track {
 
 export function trackTitle(track: Track): string {
   return getLang() === 'zh' ? track.title[0] : track.title[1];
-}
-
-function builtinTracks(): Track[] {
-  return DEMO_SONGS.map((spec) => ({
-    id: `demo:${spec.id}`,
-    title: spec.title,
-    composer: spec.composer,
-    song: specToSong(spec),
-    group: 'builtin' as const,
-    source: spec.source,
-  }));
 }
 
 /** Validate a stored song: a broken one is dropped rather than played. */
@@ -201,18 +205,28 @@ function readStoredId(): string | null {
 
 /** Exported for the migration tests, which build one over a stored document. */
 export class MidiLibrary {
-  private tracks: Track[] = builtinTracks();
+  private tracks: Track[];
+  /** The built-in demos, or null until `loadBuiltins()` has fetched them. */
+  private builtins: Track[] | null = null;
+  /** One in-flight fetch, shared by every caller of `loadBuiltins()`. */
+  private builtinsLoad: Promise<Track[]> | null = null;
   private currentId: string;
   private listeners = new Set<() => void>();
 
   constructor() {
     // Imported files and recordings are the player's own work: bringing them
     // back after a reload is the difference between a toy and a tool. Built-ins
-    // always come from the build, never from storage.
-    this.tracks = [...this.tracks, ...readStoredTracks()];
+    // always come from the build, never from storage — and they arrive later
+    // (`loadBuiltins()`), so they are not part of this list yet.
+    this.tracks = readStoredTracks();
     const stored = readStoredId();
-    const fallback = this.tracks.find((track) => track.id === 'demo:arpeggio')?.id ?? this.tracks[0].id;
-    this.currentId = stored && this.tracks.some((track) => track.id === stored) ? stored : fallback;
+    // A stored selection wins. It may name a built-in that has not been fetched
+    // yet: the id is kept so `loadBuiltins()` can honour it, and `getCurrent()`
+    // says "nothing yet" in the meantime rather than handing back another track.
+    this.currentId =
+      stored && (this.tracks.some((track) => track.id === stored) || stored.startsWith('demo:'))
+        ? stored
+        : DEFAULT_BUILTIN_ID;
     const current = this.getCurrent();
     midiPlayer.load(current?.song ?? null);
     // The song's mix comes back with the song, not with the session.
@@ -220,6 +234,63 @@ export class MidiLibrary {
     // Anything that could not be stored is dropped here rather than lingering
     // in memory as a track that silently disappears on the next reload.
     this.persist();
+  }
+
+  /** Whether the built-in playlist has been fetched (P9.26). */
+  get builtinsLoaded(): boolean {
+    return this.builtins !== null;
+  }
+
+  /**
+   * Fetch the built-in demo playlist (`midi/songs.ts`).
+   *
+   * A chunk of its own: 32 KB of score data (9.0 KB gzip) that only the panels
+   * which *list* tracks need. Called when the player panel opens, when the
+   * signal-flow performance bar is shown, and when the piano roll adopts the
+   * current song — the three places a demo title can appear.
+   *
+   * Idempotent, so a second caller joins the first fetch. A rejected fetch
+   * clears the memo so reopening the panel retries instead of showing a playlist
+   * that will never arrive.
+   */
+  async loadBuiltins(): Promise<Track[]> {
+    if (this.builtins) return this.builtins;
+    if (!this.builtinsLoad) {
+      this.builtinsLoad = import('./songs').then(({ DEMO_SONGS, specToSong }) =>
+        DEMO_SONGS.map((spec) => ({
+          id: `demo:${spec.id}`,
+          title: spec.title,
+          composer: spec.composer,
+          song: specToSong(spec),
+          group: 'builtin' as const,
+          source: spec.source,
+        })),
+      );
+    }
+    let builtins: Track[];
+    try {
+      builtins = await this.builtinsLoad;
+    } catch (error) {
+      this.builtinsLoad = null;
+      throw error;
+    }
+    if (this.builtins) return this.builtins;
+    this.builtins = builtins;
+    // Built-ins come first, exactly where they were when this list was built in
+    // the constructor.
+    this.tracks = [...builtins, ...this.tracks.filter((track) => !track.id.startsWith('demo:'))];
+    if (!this.tracks.some((track) => track.id === this.currentId)) {
+      this.currentId =
+        this.tracks.find((track) => track.id === DEFAULT_BUILTIN_ID)?.id ?? this.tracks[0]?.id ?? '';
+    }
+    const current = this.getCurrent();
+    if (current) {
+      midiPlayer.load(current.song);
+      this.applyMix(current);
+    }
+    this.persist();
+    this.emit();
+    return builtins;
   }
 
   private persist(): void {
@@ -254,7 +325,12 @@ export class MidiLibrary {
   }
 
   getCurrent(): Track | null {
-    return this.tracks.find((track) => track.id === this.currentId) ?? this.tracks[0] ?? null;
+    const found = this.tracks.find((track) => track.id === this.currentId);
+    if (found) return found;
+    // The selection may be a built-in the playlist has not delivered yet.
+    // Naming an unrelated user track as "current" would be a lie the player and
+    // the roll act on, so this is null until `loadBuiltins()` resolves it.
+    return this.builtins ? this.tracks[0] ?? null : null;
   }
 
   getCurrentId(): string {
@@ -378,11 +454,23 @@ export class MidiLibrary {
 
   /** Put the user's tracks back exactly as they were (undo/redo). */
   restore(clips: Track[], currentId: string): void {
-    const builtins = this.tracks.filter((track) => track.id.startsWith('demo:'));
+    const builtins = this.builtins ?? [];
     this.tracks = [...builtins, ...clips.map((t) => ({ ...t }))];
-    const next = this.tracks.find((track) => track.id === currentId) ?? this.tracks[0] ?? null;
-    this.currentId = next?.id ?? '';
-    midiPlayer.load(next?.song ?? null);
+    const next = this.tracks.find((track) => track.id === currentId) ?? null;
+    if (next) {
+      this.currentId = next.id;
+      midiPlayer.load(next.song);
+    } else if (!this.builtins) {
+      // The selection may be a built-in the playlist has not delivered yet: keep
+      // the id for `loadBuiltins()` and leave the player empty rather than
+      // starting a different song than the document asked for.
+      this.currentId = currentId;
+      midiPlayer.load(null);
+    } else {
+      const first = this.tracks[0] ?? null;
+      this.currentId = first?.id ?? '';
+      midiPlayer.load(first?.song ?? null);
+    }
     this.persist();
     this.emit();
   }

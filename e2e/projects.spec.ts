@@ -36,7 +36,18 @@ async function closeProjects(page: Page) {
 }
 
 const presetName = (page: Page) => page.locator('.preset-name').innerText();
-const nextPreset = (page: Page) => page.getByRole('button', { name: '下一个预设' }).click();
+/**
+ * Step to the next preset and wait for it to land.
+ *
+ * The factory table is a lazy chunk (P9.26), so the first press of a session
+ * fetches it before the patch changes: the click alone would return while the
+ * bar still showed the previous name.
+ */
+async function nextPreset(page: Page): Promise<void> {
+  const before = await presetName(page);
+  await page.getByRole('button', { name: '下一个预设' }).click();
+  await expect(page.locator('.preset-name')).not.toHaveText(before);
+}
 
 test.describe('projects', () => {
   test.use({ viewport: { width: 1440, height: 900 } });

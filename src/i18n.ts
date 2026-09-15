@@ -61,7 +61,11 @@ const CORE: StringTable = {
   'app.later': ['稍后', 'Later'],
   'app.suspended': ['⏸ 音频已暂停 · 点按此处恢复', '⏸ Audio suspended · tap to resume'],
   'app.sharedLoaded': ['已载入分享音色', 'Shared patch loaded'],
-  'preset.initName': ['INIT · 初始正弦', 'INIT · Sine'],
+  // `preset.initName` used to sit here as the top bar's fallback when the
+  // selected id named nothing. The bar now names the boot patch itself
+  // (`DEFAULT_PRESET` in `state/preset-model.ts`, P9.26), so the key is dead copy
+  // and was deleted with the evidence the P11.2 split used: zero references in
+  // `src/`, `e2e/`, `scripts/`, `mcp/` or `index.html`.
 
   // --- top bar -------------------------------------------------------------
   'top.prevPreset': ['上一个预设', 'Previous preset'],

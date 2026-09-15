@@ -1,7 +1,9 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { store } from '@/state/store';
 import { useSynth } from '@/hooks/useSynth';
-import { PRESET_CATEGORIES, type PresetCategory } from '@/state/presets';
+// The catalogue's *shape* only: `state/presets.ts` is fetched on open (P9.26),
+// and importing the table here would pull it in with this idle-warmed chunk.
+import { PRESET_CATEGORIES, type PresetCategory } from '@/state/preset-model';
 import { WaveIcon } from './controls';
 import { toast } from './Toast';
 import { localizeName, t } from '@/i18n';
@@ -20,15 +22,44 @@ const SW_COLOR: Record<string, string> = {
   noise: '#f87171',
 };
 
+/** How the factory table is arriving, so the list never renders blank. */
+type LibraryState = 'loading' | 'ready' | 'failed';
+
 export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { userPresets, currentPresetId } = useSynth();
   const [category, setCategory] = useState<PresetCategory>('ALL');
   const [query, setQuery] = useState('');
+  const [library, setLibrary] = useState<LibraryState>(
+    store.presetsLoaded ? 'ready' : 'loading',
+  );
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // `userPresets` is the change signal; `allPresets()` reads the store directly.
+  // The factory table is a chunk of its own (P9.26) and this drawer is the one
+  // place that always lists it: fetch it on the first open, not on mount, so a
+  // visitor who never opens the library never downloads it.
+  useEffect(() => {
+    if (!open || library === 'ready') return;
+    let live = true;
+    store.ensurePresets().then(
+      () => {
+        if (live) setLibrary('ready');
+      },
+      () => {
+        // A failed chunk is reported, not swallowed: the panel says so and
+        // offers a retry instead of looking like an empty library.
+        if (live) setLibrary('failed');
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, library]);
+
+  // `userPresets` and `library` are the change signals; `allPresets()` reads the
+  // store directly and throws while the table is missing, so it is only called
+  // once it is there.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const all = useMemo(() => store.allPresets(), [userPresets]);
+  const all = useMemo(() => (library === 'ready' ? store.allPresets() : []), [library, userPresets]);
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();
     return all.filter(
@@ -81,7 +112,23 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
             presets there were to look at. */}
         <div className="d-body">
           <div className="d-list">
-          {items.length === 0 ? (
+          {library === 'loading' ? (
+            <div className="d-status" role="status">
+              <span className="d-status-spin" aria-hidden="true" />
+              {t('drawer.loading')}
+            </div>
+          ) : library === 'failed' ? (
+            <div className="d-status" role="alert">
+              {t('drawer.loadFailed')}
+              <button
+                type="button"
+                className="d-reset"
+                onClick={() => setLibrary('loading')}
+              >
+                {t('drawer.retry')}
+              </button>
+            </div>
+          ) : items.length === 0 ? (
             <div style={{ textAlign: 'center', color: 'var(--txt-dim)', padding: '30px 0', font: '500 11px var(--mono)' }}>
               NO PRESET FOUND
             </div>
@@ -180,7 +227,11 @@ export function PresetDrawer({ open, onClose }: { open: boolean; onClose: () => 
             }}
           />
           <div className="d-foot-count">
-            <span dangerouslySetInnerHTML={{ __html: t('drawer.footer', { n: all.length, m: userPresets.length }) }} />
+            {/* Held back until the table is there: "0 presets" while the chunk
+                is in flight would read as an empty library (P9.26). */}
+            {library === 'ready' ? (
+              <span dangerouslySetInnerHTML={{ __html: t('drawer.footer', { n: all.length, m: userPresets.length }) }} />
+            ) : null}
           </div>
           </div>
         </div>

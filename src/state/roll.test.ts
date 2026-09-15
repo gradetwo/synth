@@ -52,8 +52,11 @@ function putUserTrack(song: MidiSong): string {
 const storedLayer = (index = 0) => midiLibrary.getCurrent()?.song.tracks?.[index].notes ?? [];
 
 describe('editing session', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorage.clear();
+    // The built-in playlist is a lazy chunk (P9.26); this suite edits a demo by
+    // id, so it asks for the playlist the way the player panel does.
+    await midiLibrary.loadBuiltins();
     putUserTrack(twoLayerSong());
     rollSession.open(0);
   });
