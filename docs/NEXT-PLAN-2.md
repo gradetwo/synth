@@ -163,13 +163,22 @@
    代价是「首访当场打开抽屉、且当时已经离线」会看到加载失败 + 重试（联网打开过一次后就会被 fetch 处理器缓存）。
    **当前选择：保持预缓存**（离线可用性优先），**这条留给用户拍板**。
 
-42. **`MASTER_TUNE` 在渲染路径被应用两次**（轨道 `pnoise` 途中发现，父代理按源码复核，2026-09-15）
-   `Engine::flush_pending`（`engine.rs:1830` 附近）用 `pitch_hz_with(note, master_tune, &tuning)` 设声部基频（应用一次），
-   同一块的渲染又 `let mut pitch_mod = … + params.master_tune`（:1965）再乘一次 ⇒ 真 wasm 实测 note 69 发
+42. ~~**`MASTER_TUNE` 在渲染路径被应用两次**（轨道 `pnoise` 途中发现，父代理按源码复核，2026-09-15）~~
+   **✅ 已修（轨道 `pitchbug`，3 条 commit，已并入 v2.1.5 批次）。** 原文记录：`Engine::flush_pending`（`engine.rs:1830` 附近）
+   用 `pitch_hz_with(note, master_tune, &tuning)` 设声部基频（应用一次），同一块的渲染又
+   `let mut pitch_mod = … + params.master_tune`（:1965）再乘一次 ⇒ 真 wasm 实测 note 69 发
    `+1 / +7 / +12 / −12` → 音频 **+2.005 / +13.998 / +24.000 / −24.022** 半音（**正好两倍**）。公开 `pitch_hz()`（:1244）
    与既有 Rust 单测只覆盖「应用一次」的路径 ⇒ **渲染路径没有门禁**。**影响面小**：91 条工厂预设 masterTune 全 0、
-   UI 没有这个旋钮，只能经 MCP 裸参数 / `.gs1proj` / CC 到达。**修法**：删掉渲染里那次多加 + 一条**从音频测音高**的
-   Rust 门禁（旧代码必红）；默认 0 时逐位不变。**状态：轨道 `pitchbug` 在跑**（`.tmp/brief-pitchbug.md`）。
+   UI 没有这个旋钮，只能经 MCP 裸参数 / `.gs1proj` / CC 到达。
+   **修法**：删掉渲染里那次多加（`pitch_mod` 只留 bend/LFO/调制矩阵；`pitch_hz*()` 那次是正确的一次，MONO 滑音与 pending 提升都走它）。
+   **两条门禁都加了**：Rust `master_tune_moves_the_rendered_pitch_once`（旧代码读 +2.000 半音 ⇒ 红）+ 真 wasm
+   `scripts/verify-audio.mjs` 的 4 行（0/+1/+12/−12，容差 0.1 半音；临时还原生产行 ⇒ 三条红，原文见轨道报告）。
+   真 wasm 复测：`0/+1/+7/+12/−12` → **−0.000/+1.000/+7.000/+12.000/−12.000** 半音。
+   **默认 0 逐位不变**（`a + 0.0` 逐位等于 `a`；`semitone_ratio(±0.0)==1.0`），`test:dsp 0.061470`、`verify:dsp:2x 0.061703`、
+   `91 presets unchanged · ABI 8` 全部未动；wasm raw −6 B（gzip 76715 → 76710 B）。
+   **一条行为变化（已知并接受）**：master tune 现在**在 note-on 生效**——按住键期间改它不再实时移动已发声音部
+   （改前会跟调，但整体是双倍）。UI 无此控件，若要「持键实时微调」，正确形态是基频不预含 tune、只在渲染加一次，
+   那会改默认 0 的路径，另立批再说。
 43. **同音高双振荡器的相对初相随 note-on 变**（轨道 `pnoise` 途中发现，2026-09-15，**需拍板**）
    `Engine::next_phases()`（`engine.rs:1377`）给 osc1/osc2 各一条黄金比序列的伪随机相位、**每次 note-on 都不同**
    （P9.1c 为打散硬同步/混叠爆发而做的「反坏对齐」设计）。后果：两个**设置完全相同**的锯齿会梳状叠加、
@@ -182,6 +191,12 @@
    **1.1 dB**，主峰在 f0 与 **40 Hz**，音频里是 **k·f0 ± 40 Hz** 侧带（偏移与 f0 无关：55/110/220/440 全是 ±40 Hz）
    ⇒ 峰值检波增益调制。**严重性边界**：按 `verify-presets` 的乐句跑 91 条预设，**0/91 进入限幅器**
    （单声部要 `PATCH_GAIN ≳ 2.4`），10 音满电平和弦会进入。**当前选择：只登记，不立批。**
+45. ~~**并行的整链验证会被 `mcp/ui/ui.test.mjs` 的端口假设弄红**（慢轨 `slowver` 发现，2026-09-15）~~
+   **✅ 已修（父代理，集成窗口）。** 该测试断言 `E2E_PORT === 4783`、再拒绑 `GS1_MCP_UI_PORT=4783`，而
+   `mcp/ui/lib/preview.mjs` 里 `E2E_PORT = Number(process.env.GS1_E2E_PORT ?? 4783)` ⇒ **任何**按
+   `parallel-dev.md` §六 给自己一个端口（`GS1_E2E_PORT=479x`）的轨道，跑整链 `verify` 都会在这一条**假红**
+   （产品无碍，`npm test` 1 failed / 708 passed）。修法：拒绑跟着**解析后的** `E2E_PORT` 走，文档同步。
+   实测：无覆盖 **31 passed**、`GS1_E2E_PORT=4791` **31 passed**（改前后者红）。这条修完，「多线推进」的整链验证才真正可用。
 
 ## 二、四个方向
 
