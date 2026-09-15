@@ -160,12 +160,32 @@ src/panels/               模块面板与布局
 src/state/                状态仓库与预设库
 src/pwa/                  Service Worker 注册与更新
 scripts/                  构建、图标、SW、打包、校验
+mcp/                      给外部 AI/LLM 的 MCP 工具服务器（离线层 + 浏览器层）
 public/                   manifest 与图标
 ```
 
 ---
 
-## 7. 功能一览（v1.6.0）
+## 7. 给其它 AI / LLM 的接口（MCP）
+
+这台合成器带一套**离线、确定性**的工具接口：别的 agent 可以查询参数与预设、读写整套音色（夹取会如实报告）、
+导入采样与波表、把一段演奏**渲染成 WAV**，并用**本应用自己那套交叉验证过的测量尺子**（7 项 Blackman-Harris
+非谐波地板、Hann 窗探针、THD、峰值与最大步进）量出结构化数字——所以它能对着**真实门禁**迭代音色，
+而不是凭感觉调参。
+
+```bash
+npm run mcp        # 离线层：stdio（或 --http 回环）上的 14 个 gs1.* 工具
+npm run mcp:ui     # 浏览器层：5 个 gs1.ui.*（要 dist/ 与 Chromium，自己的 4796 端口）
+npm run ui:smoke   # 浏览器层的一次端到端冒烟
+```
+
+- 工具契约、限制与拒绝、客户端接入配置、**接入自查清单**：`docs/LLM-INTERFACE.md`
+- 实现说明与取舍（为什么手写 JSON-RPC、为什么零新增运行时依赖、确定性从哪来）：`docs/notes/mcp.md`
+- **零新增运行时依赖**；服务器只绑 `127.0.0.1`、只写 `.tmp/mcp/`、**永不联网、永不部署**。
+
+---
+
+## 8. 功能一览（v1.6.0）
 
 - **合成**：双振荡器（6 波形 + 声像）、Moog 阶梯 / SVF 滤波、独立滤波器包络、
   双 LFO、4 路调制矩阵、POLY/MONO/LEGATO + GLIDE。
@@ -199,10 +219,10 @@ public/                   manifest 与图标
   负载过高自动降复音并平滑释放。
 - **工程**：CI、DSP 回归基线、NaN/Inf 防护 + 模糊测试、ESLint、版本注入。
 
-## 8. 路线图
+## 9. 路线图
 
 后续开发与完善规划见 [`docs/ROADMAP.md`](docs/ROADMAP.md)（P0 音质与稳定性 → P1 合成能力扩展 → P2 动态信号图 → P3 无障碍/国际化/分发）。
 
-## 9. 许可证
+## 10. 许可证
 
 本项目代码 MIT（见 `LICENSE`）。第三方组件许可见 `THIRD_PARTY_NOTICES.md`。
