@@ -497,6 +497,49 @@ function inconclusive(name, reason, reading, host) {
   );
 }
 
+// ------------------------------------------------- master tune is applied once
+//
+// `MASTER_TUNE` is baked into a voice's frequency when the note is tuned
+// (`pitch_hz()` / `pitch_hz_with()`), and the render block used to add the same
+// offset to `pitch_mod` a second time: every semitone of master tune moved the
+// audio two semitones (+12 sounded +24, measured on this wasm core). The Rust
+// test `master_tune_moves_the_rendered_pitch_once` covers the engine; this is
+// the same claim on the real wasm module, because the bug lived in the render
+// path and a unit test of `pitch_hz()` could not see it.
+//
+// Measured with the gate's existing spectrum ruler: one note 69 (A4, 440 Hz)
+// through `aliasBase` (which pins every other parameter, master tune included),
+// a whole 65536-sample window so a bin is 0.73 Hz, and the peak bin read back
+// as semitones. One bin at the lowest probed pitch (220 Hz) is 0.079 semitone,
+// so the 0.1 semitone tolerance is "a bin and a half"; the doubled answer sits
+// 12 semitones away and is nowhere near it.
+{
+  const NFFT = 65536;
+  const measuredHz = (tune) => {
+    engine([...aliasBase, [P.MASTER_TUNE, tune]], [[69, 1]]);
+    clearModMatrix();
+    const buf = [];
+    for (const [l] of render(NFFT / BLOCK)) buf.push(...l);
+    const mag = spectrum(buf, NFFT);
+    let peak = 1;
+    for (let k = 2; k < mag.length; k++) if (mag[k] > mag[peak]) peak = k;
+    return (peak * SR) / NFFT;
+  };
+  for (const [tune, want] of [[0, 0], [1, 1], [12, 12], [-12, -12]]) {
+    const hz = measuredHz(tune);
+    const got = 12 * Math.log2(hz / 440);
+    const sign = (v) => `${v >= 0 ? '+' : ''}${v}`;
+    check(
+      `master tune ${sign(tune)} shifts the rendered pitch ${sign(want)} semitone(s), not the double`,
+      Math.abs(got - want) < 0.1 && (want === 0 || Math.abs(got - want) < Math.abs(got - 2 * want)),
+      `${hz.toFixed(1)} Hz = ${got >= 0 ? '+' : ''}${got.toFixed(2)} semitones`,
+    );
+  }
+  // `engine()` keeps the parameter block across `gs_init`, so leave the shared
+  // state where every later scenario expects it.
+  ex.gs_set_param(P.MASTER_TUNE, 0);
+}
+
 // ------------------------------------------- FM / PM and ring modulation (P6.1)
 //
 // Both features are *spectral* claims, so both are checked in both domains:
