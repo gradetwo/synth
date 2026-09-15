@@ -48,6 +48,7 @@
 17. ~~**回滚后的更新横幅会写「被回滚掉的那个版本」（P12.4 发现）**~~ **✅ 版本号已由 P12.6（v2.0.2）修好**（向 waiting worker 握手取得，超时则不显示版本号）；**说明文字那一半仍开着，见第 27 条**。当时的记录：横幅的版本号取自**正在运行的那份 bundle** 的 `CHANGELOG_HEAD`。对「页面还开着、自回滚后从未重载」的 PWA，运行的仍是 vW，于是横幅写「新版本已就绪 · vW」（vW 正是被回滚掉的版本），点下去装的却是 vX。新访客与重载过的 PWA 不会错位。P12.4 已断言「线上 `sw.js` 的 cache 名 = 快照 pin」⇒ waiting worker 必然出现 ⇒ 横幅一定会重新出现（那类客户端唯一会被主动通知的通道），但**版本标签本身没修**。**用户 2026-09-14 批准**：给 SW 加**版本握手**（现在只有内容哈希缓存名、没有 semver），会动 `scripts/gen-sw.mjs` + `src/pwa/register.ts` + `src/App.tsx` + i18n + 首屏预算⇒ 立为 **P12.6**，但**排在 p104（工程管理）合并之后**再做（它要动 `src/App.tsx` 与 i18n，与 p104 撞）。
 
 18. **nightly 默认子集在 1 fps 的 WebKit 上可能逼近 systemd 的 `TimeoutStartSec=3h`（P11.6 登记，未实测）**：默认子集从 8 个 spec 扩到 18（core+visual+audio），P11.6 按「不许为变绿缩子集」保留了它；第一次 timer 实跑后视情况决定是调 unit 的超时还是让默认走 `--core`（`scripts/systemd/gs1-nightly.service`）。
+   **2026-09-15 进展**：①**可见性缺口已修（轨道 `nightlog`，v2.1.5）**——原来每个引擎的日志是 `spawnSync` 结束后才写盘，慢轨一次 `npm run nightly -- --engines=webkit,firefox --all` 跑了 **2 小时 12 分仍零输出**，只能中止；现在改成**边跑边落盘**（每 chunk 同步写、用户态零缓冲，SIGTERM/SIGKILL 都留下已写部分）并加「starting/finished」两行进度，判定语义（退出码 `code ?? 1`、`out` 仍是 stdout 后接 stderr、子集/重试/报告形状）一字未动。自证用假 `npx`：命令**未结束**时日志已有 `MARKER-A`，而改前同一时刻日志文件根本不存在。②**墙钟仍在量**：慢轨正用 systemd 单元同口径的默认子集（18 files）+ `time` 测；结论回来再决定是否调 unit 超时或走 `--core`。
 
 19. ~~**跨引擎 E2E 脆弱用例挡住 Firefox/WebKit 信号**~~ **✅ 已在 v2.0.1（fxwire）修复——但真正的原因和慢轨的猜测不同，这一点更重要**。慢轨猜「`click({force:true})` 点包围盒中心、中心不在笔画上」；三引擎实测**否掉了它**（那个坐标恰好就是曲线中点，几何完全一致）。真因是 **`stroke-dasharray: 5 3`**：命中测试跟随**画出来的**描边，**虚线间隙在 Gecko/WebKit 上是死画布**，而 Chromium 把整条路径当命中区。**WebKit 是陷阱**：它的 `elementFromPoint` **忽略** dash、事件命中**不忽略**，两者不一致 ⇒ **不能拿 `elementFromPoint` 当判据**。**加宽也无效**（间隙横跨整个线宽）。**修法（产品侧）**：每条 wire 在可见路径之下加一条同曲线的**实心透明 2 px 命中笔画**（`aria-hidden`、不带 `data-wire`/`data-modwire`），**刻意不加宽**（实测 12 px 会让相邻 wire 互抢点击、删错边）。**足迹只有 2 个产品文件，`e2e/fxgraph.spec.ts` 最终未改**（测试是对的，产品有真缺陷）。**验收**：Firefox `--retries=0` 2/2 绿、Chromium 整个 spec 16/16 不回归、`test:visual` 10 passed。**与 webkitraf 合并后我在主树复跑**：headless WebKit 上这条用例 **40.7 s 通过**（远在 120 s 预算内）⇒ **不需要动 timeout**，CI 的 `e2e-engines` 那半应转绿（该作业 2026-09-14 已按 20 分钟判据并入 schedule 的 `nightly`，见第 38 条）。全量 grep 确认真正点 SVG 描边的只有 3 处（都在该 spec），均已被覆盖。教训写进 `docs/notes/compat.md` §8。
 
@@ -215,6 +216,13 @@
    `parallel-dev.md` §六 给自己一个端口（`GS1_E2E_PORT=479x`）的轨道，跑整链 `verify` 都会在这一条**假红**
    （产品无碍，`npm test` 1 failed / 708 passed）。修法：拒绑跟着**解析后的** `E2E_PORT` 走，文档同步。
    实测：无覆盖 **31 passed**、`GS1_E2E_PORT=4791` **31 passed**（改前后者红）。这条修完，「多线推进」的整链验证才真正可用。
+46. **nightly 的 lock 在 SIGTERM 后不删，手动重试会被自己挡 6 小时**（轨道 `nightlog` 途中发现，2026-09-15，未做）
+   `scripts/nightly-e2e.mjs` 的 `nightly.lock` 只在正常退出路径的 `finally` 里删；被信号打断时
+   （systemd `TimeoutStartSec=3h` 到点、或人工 Ctrl-C / `kill`）`finally` 不执行，于是**同一台机器在
+   6 小时内再跑 `npm run nightly` 会被自己的 lock 拒绝**（6 小时后走既有的 `clearing a stale lock`）。
+   轨道 `nightlog` 的作者自己就被实验后的残留 lock 挡过一次。**systemd 定时器每天一次（>6h）所以生产上撞不到**，
+   撞到的是「手动复跑」这条路径。**没改**：在信号处理里删 lock 会削弱并发保护语义（两个 nightly 同时跑会抢端口/资源），
+   要改应当把「持锁者还活着吗」做成判据（例如记录 pid 并检查），属独立小批，**登记待立**。
 
 ## 二、四个方向
 
