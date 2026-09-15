@@ -22,13 +22,13 @@ export interface Release {
 }
 
 export const CHANGELOG_HEAD: Release = {
-    version: '2.1.3',
+    version: '2.1.4',
     date: '2026-09-15',
-    kind: 'feature',
+    kind: 'fix',
     items: [
       [
-        '**首屏更轻了：预设库与内置曲库改成「用到才下载」。** 以前无论你要不要打开它们，这两坨数据（91 条工厂预设 + 25 首内置曲目）都跟着首屏一起下载；现在它们在你**打开音色抽屉或播放器时**才取，首屏要下载的 JS 少了约 **12 KB**（gzip）。代价写清楚：首次打开这两个面板会有一瞬间的加载状态；**离线**且从未联网打开过它们时，会看到「加载失败 + 重试」。合成器的声音没有任何变化。',
-        '**A lighter first screen: the preset library and the built-in songs load only when you use them.** Both used to come down with the first screen whether you opened them or not (91 factory presets, 25 songs); they are fetched when you **open the preset drawer or the player**, which takes about **12 KB gzip** off what a first visit loads up front. The cost, stated plainly: the first open of those panels shows a brief loading state, and **offline** -- if you have never opened them online -- a "load failed / retry" line instead. The synth sounds exactly as before.',
+        '**两处「说错话」的地方修好了，采样导入也更快。** 在**音色 B（实例 2）**里改效果图时，画面以前会弹回实例 1 的值——现在图编辑器跟着你正在编辑的那一层走。导入**偏长的采样**时，现在会**明确告诉你已经截断**（以前是静默地只保留开头一段）。另外采样导入快了约 **35%**（4 秒样本 108 → 80 ms，同一台机器交替 A/B 测得），门禁里每一行采样读数都没有变化。',
+        '**Two things that showed you the wrong thing are fixed, and sample import is faster.** Editing the effect graph on **instance B** used to snap back to instance A\'s values -- the editor now follows the layer you are editing. Importing an **over-long sample** now **tells you it was truncated** instead of quietly keeping only the front of it. Sample import is also about **35% faster** (a 4 s sample: 108 ms to 80 ms, interleaved A/B on one machine), with every sampler gate reading unchanged.',
       ],
     ],
   };

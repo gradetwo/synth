@@ -73,6 +73,32 @@ test.describe('sampler', () => {
     await expect(reloaded.locator('[data-act="name"]')).toHaveText('未导入');
   });
 
+  // The product keeps the first 4 s of a long file (P9.8); the user asked for
+  // that to be said out loud rather than done silently (2026-09-15).
+  test('says so when a file longer than 4 s is truncated', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /启动音频引擎/ }).click();
+    await page.waitForTimeout(400);
+    const osc = page.locator('[data-module-id="osc1"]');
+    await osc.locator('.wave-btn').nth(9).click();
+    await osc.locator('[data-smp="1"] input[type=file]').setInputFiles({
+      name: 'long.wav',
+      mimeType: 'audio/wav',
+      buffer: toneWav(22050, 5),
+    });
+    await expect(page.locator('.toast')).toContainText('已截断到上限');
+    await expect(osc.locator('[data-smp="1"] [data-act="name"]')).toHaveText('long.wav');
+
+    // The short-file toast is not the same string: the two must stay distinct.
+    await osc.locator('[data-smp="1"] input[type=file]').setInputFiles({
+      name: 'short.wav',
+      mimeType: 'audio/wav',
+      buffer: toneWav(),
+    });
+    await expect(page.locator('.toast')).toContainText('已导入采样 short.wav');
+    await expect(page.locator('.toast')).not.toContainText('已截断');
+  });
+
   test('reports a silent file', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: /启动音频引擎/ }).click();

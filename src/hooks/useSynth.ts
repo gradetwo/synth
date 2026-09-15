@@ -22,6 +22,30 @@ export function useSynth(): Snapshot {
 }
 
 /** One DSP parameter. */
+export function useParam(id: ParamId): number {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getParam(id),
+    () => store.getParam(id),
+  );
+}
+
+/**
+ * The whole parameter set of the active instance (changes only when that layer
+ * does, or when the active instance switches).
+ *
+ * The effect graph renders many parameters as one picture — which is why it
+ * cannot use `useParam` per id — and it must picture the instance its edits go
+ * to, not always instance 1 (§一.8).
+ */
+export function useActiveParams(): Record<number, number> {
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getActiveParams(),
+    () => store.getActiveParams(),
+  );
+}
+
 /** Persisted MIDI CC bindings (re-renders when they change). */
 export function useCcMap(): CcBinding[] {
   return useSyncExternalStore(
@@ -43,14 +67,6 @@ export function useMidiOut(): boolean {
   return useSyncExternalStore(
     (fn) => store.subscribe(fn),
     () => store.getSnapshot().layout.midiOut,
-  );
-}
-
-export function useParam(id: ParamId): number {
-  return useSyncExternalStore(
-    subscribe,
-    () => store.getParam(id),
-    () => store.getParam(id),
   );
 }
 

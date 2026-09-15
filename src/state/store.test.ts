@@ -459,6 +459,23 @@ describe('two instances', () => {
     expect(s.getParam(Param.FILTER_CUTOFF)).toBeCloseTo(1234, 6);
   });
 
+  it('hands a whole-patch view the active instance, not always instance 1', () => {
+    // §一.8: the effect graph renders many parameters as one picture, so it
+    // cannot ask `getParam` per id. It used to read `state.params` directly and
+    // so always drew instance 1 while its edits went to the active layer.
+    const s = new SynthStore();
+    s.setActiveInstance(1);
+    s.setParam(Param.FX_CHAIN1, 0);
+    s.setActiveInstance(2);
+    s.setParam(Param.FX_CHAIN1, 3);
+    expect(s.getActiveParams()[Param.FX_CHAIN1]).toBe(3);
+
+    s.setActiveInstance(1);
+    expect(s.getActiveParams()[Param.FX_CHAIN1]).toBe(0);
+    // The set is the live layer object, so a selector can bail out on it.
+    expect(s.getActiveParams()).toBe(s.getSnapshot().state.params);
+  });
+
   it('starts instance 2 from a usable patch and keeps it across a reload', () => {
     const s = new SynthStore();
     const second = s.getSnapshot().state.params2;

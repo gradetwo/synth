@@ -77,7 +77,7 @@ const BANDS = [80, 160, 320, 640, 1280, 2560, 5120, 10240, 200, 500, 1000, 4000]
 const goertzel = (data, freq, sampleRate) => {
   const k = (2 * Math.PI * freq) / sampleRate;
   const coeff = 2 * Math.cos(k);
-  let s0 = 0;
+  let s0;
   let s1 = 0;
   let s2 = 0;
   for (const x of data) {

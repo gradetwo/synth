@@ -42,6 +42,17 @@ import { CHANGELOG_HEAD } from './changelog-head';
 export const CHANGELOG: Release[] = [
   CHANGELOG_HEAD,
   {
+    version: '2.1.3',
+    date: '2026-09-15',
+    kind: 'feature',
+    items: [
+      [
+        '**首屏更轻了：预设库与内置曲库改成「用到才下载」。** 以前无论你要不要打开它们，这两坨数据（91 条工厂预设 + 25 首内置曲目）都跟着首屏一起下载；现在它们在你**打开音色抽屉或播放器时**才取，首屏要下载的 JS 少了约 **12 KB**（gzip）。代价写清楚：首次打开这两个面板会有一瞬间的加载状态；**离线**且从未联网打开过它们时，会看到「加载失败 + 重试」。合成器的声音没有任何变化。',
+        '**A lighter first screen: the preset library and the built-in songs load only when you use them.** Both used to come down with the first screen whether you opened them or not (91 factory presets, 25 songs); they are fetched when you **open the preset drawer or the player**, which takes about **12 KB gzip** off what a first visit loads up front. The cost, stated plainly: the first open of those panels shows a brief loading state, and **offline** -- if you have never opened them online -- a "load failed / retry" line instead. The synth sounds exactly as before.',
+      ],
+    ],
+  },
+  {
     version: '2.1.2',
     date: '2026-09-15',
     kind: 'feature',
@@ -348,17 +359,6 @@ export const CHANGELOG: Release[] = [
           '**Recording no longer overwrites the last pass**: every finished recording becomes its own take (the selected take’s notes, or the layer’s, plus what you just played), the new one is selected and the old ones stay, so switching back to hear them is a click. The same key inside 50 ms counts as a re-strike and replaces the note instead of doubling its velocity into a flam, and a layer keeps up to eight takes, retiring the oldest. Switching a take changes the layer immediately, and playback, the roll, MIDI/WAV/MP3 export and the share link all follow the selected take; the link carries every take so the other side can switch too.',
         ],
       ],
-  },
-  {
-    version: '1.90.0',
-    date: '2026-09-12',
-    kind: 'feature',
-    items: [
-      [
-        '**滤波可以接两级了**：滤波模块多了一排「接法」——**串联**时第二级接着第一级（斜率相加：两级低通就是 24 dB/oct，落点更陡），**并联**时两级各自处理同一路信号、由 BLEND 决定比例（0 是只有第一级、1 是只有第二级），第二级的类型、截止、共振、驱动全部独立。默认关闭，所有旧音色的声音**完全不变**。',
-        '**The filter can run two stages**: the filter module gained a routing row — in **series** the second stage follows the first (the slopes add up: two low-passes make 24 dB/oct, which is how you get a steeper knee), in **parallel** both stages filter the same signal and BLEND sets the mix (0 is the first stage alone, 1 the second alone), with the second stage’s type, cutoff, resonance and drive all independent. Off by default, and every existing patch sounds exactly as before.',
-      ],
-    ],
   },
 ];
 

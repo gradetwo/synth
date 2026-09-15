@@ -41,12 +41,7 @@ export function readImportBytes(args, { pathField = 'path', base64Field, kind = 
     if (typeof path !== 'string' || path.length === 0) {
       throw fail(ERRORS.SCHEMA, `\`${pathField}\` must be a non-empty string`, { field: pathField });
     }
-    let absolute;
-    try {
-      absolute = resolveReadPath(path, pathField);
-    } catch (error) {
-      throw error;
-    }
+    const absolute = resolveReadPath(path, pathField);
     try {
       return { name: basename(path), bytes: readFileSync(absolute) };
     } catch (error) {

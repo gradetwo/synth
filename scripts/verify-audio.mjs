@@ -33,7 +33,7 @@ import {
   importWavetableCycle, importSample, importImpulseResponse,
 } from './lib/render-core.mjs';
 import {
-  offGridFloor, binMag, binMagRect, spectrum, binMagHann,
+  offGridFloor, binMag, spectrum, binMagHann,
   aliasFloor, aliasBase, ALIAS_NOTE, ALIAS_F0,
   thdPercent, interHarmonicDb,
 } from './lib/audio-ruler.mjs';

@@ -21,7 +21,7 @@ import { validateRenderSpec, renderChannels, noteHz } from '../lib/render.mjs';
 import { resolvePatch } from '../lib/patch.mjs';
 import { resolveReadPath, repoPath } from '../lib/paths.mjs';
 import { bh7Floor, hannProbes, thd, interHarmonic, BH7, HANN, DEFAULT_PROBES, distinctNotes, RULER_SAMPLE_RATE } from '../lib/measure.mjs';
-import { BLOCK, allocViolations } from '../../scripts/lib/render-core.mjs';
+import { BLOCK } from '../../scripts/lib/render-core.mjs';
 import { ERRORS, fail } from '../lib/errors.mjs';
 
 const countNonFinite = (samples) => {
@@ -67,7 +67,7 @@ export default {
 
     let samples;
     let source;
-    let engineViolations = null;
+    let engineViolations;
     let blocks;
     let spec = null;
 

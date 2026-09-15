@@ -73,7 +73,7 @@ function parseArgs(argv) {
 export function extractToolTokens(text) {
   const names = new Set();
   const families = new Set();
-  for (const match of text.matchAll(ALL_FAMILY)) families.add('gs1.');
+  for (const _family of text.matchAll(ALL_FAMILY)) families.add('gs1.');
   for (const match of text.matchAll(TOOL_TOKEN)) {
     const [, name, star] = match;
     if (star) families.add(`gs1.${name}.`);

@@ -366,6 +366,12 @@ export const SOURCES_STRINGS: StringTable = {
   ],
   'smp.clearHint': ['移除导入的采样', 'Remove the imported sample'],
   'smp.loaded': ['已导入采样 {name}', 'Imported sample {name}'],
+  // P9.8's product behaviour is to keep the first 4 s rather than refuse; the
+  // one thing it must not do is do it silently (user decision 2026-09-15).
+  'smp.loadedTruncated': [
+    '已导入采样 {name}（文件偏长，已截断到上限）',
+    'Imported sample {name} (the file was long — it was truncated to what the sampler can hold)',
+  ],
   'smp.cleared': ['已移除采样', 'Sample removed'],
   'smp.modeOneShot': ['一次性：放完即停（鼓、音效）', 'One-shot: play once and stop (drums, effects)'],
   'smp.modeLoop': ['循环：到循环终点跳回起点（持续音）', 'Loop: jump back to the loop start (sustained tones)'],

@@ -131,7 +131,7 @@ export function readManifest(store, { keep = KEEP_VERSIONS } = {}) {
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'));
   } catch (error) {
-    throw new Error(`retained: ${path} is not valid JSON — ${error.message}`);
+    throw new Error(`retained: ${path} is not valid JSON — ${error.message}`, { cause: error });
   }
   if ((parsed.schema ?? 0) > MANIFEST_SCHEMA) {
     throw new Error(`retained: ${path} has schema ${parsed.schema}, newer than this tooling (${MANIFEST_SCHEMA})`);

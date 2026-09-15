@@ -13,14 +13,34 @@ import { engine } from './engine';
 import { SCHEMA_VERSION } from '@/state/persist';
 
 const KEY = 'gs1:sample:v1';
-/** Samples the core can hold: `MAX_BASE_SAMPLES` in `dsp/sampler.rs` (4 s at 48 kHz). */
-const SAMPLE_CAPACITY = 192 * 1024;
+/**
+ * Samples the core can stage: `MAX_BASE_SAMPLES` / `gs_sample_capacity()` in
+ * `dsp/sampler.rs`. It is 192 000, i.e. **4 s at the 48 kHz engine rate** — not
+ * a rounded 192 KiB (196 608), which is what this file used to say while the
+ * worklet and the core clamped to the smaller number anyway.
+ */
+const SAMPLE_CAPACITY = 192_000;
+/** The rate the 4 s ceiling is stated at (the engine's own). */
+const ENGINE_RATE = 48_000;
+/** How long the core can hold: the cap above, in seconds. */
+const SAMPLE_SECONDS = SAMPLE_CAPACITY / ENGINE_RATE;
 const MIN_SAMPLE_SAMPLES = 32;
 
 export interface UserSample {
   name: string;
   samples: Float32Array;
   sampleRate: number;
+}
+
+/** What an import produced: the sample, plus whether the file was cut down. */
+export interface SampleImportResult {
+  sample: UserSample;
+  /**
+   * The file was longer than the sampler can hold, so it was truncated. The
+   * truncation is the product behaviour (P9.8); reporting it is what keeps it
+   * from being *silent* — the picker says so in the toast.
+   */
+  truncated: boolean;
 }
 
 let current: UserSample | null = readStored();
@@ -79,10 +99,15 @@ function persist(sample: UserSample | null) {
 }
 
 /** Decode `file`, truncate it to what the core can hold and install it. */
-export async function importUserSample(file: File): Promise<UserSample> {
+export async function importUserSample(file: File): Promise<SampleImportResult> {
   const decoded = await decodeSampleFile(file);
-  const samples =
-    decoded.samples.length > SAMPLE_CAPACITY ? decoded.samples.subarray(0, SAMPLE_CAPACITY) : decoded.samples;
+  // Two ways to lose audio. Over the staging cap is one; the other is a file
+  // that is under it in samples but over 4 s once resampled to the engine rate
+  // (a 5 s, 22.05 kHz file is only 110 250 samples). Both are truncation.
+  const overStage = decoded.samples.length > SAMPLE_CAPACITY;
+  const overSeconds = decoded.samples.length / decoded.sampleRate > SAMPLE_SECONDS;
+  const truncated = overStage || overSeconds;
+  const samples = overStage ? decoded.samples.subarray(0, SAMPLE_CAPACITY) : decoded.samples;
   if (samples.length < MIN_SAMPLE_SAMPLES) throw new WaveImportError('short', 'sample too short');
   let peak = 0;
   for (const value of samples) {
@@ -102,7 +127,7 @@ export async function importUserSample(file: File): Promise<UserSample> {
   current = { name: file.name, samples: new Float32Array(samples), sampleRate: decoded.sampleRate };
   persist(current);
   emit();
-  return current;
+  return { sample: current, truncated };
 }
 
 export function clearUserSample() {

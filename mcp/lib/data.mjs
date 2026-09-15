@@ -76,6 +76,7 @@ export async function loadData() {
     } catch (error) {
       throw new Error(
         `mcp: esbuild is required to read the app's TypeScript (vite ships it) — run "npm install": ${error?.message ?? error}`,
+        { cause: error },
       );
     }
     // One bundle per process: vitest runs test files in parallel workers, and
@@ -187,7 +188,7 @@ export function parameterTable(data = null) {
  * than kept as a second table. `fmt.pct(0.5)` is "50 %", so the unit is "%".
  */
 function unitOf(spec) {
-  let text = '';
+  let text;
   try {
     text = String(spec.format(spec.def));
   } catch {

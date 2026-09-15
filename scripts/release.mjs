@@ -208,7 +208,7 @@ function preflight() {
   check('version looks like x.y.z', /^\d+\.\d+\.\d+$/.test(version), version);
   check('package.json carries that version', pkg.version === version, `package.json ${pkg.version}`);
 
-  const head = changelogText.match(/\{\s*version: '([^']+)',\s*date: '([^']+)',\s*kind: '([^']+)',\s*items: \[([\s\S]*?)\n  \},/);
+  const head = changelogText.match(/\{\s*version: '([^']+)',\s*date: '([^']+)',\s*kind: '([^']+)',\s*items: \[([\s\S]*?)\n {2}\},/);
   check('the newest changelog entry is for this version', head?.[1] === version, head?.[1] ?? 'not found');
   const date = head?.[2] ?? '';
   if (flags.check) {
@@ -235,7 +235,7 @@ function preflight() {
     );
   }
 
-  const versions = [...changelogText.matchAll(/^    version: '([^']+)'/gm)].map((m) => m[1]);
+  const versions = [...changelogText.matchAll(/^ {4}version: '([^']+)'/gm)].map((m) => m[1]);
   const sorted = [...versions].sort(compareVersions).reverse();
   check('changelog versions are unique and newest-first', versions.join() === sorted.join(), `${versions.length} releases`);
 

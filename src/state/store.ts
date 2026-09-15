@@ -376,6 +376,20 @@ export class SynthStore {
     return set[id] ?? DEFAULT_PARAMS[id] ?? 0;
   }
 
+  /**
+   * The whole parameter set of the instance the panels are editing.
+   *
+   * `getParam` answers one id at a time; a view that renders a *picture* of the
+   * patch — the effect graph, which reads chain slots, wire gains and node
+   * routing together — needs the set. Reading `state.params` directly is what
+   * made that picture always instance 1 while its edits went to the active one
+   * (§一.8): the fix is to ask the store, which knows which layer is live.
+   * The reference is stable between writes, so a selector can bail out on it.
+   */
+  getActiveParams(): Record<number, number> {
+    return this.activeInstance === 2 ? this.state.params2 : this.state.params;
+  }
+
   setParam(id: ParamId, value: number, opts: { immediate?: boolean } = {}) {
     const key = this.activeInstance === 2 ? 'params2' : 'params';
     const set = this.state[key];

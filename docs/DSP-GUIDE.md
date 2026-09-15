@@ -1703,7 +1703,8 @@ let read = match pm { Some((m, cycles)) => (phase + m[i] * cycles).rem_euclid(1.
 > level**.
 
 容量：`MAX_BASE_SAMPLES = 192_000`（**4 s @ 48 kHz**），
-`MIN_BASE_SAMPLES = 64`，文件在 JS 侧**截断**到 4 s。
+`MIN_BASE_SAMPLES = 64`，文件在 JS 侧**截断**到 4 s，并在 toast 里**告知已截断**
+（`smp.loadedTruncated`；JS 的 `SAMPLE_CAPACITY` 与 `gs_sample_capacity()` 同为 192 000）。
 采样**出厂没有任何内容**——「采样是乐器级导入状态」，没有导入时**诚实静音**，
 而不是给一个替代音色（`engine.rs`：「With nothing imported there is nothing to play:
 silence is the honest answer, and the UI is where the player finds out why.」）。
@@ -2312,7 +2313,7 @@ fn level_top(level: usize) -> u32 { ((BASE_LEN >> level) / 2).max(1) as u32 }
 | `LEVELS` | **9** | mip 级数：1/1、1/2 … 1/256 的速率 |
 | `MIN_LEVEL_LEN` | **256** | 最短 mip 级（「a few hundred samples still loop smoothly」） |
 | `LEVEL_NYQUIST` | **0.25** | 内容在自身 Nyquist 中的位置（P9.8 核心） |
-| `CHAIN_TAPS_EARLY` | **192** | 建 level 1..3 的滤波器抽头 |
+| `CHAIN_TAPS_EARLY` | **128** | 建 level 1..3 的滤波器抽头（§一.25，2026-09-15 由 192 降下） |
 | `CHAIN_TAPS_LATE` | **96** | 建 level 4..8 的滤波器抽头 |
 | `KERNEL_TAPS` | **16** | 播放插值核抽头（4 项 BH 窗 sinc） |
 | `KERNEL_PHASES` | **1024** | 相位表列数 |
@@ -2343,7 +2344,7 @@ fn level_top(level: usize) -> u32 { ((BASE_LEN >> level) / 2).max(1) as u32 }
 > **every level gets the widest band its own rate range allows**, and none of them is short.
 
 以及**可实测的结论**（`docs/notes/band-limited-oscillators.md` §P9.8）：
-每级输出带宽 **12–24 kHz**、级 1/2 收窄到 **3–12 kHz**（见 §15.9）、
+每级输出带宽 **12–24 kHz**（1A 阶段级 1/2 曾收窄到 3–12 kHz，1C 已全拿回，见 §15.9）、
 `mipmap_samples(N) = 2.9921875·N`（即 **11.875 B / 底采样**，见 §15.7）
 ——池大小是**实测**的，不依赖上面那条公式。
 
@@ -2356,7 +2357,7 @@ pub const fn level_shift(level: usize) -> usize { if level == 0 { 0 } else { lev
 即读步进 = `rate / 2^level_shift(level)`，**而不是** `rate / 2^level`——
 「P9.8's levels are longer than their index implies」（`engine.rs` 的注释）。
 
-### 15.4 链式滤波：为什么前 192 后 96
+### 15.4 链式滤波：为什么前段 128 后段 96
 
 `CHAIN_TAPS_EARLY/LATE` 的注释就是一份完整的取舍记录：
 
@@ -2367,6 +2368,11 @@ pub const fn level_shift(level: usize) -> usize { if level == 0 { 0 } else { lev
   「a 192-tap filter's edge-clamped region covers the whole loop and the seam folds back
   （8372 Hz read **−58.1 dB** with 192 taps, **−80.2** with 96）」；
 - **全键盘实测最差**：**192/192 −58.1 dB、96/96 −66.6 dB、192 前 + 96 后 −77.3 dB**。
+- **§一.25（2026-09-15）：前段 192 → 128。** 导入路径要拿这组滤波跑完整段录音，
+  两个 wasm **在同一进程里交替**跑（`.tmp/import-ab.mjs`，median of 9）得到
+  **4 s 文件 107.5 → 79.9 ms（1.34×）**、门禁样本 32768 点 **22.0 → 15.9 ms（1.38×）**；
+  而 `verify:audio` 的采样三行**逐字不变**（−86.4/−90.1/−92.7、−90.9/−81.0、−81.9/−83.4/−82.5），
+  **顶棚 −81/−75/−77 一个没动**。必须交替测的理由见 §15.9 的「不可跨会话比」一行。
 
 门禁里专门有一行钉住这个选择（`scripts/verify-audio.mjs`）：
 
@@ -2437,11 +2443,11 @@ pub const fn level_shift(level: usize) -> usize { if level == 0 { 0 } else { lev
 
 | 边界 | 说明/数字 |
 | :-- | :-- |
-| **级 1/2 的输出带宽被换掉了** | 级 1/2（速率 **1–4×**）输出带宽收窄到 **3–12 kHz**（P9.7 抽取链是 10.6–21 kHz）；级 3 及以上更宽；**根音及以下逐字未变**。补回级 1 的 6–12 kHz 需 **+0.77 MB**（4 s 上限），代价是那一档地板从 **−79** 抬到 **≈−60**。当前选择保持现状（**10 dB 余量**） |
+| **级 1/2 的输出带宽（已关闭）** | **1C（v2.0.4）已拿回**：布局改成 ν=1/4 + 16 抽头窗 sinc 后，每级输出带宽都是 **12–24 kHz**（P9.7 抽取链是 10.6–21 kHz），**根音及以下逐字未变**；当年 1A 记的「级 1/2 收窄到 3–12 kHz、补回需 +0.77 MB 且地板抬到 ≈−60」**已被这个解取代**（那 +0.77 MB 事实上已花在 2 244 KB 的池上，而地板是 **−81.0**）。门禁：Rust `every_level_keeps_its_content_well_inside_its_own_band` 对每级断言带宽落在 `(12 kHz, 24 kHz]`；`verify:audio` 的顶棚 −81/−75 实测 −86.4/−81.0，**阈值一个没动** |
 | **级 8 无门禁覆盖** | 级 8（速率 128–256×）只有 **93.75 Hz** 内容，「任何门禁范围都不覆盖它」（**无实测 dB**） |
 | **导入耗时的绝对数字不可跨会话比** | 4 s 导入 **273.9 ms**（P9.8 记录）与同机 **157.6 ms** 差 **1.74×**；纪律是「**同机同探针的改前/改后**」 |
-| **导入在消息路径上会卡顿** | 4 s 样本 mipmap 构建 **273.9 ms**（后来同机 157.6 ms、141.1 ms）；filter 16–64 → 192 抽头；32768 点 26.4 ms、1 s 39.3 ms |
-| **>4 s 文件在 JS 侧截断** | `src/audio/userSample.ts` 注释确认 4 s 上限 |
+| **导入在消息路径上会卡顿** | 4 s 样本 mipmap 构建 **273.9 ms**（后来同机 157.6、141.1，抽头 128/96 后 **79.9 ms**）；filter 16–64 → 前段 128 抽头 / 后段 96（§一.25 把前段从 192 降到 128）；32768 点 26.4 ms、1 s 39.3 ms |
+| **文件偏长会截断（现在会告知）** | 上限 = `gs_sample_capacity()` = `MAX_BASE_SAMPLES` = **192 000**（4 s @48 kHz），JS 侧 `SAMPLE_CAPACITY` 与它一致；截断时 toast 走 `smp.loadedTruncated`（2026-09-15 用户拍板：**保留截断、不改成可见拒绝**） |
 | **无出厂采样** | 采样是**乐器级导入状态**；没有导入时**诚实静音**（不替代音色） |
 
 ---
@@ -5035,10 +5041,10 @@ P9.3 的覆盖槽 + 覆盖槽调制总线**部分解决**了这个问题（4 个
 | :-- | :-- |
 | **硬同步 `≥30 s 离散度 < 3 dB` 未达标** | 只有 triangle 的三个比值达到（0.2–0.8 dB）；锯齿/方波 4.3–16.4 dB。需更高过采样（4×）或重做核 |
 | **硬同步 44.1/96 kHz 的包络周期没有定量解释** | 模型给 31 s / 12 s，实测 21 s / 6 s |
-| **采样级 1/2 的带宽被换掉了** | 收窄到 3–12 kHz；补回需 +0.77 MB |
+| **采样级 1/2 的带宽（已关闭，1C 拿回）** | 每级 12–24 kHz；1A 的「收窄到 3–12 kHz」已作废 |
 | **采样级 8 无门禁覆盖** | 只覆盖键盘之外 |
 | **采样导入耗时不可跨会话比** | 273.9 ms vs 同机 157.6 ms，差 1.74× |
-| **导入在消息路径卡顿 / >4 s 截断** | 4 s mipmap 构建 ~140–274 ms；JS 侧截断 |
+| **导入在消息路径卡顿 / 截断会告知** | 4 s mipmap 构建 ~80–274 ms（抽头 128/96）；JS 侧截断并在 toast 告知 |
 | **真峰值非标准** | 相邻样本均值估计，不是 ITU-R BS.1770 |
 | **无 LUFS / 无 crest factor 度量** | 用**乐句 RMS** 作感知响度的廉价替身 |
 | **无 IMD 门禁** | 未实现 |

@@ -53,14 +53,35 @@ beforeEach(() => {
 
 describe('sample state', () => {
   it('keeps the rate the file was recorded at', async () => {
-    const sample = await importUserSample(wavFile('kick.wav', tone()));
+    const { sample, truncated } = await importUserSample(wavFile('kick.wav', tone()));
     // The whole point: a 22 kHz file must not be treated as 48 kHz audio.
     expect(sample.sampleRate).toBe(22050);
     expect(sample.samples.length).toBe(4096);
+    expect(truncated).toBe(false);
 
     const raw = JSON.parse(localStorage.getItem(KEY)!) as { rate: number; name: string };
     expect(raw.rate).toBe(22050);
     expect(raw.name).toBe('kick.wav');
+  });
+
+  // P9.8 keeps the first 4 s instead of refusing; the user asked for that to be
+  // visible rather than silent (2026-09-15), so the import has to *report* it.
+  it('reports a file longer than the core can hold as truncated', async () => {
+    const { sample, truncated } = await importUserSample(wavFile('long.wav', tone(200_000)));
+    expect(truncated).toBe(true);
+    expect(sample.samples.length).toBe(192_000);
+    expect(sample.name).toBe('long.wav');
+    expect(getUserSample()?.samples.length).toBe(192_000);
+  });
+
+  // The staging cap is counted in samples, but the ceiling the player feels is
+  // 4 s at the engine rate: a 5 s file recorded at 22.05 kHz is only 110 250
+  // samples, under the cap, and still gets cut by the core's resampling.
+  it('reports a low-rate file over four seconds as truncated', async () => {
+    const { sample, truncated } = await importUserSample(wavFile('slow.wav', tone(110_250, 22050)));
+    expect(truncated).toBe(true);
+    expect(sample.samples.length).toBe(110_250);
+    expect(sample.sampleRate).toBe(22050);
   });
 
   it('notifies subscribers and clears cleanly', async () => {

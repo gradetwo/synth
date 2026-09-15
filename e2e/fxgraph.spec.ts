@@ -659,6 +659,48 @@ test('overrides one node of a kind and leaves its sibling alone', async ({ page 
   ).toHaveAttribute('aria-pressed', 'false');
 });
 
+/**
+ * §一.8: the graph draws a *picture* of a whole patch — chain kinds, wire gains,
+ * node routing — so it has to picture the instance its edits go to. It used to
+ * read `state.params` (always instance 1) while `setParam` wrote the active
+ * layer, so on instance 2 a changed node snapped straight back.
+ */
+test('pictures the instance it edits, not always instance 1', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /启动音频引擎/ }).click();
+  await page.waitForTimeout(400);
+
+  const switchTo = async (instance: 1 | 2) => {
+    await page.locator('[data-act="settings"]').first().click();
+    await page.locator(`[data-instance="${instance}"]`).click();
+    await page.locator('.settings-drawer .d-close').click();
+    // The mask outlives the drawer by a transition; wait it out so the next
+    // click is not intercepted.
+    await expect(page.locator('.settings-drawer.open')).toHaveCount(0);
+  };
+  const kind = (slot: number) => page.locator('[data-act="kind"][data-node="' + slot + '"]');
+
+  // Instance 2 gets a chain instance 1 does not have. Before the fix this write
+  // landed on B while the select kept rendering A, so the value never took.
+  await switchTo(2);
+  await openEditor(page);
+  await expect(kind(0)).toHaveValue('delay');
+  await kind(0).selectOption('chorus');
+  await expect(kind(0)).toHaveValue('chorus');
+  await page.locator('.fxg-close').click();
+
+  // Instance 1 still shows its own chain: the two layers are not one picture.
+  await switchTo(1);
+  await openEditor(page);
+  await expect(kind(0)).toHaveValue('delay');
+  await page.locator('.fxg-close').click();
+
+  // And switching back shows B's edit, so the picture follows the layer both ways.
+  await switchTo(2);
+  await openEditor(page);
+  await expect(kind(0)).toHaveValue('chorus');
+});
+
 test.describe('on a phone', () => {
   // A coarse pointer is what the editor's 36 px targets key off (the same
   // media query the rest of the panel uses), so the run has to have touch.

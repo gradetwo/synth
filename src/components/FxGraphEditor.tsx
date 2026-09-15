@@ -60,7 +60,7 @@ import {
 import { getUserIr } from '@/audio/ir';
 import { BUILTIN_FX_TEMPLATES, type FxTemplate } from '@/state/fxtemplates';
 import { store } from '@/state/store';
-import { useSynth } from '@/hooks/useSynth';
+import { useActiveParams, useSynth } from '@/hooks/useSynth';
 import { useViewport } from '@/hooks/useViewport';
 import { haptic, HAPTIC } from '@/hooks/useInputMode';
 import { t } from '@/i18n';
@@ -195,7 +195,10 @@ function kindBaseValue(params: Record<number, number>, kind: FxKind, slot: numbe
 
 export function FxGraphEditor({ onClose }: { onClose: () => void }) {
   const snapshot = useSynth();
-  const params = snapshot.state.params;
+  // The layer the edits go to, not always instance 1 (§一.8): `setParam` writes
+  // to the active instance, so a picture read from `state.params` would show A
+  // while B was being edited.
+  const params = useActiveParams();
   const viewport = useViewport();
   /**
    * `null` means "whatever suits this screen": the canvas on a desktop, the

@@ -175,12 +175,13 @@ export default {
       // A log that cannot be written must not turn a green gate red.
     }
 
-    let report = null;
-    try {
-      report = JSON.parse(readFileSync(reportPath, 'utf8'));
-    } catch {
-      report = null;
-    }
+    const report = (() => {
+      try {
+        return JSON.parse(readFileSync(reportPath, 'utf8'));
+      } catch {
+        return null;
+      }
+    })();
     const tests = report ? collectTests(report) : [];
     const count = (status) => tests.filter((test) => test.status === status).length;
     const skipped = tests.filter((test) => test.status === 'skipped' || test.expectedStatus === 'skipped').length;

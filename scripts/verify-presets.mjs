@@ -129,7 +129,7 @@ const module = new WebAssembly.Module(wasmBytes);
 const goertzel = (data, freq) => {
   const k = (2 * Math.PI * freq) / SR;
   const coeff = 2 * Math.cos(k);
-  let s0 = 0;
+  let s0;
   let s1 = 0;
   let s2 = 0;
   for (const x of data) {

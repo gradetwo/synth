@@ -49,24 +49,6 @@ pub const MIN_LEVEL_LEN: usize = 256;
 /// four-point Lagrange chord error at ν = 0.44 is a train of images about 30 dB
 /// down.
 ///
-/// Making the level *longer for the same content* moves ν down: a level whose
-/// band is `SR / 2^(k+1)` stored at `SR / 2^(k-3)` samples keeps ν at 1/16, and
-/// the chord error falls with ν⁴. That is this constant. It is the sampler's
-/// version of P9.7's "every wavetable level is full length": here the length is
-/// only what the alias-free band allows, because the sample itself supplies the
-/// bandwidth and the table has to be filtered down to it.
-///
-/// Where the content of a mip level sits inside that level's own band, as a
-/// fraction of its Nyquist (P9.8).
-///
-/// P9.7 fixed the *interpolator* (f32 position → f64, linear → cubic) and left
-/// the sampler at −33 dB because a mip level built by plain decimation always
-/// holds content right up to its own Nyquist: 0.44 of it with the 0.22-cutoff
-/// half-band filter, whatever the level. The read step of `rate / 2^k` samples
-/// then hands the interpolator a signal at the worst possible frequency, and a
-/// four-point Lagrange chord error at ν = 0.44 is a train of images about 30 dB
-/// down.
-///
 /// Making the level *longer for the same content* moves ν down, and the error
 /// falls with ν^(order). The level layout is then set by two constraints at once:
 /// level `k` must be band-limited to `SR / 2^(k+1)` (or a rate up to `2^k` folds),
@@ -100,7 +82,15 @@ pub const LEVEL_NYQUIST: f32 = 0.25;
 /// Measured across the keyboard (7-term Blackman-Harris ruler, gate sample):
 /// 192/192 worst -58.1 dB, 96/96 worst -66.6 dB, 192 early + 96 late worst
 /// -77.3 dB. See `docs/notes/band-limited-oscillators.md` §P9.8.
-const CHAIN_TAPS_EARLY: usize = 192;
+///
+/// §一.25 took the early count from 192 to 128 (2026-09-15). The import path
+/// runs these filters over the whole recording, and interleaved on one host
+/// (`import-ab`, median of 9) that is **1.34× on a 4 s file** (107.5 → 79.9 ms)
+/// and **1.38× on the gate sample** (22.0 → 15.9 ms), while **every sampler gate
+/// row reads the same to 0.1 dB** (-86.4/-90.1/-92.7 high, -90.9/-81.0 top,
+/// -81.9/-83.4/-82.5 low; no ceiling touched). 96 is what the old scan says is
+/// too short, so 128 is the short end with margin to spare.
+const CHAIN_TAPS_EARLY: usize = 128;
 const CHAIN_TAPS_LATE: usize = 96;
 /// Filter length for chain step `step` (`0` builds level 1's table).
 const fn chain_taps(step: usize) -> usize {
@@ -111,7 +101,7 @@ const fn chain_taps(step: usize) -> usize {
     }
 }
 /// Longest filter this module will build.
-const MAX_TAPS: usize = 192;
+const MAX_TAPS: usize = CHAIN_TAPS_EARLY;
 
 /// Taps in the playback interpolator, and entries in its phase table.
 ///

@@ -29,7 +29,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   defaultStore,
@@ -254,9 +254,8 @@ async function main() {
   // ------------------------------------------------------------------ report
 
   step('report');
-  let liveHash = '';
   try {
-    liveHash = await fetchLiveIndexHash(site);
+    const liveHash = await fetchLiveIndexHash(site);
     log(`[drill]   live now: ${liveHash}`);
   } catch (error) {
     log(`[drill]   live now: unreachable — ${error.message}`);

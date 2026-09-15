@@ -55,7 +55,7 @@ export function UserSamplePicker({ which }: { which: 1 | 2 }) {
 
   const pick = async (file: File) => {
     try {
-      const sample = await importUserSample(file);
+      const { sample, truncated } = await importUserSample(file);
       // Importing is a statement of intent: play it.
       // Switch this oscillator to the sample wave: importing and then having to
       // find the wave in the selector would be a step for nothing.
@@ -64,7 +64,10 @@ export function UserSamplePicker({ which }: { which: 1 | 2 }) {
         9,
         { immediate: true },
       );
-      toast(t('smp.loaded', { name: sample.name }));
+      // A file over 4 s keeps its first 4 s (P9.8). One toast, not two — the
+      // second would overwrite the first before it could be read — and the
+      // truncated one says what happened instead of just naming the sample.
+      toast(t(truncated ? 'smp.loadedTruncated' : 'smp.loaded', { name: sample.name }));
     } catch (error) {
       toast(failureMessage(error));
     }
