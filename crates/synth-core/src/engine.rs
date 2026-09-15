@@ -1742,7 +1742,22 @@ impl Engine {
                 self.limit_target = need;
                 self.limit_slope = (self.limit_gain - need) / LOOKAHEAD as f32;
             } else {
-                self.limit_target = (self.limit_target + release_step).min(need);
+                // Release only once the bus is back under the ceiling; while
+                // `limit_peak` is still above it there is nothing to release
+                // *to*. Releasing there is what turned the ramp into a
+                // sampling-phase modulator: `limit_peak` decays fast enough
+                // between two waveform peaks that a cycle-long recovery is
+                // visible, so the gain became a sawtooth at f0 whose depth was
+                // set by the *sampled* height of the waveform's edge -- and
+                // that height moves with where the edge lands between samples.
+                // On a 110 Hz saw the per-cycle dip jittered by ~4.4 %
+                // (correlation with the sampled peak -0.91), which put the
+                // k*f0+-40 Hz sidebands only 35 dB down (measurements and
+                // ablation in `docs/notes/limiter-sidebands.md`). Quiet signals
+                // keep `need == 1.0`, so the not-limiting path is untouched and
+                // bit-identical.
+                let step = release_step * f32::from(u8::from(need >= 1.0));
+                self.limit_target = (self.limit_target + step).min(need);
             }
             if self.limit_gain > self.limit_target {
                 self.limit_gain = (self.limit_gain - self.limit_slope).max(self.limit_target);
@@ -9320,6 +9335,90 @@ mod tests {
             assert!(e.out_r[i].abs() <= 1.0 + 1e-6, "right over unity at {i}");
         }
         assert!(e.limit_gain <= 1.0 && e.limit_gain > 0.0);
+    }
+
+    /// §一.44: a voice pushed into the limiter must not modulate the master bus
+    /// at the sampling-phase rate.
+    ///
+    /// The failure this pins: `limit_peak` is a *sampled* peak follower, and for
+    /// a waveform with an edge (saw, square, pulse) the height of the sample
+    /// nearest the peak depends on where that edge lands between samples. The
+    /// sample phase advances by a non-integer number of samples per cycle, so
+    /// the per-cycle dip of the gain jittered by ~4.4 % and repeated with the
+    /// phase pattern's own period: for the A notes (110 Hz at note 45) that put
+    /// the strongest sidebands at `k*f0 +- 40 Hz`. Releasing between two peaks
+    /// is what let that jitter into the gain; the ceiling hold in the limiter
+    /// loop removes it. Measured here (one second, BH-7 off-grid ruler, the same
+    /// one `verify-audio.mjs` uses):
+    ///
+    /// * before: floor -28..-40 dB across the keyboard, gain pumped 1.1 dB;
+    /// * after: floor -52..-61 dB, gain flutter 0.000 dB.
+    ///
+    /// The frequency bound sits inside the after numbers and well above the
+    /// before ones, and it has to: the unfixed core fails both the floor and the
+    /// pump assertion. The sine/triangle controls (no edge) were already clean
+    /// and stay clean, which is what makes the saw measurement meaningful.
+    #[test]
+    fn the_limiter_does_not_modulate_the_bus_at_the_phase_rate() {
+        let _guard = lock_engine();
+        let f0 = 440.0 * 2f32.powf((45.0 - 69.0) / 12.0);
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.9);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18_000.0);
+        e.set_param(id::FILTER_RES, 0.05);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.01);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::FX_REVERB_ON, 0.0);
+        e.set_param(id::FX_DELAY_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        e.set_param(id::PATCH_GAIN, 6.0);
+        e.note_on(45, 1.0);
+        for _ in 0..400 {
+            e.process(128);
+        }
+        let mut out: Vec<f32> = Vec::with_capacity(48_000);
+        let (mut peak, mut step, mut prev) = (0.0f32, 0.0f32, 0.0f32);
+        let (mut lo, mut hi) = (1.0f32, 0.0f32);
+        for _ in 0..375 {
+            e.process(128);
+            for i in 0..128 {
+                let v = e.out_l[i];
+                assert!(v.is_finite(), "the limiter produced a non-finite sample");
+                peak = peak.max(v.abs());
+                step = step.max((v - prev).abs());
+                prev = v;
+            }
+            lo = lo.min(e.limit_gain);
+            hi = hi.max(e.limit_gain);
+            out.extend_from_slice(&e.out_l[..128]);
+        }
+        let floor = off_grid_floor(&out, f0 as f64);
+        let pumped = 20.0 * (hi / lo).log10();
+        println!(
+            "LIM-SB floor={floor:.1} dB pump={pumped:.3} dB peak={peak:.3} step={step:.3} gain={lo:.3}..{hi:.3}"
+        );
+        assert!(peak <= 1.0, "output clipped at {peak}");
+        assert!(peak > 0.5, "nothing came through: {peak}");
+        // The sawtooth's own edge is ~1.0x the peak, so this is not a click
+        // bound for a smooth signal: it catches a *limiter-introduced*
+        // discontinuity (a gain step) on top of the waveform.
+        assert!(
+            step < peak * 1.2,
+            "the limiter stepped the bus by {step} against a peak of {peak}"
+        );
+        assert!(
+            pumped < 0.5,
+            "the limiter pumped the bus by {pumped:.2} dB at the waveform rate"
+        );
+        assert!(
+            floor < -50.0,
+            "the limiter left off-grid energy on the bus: {floor:.1} dB (k*f0 +- 40 Hz sidebands)"
+        );
     }
 
     // ------------------------------------------------- P6.5: 2x oversampling

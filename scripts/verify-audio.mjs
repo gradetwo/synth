@@ -26,7 +26,7 @@
 import {
   SR, BLOCK, BUDGET_US, P, WAVE, WAVE_TYPES,
   ex, initCore,
-  engine, render, clearModMatrix, renderFloor,
+  engine, render, clearModMatrix, renderFloor, QUIET_PATCH,
   noteOnCount, countNoteOn,
   blockSteps, worstStepOf, peakOf, rmsOf,
   arenaFreeBytes,
@@ -2363,6 +2363,77 @@ const P96_SWEEP = 24;
   // section someone adds.
   ex.gs_wavetable_clear();
   ex.gs_sample_clear();
+}
+
+// ------------------- §一.44: the limiter must not colour the bus
+//
+// Pushing one voice into the master limiter (`PATCH_GAIN`, id 78) used to put
+// a strong sideband comb on the bus. The gain followed a *sampled* peak
+// follower, and for a waveform with an edge the height of the sample nearest
+// the peak depends on where that edge lands between samples. The sample phase
+// advances by a non-integer number of samples per cycle, so the per-cycle dip
+// of the gain jittered by ~4.4 % with the phase pattern's own period — for
+// the A notes the strongest lines sat at `k*f0 +- 40 Hz` (55/110/220/440 Hz
+// all read them), which is the "40 Hz" of `.tmp/pnoise-report.md` §3b and
+// `.tmp/brief-limiter.md`. Releasing between two waveform peaks is what let
+// that jitter into the gain; the limiter loop now holds the release while the
+// peak is still over the ceiling (see `docs/notes/limiter-sidebands.md`).
+//
+// Measured on this tree, four seconds, the ruler below, same note-on history:
+//   before — floor -35.2 dB, gain pumped 1.085 dB, first sidebands -40.5 dBc;
+//   after  — floor -58.3 dB, gain flutter 0.000 dB, first sidebands -89.1 dBc.
+// The sine control (no edge at all) reads -123 dB after, so what the saw
+// number measures is the limiter and not the ruler.
+{
+  const NOTE = 45;
+  const F0 = 440 * 2 ** ((NOTE - 69) / 12);
+  const drive = (extra) => {
+    engine([...QUIET_PATCH, ...extra], [[NOTE, 1]]);
+    clearModMatrix();
+    const frames = 4 * SR;
+    const out = new Float64Array(frames);
+    const gains = [];
+    const heap = new Float32Array(ex.memory.buffer);
+    let w = 0;
+    for (let b = 0; b < 400 + frames / BLOCK; b++) {
+      ex.gs_process(BLOCK);
+      if (b < 400) continue;
+      gains.push(ex.gs_limit_reduction());
+      const p = ex.gs_left_ptr() / 4;
+      for (let i = 0; i < BLOCK; i++) out[w++] = heap[p + i];
+    }
+    return { out, gains };
+  };
+  const saw = drive([[P.OSC1_WAVE, WAVE.saw], [P.PATCH_GAIN, 6]]);
+  const peak = peakOf(saw.out);
+  const step = worstStepOf(saw.out);
+  const lo = Math.min(...saw.gains);
+  const hi = Math.max(...saw.gains);
+  const pumped = 20 * Math.log10(hi / lo);
+  const floor = offGridFloor(saw.out, F0);
+  const fund = binMagHann(saw.out, F0);
+  const side = (hz) => 20 * Math.log10(Math.max(binMagHann(saw.out, hz), 1e-12) / fund);
+  check(
+    'the limiter keeps a driven voice under the ceiling',
+    peak <= 0.95 && peak > 0.5 && step.step < peak * 1.2 && saw.out.every(Number.isFinite),
+    `peak ${peak.toFixed(4)} (ceiling 0.95, soft knee ${KNEE}), worst step ${step.step.toFixed(4)} = ${(step.step / peak).toFixed(3)} of peak (bound 1.2), all samples finite`,
+  );
+  check(
+    'the limiter does not pump a held note',
+    pumped < 0.5,
+    `gain ${lo.toFixed(4)}..${hi.toFixed(4)} = ${pumped.toFixed(3)} dB peak-to-peak over 4 s (1.085 dB before the ceiling hold, line 0.5)`,
+  );
+  check(
+    'the limiter leaves no k*f0 +- 40 Hz sidebands',
+    floor < -50,
+    `off-grid floor ${floor.toFixed(1)} dB (f0${'-'}40 ${side(F0 - 40).toFixed(1)} dBc, f0+40 ${side(F0 + 40).toFixed(1)} dBc; -35.2 dB before the fix, line -50)`,
+  );
+  const sine = drive([[P.OSC1_WAVE, WAVE.sine], [P.PATCH_GAIN, 6]]);
+  check(
+    'the ruler is not what the saw measurement is reading',
+    offGridFloor(sine.out, F0) < -100,
+    `the edge-free control reads ${offGridFloor(sine.out, F0).toFixed(1)} dB through the same limiter`,
+  );
 }
 
 console.log('[audio] quality gate');
