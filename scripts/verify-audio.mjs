@@ -2379,18 +2379,26 @@ const P96_SWEEP = 24;
 // that jitter into the gain; the limiter loop now holds the release while the
 // peak is still over the ceiling (see `docs/notes/limiter-sidebands.md`).
 //
-// Measured on this tree, four seconds, the ruler below, same note-on history:
-//   before — floor -35.2 dB, gain pumped 1.085 dB, first sidebands -40.5 dBc;
-//   after  — floor -58.3 dB, gain flutter 0.000 dB, first sidebands -89.1 dBc.
-// The sine control (no edge at all) reads -123 dB after, so what the saw
-// number measures is the limiter and not the ruler.
+// Three notes, not one: the residual floor is the *soft limit*'s own — a fixed
+// gain that only pushes the peak past the 0.82 knee reads -55..-57 dB — and it
+// is worst at the top of the range, so a 110 Hz-only assertion would let a
+// treble-only regression through. The -50 dB line is chosen from that soft
+// clipper floor, not from the brief's example. Measured with this fixture,
+// same note-on history, before -> after:
+//
+//   note 45 (110 Hz): -35.2 -> -58.3 dB, pump 1.060 -> 0.000 dB, f0+-40 -40.6/-40.6 -> -89.2/-89.0 dBc
+//   note 57 (220 Hz): -34.1 -> -55.2 dB, pump 0.726 -> 0.000 dB, f0+-40 -38.4/-37.2 -> -83.3/-82.9 dBc
+//   note 69 (440 Hz): -33.9 -> -51.9 dB, pump 0.616 -> 0.000 dB, f0+-40 -37.1/-37.0 -> -77.0/-76.3 dBc
+//
+// Note 45 keeps the four-second window (it carries the sideband detail); 57 and
+// 69 use one second. One second is enough because the number is set by the
+// sampling-phase pattern, and eight successive note-ons (which walk the phase
+// seed) read those three floors to 0.1 dB at one second and at four.
 {
-  const NOTE = 45;
-  const F0 = 440 * 2 ** ((NOTE - 69) / 12);
-  const drive = (extra) => {
-    engine([...QUIET_PATCH, ...extra], [[NOTE, 1]]);
+  const drive = (note, extra, seconds) => {
+    engine([...QUIET_PATCH, ...extra], [[note, 1]]);
     clearModMatrix();
-    const frames = 4 * SR;
+    const frames = seconds * SR;
     const out = new Float64Array(frames);
     const gains = [];
     const heap = new Float32Array(ex.memory.buffer);
@@ -2404,36 +2412,46 @@ const P96_SWEEP = 24;
     }
     return { out, gains };
   };
-  const saw = drive([[P.OSC1_WAVE, WAVE.saw], [P.PATCH_GAIN, 6]]);
-  const peak = peakOf(saw.out);
-  const step = worstStepOf(saw.out);
-  const lo = Math.min(...saw.gains);
-  const hi = Math.max(...saw.gains);
-  const pumped = 20 * Math.log10(hi / lo);
-  const floor = offGridFloor(saw.out, F0);
-  const fund = binMagHann(saw.out, F0);
-  const side = (hz) => 20 * Math.log10(Math.max(binMagHann(saw.out, hz), 1e-12) / fund);
-  check(
-    'the limiter keeps a driven voice under the ceiling',
-    peak <= 0.95 && peak > 0.5 && step.step < peak * 1.2 && saw.out.every(Number.isFinite),
-    `peak ${peak.toFixed(4)} (ceiling 0.95, soft knee ${KNEE}), worst step ${step.step.toFixed(4)} = ${(step.step / peak).toFixed(3)} of peak (bound 1.2), all samples finite`,
-  );
-  check(
-    'the limiter does not pump a held note',
-    pumped < 0.5,
-    `gain ${lo.toFixed(4)}..${hi.toFixed(4)} = ${pumped.toFixed(3)} dB peak-to-peak over 4 s (1.085 dB before the ceiling hold, line 0.5)`,
-  );
-  check(
-    'the limiter leaves no k*f0 +- 40 Hz sidebands',
-    floor < -50,
-    `off-grid floor ${floor.toFixed(1)} dB (f0${'-'}40 ${side(F0 - 40).toFixed(1)} dBc, f0+40 ${side(F0 + 40).toFixed(1)} dBc; -35.2 dB before the fix, line -50)`,
-  );
-  const sine = drive([[P.OSC1_WAVE, WAVE.sine], [P.PATCH_GAIN, 6]]);
-  check(
-    'the ruler is not what the saw measurement is reading',
-    offGridFloor(sine.out, F0) < -100,
-    `the edge-free control reads ${offGridFloor(sine.out, F0).toFixed(1)} dB through the same limiter`,
-  );
+  const hz = (note) => 440 * 2 ** ((note - 69) / 12);
+  // note 45 carries the sideband detail on a whole four seconds; the treble
+  // notes -- where the soft clipper's own floor is worst -- use one second.
+  for (const [note, seconds] of [[45, 4], [57, 1], [69, 1]]) {
+    const f0 = hz(note);
+    const r = drive(note, [[P.OSC1_WAVE, WAVE.saw], [P.PATCH_GAIN, 6]], seconds);
+    const peak = peakOf(r.out);
+    const step = worstStepOf(r.out);
+    const lo = Math.min(...r.gains);
+    const hi = Math.max(...r.gains);
+    const pumped = 20 * Math.log10(hi / lo);
+    const floor = offGridFloor(r.out, f0);
+    const fund = binMagHann(r.out, f0);
+    const side = (f) => 20 * Math.log10(Math.max(binMagHann(r.out, f), 1e-12) / fund);
+    check(
+      `the limiter keeps a driven note ${note} under the ceiling`,
+      peak <= 0.95 && peak > 0.5 && step.step < peak * 1.2 && r.out.every(Number.isFinite),
+      `peak ${peak.toFixed(4)} (ceiling 0.95, soft knee ${KNEE}), worst step ${step.step.toFixed(4)} = ${(step.step / peak).toFixed(3)} of peak (bound 1.2), all samples finite`,
+    );
+    check(
+      `the limiter does not pump a held note ${note}`,
+      pumped < 0.5,
+      `gain ${lo.toFixed(4)}..${hi.toFixed(4)} = ${pumped.toFixed(3)} dB peak-to-peak over ${seconds} s (line 0.5; 1.060/0.726/0.616 dB at notes 45/57/69 before the ceiling hold)`,
+    );
+    check(
+      `the limiter leaves no sidebands at note ${note} (k*f0 +- 40 Hz)`,
+      floor < -50,
+      `off-grid floor ${floor.toFixed(1)} dB at f0 ${f0.toFixed(1)} Hz over ${seconds} s (f0-40 ${side(f0 - 40).toFixed(1)} dBc, f0+40 ${side(f0 + 40).toFixed(1)} dBc; -35.2/-34.1/-33.9 dB before the fix at notes 45/57/69, line -50 chosen from the soft clipper's own floor)`,
+    );
+  }
+  // Controls: the same limiter, a waveform with no edge to sample badly. Their
+  // before numbers were -92.2 / -70.6 dB, so the bounds have teeth too.
+  for (const [name, wave, bound] of [['sine', WAVE.sine, -100], ['triangle', WAVE.triangle, -95]]) {
+    const r = drive(45, [[P.OSC1_WAVE, wave], [P.PATCH_GAIN, 6]], 1);
+    check(
+      `the ruler is not what the saw measurement is reading (${name})`,
+      offGridFloor(r.out, hz(45)) < bound,
+      `the edge-free control reads ${offGridFloor(r.out, hz(45)).toFixed(1)} dB through the same limiter (bound ${bound})`,
+    );
+  }
 }
 
 console.log('[audio] quality gate');

@@ -9345,79 +9345,129 @@ mod tests {
     /// nearest the peak depends on where that edge lands between samples. The
     /// sample phase advances by a non-integer number of samples per cycle, so
     /// the per-cycle dip of the gain jittered by ~4.4 % and repeated with the
-    /// phase pattern's own period: for the A notes (110 Hz at note 45) that put
-    /// the strongest sidebands at `k*f0 +- 40 Hz`. Releasing between two peaks
-    /// is what let that jitter into the gain; the ceiling hold in the limiter
-    /// loop removes it. Measured here (one second, BH-7 off-grid ruler, the same
-    /// one `verify-audio.mjs` uses):
+    /// phase pattern's own period: for the A notes that put the strongest
+    /// sidebands at `k*f0 +- 40 Hz`. Releasing between two peaks is what let
+    /// that jitter into the gain; the ceiling hold in the limiter loop removes
+    /// it.
     ///
-    /// * before: floor -28..-40 dB across the keyboard, gain pumped 1.1 dB;
-    /// * after: floor -52..-61 dB, gain flutter 0.000 dB.
+    /// Three notes, not one, because the residual floor is the *soft limit*'s
+    /// own and it is worst at the top of the range. The `-50 dB` line is chosen
+    /// from that floor -- a fixed gain that only pushes the peak past the 0.82
+    /// knee reads -55..-57 dB, so the limiter's own contribution is below the
+    /// soft clipper here -- and not from a round number in the brief. Measured
+    /// with this fixture, one-second renders, BH-7 off-grid ruler (the same one
+    /// `verify-audio.mjs` uses), before -> after:
     ///
-    /// The frequency bound sits inside the after numbers and well above the
-    /// before ones, and it has to: the unfixed core fails both the floor and the
-    /// pump assertion. The sine/triangle controls (no edge) were already clean
-    /// and stay clean, which is what makes the saw measurement meaningful.
+    /// | note | f0 | before | after | pump before | pump after |
+    /// | :-- | --: | --: | --: | --: | --: |
+    /// | 45 | 110 Hz | -35.2 dB | -58.3 dB | 1.060 dB | 0.000 dB |
+    /// | 57 | 220 Hz | -34.1 dB | -55.2 dB | 0.726 dB | 0.000 dB |
+    /// | 69 | 440 Hz | -33.9 dB | -51.9 dB | 0.616 dB | 0.000 dB |
+    ///
+    /// One second is enough: the number is set by the sampling-phase pattern,
+    /// and eight successive note-ons (which walk `phase_seed`) read those three
+    /// floors to 0.1 dB at one second and at four. The sine control (no edge at
+    /// all) reads -122 dB through the same limiter, so what the saw numbers
+    /// measure is the limiter and not the ruler.
     #[test]
     fn the_limiter_does_not_modulate_the_bus_at_the_phase_rate() {
         let _guard = lock_engine();
-        let f0 = 440.0 * 2f32.powf((45.0 - 69.0) / 12.0);
-        let mut e = new_engine(16);
-        e.set_param(id::OSC1_ON, 1.0);
-        e.set_param(id::OSC1_WAVE, crate::params::Wave::Saw as u32 as f32);
-        e.set_param(id::OSC1_LEVEL, 0.9);
-        e.set_param(id::OSC2_ON, 0.0);
-        e.set_param(id::OSC2_LEVEL, 0.0);
-        e.set_param(id::FILTER_CUTOFF, 18_000.0);
-        e.set_param(id::FILTER_RES, 0.05);
-        e.set_param(id::FILTER_DRIVE, 0.0);
-        e.set_param(id::ENV_ATTACK, 0.01);
-        e.set_param(id::ENV_SUSTAIN, 1.0);
-        e.set_param(id::FX_REVERB_ON, 0.0);
-        e.set_param(id::FX_DELAY_ON, 0.0);
-        e.set_param(id::MASTER_VOLUME, 1.0);
-        e.set_param(id::PATCH_GAIN, 6.0);
-        e.note_on(45, 1.0);
-        for _ in 0..400 {
-            e.process(128);
-        }
-        let mut out: Vec<f32> = Vec::with_capacity(48_000);
-        let (mut peak, mut step, mut prev) = (0.0f32, 0.0f32, 0.0f32);
-        let (mut lo, mut hi) = (1.0f32, 0.0f32);
-        for _ in 0..375 {
-            e.process(128);
-            for i in 0..128 {
-                let v = e.out_l[i];
-                assert!(v.is_finite(), "the limiter produced a non-finite sample");
-                peak = peak.max(v.abs());
-                step = step.max((v - prev).abs());
-                prev = v;
+        // A fresh engine per note: this resets the parameter block, the phase
+        // seed and the limiter state, so one note cannot leak into the next.
+        let render = |wave: u32, note: u8| {
+            let mut e = new_engine(16);
+            e.set_param(id::OSC1_ON, 1.0);
+            e.set_param(id::OSC1_WAVE, wave as f32);
+            e.set_param(id::OSC1_LEVEL, 0.9);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_CUTOFF, 18_000.0);
+            e.set_param(id::FILTER_RES, 0.05);
+            e.set_param(id::FILTER_DRIVE, 0.0);
+            e.set_param(id::ENV_ATTACK, 0.01);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::FX_REVERB_ON, 0.0);
+            e.set_param(id::FX_DELAY_ON, 0.0);
+            e.set_param(id::MASTER_VOLUME, 1.0);
+            e.set_param(id::PATCH_GAIN, 6.0);
+            e.note_on(note, 1.0);
+            for _ in 0..400 {
+                e.process(128);
             }
-            lo = lo.min(e.limit_gain);
-            hi = hi.max(e.limit_gain);
-            out.extend_from_slice(&e.out_l[..128]);
+            let mut out: Vec<f32> = Vec::with_capacity(48_000);
+            let (mut peak, mut step, mut prev) = (0.0f32, 0.0f32, 0.0f32);
+            let (mut lo, mut hi) = (1.0f32, 0.0f32);
+            for _ in 0..375 {
+                e.process(128);
+                for i in 0..128 {
+                    let v = e.out_l[i];
+                    assert!(v.is_finite(), "the limiter produced a non-finite sample");
+                    peak = peak.max(v.abs());
+                    step = step.max((v - prev).abs());
+                    prev = v;
+                }
+                lo = lo.min(e.limit_gain);
+                hi = hi.max(e.limit_gain);
+                out.extend_from_slice(&e.out_l[..128]);
+            }
+            let f0 = 440.0 * 2f32.powf((note as f32 - 69.0) / 12.0);
+            (
+                off_grid_floor(&out, f0 as f64),
+                20.0 * (hi / lo).log10(),
+                peak,
+                step,
+            )
+        };
+        // Every note is measured before anything is asserted, so one run shows
+        // the whole picture -- including the 440 Hz reading that a 110 Hz-only
+        // gate would miss -- instead of stopping at the first bad note.
+        let mut failures: Vec<String> = Vec::new();
+        let mut readings: Vec<String> = Vec::new();
+        for note in [45u8, 57, 69] {
+            let (floor, pumped, peak, step) = render(crate::params::Wave::Saw as u32, note);
+            let f0 = 440.0 * 2f32.powf((note as f32 - 69.0) / 12.0);
+            readings.push(format!(
+                "note={note} f0={f0:.0} floor={floor:.1} pump={pumped:.3} peak={peak:.3} step={step:.3}"
+            ));
+            if peak > 1.0 {
+                failures.push(format!("note {note} clipped at {peak}"));
+            }
+            if peak <= 0.5 {
+                failures.push(format!("nothing came through at note {note}: {peak}"));
+            }
+            // The sawtooth's own edge is ~1.0x the peak, so this is not a click
+            // bound for a smooth signal: it catches a *limiter-introduced*
+            // discontinuity (a gain step) on top of the waveform.
+            if step >= peak * 1.2 {
+                failures.push(format!(
+                    "the limiter stepped note {note} by {step} against a peak of {peak}"
+                ));
+            }
+            if pumped >= 0.5 {
+                failures.push(format!(
+                    "the limiter pumped note {note} by {pumped:.2} dB at the waveform rate"
+                ));
+            }
+            if floor >= -50.0 {
+                failures.push(format!(
+                    "note {note} has off-grid energy from the limiter: {floor:.1} dB (k*f0 +- 40 Hz sidebands)"
+                ));
+            }
         }
-        let floor = off_grid_floor(&out, f0 as f64);
-        let pumped = 20.0 * (hi / lo).log10();
+        let (control, _, _, _) = render(crate::params::Wave::Sine as u32, 45);
+        if control >= -100.0 {
+            failures.push(format!(
+                "the edge-free control is not clean through the limiter: {control:.1} dB"
+            ));
+        }
         println!(
-            "LIM-SB floor={floor:.1} dB pump={pumped:.3} dB peak={peak:.3} step={step:.3} gain={lo:.3}..{hi:.3}"
-        );
-        assert!(peak <= 1.0, "output clipped at {peak}");
-        assert!(peak > 0.5, "nothing came through: {peak}");
-        // The sawtooth's own edge is ~1.0x the peak, so this is not a click
-        // bound for a smooth signal: it catches a *limiter-introduced*
-        // discontinuity (a gain step) on top of the waveform.
-        assert!(
-            step < peak * 1.2,
-            "the limiter stepped the bus by {step} against a peak of {peak}"
+            "LIM-SB {} | sine control {control:.1} dB",
+            readings.join(" | ")
         );
         assert!(
-            pumped < 0.5,
-            "the limiter pumped the bus by {pumped:.2} dB at the waveform rate"
-        );
-        assert!(
-            floor < -50.0,
-            "the limiter left off-grid energy on the bus: {floor:.1} dB (k*f0 +- 40 Hz sidebands)"
+            failures.is_empty(),
+            "limiter sidebands by note: {}",
+            failures.join("; ")
         );
     }
 
