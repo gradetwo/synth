@@ -41,8 +41,10 @@ import {
   retainVersion,
   sortVersions,
   swCacheOf,
+  writeReleaseSums,
 } from './lib/retained.mjs';
 import { cloudflareToken, resolveSite } from './lib/release-env.mjs';
+import { fpsLogLines, readFpsLines } from './lib/fps-windows.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const site = resolveSite();
@@ -142,13 +144,6 @@ async function liveIndexHash() {
  * runs the one spec file (perf project, single worker) to keep the gate honest.
  */
 const BOOT_LINE = /\[boot-budget\] interactive (\d+) ms .*? budget (\d+) ms/;
-/**
- * The three frame-rate guards in `e2e/performance.spec.ts`. They are echoed in
- * the release log together with their window detail, because "best of five"
- * alone hides whether the windows agree -- the whole point of running them
- * isolated is that they do.
- */
-const FPS_LINE = /\[fps\] ([\w-]+) best ([\d.]+) of \[([^\]]*)\] fps/g;
 
 /** Scan a captured run for the boot line and check it. */
 function checkBootFrom(output, what) {
@@ -162,19 +157,31 @@ function checkBootFrom(output, what) {
 }
 
 /**
- * Echo the `[fps]` lines of the isolated performance run.
+ * Echo the `[fps]` lines of the isolated performance run, worst window included.
  *
  * The threshold itself is asserted by the spec (and the release stops on a
  * non-zero exit before this ever runs), so this does not re-check it; it puts
- * the best *and* the five windows into the release log so the next release
- * report carries the dispersion, not just the lucky window.
+ * the best *and* the worst of the five windows into the release log. Best-of-five
+ * is what the spec gates on and stays that way (host load can only slow a window
+ * down), but reporting only the best window hid the dispersion: a real run
+ * passed at `best 60.0 of [21.3, …, 60.0]` with its worst window 1.3 fps above
+ * the floor (§一.20⑥). A worst window under the floor is therefore logged as a
+ * `⚠` line and **not** turned into a failure — see `scripts/lib/fps-windows.mjs`.
+ *
+ * The reader is strict about the line's shape: a `[fps]` line it cannot parse is
+ * a failure, because "the spec stopped printing the worst window" must not read
+ * as "everything is fine".
  */
 function reportFpsFrom(output, what) {
-  const lines = [...output.matchAll(FPS_LINE)];
-  if (!lines.length) fail(`fps guards: ${what} printed no [fps] line`);
-  for (const line of lines) {
-    log(`[release]   · ${line[1]} best ${line[2]} fps of [${line[3]}] (${what})`);
+  const { entries, printed, malformed } = readFpsLines(output);
+  if (!printed) fail(`fps guards: ${what} printed no [fps] line`);
+  if (malformed) {
+    fail(
+      `fps guards: ${what} printed ${malformed}/${printed} [fps] line(s) that are not the ` +
+        '"best N worst M of [...]" shape — the spec and scripts/lib/fps-windows.mjs have drifted',
+    );
   }
+  for (const line of fpsLogLines(entries)) log(`[release]   ${line}`);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -255,6 +262,13 @@ function preflight() {
 }
 
 // ------------------------------------------------------- retained versions
+
+/** The three artefacts `npm run package` writes for this version, in its order. */
+const packagedArtifacts = () => [
+  resolve(root, 'release', `gs1-synth-${version}.zip`),
+  resolve(root, 'release', `gs1-synth-${version}-dist.zip`),
+  resolve(root, 'release', `gs1-synth-${version}.tar.gz`),
+];
 
 /**
  * Copy this release into `release/retained/` and prune the window (P12.4).
@@ -440,6 +454,14 @@ async function main() {
     // must not prune the window it never joined.
     step('retain the release artefacts');
     retainRelease(distHash);
+    // `npm run package` wrote `release/SHA256SUMS` before retention, so the
+    // snapshot of *this* release was not in it yet. Re-run the same writer now
+    // that the store holds it (§一.20⑧): the manifest a rollback is verified
+    // against has to include the copy a rollback would actually read. Same
+    // function and same paths, so the result is the package step's file plus
+    // the new snapshot.
+    const sums = writeReleaseSums({ root, extra: packagedArtifacts() });
+    log(`[release]   release/SHA256SUMS covers ${sums.count} file(s) (this release + every retained snapshot)`);
   } else {
     log('[release]   (--skip-deploy: nothing was deployed, so nothing is retained)');
   }

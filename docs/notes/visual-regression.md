@@ -52,7 +52,7 @@ npm run test:visual:update   # 重录基线（只有在你确实想改界面时�
 - E2E 有自己的端口 **4783**（`playwright.config.ts`），`vite preview` 用 `--strictPort`，
   不会复用 4173 上别的项目。
 
-## 为什么是可选套件（不进 CI、不进 `verify`）
+## 为什么曾经是可选套件（这段前提仍然成立）
 
 文字栅格化是**这台机器的字体栈**的属性，不是仓库的属性。在 CachyOS 上录的基线没有资格去判
 Ubuntu runner 的对错；一条含义为「freetype 版本不同」的红灯，只会教人忽略红灯。所以：
@@ -60,8 +60,52 @@ Ubuntu runner 的对错；一条含义为「freetype 版本不同」的红灯，
 - CI 的 `npm run test:e2e` 会加载这个 spec 并**跳过**（文件顶部的 `test.skip(!RUN, …)`），不产生噪声；
 - 录基线是显式动作；比较也是显式动作。当前基线属于本机 + 本机 Chromium。
 
-如果以后要进 CI，正确做法是给 CI 单独录一套基线（Playwright 的默认 `snapshotPathTemplate` 会带上
-project 与平台后缀，文件名已经天然分开），而不是让两边共用一套。
+「不进 CI」在 §一.12 里被证明是有代价的：没人跑 ⇒ 基线漂了十张没人知道。下一节是修这个代价的
+**第一步**，它没有推翻上面这段前提。
+
+## 从「可选套件」到「schedule 上的报告」（§一.12 / §一.20⑦）
+
+`.github/workflows/ci.yml` 多了一个 `visual` 作业，只做一件事：在 **schedule** 上跑
+`npm run test:visual -- --update-snapshots=none`，把 48 张基线比一遍、把差异作为制品留下来。
+
+### 为什么是 schedule + `continue-on-error`，而不是 push 作业里的一步
+
+- **schedule-only**（`if: github.event_name == 'schedule'`）：push/PR **永远不会**被它挡住。基线录在
+  开发机，CI runner 是 `ubuntu-latest`，两边字体栈不同是**已知**的；把这条红放进取 PR 的必过集合，
+  就是上面说的「教人忽略红灯」。20 分钟判据（`docs/notes/release.md`）也把它归到慢轨。
+- **`continue-on-error: true`**：第一次实跑是**报告**不是判决，schedule 跑红了也不把工作流判死。
+- **`--update-snapshots=none`**：命令本身承诺「只报差异、不录基线」。Playwright 对**缺失**基线的默认
+  行为是「写一张然后判失败」——在字体栈不同的 runner 上，那等于**悄悄铸出一张假基线**，而不是把差异
+  摆出来。这一条把「别让本地基线被静默覆盖」变成命令行里的硬约束。
+- 失败时的 `-expected` / `-actual` / `-diff` 三张图作为 `visual-diffs` 制品留 14 天，让「收紧还是不管」
+  这个决定能看着图做。
+
+`scripts/verify-ci.mjs` 对**两半**都做了断言：作业必须存在、必须构建后跑套件、必须装 Chromium、必须带
+`--update-snapshots=none`；并且**任何**跑 `test:visual` 的作业都必须是 schedule-gated —— 所以以后把
+它塞回 `verify`（或任何 push 作业）会在 `verify:ci` 红，而不是变成每个 PR 一条「不同 freetype」的红灯。
+它**不**断言 `continue-on-error` 一定在：那正是收紧时要动的东西。
+
+### 第一次实跑之后怎么收紧（**未做：本机验证不了 runner 的字体/渲染**）
+
+本机**无法**验证 CI runner 的字体栈与渲染是否与开发机一致，所以本批只交付「定期报告 + 制品留存」，
+把收紧步骤写死，免得下一次靠感觉决定。看第一次 schedule 跑的 `visual-diffs`：
+
+1. **差异只落在文字边缘/字形**（典型：每张图几百到几千像素、占比 < 1%，人眼只看出抗锯齿不同）
+   ⇒ 这是字体栈差异，**不要**用 runner 的输出覆盖仓库里的基线。正确做法是给 CI 单独一套基线：
+   给 `playwright.config.ts` 的 `snapshotPathTemplate` 加一个环境变量后缀（例如
+   `GS1_VISUAL_SNAPSHOT_SUFFIX`），在 `visual` 作业里设成 `-ci`，然后用
+   `npm run test:visual -- --update-snapshots=all` 在 runner 上录一次，把 48 张带 `-ci` 的图**提交**进仓库；
+   之后该作业比对的是 CI 自己的基线，本机那套 `-chromium-linux` 一张都不动、也不允许被覆盖。
+2. **差异是真界面差异**（大面积、结构性、能指到某个选择器）⇒ 那是真回归，按「维护」一节走：本机
+   `npm run test:visual` 复现、确认是有意改动再重录。
+3. **绿** ⇒ 说明两边渲染一致到阈值以内，此时可以去掉 `continue-on-error`，让 schedule 那次的失败变成
+   硬信号。**无论哪种情况都不要**把这条作业移进 push/PR 的必过集合：schedule 只是「定期真跑」，
+   不是「每次提交都判」。
+
+在没做完上面那一步之前，**不要**把这条作业的绿读成「视觉门禁已经接上」。它现在的定位是
+**定期报告 + 制品留存**，真正意义上的「门禁」还差第 1/2/3 步里的一个。改界面的批次照旧要自觉跑
+`npm run test:visual` 并重录（见「维护」一节）——CI 这条作业**不替代**那件事，它替代的是
+「没人跑所以漂到过期」。
 
 ## 阈值：0.01 像素占比 + 0.05 单像素色距（实测标定）
 

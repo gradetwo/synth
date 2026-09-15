@@ -16,7 +16,7 @@ npm run release -- --check           # 只做发布前校验（`npm run verify` 
 | 4 | `npm run package`（release/ 里的 zip/tar.gz/SHA256SUMS） | 构建失败 |
 | 5 | `wrangler deploy`（token 取环境变量，取不到就读 `~/.zshrc` 里的 `export CLOUDFLARE_API_TOKEN=`） | 未登录 / 网络 |
 | 6 | **线上资源核对**：带随机查询串拉首页，比对 `assets/index-*.js` 与 `dist/index.html`；不一致时每 5 秒重试，第 3 次重试前**再部署一次**（CF 边缘偶尔还挂着旧清单）；6 次仍不一致即失败 | 边缘缓存 / 部署没推上去 |
-| 7 | **保留本次发布**：把 `dist/index.html`、`dist/sw.js`、全站 `sha256.txt` 与 `release/gs1-synth-<version>.tar.gz` 复制进 `release/retained/<version>/`，更新 `release/retained/index.json`，**然后**把窗口外的旧版本删掉（N=5，见下文「保留 N 个版本」） | 快照缺失 / 快照指纹与已部署哈希不一致 |
+| 7 | **保留本次发布**：把 `dist/index.html`、`dist/sw.js`、全站 `sha256.txt` 与 `release/gs1-synth-<version>.tar.gz` 复制进 `release/retained/<version>/`，更新 `release/retained/index.json`，**然后**把窗口外的旧版本删掉（N=5，见下文「保留 N 个版本」），最后重写 `release/SHA256SUMS`（本次三件产物 + 每个保留快照） | 快照缺失 / 快照指纹与已部署哈希不一致 |
 | 8 | 打附注 tag `v<version>`（已存在则跳过，不覆盖） | — |
 
 参数：`--skip-verify`、`--skip-e2e`、`--skip-deploy`（只打包打 tag，**不保留、不清理**）、`--quiet`、`GS1_SITE=<url>` 覆盖线上地址、
@@ -141,7 +141,15 @@ CI 侧同样只在 schedule 的 `nightly` 作业里跑）、
   cat release/retained/index.json           # 每版的 shell/sw 指纹、storeSchema、保留时间、事件
   tar -xzf release/retained/<version>/gs1-synth-<version>.tar.gz -C /tmp/site   # 完整站点
   cat release/retained/<version>/sha256.txt # 每个文件的 sha256
+  cat release/SHA256SUMS                    # 本次三件产物 + **每个**保留快照的 sha256（§一.20⑧）
+  sha256sum -c release/SHA256SUMS           # 从仓库根目录核对上面这些字节
   ```
+
+  `release/SHA256SUMS` 由 `scripts/package.mjs` 写、`release.mjs` 在保留步骤之后**再写一次**：
+  `package` 跑的时候本次快照还没进 store，所以第二次写入把「回滚真会读的那个文件」也列了进去。
+  两个调用点是 `scripts/lib/retained.mjs` 的同一个 `writeReleaseSums`——写完立刻重读+重算哈希，
+  对不上就让 `package` 失败，而不是把错误的清单发出去。落在保留窗口之外的旧 `release/gs1-synth-*`
+  不在清单里（它们已经不是回滚目标）。
 
   `rollback.mjs` 做的就是「解包 + 逐文件核对 sha256 + 用这个目录当 `[assets]` 重新部署」。
 

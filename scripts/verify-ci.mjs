@@ -137,6 +137,23 @@ for (const name of [...requiredCommands] .map(scriptOf).filter((n) => n && n !==
 check('the scalar core is gated too', verify.includes('synth_core_scalar.wasm'));
 check('dist is uploaded for inspection', verify.includes('upload-artifact'));
 
+// §一.39: `dtolnay/rust-toolchain@stable` pins no version, and a clippy 1.98
+// upgrade turned the *first* step of the verify job red with nobody expecting
+// it. The version log therefore has to stay, and it has to stay *before* the
+// clippy gate: a version printed after the step that died is a version nobody
+// ever sees.
+check('verify job logs the toolchain versions', verify.includes('Toolchain versions'));
+for (const needle of ['rustc --version', 'cargo clippy --version', 'node --version', 'npm --version']) {
+  check(`verify job prints "${needle}"`, verify.includes(needle));
+}
+const versionLogAt = verify.indexOf('rustc --version');
+const clippyAt = verify.indexOf('npm run verify:clippy');
+check(
+  'the toolchain version log precedes the clippy gate',
+  versionLogAt >= 0 && clippyAt >= 0 && versionLogAt < clippyAt,
+  versionLogAt >= 0 && clippyAt >= 0 && versionLogAt < clippyAt ? '' : 'print the versions before `verify:clippy`, or the log is useless when clippy is the thing that broke',
+);
+
 // The slow engines may not sit in a push-triggered job. WebKit needs 42.7 min
 // for the whole suite on a warm workstation (and 19.1 min for the fifty most
 // relevant tests), Firefox is slow-lane only by the same decision, and the rule
@@ -175,6 +192,36 @@ check('it runs both engines over the whole suite', wholeSuite >= 2,
   wholeSuite >= 2 ? '' : 'each engine needs an `--all` pass now that `e2e-engines` is gone');
 check('it runs the long benchmark', nightly.includes('npm run bench:long'));
 check('it keeps its logs', nightly.includes('nightly-logs'));
+
+// §一.12 / §一.20⑦: the visual baselines are a gate nobody ran, and they drifted
+// ten baselines out of date before P11.3 noticed. Both halves of the promise are
+// asserted here. The job has to exist and actually run the suite (deleting it is
+// exactly how "nobody runs it" started), and it may not run anywhere a push or
+// a PR can be blocked by it: the baselines encode the recording host's font
+// stack, so a red comparison on an Ubuntu runner means "different freetype" and
+// nothing else. `continue-on-error` is deliberately *not* asserted — tightening
+// that is the documented next step once the runner has shown what it does.
+const visual = body('visual');
+check('a visual-baseline job exists', jobs.has('visual'));
+check('it only runs on the schedule', scheduledOnly('visual'));
+check('it builds the app before comparing', visual.includes('npm run build'));
+check('it installs Chromium', /playwright install[^\n]*chromium/.test(visual));
+check('it runs the visual suite', visual.includes('npm run test:visual'));
+check('it never records a baseline (--update-snapshots=none)', visual.includes('--update-snapshots=none'));
+check('it keeps the diff images for the tightening decision', visual.includes('visual-diffs'));
+check('package.json defines "test:visual"', Object.prototype.hasOwnProperty.call(scripts, 'test:visual'));
+// The general form of "not in the blocking set": *any* job that runs the suite
+// has to be schedule-gated, so adding it to a push job later reads as a failure
+// here rather than as a red PR that means "different freetype".
+for (const [name, steps] of jobs) {
+  if (name === 'visual') continue;
+  if (!steps.some((line) => line.includes('test:visual'))) continue;
+  check(
+    `the "${name}" job runs the visual suite only on the schedule`,
+    scheduledOnly(name),
+    `"${name}" runs the visual suite but is not schedule-gated`,
+  );
+}
 
 if (failures.length) {
   console.error(`[ci] FAIL — ${failures.join(', ')}`);
