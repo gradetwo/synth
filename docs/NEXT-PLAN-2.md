@@ -426,7 +426,7 @@
 | **P13.2 只读+渲染+测量** | `mcp/server.mjs` + `gs1.describe`/`params.list`/`presets.list`/`patch.get`/`render`/`analyze`/`gate` + `npm run mcp` | 工具级单测 + 黄金会话（同调用两次逐字节相同）+ 手写 JSON-RPC 的 `initialize`/`tools/list`/`tools/call` 有测试 + **`dependencies` 仍为空** |
 | **P13.3 操作类** | `patch.set`/`patch.random`/`sample.import`/`wavetable.import`/preset 套用保存 | 覆盖「夹取要报告」「装不下返回 `noRoom`」「坏文件结构化拒绝」；patch 往返一致 |
 | **P13.4 浏览器层 + 范例** | ✅ `gs1.ui.*`（Playwright，复用抽出来的 `e2e/interact.mjs`）+ 实战范例 | 范例**真跑过**：`crushlead` 只改 `fxCrushBits 6→4`，≥1 kHz Hann 地板 **−4.02 → −64.88 dB（60.86 dB）**，前后 JSON/分享码/调用序列都在 `docs/LLM-INTERFACE.md` §4.5 且可重放；截图 1440×900 与桌面基线同尺寸 |
-| **P13.5 文档与发现** | `docs/LLM-INTERFACE.md` 补齐工具契约/限制/示例；`docs/notes/mcp.md` 记设计与坑 | 一个外部 agent 能只读这两个文件就接上（自查清单） |
+| **P13.5 文档与发现** ✅ | `docs/LLM-INTERFACE.md` 补齐工具契约/限制/示例；`docs/notes/mcp.md` 记设计与坑；`scripts/verify-llm-docs.mjs` 钉住不许漂移 | ✅ 一个**无上下文**新 agent 只读这两份文档就端到端跑通（`initialize → tools/list → presets.list → render → analyze`，自算 sha256 与返回一致）；它卡住的 8 处已据此改文档 |
 
 **非目标（第一版）**：不接声卡（只离线渲染）、不联网、不接受任意代码/表达式、**永不部署**。
 **依赖与并行**：依赖 P9.x/P10.x 已定型（尺子/返回码）；足迹是 `scripts/lib/`、`mcp/`、`docs/`，
@@ -463,7 +463,7 @@
 | 19 | **P13.2 MCP 只读+渲染+测量** ✅ 7 个工具、54 条测试、黄金会话逐字节相同、目录驱动注册表、`npm run mcp` 与 CI/verify-ci 同步；**零新增运行时依赖** | P13.1 | 中 | ✅ **v2.1.1** |
 | 20 | **P13.3 MCP 操作类（patch/sample/preset）** ✅ 7 个工具、变异工具会如实报告夹取/拒绝；MCP 测试共 **88** 条、黄金会话 21 次调用两遍哈希相同 | P13.2 | 中 | ✅ **v2.1.1** |
 | 21 | **P13.4 MCP 浏览器层 + 实战范例** ✅ 5 个 `gs1.ui.*` 工具（独立入口 `npm run mcp:ui`、只用 4796、只连 127.0.0.1、白名单 spec）；**帧无关交互抽成 `e2e/interact.mjs` 与 E2E 共用**，顺带修掉 `force` 从不被读的真缺陷（删掉那 5 行 ⇒ 5 条单测 30 s 超时变红）；**范例真跑**：`crushlead` 只改 `fxCrushBits 6→4`，≥1 kHz Hann 地板 **-4.02 → -64.88 dB（60.86 dB）** | P13.2 | 中 | v2.1.2 |
-| 22 | **P13.5 LLM 接口文档与发现** | P13.2 | 小 | v2.1.4 |
+| 22 | **P13.5 LLM 接口文档与发现** ✅ `docs/LLM-INTERFACE.md` 402→744 行改成**外部契约**（19 工具分两层、限制/拒绝、客户端接法、20 条接入自查清单）+ `docs/notes/mcp.md` 补完；新门禁 **`verify:llm-docs`**（工具名/错误码**双向**一致、上限与端口从代码派生）；**外部视角检验**用一个无上下文 agent 真跑通调用链，并据它卡住的 8 处改了文档 | P13.2 | 小 | v2.1.2 |
 | 23 | **P9.10 采样导入提速（每抽头 clamp 提出内循环，逐位相同；§一.29）** ✅ 安静主机 4 s 导入 **130 → 78 ms**（1.68×），`test:dsp` / 91 指纹 / 导入→渲染 sha256 全部一字不动；`#[inline(never)]` 把 wasm gzip 从超线 92 B 买回（76 717 B，余 83 B） | P9.8 | 小 | ✅ **v2.1.1** |
 | 24 | **p141 更新记录上限化（买回 dist 体积；§一.39②）** ✅ dist **−79.4 KB**，线 1619 → **1550（下调）** | — | 小 | ✅ **v2.1.1** |
 | 25 | **p142 计时判据统一 + 读数可见（§一.20①②⑤）** ✅ 三处门禁共用 `scripts/lib/host-load.mjs`，读数恒打印，不可信时可见地 skip；阈值未动 | — | 小 | ✅ **v2.1.1** |
@@ -493,7 +493,7 @@
 ## 六、每批的完成定义（Definition of Done）
 
 1. **实现**（含注释说明「为什么」）+ **单元测试**（音频批次还要真 wasm 门禁）+ **E2E**（用户可见改动必须有）。
-2. `npm run verify` **全绿**（实际链序：clippy → `test:rust` → **build** → `test` → lint → `test:wasm` → ci → release → dist → budget → audio → presets → presets:2x → bench → dsp → dsp:2x → `mcp --self-test`）。
+2. `npm run verify` **全绿**（实际链序：clippy → `test:rust` → **build** → `test` → lint → `test:wasm` → ci → release → dist → budget → audio → presets → presets:2x → bench → dsp → dsp:2x → `mcp --self-test` → `verify:llm-docs`）。
    **`build` 必须排在 `test` 前面**：`src/generated/*.wasm` 是 gitignore 的构建产物，干净 worktree 上先测必红（§一.35，修复提交 `0a5aca3`）。
 3. **相容红线**：`test:dsp` **0.061470**、`verify:dsp:2x` **0.061703**、`verify:presets` 与 `verify:presets:2x` 都是 **`91 presets unchanged · ABI 8`**，除非本批有意改变并显式重录（附理由）。
 4. **小步提交**（功能 / 文档+版本 分开）+ `npm run package` + `npm run release -- <version>`。
