@@ -1859,8 +1859,12 @@ input,textarea,[contenteditable='true']{
 .app[data-device='tablet'] .topbar:not(.compact) .preset-ctrl{order:3;flex-basis:100%;width:100%}
 
 /* Desktop: the preset needs the room the compare/random/save buttons took, so
-   those three move into the overflow menu. */
-.app[data-device='desktop'] .preset-ctrl{min-width:320px}
+   those three move into the overflow menu. The floor is capped by the room the
+   bar actually has: a stale device class -- WebKit keeps the class the app
+   booted with when a viewport change brings no `resize`/ResizeObserver
+   callback -- must not be able to widen the page at 320 px. At desktop widths
+   100% of the bar is wider than 320 px, so nothing changes there. */
+.app[data-device='desktop'] .preset-ctrl{min-width:min(320px,100%)}
 
 /* ==========================================================================
    Piano roll editor

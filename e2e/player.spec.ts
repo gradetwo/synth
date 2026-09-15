@@ -322,6 +322,19 @@ test.describe('player MIDI import', () => {
     );
     expect(overflow).toBeLessThanOrEqual(1);
 
+    // …and it still has to fit when the app is left in its *desktop* class.
+    // WebKit does not notify the page of `page.setViewportSize` -- measured:
+    // no `resize`, no `visualViewport.resize`, no `ResizeObserver` callback --
+    // so the class the app booted with at 1280 px survives the shrink to
+    // 320 px. Under that stale class the top bar keeps its desktop layout, and
+    // a desktop-only `min-width` on the preset control then grew the page
+    // 10 px sideways (exactly the top bar's left padding). A class the app
+    // cannot refresh must not be able to widen the page.
+    await page.evaluate(() => document.querySelector('.app')?.setAttribute('data-device', 'desktop'));
+    const staleClass = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(staleClass).toBeLessThanOrEqual(1);
   });
 });
 
