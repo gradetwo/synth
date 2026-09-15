@@ -147,8 +147,15 @@ w(v,edge)  = M − lat(src)                                  // 干声源→输�
 无 P9.4 代码）** vs 1.795138（含 P9.4）——那是**声部滤波路径自己的 31 样本往返**在硬驱方波上换挡，
 用 A/B 对照确认过；P6.5 场景（无并联支路、非满驱）仍 < 0.25。
 
-**发现但未修的既存 bug（留给后续批次）**：`graph_param_field` 的 `base <= id < base + FX_SLOTS`
-让节点参数区与其它参数**编号重叠**：`FX_NODE_OUT_GAIN + 1 == FX_DELAY_MIX`、
-`FX_NODE_TO_OUT + 5 == FX_PARALLEL3`、`FX_NODE_IN1 + 5 == FX_EQ_ON`。后果是**宿主（JS/worklet）
-无法把 6 个节点全部清干净**，我的 JS 探针因此出现「节点 2 读节点 1」的双驱动（rms 是链的 2 倍）；
-Rust 测试走内部 API 所以不受影响，两把尺子的**差值**也不受影响。修它要动参数编号，属红线级改动。
+**「编号重叠」不成立（2026-09-15 复核并更正）**：这里原来写着 `graph_param_field` 的
+`base <= id < base + FX_SLOTS` 让节点区与其它参数撞号，并给了三个算式。**那三个算式全是错的**
+（`FX_NODE_OUT_GAIN + 1 = 132 ≠ FX_DELAY_MIX = 35`、`FX_NODE_TO_OUT + 5 = 130 ≠ FX_PARALLEL3 = 90`、
+`FX_NODE_IN1 + 5 = 106 ≠ FX_EQ_ON = 157`），真算式是 `FX_NODE_OUT_GAIN + 6 == OSC_FM`（131+6=137）。
+节点块是**干净连续的 36 个 id**：六个字段的 base 恰好相距 `FX_SLOTS = 6`，半开区间
+`[101,107) [107,113) [113,119) [119,125) [125,131) [131,137)` **两两不相交且铺满 `[101,137)`**，
+每个 id 都解码到自己那格，`132..136` 是**空缺号**、没有任何普通参数落在块内。所以
+「宿主无法把 6 个节点清干净」不成立，`Params::set` 的 `slot < FX_SLOTS` 守卫是**防御性**的
+（没有真实 id 会走到它）。**本文件上面那条「过采样往返补偿被算了两遍」才是 P9.4 那次 2× rms
+的真因**，两件事原被并成了一句话。逐 id 影响面与「为什么不重排编号」见
+`docs/notes/node-param-ids.md`（轨道 `pid`，2026-09-15），并由 Rust
+`node_block_does_not_shadow_any_ordinary_parameter` 等 4 条与 `src/audio/node-ids.test.ts` 5 条钉住。
