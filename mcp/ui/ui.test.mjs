@@ -14,7 +14,8 @@
  *   * `gs1.ui.text` / `click` / `screenshot` refuse without an open page, and a
  *     selector that never appears is a structured `E_UI_TIMEOUT`, not a hang;
  *   * `gs1.ui.screenshot` only writes names inside `.tmp/mcp/`;
- *   * the preview refuses the E2E suite's port (4783) and serves only `dist/`;
+ *   * the preview refuses the E2E suite's port (4783 by default, `GS1_E2E_PORT`
+ *     moves it) and serves only `dist/`;
  *   * the offline registry never contains a `gs1.ui.*` tool, and the browser
  *     layer's tools are exactly the five documented ones.
  */
@@ -377,13 +378,18 @@ describe('G. the preview server is loopback-only and refuses the E2E port', () =
     rmSync(fixture, { recursive: true, force: true });
   });
 
-  it('the default port is 4796 and 4783 is refused', () => {
+  it('the default port is 4796 and the E2E port is refused', () => {
     const previous = process.env.GS1_MCP_UI_PORT;
     delete process.env.GS1_MCP_UI_PORT;
     expect(previewPort()).toBe(DEFAULT_PORT);
     expect(DEFAULT_PORT).not.toBe(E2E_PORT);
-    expect(E2E_PORT).toBe(4783);
-    process.env.GS1_MCP_UI_PORT = '4783';
+    // `E2E_PORT` is the port `playwright.config.ts` resolved, and a parallel
+    // development track moves it with `GS1_E2E_PORT` so its suite does not take
+    // this machine's 4783 (see `.tmp/parallel-dev.md` §六). The refusal has to
+    // follow that resolved port: asserting the literal 4783 here made every
+    // parallel track's full `verify` red for a reason that was not a regression.
+    expect(E2E_PORT).toBe(Number(process.env.GS1_E2E_PORT ?? 4783));
+    process.env.GS1_MCP_UI_PORT = String(E2E_PORT);
     let error;
     try {
       previewPort();
@@ -391,7 +397,7 @@ describe('G. the preview server is loopback-only and refuses the E2E port', () =
       error = errorPayload(thrown).error;
     }
     expect(error.code).toBe(ERRORS.RANGE);
-    expect(error.e2ePort).toBe(4783);
+    expect(error.e2ePort).toBe(E2E_PORT);
     process.env.GS1_MCP_UI_PORT = 'not-a-port';
     expect(() => previewPort()).toThrow(/must be 1\.\.65535/);
     if (previous === undefined) delete process.env.GS1_MCP_UI_PORT;
