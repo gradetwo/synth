@@ -1,0 +1,274 @@
+/**
+ * Layout model: module order, collapsed state and keyboard visibility.
+ *
+ * Kept separate from the patch (`SynthState`) so loading a preset never moves
+ * the user's panels around. Persisted independently under `gs1:layout:v1`.
+ */
+
+import type { ParamId } from '@/audio/params';
+import type { Lang } from '@/i18n';
+import { Param } from '@/audio/params';
+import { normalizeBindings, type CcBinding } from '@/audio/ccmap';
+import { normalizeScale } from '@/audio/scala';
+import { normalizeFxTemplates, type FxTemplate } from './fxtemplates';
+import { normalizeClipTemplates, type ClipTemplate } from '@/midi/cliptemplates';
+
+export type ModuleId = 'osc1' | 'osc2' | 'filter' | 'env' | 'lfo' | 'matrix' | 'fx' | 'fx2';
+
+export const MODULE_IDS: ModuleId[] = ['osc1', 'osc2', 'filter', 'env', 'lfo', 'matrix', 'fx', 'fx2'];
+
+export interface ModuleMeta {
+  title: string;
+  sub: string;
+  color: string;
+  ledId?: ParamId;
+  /** Grid columns to span on wide layouts. */
+  span: 1 | 2;
+}
+
+export const MODULE_META: Record<ModuleId, ModuleMeta> = {
+  osc1: { title: 'OSC 1', sub: 'module.osc1.sub', color: 'var(--osc1)', ledId: Param.OSC1_ON, span: 1 },
+  osc2: { title: 'OSC 2', sub: 'module.osc2.sub', color: 'var(--osc2)', ledId: Param.OSC2_ON, span: 1 },
+  filter: { title: 'FILTER', sub: 'module.filter.sub', color: 'var(--filter)', span: 1 },
+  env: { title: 'AMP ENV', sub: 'module.env.sub', color: 'var(--env)', span: 1 },
+  lfo: { title: 'LFO', sub: 'module.lfo.sub', color: 'var(--lfo)', ledId: Param.LFO_ON, span: 1 },
+  matrix: { title: 'MOD MATRIX', sub: 'module.matrix.sub', color: 'var(--matrix)', span: 1 },
+  fx: { title: 'FX', sub: 'module.fx.sub', color: 'var(--fx)', span: 2 },
+  fx2: { title: 'FX 2', sub: 'module.fx2.sub', color: 'var(--fx)', span: 2 },
+};
+
+/** Colour scheme. `auto` follows the operating system preference live. */
+export type Theme = 'dark' | 'light' | 'auto';
+
+/**
+ * How a touch on a key maps to note velocity.
+ * - `fixed`  → every tap is 0.9 (predictable, like a step sequencer).
+ * - `touch`  → vertical position on the key: lower = louder (0.35..1).
+ */
+export type VelocityMode = 'fixed' | 'touch';
+
+/** Top-level workspace: the classic module grid or the signal-flow canvas. */
+export type ViewMode = 'modules' | 'flow';
+
+export interface LayoutState {
+  order: ModuleId[];
+  collapsed: Partial<Record<ModuleId, boolean>>;
+  keyboardVisible: boolean;
+  theme: Theme;
+  /** High-contrast overlay, independent of the colour scheme. */
+  contrast: boolean;
+  lang: Lang;
+  velocityMode: VelocityMode;
+  haptics: boolean;
+  view: ViewMode;
+  /** Signal-flow node positions in canvas pixels. */
+  flowPos: Record<string, [number, number]>;
+  /** Effect-graph card positions, when the user has arranged them (A1). */
+  fxGraphPos: Record<string, [number, number]>;
+  /**
+   * Saved effect-graph templates (P7.3). Workspace data, next to the card
+   * positions: a template is a routing the player can reuse, not part of the
+   * patch and not carried by a share code. Built-ins come from
+   * `state/fxtemplates`, so this list holds only the saved ones.
+   */
+  fxTemplates: FxTemplate[];
+  /**
+   * Saved clip templates (P10.2). The same kind of thing as `fxTemplates` and
+   * stored in the same place for the same reason: a named figure the player
+   * reuses across songs belongs to their workspace, and a share code carries a
+   * *song*, not the shelf of parts it was built from. See `midi/cliptemplates`.
+   */
+  clipTemplates: ClipTemplate[];
+  /** Nodes removed from the signal-flow canvas. */
+  flowHidden: string[];
+  /** `null` = automatic (collapsed on phones/tablets, expanded on desktop). */
+  displayExpanded: boolean | null;
+  /** Whether the phone first-run defaults (collapsed modules, compact row) were applied. */
+  phoneDefaults: boolean;
+  /** Modules collapsed automatically by the phone defaults, not by the user. */
+  autoCollapsed: ModuleId[];
+  /** User-pinned polyphony ceiling; 0 = let the load monitor decide. */
+  polyphony: number;
+  /** Which instance the panels are editing (1 = main, 2 = layer). */
+  activeInstance: 1 | 2;
+  /** How notes reach the two instances. */
+  instanceMode: 'single' | 'layer' | 'split';
+  /** Highest note that still plays instance 1 in `split` mode. */
+  splitNote: number;
+  /** Microtuning temperament id (see `audio/tuning`). */
+  temperament: string;
+  /** MIDI CC → parameter bindings (see `audio/ccmap`). */
+  ccMap: CcBinding[];
+  /** Live-input velocity curve (see `audio/velocity`). */
+  velocityCurve: string;
+  /** Send played notes to an external MIDI device. */
+  midiOut: boolean;
+  /** Selected MIDI output port id ('' = none). */
+  midiOutPort: string;
+  /** Quantise grid applied to recordings ('off' = leave the take alone). */
+  recordQuantise: string;
+  /** Imported Scala scale, when the temperament is set to `custom`. */
+  customTuning: { name: string; degrees: number[]; period: number } | null;
+  /** MPE input: per-note bend and pressure from a channel-per-note controller. */
+  mpe: boolean;
+}
+
+export function defaultLayout(): LayoutState {
+  return {
+    order: [...MODULE_IDS],
+    collapsed: {},
+    keyboardVisible: true,
+    // Fresh installs follow the operating system; the user can pin either mode.
+    theme: 'auto',
+    contrast: false,
+    lang: 'zh',
+    velocityMode: 'fixed',
+    haptics: true,
+    view: 'modules',
+    flowPos: {},
+    fxGraphPos: {},
+    fxTemplates: [],
+    clipTemplates: [],
+    flowHidden: [],
+    displayExpanded: null,
+    phoneDefaults: false,
+    autoCollapsed: [],
+    polyphony: 0,
+    activeInstance: 1,
+    instanceMode: 'single',
+    splitNote: 60,
+    temperament: 'equal',
+    ccMap: [],
+    velocityCurve: 'linear',
+    midiOut: false,
+    midiOutPort: '',
+    recordQuantise: 'off',
+    customTuning: null,
+    mpe: false,
+  };
+}
+
+/** Canvas coordinates a card may sit at: big enough to arrange, small enough
+ * that a corrupt save cannot push a card out of reach. */
+function clampCanvas(value: number): number {
+  return Math.max(-400, Math.min(2400, Math.round(value)));
+}
+
+/** Repair persisted layout data (unknown/duplicate ids, missing modules). */
+export function normalizeLayout(raw: unknown): LayoutState {
+  const base = defaultLayout();
+  if (!raw || typeof raw !== 'object') return base;
+  const input = raw as Partial<LayoutState>;
+  const seen = new Set<ModuleId>();
+  const order: ModuleId[] = [];
+  if (Array.isArray(input.order)) {
+    for (const id of input.order) {
+      if (typeof id === 'string' && (MODULE_IDS as string[]).includes(id) && !seen.has(id as ModuleId)) {
+        seen.add(id as ModuleId);
+        order.push(id as ModuleId);
+      }
+    }
+  }
+  for (const id of MODULE_IDS) if (!seen.has(id)) order.push(id);
+
+  const collapsed: Partial<Record<ModuleId, boolean>> = {};
+  if (input.collapsed && typeof input.collapsed === 'object') {
+    for (const id of MODULE_IDS) {
+      if ((input.collapsed as Record<string, unknown>)[id] === true) collapsed[id] = true;
+    }
+  }
+
+  const flowPos: Record<string, [number, number]> = {};
+  if (input.flowPos && typeof input.flowPos === 'object') {
+    for (const [id, pos] of Object.entries(input.flowPos as Record<string, unknown>)) {
+      if (Array.isArray(pos) && pos.length === 2 && pos.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+        flowPos[id] = [pos[0], pos[1]];
+      }
+    }
+  }
+  // The graph cards share the flow canvas's rules: finite numbers, clamped to a
+  // range a canvas can actually show, and unknown keys dropped rather than
+  // trusted. The modulation source cards (`lfo1`, `lfo2`, `env`) are cards too,
+  // so a dragged one keeps its place (P7.2).
+  const fxGraphPos: Record<string, [number, number]> = {};
+  if (input.fxGraphPos && typeof input.fxGraphPos === 'object') {
+    for (const [id, pos] of Object.entries(input.fxGraphPos as Record<string, unknown>)) {
+      if (!/^(dry|out|lfo1|lfo2|env|node[1-6])$/.test(id)) continue;
+      if (Array.isArray(pos) && pos.length === 2 && pos.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+        fxGraphPos[id] = [clampCanvas(pos[0]), clampCanvas(pos[1])];
+      }
+    }
+  }
+
+  const flowHidden = Array.isArray(input.flowHidden)
+    ? input.flowHidden.filter((id): id is string => typeof id === 'string')
+    : [];
+
+  return {
+    order,
+    collapsed,
+    keyboardVisible: input.keyboardVisible !== false,
+    // Older saves used `theme: 'contrast'`; migrate it to dark + contrast.
+    theme:
+      input.theme === 'light'
+        ? 'light'
+        : input.theme === 'dark' || (input.theme as string) === 'contrast'
+          ? 'dark'
+          : 'auto',
+    // `contrast` was a theme value in older saves.
+    contrast: input.contrast === true || (input.theme as string) === 'contrast',
+    lang: input.lang === 'en' ? 'en' : 'zh',
+    velocityMode: input.velocityMode === 'touch' ? 'touch' : 'fixed',
+    haptics: input.haptics !== false,
+    view: input.view === 'flow' ? 'flow' : 'modules',
+    flowPos,
+    fxGraphPos,
+    fxTemplates: normalizeFxTemplates(input.fxTemplates),
+    clipTemplates: normalizeClipTemplates(input.clipTemplates),
+    flowHidden,
+    displayExpanded:
+      typeof input.displayExpanded === 'boolean' ? input.displayExpanded : null,
+    phoneDefaults: input.phoneDefaults === true,
+    temperament: typeof input.temperament === 'string' ? input.temperament : 'equal',
+    ccMap: normalizeBindings(input.ccMap),
+    velocityCurve: ['linear', 'soft', 'hard'].includes(input.velocityCurve as string)
+      ? (input.velocityCurve as string)
+      : 'linear',
+    midiOut: input.midiOut === true,
+    midiOutPort: typeof input.midiOutPort === 'string' ? input.midiOutPort : '',
+    recordQuantise: ['off', '1/16', '1/8', '1/8t', '1/4'].includes(input.recordQuantise as string)
+      ? (input.recordQuantise as string)
+      : 'off',
+    customTuning: normalizeScale(input.customTuning),
+    mpe: input.mpe === true,
+    polyphony: [0, 4, 8, 16, 32].includes(input.polyphony as number)
+      ? (input.polyphony as number)
+      : base.polyphony,
+    activeInstance: input.activeInstance === 2 ? 2 : 1,
+    instanceMode:
+      input.instanceMode === 'layer' || input.instanceMode === 'split' ? input.instanceMode : 'single',
+    splitNote:
+      typeof input.splitNote === 'number' && input.splitNote >= 0 && input.splitNote <= 127
+        ? Math.round(input.splitNote)
+      : 0,
+    autoCollapsed: Array.isArray(input.autoCollapsed)
+      ? input.autoCollapsed.filter(
+          (id, index, list): id is ModuleId =>
+            typeof id === 'string' &&
+            (MODULE_IDS as string[]).includes(id) &&
+            list.indexOf(id) === index,
+        )
+      : [],
+  };
+}
+
+/** Move `id` so that it sits at `index` in the order (clamped). */
+export function moveModule(order: ModuleId[], id: ModuleId, index: number): ModuleId[] {
+  const from = order.indexOf(id);
+  if (from === -1) return order;
+  const rest = order.filter((m) => m !== id);
+  const to = Math.max(0, Math.min(rest.length, index));
+  rest.splice(to, 0, id);
+  if (rest.every((m, i) => m === order[i])) return order;
+  return rest;
+}

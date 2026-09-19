@@ -1,0 +1,598 @@
+import { Suspense, lazy, memo, useCallback, useEffect, useRef, useState } from 'react';
+import { engine } from '@/audio/engine';
+import { installUserWave } from '@/audio/userWave';
+import { installUserIr } from '@/audio/ir';
+import { installUserSample } from '@/audio/userSample';
+import { store } from '@/state/store';
+import { useContrast, useLayout, usePower, useTheme, useView } from '@/hooks/useSynth';
+import { useViewport } from '@/hooks/useViewport';
+import { wireAnalysis } from '@/audio/analysis';
+import { TopBar, DisplayRow, KeyboardDock } from '@/panels/layout';
+import { CHANGELOG_HEAD } from '@/changelog-head';
+import { fxGraphOpen, useFxGraphOpen } from '@/state/overlays';
+import { ModuleFor } from '@/panels/modules';
+import { ModulesGrid } from '@/components/Module';
+// The three dialogs carry a lot of copy (the guide alone is tens of KB) and
+// ship as their own chunks: the synth itself should not wait for a manual.
+//
+// Each lazy panel waits for its own *string table* as well as its code (P11.2):
+// the tables live in `src/i18n.<panel>.ts`, and they are registered before the
+// component module resolves, so the panel renders its first frame with real
+// copy instead of key names. The idle preload in `src/i18n.ts` normally beats
+// this, and registration is idempotent, so this is cheap insurance rather than
+// the only path.
+const Guide = lazy(() =>
+  import('@/i18n-panels')
+    .then((m) => m.loadDocsStrings())
+    .then(() => import('@/components/Guide'))
+    .then((m) => ({ default: m.Guide })),
+);
+// The routing editor is a whole canvas: it belongs in a chunk of its own, not in
+// the bundle every visitor downloads.
+// The piano roll is a canvas editing surface behind a button: a chunk of its
+// own, loaded when it is first opened.
+
+const PianoRoll = lazy(() =>
+  import('@/i18n-panels')
+    .then((m) => m.loadRollStrings())
+    .then(() => import('@/components/PianoRoll'))
+    .then((m) => ({ default: m.PianoRoll })),
+);
+// The player panel renders the whole track list whether or not it is open, so it
+// belongs in a chunk of its own and mounts the first time it is opened.
+const PlayerPanel = lazy(() =>
+  import('@/i18n-panels')
+    .then((m) => m.loadPlayerStrings())
+    .then(() => import('@/components/PlayerPanel'))
+    .then((m) => ({ default: m.PlayerPanel })),
+);
+// The preset drawer and the flow canvas are behind a click or a view switch too.
+const PresetDrawer = lazy(() =>
+  import('@/i18n-panels')
+    .then((m) => m.loadPlayerStrings())
+    .then(() => import('@/components/PresetDrawer'))
+    .then((m) => ({ default: m.PresetDrawer })),
+);
+const SignalFlow = lazy(() =>
+  import('@/i18n-panels')
+    .then((m) => m.loadFlowStrings())
+    .then(() => import('@/components/SignalFlow'))
+    .then((m) => ({ default: m.SignalFlow })),
+);
+const FxGraphEditor = lazy(() =>
+  import('@/i18n-panels')
+    .then((m) => m.loadFxStrings())
+    .then(() => import('@/components/FxGraphEditor'))
+    .then((m) => ({ default: m.FxGraphEditor })),
+);
+const Changelog = lazy(() =>
+  import('@/i18n-panels')
+    .then((m) => m.loadDocsStrings())
+    .then(() => import('@/components/Changelog'))
+    .then((m) => ({ default: m.Changelog })),
+);
+const AudioSettings = lazy(() =>
+  import('@/i18n-panels')
+    .then((m) => m.loadAudioStrings())
+    .then(() => import('@/components/AudioSettings'))
+    .then((m) => ({ default: m.AudioSettings })),
+);
+// The settings drawer stays in the main chunk: it is the panel the shell test
+// renders through, and keeping it eager keeps that test honest. Its copy is
+// therefore core (`settings.*`, `scene.*`, `inst.*`, `velocity.*`); only the
+// theme-name strings it shares with nothing else moved out (P11.2).
+import { SettingsDrawer } from '@/components/SettingsDrawer';
+import { ToastHost } from '@/components/Toast';
+import { applyUpdate, onUpdateAvailable, registerServiceWorker, waitingVersion } from '@/pwa/register';
+import { setHapticsEnabled } from '@/hooks/useInputMode';
+import { readShareCode } from '@/state/share';
+import { APP_VERSION } from '@/version';
+
+import { getLang, preloadStrings, t } from '@/i18n';
+import { toast } from '@/components/Toast';
+import { midiPlayer } from '@/midi/player';
+import { recorder } from '@/midi/recorder';
+import { setResolvedTheme } from '@/state/theme';
+
+wireAnalysis();
+
+function StartOverlay({
+  onStart,
+  error,
+  busy,
+}: {
+  onStart: () => void;
+  error: string | null;
+  busy: boolean;
+}) {
+  const d = engine.diagnostics();
+  const diag = `GS-1 v${APP_VERSION} · SIMD ${d.simd ? '✓' : '✗'} · WASM ${d.wasm} · AudioContext ${d.contextState} · ${d.sampleRate} Hz`;
+  return (
+    <div className="start-overlay" role="dialog" aria-label={t('app.start')}>
+      <div className="start-card">
+        {/* The logo and the version belong *here*: the first thing a returning
+            player wants to know is which build they are looking at. */}
+        <div className="start-brand">
+          <svg className="start-logo" width="46" height="46" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="10.5" stroke="currentColor" strokeOpacity=".35" />
+            <path
+              className="start-logo-wave"
+              d="M3.5 12 Q6.5 4.5 12 12 T20.5 12"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+            />
+          </svg>
+          <div className="start-name">
+            GROOVE <b>SYNTH</b>
+          </div>
+          <div className="start-sub">GS-1 · v{APP_VERSION}</div>
+        </div>
+        <button type="button" className="start-btn" onClick={onStart} disabled={busy}>
+          <span>{busy ? t('app.starting') : t('app.start')}</span>
+        </button>
+        {error ? (
+          <div className="start-error" role="alert">
+            <b>{t('app.startFailed')}</b>
+            <p>{error}</p>
+            <small>{diag}</small>
+            <button type="button" className="start-retry" onClick={onStart} disabled={busy}>
+              {t('app.retry')}
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function UpdateBanner() {
+  const [available, setAvailable] = useState(false);
+  // The version the waiting worker will install, or null while the handshake is
+  // in flight and if it never answers. Deliberately *not* `CHANGELOG_HEAD`:
+  // that is the running build's own version, which after a rollback is the
+  // release being replaced — the banner used to advertise exactly that.
+  const [incoming, setIncoming] = useState<string | null>(null);
+  const lang = getLang();
+  useEffect(() => {
+    onUpdateAvailable(() => {
+      setAvailable(true);
+      void waitingVersion().then(setIncoming);
+    });
+  }, []);
+  if (!available) return null;
+  // The headline is still the newest entry this bundle knows about — the worker
+  // carries only its version — while the version beside it is the incoming one.
+  const newest = CHANGELOG_HEAD;
+  const headline = newest?.items[0]?.[lang === 'zh' ? 0 : 1].replace(/\*\*/g, '') ?? '';
+  const line = incoming ? `v${incoming}${headline ? ` · ${headline}` : ''}` : headline;
+  return (
+    <div className="update-banner" role="status">
+      {/* Two lines that can shrink, then two fixed-size actions: the version
+          and the headline on top, the buttons in their own column. */}
+      <div className="update-copy">
+        <span className="update-title">{t('app.updateReady')}</span>
+        {line ? (
+          <span className="update-what" data-act="update-what">
+            {line}
+          </span>
+        ) : null}
+      </div>
+      <button type="button" className="update-go" onClick={() => applyUpdate()}>
+        {t('app.updateNow')}
+      </button>
+      <button
+        type="button"
+        className="update-x"
+        onClick={() => setAvailable(false)}
+        aria-label={t('app.later')}
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The module grid, on its own.
+ *
+ * Opening a drawer is App state, and before this every such change re-rendered
+ * the whole tree — eight module panels with their canvases, the monitor strip,
+ * the keyboard and the player's track list. On a slow engine that was seconds
+ * (measured: opening the preset library took 8.5 s under WebKit, against 160 ms
+ * in Chromium). Reading the layout here and memoising means an overlay toggle
+ * re-renders the overlay.
+ */
+const ModulesView = memo(function ModulesView() {
+  const layout = useLayout();
+  return (
+    <main className="modules">
+      <ModulesGrid>
+        {layout.order.map((id) => (
+          <ModuleFor key={id} id={id} />
+        ))}
+      </ModulesGrid>
+    </main>
+  );
+});
+
+/** The pieces of chrome that only depend on their own hooks. */
+const TopBarView = memo(TopBar);
+const DisplayRowView = memo(DisplayRow);
+const KeyboardView = memo(KeyboardDock);
+
+
+export default function App() {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
+  const [audioOpen, setAudioOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [playerOpen, setPlayerOpen] = useState(false);
+  const [rollOpen, setRollOpen] = useState(false);
+  const [status, setStatus] = useState(engine.getState());
+  /** True once the engine has actually played in this session. */
+  const [everRan, setEverRan] = useState(false);
+  /** The player panel is lazy: once opened, it stays mounted so it can animate. */
+  const [playerMounted, setPlayerMounted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const layout = useLayout();
+  const view = useView();
+  const viewport = useViewport();
+  const power = usePower();
+
+  /**
+   * Once the engine is running, fetch the panels a player is most likely to
+   * open next while the browser is idle. They stay lazy chunks — the first paint
+   * does not wait for them and the bundle budget is untouched — but the first
+   * open no longer pays for a parse: on a slow engine opening the preset library
+   * for the first time took 5.4 s, and it is the chunk arriving that costs it.
+   */
+  useEffect(() => {
+    if (!everRan) return;
+    const warm = () => {
+      void import('@/components/PresetDrawer');
+      void import('@/components/PianoRoll');
+      void import('@/components/FxGraphEditor');
+      // The string tables ride along with the same idle slot; `preloadStrings()`
+      // covers the panels the warm-up list does not name.
+      void import('@/i18n-panels').then((m) => Promise.all(m.STRING_LOADERS.map((load) => load())));
+    };
+    const idle = (window as Window & typeof globalThis & {
+      requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    });
+    if (typeof idle.requestIdleCallback === 'function') {
+      const id = idle.requestIdleCallback(warm, { timeout: 4000 });
+      return () => idle.cancelIdleCallback?.(id);
+    }
+    const timer = setTimeout(warm, 2500);
+    return () => clearTimeout(timer);
+  }, [everRan]);
+  const theme = useTheme();
+  const contrast = useContrast();
+  const [systemDark, setSystemDark] = useState(true);
+
+  /**
+   * Pull the lazy i18n tables in while the browser is idle (P11.2).
+   *
+   * The first frame only needs the inline core, but every panel that owns a
+   * lazy table would otherwise wait for its copy the first time it opens, and a
+   * language switch would have to wait for one. Nothing here blocks paint: it
+   * is a `requestIdleCallback` (with a timer fallback), and a failure is
+   * retried by the panel's own loader.
+   */
+  useEffect(() => {
+    preloadStrings();
+  }, []);
+
+  useEffect(() => {
+    // Apply a shared patch from the URL hash on first load.
+    const code = readShareCode();
+    if (!code) return;
+    // The code may be deflated (an arrangement is), which is why this one is
+    // async; the plain form resolves immediately.
+    void store.importPatchCodeAsync(code).then((ok) => {
+      if (!ok) return;
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+      toast(t('app.sharedLoaded'));
+    });
+  }, []);
+
+  useEffect(() => {
+    const off = engine.onStatus(() => {
+      const next = engine.getState();
+      setStatus(next);
+      if (next === 'running') setEverRan(true);
+      if (engine.error) setError(engine.error);
+    });
+    void registerServiceWorker();
+    return off;
+  }, []);
+
+  // Phones get a compact first-run layout (essential modules open, scope row
+  // collapsed). Applied once, then the user's own choices win.
+  useEffect(() => {
+    if (viewport.device === 'phone') store.applyPhoneDefaults();
+    if (viewport.device === 'desktop') store.expandAutoCollapsed();
+  }, [viewport.device]);
+
+  // On phones the flow view starts without the piano dock so the graph gets the
+  // screen, but the keyboard toggle keeps working — restore it on the way back.
+  const keyboardBeforeFlow = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (viewport.device !== 'phone') return;
+    if (view === 'flow') {
+      if (keyboardBeforeFlow.current === null) {
+        keyboardBeforeFlow.current = store.getSnapshot().layout.keyboardVisible;
+        if (keyboardBeforeFlow.current) store.setKeyboardVisible(false);
+      }
+    } else if (keyboardBeforeFlow.current !== null) {
+      const restore = keyboardBeforeFlow.current;
+      keyboardBeforeFlow.current = null;
+      if (restore) store.setKeyboardVisible(true);
+    }
+  }, [view, viewport.device]);
+
+  useEffect(() => {
+    // Keep the graph muted when the power switch is off.
+    engine.setMuted(!power);
+  }, [power]);
+
+  // Follow the OS colour scheme while `theme` is `auto`, including live
+  // switches (macOS sunset, iOS appearance toggle, browser devtools).
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const sync = () => setSystemDark(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+
+  const resolvedTheme = theme === 'auto' ? (systemDark ? 'dark' : 'light') : theme;
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.theme = resolvedTheme;
+    root.style.colorScheme = resolvedTheme;
+    document.body.classList.toggle('contrast', contrast);
+    setResolvedTheme(resolvedTheme);
+    // Keep the mobile browser chrome in step with the app.
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', resolvedTheme === 'light' ? '#eef1f6' : '#0b0d11');
+  }, [resolvedTheme, contrast]);
+
+  useEffect(() => {
+    setHapticsEnabled(layout.haptics);
+  }, [layout.haptics]);
+
+  const start = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      // Must run inside the gesture: creates + resumes the AudioContext before
+      // the first await (Safari requirement).
+      const layout = store.getSnapshot().layout;
+      await engine.start(layout.polyphony || 16, store.getSnapshot().state.routes);
+      // The graph exists from here on, even if the context refused to start
+      // (Firefox can sit on `resume()`): treat that as a run so the suspended
+      // hint is offered instead of an endless start gate.
+      if (engine.hasGraph()) setEverRan(true);
+      engine.setTuning(store.tuningTableFor(layout.temperament));
+      // Layer/split routing lives in the workspace, so a restarted engine has to
+      // be told about it (the params arrive with `applyState`).
+      store.syncInstanceRouting();
+      engine.applyState(store.getSnapshot().state, true);
+      engine.setMuted(!store.getSnapshot().state.power);
+      // The core's memory does not survive a reload: give it back the waveform
+      // and the impulse response the player imported last time (both are queued
+      // until the worklet is ready).
+      void installUserWave();
+      void installUserIr();
+      void installUserSample();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // iOS: suppress the long-press context menu outside real text inputs.
+  useEffect(() => {
+    const onContextMenu = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea, [contenteditable="true"]')) return;
+      event.preventDefault();
+    };
+    document.addEventListener('contextmenu', onContextMenu);
+    return () => document.removeEventListener('contextmenu', onContextMenu);
+  }, []);
+
+  // Tell the user when the engine had to shed voices: from their side the
+  // symptom is "the synth crackles", and the fix is knowing it is a load
+  // problem (the monitor shows the DSP load).
+  useEffect(
+    () =>
+      engine.onPolyphony((value, reason) => {
+        if (reason !== 'overload') return;
+        toast(t('app.overload').replace('{n}', String(value)));
+      }),
+    [],
+  );
+
+  // Undo / redo shortcuts.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) store.redo();
+        else store.undo();
+      } else if (key === 'y') {
+        event.preventDefault();
+        store.redo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Warm the audio path while the user reads the start gate: the worklet can be
+  // registered on a suspended context and the core fetched without a gesture.
+  useEffect(() => {
+    void engine.preload();
+  }, []);
+
+  // Any gesture may (re)start or resume audio. iOS suspends the context when
+  // the page is backgrounded or interrupted, so this cannot be a one-shot.
+  useEffect(() => {
+    const onGesture = () => {
+      const s = engine.getState();
+      if (s === 'idle') void start();
+      else if (s === 'suspended') void engine.resumeIfSuspended();
+    };
+    const events = ['pointerdown', 'touchend', 'keydown'] as const;
+    for (const event of events) window.addEventListener(event, onGesture, { passive: true });
+    return () => {
+      for (const event of events) window.removeEventListener(event, onGesture);
+    };
+  }, []);
+
+  // A context that exists is not a started engine (`engine.isReady()`): the
+  // worklet may still be unbuilt, and gating on the context state hid the start
+  // button over a silent app.
+  const running = status === 'running';
+  // Once it has genuinely run, a later interruption (iOS call, device change)
+  // shows the resume hint instead of throwing the start gate back over the UI.
+  const showGate = !running && (!everRan || status === 'error');
+
+  /**
+   * Open the piano-roll editor for the current track. Any running take is
+   * finished and saved first so opening the editor never loses a recording.
+   */
+  const fxGraphOpenNow = useFxGraphOpen();
+  const closeFxGraph = useCallback(() => fxGraphOpen.set(false), []);
+  const openDrawer = useCallback(() => setDrawerOpen(true), []);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const openPlayer = useCallback(() => {
+    setPlayerMounted(true);
+    setPlayerOpen(true);
+  }, []);
+  const closePlayer = useCallback(() => setPlayerOpen(false), []);
+  const closeRoll = useCallback(() => setRollOpen(false), []);
+  const changeView = useCallback((next: 'modules' | 'flow') => store.setView(next), []);
+  const openGuide = useCallback(() => {
+    setSettingsOpen(false);
+    setGuideOpen(true);
+  }, []);
+  const openChangelog = useCallback(() => {
+    setSettingsOpen(false);
+    setChangelogOpen(true);
+  }, []);
+  const openAudio = useCallback(() => {
+    setSettingsOpen(false);
+    setAudioOpen(true);
+  }, []);
+
+  const openRoll = () => {
+    if (recorder.getState().recording) {
+      const clip = recorder.stop();
+      if (clip) {
+        // Opening the editor while recording finishes the pass as a take, on
+        // the same path the transport's stop button uses (P5.4). The recording
+        // commit is imported on demand: the take model belongs to the recording
+        // flow, and pulling it in here would put it in the first-load bundle.
+        // Its copy lives in the player module (P11.2), so that table is loaded
+        // first — `finishRecording` toasts take/player strings synchronously.
+        void import('@/i18n-panels')
+          .then((m) => m.loadPlayerStrings())
+          .then(() => import('@/state/recording'))
+          .then(({ finishRecording }) => finishRecording(clip));
+      }
+    }
+    midiPlayer.stop();
+    setPlayerOpen(false);
+    setDrawerOpen(false);
+    setRollOpen(true);
+  };
+
+  return (
+    <div className="app" data-device={viewport.device} data-view={view}>
+      <TopBarView
+        onBrowse={openDrawer}
+        onSettings={openSettings}
+        onRoll={openRoll}
+        view={view}
+        onView={changeView}
+      />
+
+      <DisplayRowView onOpenPlayer={openPlayer} />
+
+      {view === 'flow' ? (
+        <Suspense fallback={null}>
+          <SignalFlow />
+        </Suspense>
+      ) : (
+        <ModulesView />
+      )}
+
+      <KeyboardView />
+
+      {status === 'suspended' && everRan ? (
+        <button type="button" className="audio-hint" onClick={() => void engine.resumeIfSuspended()}>
+          {t('app.suspended')}
+        </button>
+      ) : null}
+
+      <Suspense fallback={null}>
+        <PianoRoll open={rollOpen} onClose={closeRoll} />
+      </Suspense>
+
+      {/* Mounted only while it is open, so a closed editor keeps no state. */}
+      {fxGraphOpenNow ? (
+        <Suspense fallback={null}>
+          <FxGraphEditor onClose={closeFxGraph} />
+        </Suspense>
+      ) : null}
+
+      <Suspense fallback={null}>
+        <PresetDrawer open={drawerOpen} onClose={closeDrawer} />
+      </Suspense>
+
+      <SettingsDrawer
+        open={settingsOpen}
+        onClose={closeSettings}
+        onOpenGuide={openGuide}
+        onOpenChangelog={openChangelog}
+        onOpenAudio={openAudio}
+      />
+      {guideOpen ? (
+        <Suspense fallback={null}>
+          <Guide open onClose={() => setGuideOpen(false)} />
+        </Suspense>
+      ) : null}
+      {changelogOpen ? (
+        <Suspense fallback={null}>
+          <Changelog open onClose={() => setChangelogOpen(false)} />
+        </Suspense>
+      ) : null}
+      {audioOpen ? (
+        <Suspense fallback={null}>
+          <AudioSettings open onClose={() => setAudioOpen(false)} />
+        </Suspense>
+      ) : null}
+      {playerMounted ? (
+        <Suspense fallback={null}>
+          <PlayerPanel open={playerOpen} onClose={closePlayer} onEdit={openRoll} />
+        </Suspense>
+      ) : null}
+      <ToastHost />
+      <UpdateBanner />
+      {showGate ? <StartOverlay onStart={start} error={error} busy={busy} /> : null}
+    </div>
+  );
+}

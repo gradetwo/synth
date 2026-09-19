@@ -1,0 +1,7 @@
+// Minimal <cstddef> shim for the freestanding wasm32 C++ build.
+#pragma once
+#include <stddef.h>
+namespace std {
+using ::size_t;
+using ::ptrdiff_t;
+}

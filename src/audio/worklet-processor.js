@@ -1,0 +1,914 @@
+/**
+ * GROOVE SYNTH GS-1 — AudioWorklet render thread.
+ *
+ * This file is served as a standalone asset (see `engine.ts`), so it must not
+ * import anything. It drives the Rust/WASM core through the block ABI:
+ *   1. AudioParam values are read once per render quantum (k-rate) and pushed
+ *      into the engine — the browser does the interpolation and thread sync.
+ *   2. Note/controller events arrive as transferable ArrayBuffers (zero copy).
+ *   3. The engine renders `frames` samples into its static buffers; we rebuild
+ *      Float32Array views every block so a `memory.grow` can never detach them.
+ */
+
+/* Keep in sync with `src/audio/params.ts` (id) and
+ * `crates/synth-core/src/params.rs`. */
+/*
+ * `[name, id, default, min, max]`. The range is load-bearing twice over:
+ * `engine.ts` clamps every value to `[min, max]` before it writes the
+ * AudioParam, and the browser clamps to it again — so a max below the engine's
+ * enumeration does not "limit a knob", it silently substitutes a *different*
+ * algorithm (an `osc1Wave` of 8, the wavetable, arrived as 7 = brown noise
+ * until this table was widened). Every discrete entry's max is the highest id
+ * its Rust decoder accepts; `src/audio/param-range.test.ts` holds that line.
+ */
+const PARAMS = [
+  ['masterVolume', 0, 0.75, 0, 1],
+  ['osc1On', 1, 1, 0, 1],
+  // `Wave::from_u32`: 8 = wavetable, 9 = sample.
+  ['osc1Wave', 2, 2, 0, 9],
+  ['osc1Pitch', 3, 0, -48, 48],
+  ['osc1Detune', 4, 7, -100, 100],
+  ['osc1Level', 5, 0.65, 0, 1],
+  ['osc1Pw', 6, 0.5, 0.05, 0.95],
+  ['osc2On', 7, 1, 0, 1],
+  // Same `Wave` wire order as `osc1Wave`.
+  ['osc2Wave', 8, 2, 0, 9],
+  ['osc2Pitch', 9, 0, -48, 48],
+  ['osc2Detune', 10, -6, -100, 100],
+  ['osc2Level', 11, 0.55, 0, 1],
+  ['osc2Pw', 12, 0.5, 0.05, 0.95],
+  // `FilterType::from_u32`: 4 = comb, 5 = formant, 6 = sem.
+  ['filterType', 13, 0, 0, 6],
+  ['filterCutoff', 14, 9000, 20, 20000],
+  ['filterRes', 15, 0.25, 0, 1],
+  ['filterDrive', 16, 0.15, 0, 1],
+  ['filterEnvAmt', 17, 0.5, 0, 1],
+  ['filterKbd', 18, 1, 0, 1],
+  ['envAttack', 19, 0.003, 0.0005, 8],
+  ['envDecay', 20, 0.16, 0.001, 12],
+  ['envSustain', 21, 0.55, 0, 1],
+  ['envRelease', 22, 0.28, 0.005, 16],
+  ['lfoOn', 23, 1, 0, 1],
+  ['lfoWave', 24, 0, 0, 3],
+  ['lfoRate', 25, 4.6, 0.02, 40],
+  ['lfoDepth', 26, 0.32, 0, 1],
+  ['lfoTarget', 27, 0, 0, 3],
+  ['lfoSync', 28, 0, 0, 1],
+  ['fxReverbOn', 29, 1, 0, 1],
+  ['fxReverbSize', 30, 0.45, 0, 1],
+  ['fxReverbMix', 31, 0.25, 0, 1],
+  ['fxDelayOn', 32, 0, 0, 1],
+  ['fxDelaySync', 33, 2, 0, 3],
+  ['fxDelayFb', 34, 0.35, 0, 0.95],
+  ['fxDelayMix', 35, 0.22, 0, 1],
+  ['glide', 36, 0, 0, 1],
+  ['tempo', 37, 120, 20, 300],
+  ['pitchBendRange', 38, 2, 0, 24],
+  ['osc1Pan', 39, 0, -1, 1],
+  ['osc2Pan', 40, 0, -1, 1],
+  ['masterTune', 41, 0, -24, 24],
+  ['voiceMode', 42, 0, 0, 2],
+  ['fxChorusOn', 43, 0, 0, 1],
+  ['fxChorusDepth', 44, 0.5, 0, 1],
+  ['fxChorusRate', 45, 0.6, 0.02, 10],
+  ['fxChorusMix', 46, 0.4, 0, 1],
+  ['fxFlangerOn', 47, 0, 0, 1],
+  ['fxFlangerRate', 48, 0.3, 0.02, 10],
+  ['fxFlangerFb', 49, 0.5, 0, 0.95],
+  ['fxFlangerMix', 50, 0.4, 0, 1],
+  ['fxPhaserOn', 51, 0, 0, 1],
+  ['fxPhaserRate', 52, 0.4, 0.02, 10],
+  ['fxPhaserFb', 53, 0.6, 0, 0.95],
+  ['fxPhaserMix', 54, 0.5, 0, 1],
+  ['fxDriveOn', 55, 0, 0, 1],
+  ['fxDriveAmt', 56, 0.4, 0, 1],
+  ['fxDriveMix', 57, 0.6, 0, 1],
+  ['filterEnvAttack', 58, 0.01, 0.0005, 8],
+  ['filterEnvDecay', 59, 0.3, 0.001, 12],
+  ['filterEnvSustain', 60, 0.5, 0, 1],
+  ['filterEnvRelease', 61, 0.3, 0.005, 16],
+  ['lfo2On', 62, 0, 0, 1],
+  ['lfo2Wave', 63, 1, 0, 3],
+  ['lfo2Rate', 64, 0.5, 0.02, 40],
+  ['lfo2Depth', 65, 0.3, 0, 1],
+  ['lfo2Target', 66, 0, 0, 3],
+  ['fxReverbDamp', 67, 0.35, 0, 1],
+  ['fxReverbWidth', 68, 0.8, 0, 1],
+  ['fxReverbPredelay', 69, 0.012, 0, 0.1],
+  ['osc1Unison', 70, 1, 1, 7],
+  ['osc1Spread', 71, 0.35, 0, 1],
+  ['osc2Unison', 72, 1, 1, 7],
+  ['osc2Spread', 73, 0.35, 0, 1],
+  ['oscFm', 137, 0, 0, 1],
+  ['oscRing', 138, 0, 0, 1],
+  ['osc1Sync', 139, 0, 0, 1],
+  ['osc1Sub', 140, 0, 0, 2],
+  ['osc1SubLevel', 141, 0.4, 0, 1],
+  ['osc2Sub', 142, 0, 0, 2],
+  ['osc2SubLevel', 143, 0.4, 0, 1],
+  ['noiseMix', 144, 0, 0, 1],
+  ['filterMorph', 145, 0, 0, 1],
+  ['filterRouting', 146, 0, 0, 2],
+  ['filter2Type', 147, 0, 0, 6],
+  ['filter2Cutoff', 148, 9000, 20, 20000],
+  ['filter2Res', 149, 0.25, 0, 1],
+  ['filter2Drive', 150, 0.15, 0, 1],
+  ['filterBlend', 151, 0.5, 0, 1],
+  ['lfoRetrig', 74, 0, 0, 1],
+  ['lfoOneshot', 75, 0, 0, 1],
+  ['lfo2Retrig', 76, 0, 0, 1],
+  ['lfo2Oneshot', 77, 0, 0, 1],
+  // Per-patch loudness trim: presets set it, the UI does not show it.
+  ['patchGain', 78, 1, 0, 8],
+  ['wtUser', 79, 0, 0, 1],
+  ['fxDelayDamp', 80, 0.35, 0, 1],
+  ['fxDelayPingpong', 81, 0, 0, 1],
+  ['smpRoot', 96, 60, 0, 127],
+  ['smpMode', 97, 0, 0, 2],
+  ['smpLoopStart', 98, 0, 0, 1],
+  ['smpLoopEnd', 99, 1, 0, 1],
+  ['fxReverbMode', 94, 0, 0, 1],
+  ['fxConvTrim', 95, 1, 0, 4],
+  // `FxKind::from_u32`: 8 = eq, 9 = transient.
+  ['fxChain1', 82, 1, 0, 9],
+  ['fxChain2', 83, 2, 0, 9],
+  ['fxChain3', 84, 3, 0, 9],
+  ['fxChain4', 85, 4, 0, 9],
+  ['fxChain5', 86, 5, 0, 9],
+  ['fxChain6', 87, 6, 0, 9],
+  ['fxParallel1', 88, 0, 0, 1],
+  ['fxParallel2', 89, 0, 0, 1],
+  ['fxParallel3', 90, 0, 0, 1],
+  ['fxParallel4', 91, 0, 0, 1],
+  ['fxParallel5', 92, 0, 0, 1],
+  ['fxParallel6', 93, 0, 0, 1],
+  ['fxGraph', 100, 0, 0, 1],
+  ['fxNode1In1', 101, 1, 0, 7],
+  ['fxNode2In1', 102, 2, 0, 7],
+  ['fxNode3In1', 103, 3, 0, 7],
+  ['fxNode4In1', 104, 4, 0, 7],
+  ['fxNode5In1', 105, 5, 0, 7],
+  ['fxNode6In1', 106, 6, 0, 7],
+  ['fxNode1In1Gain', 107, 1, 0, 4],
+  ['fxNode2In1Gain', 108, 1, 0, 4],
+  ['fxNode3In1Gain', 109, 1, 0, 4],
+  ['fxNode4In1Gain', 110, 1, 0, 4],
+  ['fxNode5In1Gain', 111, 1, 0, 4],
+  ['fxNode6In1Gain', 112, 1, 0, 4],
+  ['fxNode1In2', 113, 0, 0, 7],
+  ['fxNode2In2', 114, 0, 0, 7],
+  ['fxNode3In2', 115, 0, 0, 7],
+  ['fxNode4In2', 116, 0, 0, 7],
+  ['fxNode5In2', 117, 0, 0, 7],
+  ['fxNode6In2', 118, 0, 0, 7],
+  ['fxNode1In2Gain', 119, 1, 0, 4],
+  ['fxNode2In2Gain', 120, 1, 0, 4],
+  ['fxNode3In2Gain', 121, 1, 0, 4],
+  ['fxNode4In2Gain', 122, 1, 0, 4],
+  ['fxNode5In2Gain', 123, 1, 0, 4],
+  ['fxNode6In2Gain', 124, 1, 0, 4],
+  ['fxNode1ToOut', 125, 0, 0, 1],
+  ['fxNode2ToOut', 126, 0, 0, 1],
+  ['fxNode3ToOut', 127, 0, 0, 1],
+  ['fxNode4ToOut', 128, 0, 0, 1],
+  ['fxNode5ToOut', 129, 0, 0, 1],
+  ['fxNode6ToOut', 130, 1, 0, 1],
+  ['fxNode1OutGain', 131, 1, 0, 4],
+  ['fxNode2OutGain', 132, 1, 0, 4],
+  ['fxNode3OutGain', 133, 1, 0, 4],
+  ['fxNode4OutGain', 134, 1, 0, 4],
+  ['fxNode5OutGain', 135, 1, 0, 4],
+  ['fxNode6OutGain', 136, 1, 0, 4],
+  // Bit-crusher and shaping EQ (P6.4).
+  ['fxCrushOn', 152, 0, 0, 1],
+  ['fxCrushBits', 153, 8, 4, 16],
+  ['fxCrushDown', 154, 4, 1, 64],
+  ['fxCrushAa', 155, 0.5, 0, 1],
+  ['fxCrushMix', 156, 1, 0, 1],
+  ['fxEqOn', 157, 0, 0, 1],
+  ['fxEqLowGain', 158, 0, -18, 18],
+  ['fxEqLowFreq', 159, 200, 40, 1000],
+  ['fxEqMidGain', 160, 0, -18, 18],
+  ['fxEqMidFreq', 161, 1000, 200, 8000],
+  ['fxEqMidQ', 162, 0.9, 0.3, 6],
+  ['fxEqHighGain', 163, 0, -18, 18],
+  ['fxEqHighFreq', 164, 4000, 1000, 16000],
+  ['fxEqMix', 165, 1, 0, 1],
+  // 2x oversampling of the drive-bearing filter path (P6.5), off by default.
+  ['oversample', 166, 0, 0, 1],
+  // In-graph modulation edges (P7.2): source code, gain target and the depth
+  // carried on the edge. All four start disconnected.
+  ['fxMod1Src', 167, 0, 0, 3],
+  ['fxMod1Dst', 168, 0, 0, 18],
+  ['fxMod1Depth', 169, 0, -1, 1],
+  ['fxMod2Src', 170, 0, 0, 3],
+  ['fxMod2Dst', 171, 0, 0, 18],
+  ['fxMod2Depth', 172, 0, -1, 1],
+  ['fxMod3Src', 173, 0, 0, 3],
+  ['fxMod3Dst', 174, 0, 0, 18],
+  ['fxMod3Depth', 175, 0, -1, 1],
+  ['fxMod4Src', 176, 0, 0, 3],
+  ['fxMod4Dst', 177, 0, 0, 18],
+  ['fxMod4Depth', 178, 0, -1, 1],
+  // Transient shaper (P9.2): off with both amounts neutral until asked for.
+  ['fxTransientOn', 179, 0, 0, 1],
+  ['fxTransientAttack', 180, 0, -1, 1],
+  ['fxTransientSustain', 181, 0, -1, 1],
+  ['fxTransientMix', 182, 1, 0, 1],
+  // Per-node effect overrides (P9.3), four shared slots per node (id 183-206).
+  // The value is the override itself; -2 means "follow the kind's own knob" and
+  // is the default, so an untouched patch renders exactly as it did. The kind
+  // decides what each slot means, which is why one pool serves every effect —
+  // and that is also why the range is the widest any slot can need (an EQ
+  // corner is 8000 Hz, crush bits are 16) rather than 0..1: the core clamps
+  // each slot to its own kind's range, but the browser would clamp it to the
+  // AudioParam first and quietly turn 8000 Hz into 4.
+  ['fxOvr1_1', 183, -2, -2, 8000],
+  ['fxOvr1_2', 184, -2, -2, 8000],
+  ['fxOvr1_3', 185, -2, -2, 8000],
+  ['fxOvr1_4', 186, -2, -2, 8000],
+  ['fxOvr2_1', 187, -2, -2, 8000],
+  ['fxOvr2_2', 188, -2, -2, 8000],
+  ['fxOvr2_3', 189, -2, -2, 8000],
+  ['fxOvr2_4', 190, -2, -2, 8000],
+  ['fxOvr3_1', 191, -2, -2, 8000],
+  ['fxOvr3_2', 192, -2, -2, 8000],
+  ['fxOvr3_3', 193, -2, -2, 8000],
+  ['fxOvr3_4', 194, -2, -2, 8000],
+  ['fxOvr4_1', 195, -2, -2, 8000],
+  ['fxOvr4_2', 196, -2, -2, 8000],
+  ['fxOvr4_3', 197, -2, -2, 8000],
+  ['fxOvr4_4', 198, -2, -2, 8000],
+  ['fxOvr5_1', 199, -2, -2, 8000],
+  ['fxOvr5_2', 200, -2, -2, 8000],
+  ['fxOvr5_3', 201, -2, -2, 8000],
+  ['fxOvr5_4', 202, -2, -2, 8000],
+  ['fxOvr6_1', 203, -2, -2, 8000],
+  ['fxOvr6_2', 204, -2, -2, 8000],
+  ['fxOvr6_3', 205, -2, -2, 8000],
+  ['fxOvr6_4', 206, -2, -2, 8000],
+  // The override modulation bus (P9.3): eight bus slots, each naming one
+  // override slot to sweep (0 off, else 1 + node * 4 + slot) with its own
+  // signed fraction of that slot's range, plus the one source code they all
+  // read (0 off, 1 LFO 1, 2 LFO 2, 3 the envelope).
+  ['fxOvrTarget1', 207, 0, 0, 24],
+  ['fxOvrTarget2', 208, 0, 0, 24],
+  ['fxOvrTarget3', 209, 0, 0, 24],
+  ['fxOvrTarget4', 210, 0, 0, 24],
+  ['fxOvrTarget5', 211, 0, 0, 24],
+  ['fxOvrTarget6', 212, 0, 0, 24],
+  ['fxOvrTarget7', 213, 0, 0, 24],
+  ['fxOvrTarget8', 214, 0, 0, 24],
+  ['fxOvrDepth1', 215, 0, -1, 1],
+  ['fxOvrDepth2', 216, 0, -1, 1],
+  ['fxOvrDepth3', 217, 0, -1, 1],
+  ['fxOvrDepth4', 218, 0, -1, 1],
+  ['fxOvrDepth5', 219, 0, -1, 1],
+  ['fxOvrDepth6', 220, 0, -1, 1],
+  ['fxOvrDepth7', 221, 0, -1, 1],
+  ['fxOvrDepth8', 222, 0, -1, 1],
+  ['fxOvrSrc', 223, 0, 0, 3],
+];
+
+const SPECTRUM_BINS = 36;
+const ANALYSIS_INTERVAL = 6; // blocks between analysis messages (~16 ms @ 48k/128)
+
+/**
+ * AudioWorkletGlobalScope is only guaranteed `currentFrame`, `currentTime`,
+ * `sampleRate` and `registerProcessor` — `performance` is *not* part of the
+ * spec (Safari does not expose it). Fall back to `Date.now()` so the load
+ * monitor never throws on the audio thread.
+ */
+/** Rendered-audio warm-up before the load monitor is allowed to act. */
+const WARMUP_MS = 2000;
+/** Consecutive over-budget blocks before it counts as a missed deadline. */
+const MISS_STREAK = 3;
+/** Fraction of the quantum budget that counts as "too much". */
+const OVER_LOAD = 0.35;
+/** Consecutive blocks over that fraction before voices are shed (~32 ms). */
+const OVER_BLOCKS = 12;
+/**
+ * Upper bound on queued frame-addressed note events.
+ *
+ * A host that schedules ahead legitimately holds a few hundred; anything past this means the
+ * host is leaking events (or a `noteAt` in the far future is never being reached), and growing
+ * without bound on the audio thread is not an option. The oldest event is dropped first.
+ */
+const MAX_SCHEDULED_EVENTS = 1024;
+/**
+ * Frames of constant latency between a frame-addressed note's `atFrame` and its first audible
+ * sample.
+ *
+ * Measured, not assumed (48 kHz, `atFrame` = 0/100/128/200/384/500 all land exactly 128 frames
+ * later): the core needs one full `gs_process` call before a queued note produces output, so the
+ * offset is exactly one render quantum and does **not** depend on where inside the block the
+ * event falls. That is a *fixed latency*, not jitter — the in-block position is preserved
+ * sample-exactly — so a host that wants GS-1 notes aligned with sample-accurate native voices
+ * simply addresses them this many frames early. It is reported in the `ready` message so the host
+ * never has to hard-code it.
+ */
+const SCHEDULED_NOTE_LATENCY_FRAMES = 128;
+
+const nowMs = () =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+
+/**
+ * Validate one frame-addressed note payload into the event the queue stores, or `null`.
+ *
+ * There is exactly one validator: the `noteAt` / `noteOnAt` / `noteOffAt` messages go through
+ * this function, and so does the offline export's whole-song prefill (`processorOptions.notes`,
+ * see `prefillScheduledNotes`). A second, weaker copy on the prefill path would let a malformed
+ * frame reach wasm as `NaN` while the message path kept rejecting it.
+ *
+ * Every field crosses into wasm as an `f32`, and two JavaScript coercions make a malformed one
+ * look valid: `Number(null)` and `Number('')` are both `0` (a *finite* frame, i.e. "sound now"),
+ * and `undefined` becomes `NaN` at the wasm boundary, where the core's `clamp(0, 1)` cannot clamp
+ * it (every comparison against NaN is false). So the guard is on the raw value
+ * (`typeof … === 'number'`), never on a coerced one: a missing or wrongly typed field drops the
+ * event, and `null` / `''` / `false` can no longer impersonate frame 0.
+ *
+ * A note-on that omits `velocity` means "a normal, full note" (MIDI's own implicit velocity), but
+ * a velocity that was *given* and is not a finite number is a host bug: rejecting it is honest,
+ * while silently substituting the default would hide the bug. A pan that is present but not
+ * finite is dropped (the note plays centre) rather than discarding the whole event: pan is
+ * decoration, pitch and frame are the contract.
+ */
+function timedEventFrom(payload) {
+  if (typeof payload.atFrame !== 'number' || !Number.isFinite(payload.atFrame)) return null;
+  if (typeof payload.note !== 'number' || !Number.isFinite(payload.note)) return null;
+  const isOff = payload.type === 'noteOffAt';
+  let velocity = 0;
+  if (!isOff) {
+    if (payload.velocity === undefined) velocity = 1;
+    else if (typeof payload.velocity === 'number' && Number.isFinite(payload.velocity)) velocity = payload.velocity;
+    else return null;
+  }
+  let pan;
+  if (typeof payload.pan === 'number' && Number.isFinite(payload.pan)) pan = payload.pan;
+  return { frame: Math.round(payload.atFrame), off: isOff, note: payload.note, velocity, pan };
+}
+
+class SynthWorkletProcessor extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    return PARAMS.map(([name, , defaultValue, minValue, maxValue]) => ({
+      name,
+      defaultValue,
+      minValue,
+      maxValue,
+      automationRate: 'k-rate',
+    }));
+  }
+
+  constructor(options) {
+    super();
+    const opts = (options && options.processorOptions) || {};
+    this.ready = false;
+    this.muted = false;
+    this.blockCount = 0;
+    this.pendingSpectrum = new Float32Array(SPECTRUM_BINS);
+    this.maxPoly = opts.maxPolyphony || 16;
+    this.currentPoly = this.maxPoly;
+    // 0 = the load monitor decides; otherwise a ceiling the user pinned.
+    this.manualPoly = 0;
+    this.renderedMs = 0;
+    this.missStreak = 0;
+    this.overStreak = 0;
+    this.costAvg = 0;
+    this.lastDowngrade = -Infinity;
+    this.lastUpgrade = 0;
+    this.port.onmessage = (event) => this.handleMessage(event.data);
+    /** Instance B's parameter values, so a restart can restore them. */
+    /**
+     * Frame-addressed note events, sorted by `atFrame` (see `noteAt` / `noteOffAt`).
+     *
+     * The audio thread has no way to be *called* at a future sample, so the host hands over the
+     * absolute frame and `process()` applies each event between render chunks. Until this
+     * existed a host could only say "now", which made a lookahead scheduler either early (post
+     * at scheduling time) or jittery (post from a timer at the last moment).
+     */
+    this.scheduledNotes = [];
+    /** Frames this processor has rendered, i.e. the absolute index of the next block. */
+    this.renderedFrames = 0;
+    this.paramsB = opts.paramsB || null;
+    this.instanceRoute = opts.instanceRoute || null;
+    // Offline export hands the whole song over before rendering starts (see
+    // `prefillScheduledNotes`); the live engine never sets this.
+    if (opts.notes) this.prefillScheduledNotes(opts.notes);
+
+    const bytes = opts.wasmBytes;
+    if (!bytes) {
+      this.port.postMessage({ type: 'error', message: '缺少 WASM 数据' });
+      return;
+    }
+
+    // Instantiate asynchronously from an ArrayBuffer. This is portable across
+    // Safari (which cannot reliably structured-clone a WebAssembly.Module) and
+    // keeps compilation off the render path: `process()` outputs silence until
+    // `ready` flips.
+    WebAssembly.instantiate(bytes, {})
+      .then(({ instance }) => {
+        this.wasm = instance.exports;
+        this.memory = this.wasm.memory;
+        this.leftPtr = this.wasm.gs_left_ptr();
+        this.rightPtr = this.wasm.gs_right_ptr();
+        this.spectrumPtr = this.wasm.gs_spectrum_ptr();
+        this.bins = this.wasm.gs_spectrum_bins();
+        this.maxBlock = this.wasm.gs_max_block_size();
+        this.wasm.gs_init(opts.sampleRate || sampleRate, opts.maxPolyphony || 16);
+        if (opts.routes) {
+          opts.routes.forEach((r, i) => {
+            this.wasm.gs_set_mod_route(i, r.src, r.dst, r.amount, r.enabled ? 1 : 0);
+          });
+        }
+        // Instance B: the same parameter ids as instance A, delivered as
+        // messages rather than a second set of AudioParams.
+        if (this.paramsB && typeof this.wasm.gs_set_param_inst === 'function') {
+          for (const [id, value] of Object.entries(this.paramsB)) {
+            this.wasm.gs_set_param_inst(1, Number(id), Number(value));
+          }
+        }
+        if (this.instanceRoute && typeof this.wasm.gs_set_instance_route === 'function') {
+          const r = this.instanceRoute;
+          this.wasm.gs_set_instance_route(
+            r.mode | 0,
+            r.splitNote | 0,
+            Number(r.aLo ?? 0),
+            Number(r.aHi ?? 1),
+            Number(r.bLo ?? 0),
+            Number(r.bHi ?? 1),
+          );
+        }
+        this.ready = true;
+        this.port.postMessage({
+          type: 'ready',
+          abi: this.wasm.gs_abi_version(),
+          scheduledNoteLatencyFrames: SCHEDULED_NOTE_LATENCY_FRAMES,
+        });
+      })
+      .catch((err) => {
+        this.port.postMessage({ type: 'error', message: 'WASM 实例化失败: ' + String(err) });
+      });
+  }
+
+  handleMessage(data) {
+    if (!this.ready) return;
+
+    // Zero-copy MIDI-style event packet.
+    if (data instanceof ArrayBuffer) {
+      const bytes = new Uint8Array(data);
+      const status = bytes[0] & 0xf0;
+      const note = bytes[1];
+      if (status === 0x90 && bytes[2] > 0) {
+        this.wasm.gs_note_on(note, bytes[2] / 127);
+      } else if (status === 0x80 || status === 0x90) {
+        this.wasm.gs_note_off(note);
+      }
+      return;
+    }
+
+    switch (data.type) {
+      case 'noteOn':
+        this.wasm.gs_note_on(data.note, data.velocity);
+        break;
+      case 'noteOnPan':
+        this.wasm.gs_note_on_pan(data.note, data.velocity, data.pan);
+        break;
+      case 'noteOff':
+        this.wasm.gs_note_off(data.note);
+        break;
+      /**
+       * Frame-addressed notes. The host converts its `AudioContext` time into an absolute frame
+       * (`atFrame = Math.round(when * sampleRate)`) and the event is applied *between* render
+       * chunks, so it lands on the exact frame rather than on the next 128-frame boundary and
+       * never at message-delivery time.
+       *
+       * An `atFrame` already in the past is applied as soon as possible (a late host should sound
+       * late, not never), and a malformed one is ignored rather than treated as 0.
+       */
+      case 'noteAt':
+      case 'noteOnAt':
+      case 'noteOffAt': {
+        // The field validation (raw-type frame / note, implicit full velocity, drop-only-the-pan)
+        // lives in `timedEventFrom`, shared with the offline prefill, so there is exactly one
+        // validator. Valid events take exactly the path they always did.
+        const event = timedEventFrom({
+          type: data.type,
+          atFrame: data.atFrame,
+          note: data.note,
+          velocity: data.velocity,
+          pan: data.pan,
+        });
+        if (event) this.scheduleTimedNote(event);
+        break;
+      }
+      case 'allNotesOff':
+      case 'panic':
+        // A panic must mean *silence now*: pending future events are the opposite of that.
+        this.scheduledNotes.length = 0;
+        this.wasm.gs_all_notes_off();
+        break;
+      case 'pitchBend':
+        this.wasm.gs_pitch_bend(data.value);
+        break;
+      case 'aftertouch':
+        this.wasm.gs_aftertouch(data.value);
+        break;
+      case 'modWheel':
+        this.wasm.gs_mod_wheel(data.value);
+        break;
+      case 'modRoute':
+        this.wasm.gs_set_mod_route(data.index, data.src, data.dst, data.amount, data.enabled ? 1 : 0);
+        break;
+      case 'noteBend':
+        if (this.wasm.gs_note_bend) {
+          this.wasm.gs_note_bend(Number(data.note) | 0, Number(data.semitones) || 0);
+        }
+        break;
+      case 'tuning':
+        // Microtuning: one key's cent offset. Sent as a burst when the
+        // temperament changes, so it is a plain message rather than an
+        // AudioParam.
+        if (this.wasm.gs_set_tuning_note) {
+          this.wasm.gs_set_tuning_note(Number(data.note) | 0, Number(data.cents) || 0);
+        }
+        break;
+      case 'setPolyphony': {
+        // A host request (the audio-settings panel) becomes the ceiling the
+        // load monitor may fall below but never climb back over, and it is
+        // echoed so the UI can show the value actually in force.
+        const value = Math.max(2, Math.min(this.maxPoly, Number(data.value) || this.maxPoly));
+        this.manualPoly = value;
+        this.currentPoly = value;
+        this.wasm.gs_set_max_polyphony(value);
+        this.wasm.gs_force_release_excess();
+        this.port.postMessage({ type: 'polyphony', value, reason: 'manual' });
+        break;
+      }
+      case 'downgrade':
+        this.wasm.gs_trigger_smooth_downgrade();
+        break;
+      case 'wavetable': {
+        // Single-cycle import (A6.2): the analysis runs here on the message
+        // path, never inside `process`, so a slow import cannot cause a dropout.
+        const samples = data.samples;
+        const reply = { type: 'wavetable', request: data.request, has: false, code: 0 };
+        if (typeof this.wasm.gs_wavetable_import === 'function') {
+          const capacity = this.wasm.gs_wavetable_capacity();
+          const count = Math.min(samples ? samples.length : 0, capacity);
+          if (count > 0) {
+            const scratch = new Float32Array(
+              this.memory.buffer,
+              this.wasm.gs_wavetable_import_ptr(),
+              capacity,
+            );
+            scratch.set(samples.subarray(0, count));
+            reply.code = this.wasm.gs_wavetable_import(count);
+          } else {
+            reply.code = 1;
+          }
+          reply.has = this.wasm.gs_wavetable_has() === 1;
+        } else {
+          reply.code = -1;
+        }
+        this.port.postMessage(reply);
+        break;
+      }
+      case 'ir': {
+        // Impulse response import (A5). Same contract as the wavetable import:
+        // analysis on the message path, never inside an audio block.
+        const samples = data.samples;
+        const reply = { type: 'ir', request: data.request, has: false, code: 0 };
+        if (typeof this.wasm.gs_ir_import === 'function') {
+          const capacity = this.wasm.gs_ir_capacity();
+          const count = Math.min(samples ? samples.length : 0, capacity);
+          if (count > 0) {
+            const scratch = new Float32Array(
+              this.memory.buffer,
+              this.wasm.gs_ir_import_ptr(),
+              capacity,
+            );
+            scratch.set(samples.subarray(0, count));
+            reply.code = this.wasm.gs_ir_import(count);
+          } else {
+            reply.code = 1;
+          }
+          reply.has = this.wasm.gs_ir_has() === 1;
+        } else {
+          reply.code = -1;
+        }
+        this.port.postMessage(reply);
+        break;
+      }
+      case 'paramB':
+        // One parameter of the second layer. Cheap enough to send per change,
+        // and it avoids a hundred extra AudioParams on the graph.
+        if (typeof this.wasm.gs_set_param_inst === 'function') {
+          this.wasm.gs_set_param_inst(1, Number(data.id) | 0, Number(data.value) || 0);
+        }
+        break;
+      case 'paramsB': {
+        // The whole set at once, for loading a patch or restoring at startup.
+        if (typeof this.wasm.gs_set_param_inst === 'function' && data.values) {
+          for (const [id, value] of Object.entries(data.values)) {
+            this.wasm.gs_set_param_inst(1, Number(id), Number(value));
+          }
+        }
+        break;
+      }
+      case 'instanceRoute': {
+        if (typeof this.wasm.gs_set_instance_route === 'function') {
+          this.wasm.gs_set_instance_route(
+            Number(data.mode) | 0,
+            Number(data.splitNote) | 0,
+            Number(data.aLo ?? 0),
+            Number(data.aHi ?? 1),
+            Number(data.bLo ?? 0),
+            Number(data.bHi ?? 1),
+          );
+        }
+        break;
+      }
+      case 'sample': {
+        // Sample import (A). `sampleRate` is the file's own rate: playing it at
+        // the right pitch is the whole point, so the core resamples it to the
+        // engine rate rather than assuming the two match.
+        const samples = data.samples;
+        const sourceRate = Number(data.sampleRate) || sampleRate;
+        const reply = { type: 'sample', request: data.request, has: false, code: 0 };
+        if (typeof this.wasm.gs_sample_import === 'function') {
+          const capacity = this.wasm.gs_sample_capacity();
+          const count = Math.min(samples ? samples.length : 0, capacity);
+          if (count > 0) {
+            const scratch = new Float32Array(
+              this.memory.buffer,
+              this.wasm.gs_sample_import_ptr(),
+              capacity,
+            );
+            scratch.set(samples.subarray(0, count));
+            reply.code = this.wasm.gs_sample_import(count, sourceRate);
+          } else {
+            reply.code = 1;
+          }
+          reply.has = this.wasm.gs_sample_has() === 1;
+        } else {
+          reply.code = -1;
+        }
+        this.port.postMessage(reply);
+        break;
+      }
+      case 'sampleClear':
+        if (this.wasm.gs_sample_clear) this.wasm.gs_sample_clear();
+        this.port.postMessage({ type: 'sample', request: data.request, has: false, code: 0 });
+        break;
+      case 'irClear':
+        if (this.wasm.gs_ir_clear) this.wasm.gs_ir_clear();
+        this.port.postMessage({ type: 'ir', request: data.request, has: false, code: 0 });
+        break;
+      case 'wavetableClear':
+        if (this.wasm.gs_wavetable_clear) this.wasm.gs_wavetable_clear();
+        this.port.postMessage({ type: 'wavetable', request: data.request, has: false, code: 0 });
+        break;
+      case 'mute':
+        this.muted = !!data.value;
+        if (this.muted) this.wasm.gs_all_notes_off();
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Queue one frame-addressed event, keeping the queue sorted and bounded.
+   *
+   * Insertion is a linear scan from the end: hosts schedule in increasing time order almost
+   * always, so the common case is a single comparison, and the queue is small by construction.
+   */
+  scheduleTimedNote(event) {
+    const queue = this.scheduledNotes;
+    if (queue.length >= MAX_SCHEDULED_EVENTS) queue.shift();
+    let i = queue.length;
+    while (i > 0 && queue[i - 1].frame > event.frame) i -= 1;
+    queue.splice(i, 0, event);
+  }
+
+  /**
+   * Pre-fill the timed queue with a whole song, for an offline export.
+   *
+   * `processorOptions.notes` is `[{ note, onFrame, offFrame, velocity?, pan? }]` (see
+   * `src/audio/render.ts`). Each note becomes a note-on and a note-off, both validated by the same
+   * `timedEventFrom` the live `noteAt` / `noteOffAt` messages use, then the queue is sorted by
+   * frame. `onFrame` / `offFrame` are absolute frames from the context's time origin, exactly like
+   * `atFrame` — the engine applies them inside `process()` at the frame that names, so an export no
+   * longer needs `OfflineAudioContext.suspend()` (Firefox has none; see `docs/notes/compat.md` §5).
+   *
+   * This deliberately does **not** go through `scheduleTimedNote`'s `MAX_SCHEDULED_EVENTS` bound.
+   * That bound protects the audio thread from a *live* host leaking events, where the oldest of an
+   * ever-growing queue is the right thing to drop. Here the list is the finite song the user
+   * already has in memory and asked to export: truncating it would silently cut the opening bars
+   * out of the file, which is exactly the class of quiet wrongness this export path exists to
+   * avoid. The list is validated in one pass and sorted once, rather than inserted one at a time
+   * through the live path's bounded queue.
+   */
+  prefillScheduledNotes(notes) {
+    const queue = [];
+    for (const raw of notes) {
+      if (!raw) continue;
+      const on = timedEventFrom({
+        type: 'noteOnAt',
+        atFrame: raw.onFrame,
+        note: raw.note,
+        velocity: raw.velocity,
+        pan: raw.pan,
+      });
+      if (on) queue.push(on);
+      const off = timedEventFrom({ type: 'noteOffAt', atFrame: raw.offFrame, note: raw.note });
+      if (off) queue.push(off);
+    }
+    // Stable sort: events that share a frame keep their order (a note's on before its own off, and
+    // the song's own note order), which is the first-in-first-applied tie break the queue promises.
+    queue.sort((a, b) => a.frame - b.frame);
+    this.scheduledNotes = queue;
+  }
+
+  /** Apply every queued event due at or before `frame`. Returns how many were applied. */
+  applyScheduledNotesUpTo(frame) {
+    const queue = this.scheduledNotes;
+    let applied = 0;
+    while (queue.length > 0 && queue[0].frame <= frame) {
+      const event = queue.shift();
+      if (event.off) {
+        this.wasm.gs_note_off(event.note);
+      } else if (event.pan !== undefined) {
+        this.wasm.gs_note_on_pan(event.note, event.velocity, event.pan);
+      } else {
+        this.wasm.gs_note_on(event.note, event.velocity);
+      }
+      applied += 1;
+    }
+    return applied;
+  }
+
+  monitorLoad(frames, cost, rate) {
+    const budget = (frames / rate) * 1000;
+    // Warm-up is measured in *rendered audio*, not blocks: the first second
+    // after start (and after the first notes on a phone) is full of first-touch
+    // costs and JIT compilation, and the old 15-block (40 ms) guard let those
+    // spikes trigger a downgrade — which is why the app reported "device
+    // overloaded" at 4% load, on the very first key press.
+    this.renderedMs += (frames / rate) * 1000;
+    // Asymmetric follower: rises slowly (only *sustained* load counts) and
+    // falls quickly. A symmetric average let a single slow block — a GC pause,
+    // a page fault on a phone — keep the estimate above the threshold for
+    // twenty blocks, which is how a 4%-load device ended up shedding voices.
+    if (!this.costAvg) {
+      this.costAvg = cost;
+    } else {
+      const alpha = cost > this.costAvg ? 0.05 : 0.35;
+      this.costAvg += (cost - this.costAvg) * alpha;
+    }
+    if (this.renderedMs < WARMUP_MS) {
+      // Discard the warm-up average rather than keeping the last sample: a slow
+      // startup must not decide the first verdict as soon as the window closes.
+      this.costAvg = 0;
+      this.missStreak = 0;
+      this.overStreak = 0;
+      return;
+    }
+    const now = nowMs();
+    const load = this.costAvg / budget;
+    // Decisions are made on *repetition*, not on single blocks:
+    //
+    //  * a missed deadline (a block that ate the whole quantum) counts after
+    //    three in a row — one is a GC pause, a page fault or another tab;
+    //  * high load counts after a sustained stretch — a single spike used to
+    //    drag the average over the threshold for twenty blocks, which is how a
+    //    phone at 4% load reported "device overloaded" on the first key press.
+    this.missStreak = cost > budget ? this.missStreak + 1 : 0;
+    this.overStreak = cost > budget * OVER_LOAD ? this.overStreak + 1 : 0;
+    const missed = this.missStreak >= MISS_STREAK;
+    const overloaded = this.overStreak >= OVER_BLOCKS;
+    const step = missed || load > 0.85 ? 8 : 4;
+    const cooldown = missed ? 250 : 900;
+    if (
+      (overloaded || missed) &&
+      this.currentPoly > 4 &&
+      now - this.lastDowngrade > cooldown
+    ) {
+      this.currentPoly = Math.max(4, this.currentPoly - step);
+      this.wasm.gs_set_max_polyphony(this.currentPoly);
+      this.wasm.gs_force_release_excess();
+      this.lastDowngrade = now;
+      this.costAvg = 0;
+      this.port.postMessage({ type: 'polyphony', value: this.currentPoly, reason: 'overload' });
+    } else if (
+      this.costAvg < budget * 0.12 &&
+      this.currentPoly < this.maxPoly &&
+      now - this.lastUpgrade > 8000
+    ) {
+      // Never climb back over a ceiling the user pinned.
+      this.currentPoly = Math.min(this.manualPoly || this.maxPoly, this.currentPoly + 4);
+      this.wasm.gs_set_max_polyphony(this.currentPoly);
+      this.lastUpgrade = now;
+      this.costAvg = 0;
+      this.port.postMessage({ type: 'polyphony', value: this.currentPoly, reason: 'recover' });
+    }
+  }
+
+  process(_inputs, outputs, parameters) {
+    const output = outputs[0];
+    if (!output || output.length === 0) return true;
+    const left = output[0];
+    const right = output[1] || output[0];
+    const frames = left.length;
+
+    if (!this.ready || this.muted) {
+      left.fill(0);
+      if (right !== left) right.fill(0);
+      // The frame cursor must advance even while muted, or every queued event would be applied
+      // late by however long the mute lasted (the events are addressed in absolute frames).
+      this.renderedFrames += frames;
+      return true;
+    }
+
+    // 1. Push the browser-interpolated AudioParam values into the engine.
+    for (let i = 0; i < PARAMS.length; i++) {
+      const name = PARAMS[i][0];
+      const values = parameters[name];
+      if (values !== undefined) this.wasm.gs_set_param(PARAMS[i][1], values[0]);
+    }
+
+    // 2. Render a dynamic block (128..1024 frames depending on the host),
+    //    measuring the cost against the render-quantum budget so we can shed
+    //    voices smoothly before the audio thread misses its deadline.
+    const block = Math.min(frames, this.maxBlock);
+    const blockStart = this.renderedFrames;
+    const t0 = nowMs();
+    if (this.scheduledNotes.length === 0) {
+      // The overwhelmingly common case: no timed events, so render the block in one call and
+      // keep the historical cost profile (a split render would show up as extra per-chunk
+      // overhead in the load monitor).
+      this.wasm.gs_process(block);
+    } else {
+      /**
+       * Split the block at each due event so a note can start mid-block.
+       *
+       * `gs_process(n)` is already called with dynamic sizes (the host's quantum is clamped to
+       * `maxBlock`), so chunking is safe; the cost is one extra call per event *inside* this
+       * block, which is at most a handful. An event due later than this block simply stays
+       * queued, which is what makes a 200 ms lookahead work without any timer on the host side.
+       */
+      let offset = 0;
+      while (offset < block) {
+        this.applyScheduledNotesUpTo(blockStart + offset);
+        const next = this.scheduledNotes.length > 0 ? this.scheduledNotes[0].frame : Infinity;
+        const untilNext = next === Infinity ? block - offset : Math.max(1, next - (blockStart + offset));
+        const chunk = Math.min(block - offset, untilNext);
+        this.wasm.gs_process(chunk);
+        offset += chunk;
+      }
+      // Events queued for the frame right after this block are still pending; ones that were
+      // already in the past when the message arrived were applied by the first call above.
+    }
+    this.renderedFrames = blockStart + block;
+    const cost = nowMs() - t0;
+    this.monitorLoad(block, cost, sampleRate);
+
+    // 3. Rebuild views every block; never cache them across `memory.grow`.
+    const leftView = new Float32Array(this.memory.buffer, this.leftPtr, block);
+    const rightView = new Float32Array(this.memory.buffer, this.rightPtr, block);
+    left.set(leftView);
+    if (right !== left) right.set(rightView);
+
+    // 4. Periodic analyser + meter message (small, structured-cloned copy).
+    this.blockCount++;
+    const budget = (block / sampleRate) * 1000;
+    if (this.blockCount % ANALYSIS_INTERVAL === 0) {
+      const spec = new Float32Array(this.memory.buffer, this.spectrumPtr, this.bins);
+      this.pendingSpectrum.set(spec.subarray(0, SPECTRUM_BINS));
+      this.port.postMessage(
+        {
+          type: 'analysis',
+          spectrum: this.pendingSpectrum.slice(),
+          peakL: this.wasm.gs_peak_l(),
+          peakR: this.wasm.gs_peak_r(),
+          voices: this.wasm.gs_active_voices(),
+          violations: this.wasm.gs_alloc_violations(),
+          // True-peak / loudness / limiter meters (ABI 2+).
+          truePeak: this.wasm.gs_take_true_peak ? this.wasm.gs_take_true_peak() : 0,
+          loudness: this.wasm.gs_loudness_rms ? this.wasm.gs_loudness_rms() : 0,
+          limit: this.wasm.gs_limit_reduction ? this.wasm.gs_limit_reduction() : 1,
+          // Share of the render-quantum budget the DSP is using: the number to
+          // watch when a device starts dropping out ("crackling").
+          load: budget > 0 ? this.costAvg / budget : 0,
+        },
+        [],
+      );
+    }
+
+    return true;
+  }
+}
+
+registerProcessor('gs1-synth-processor', SynthWorkletProcessor);

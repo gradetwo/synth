@@ -1,0 +1,47 @@
+/*
+ * Project manager (P10.4).
+ *
+ * Kept out of `styles/gs1.css` on purpose: this stylesheet is imported by the
+ * lazily-loaded panel, so it becomes its own CSS chunk and the first-screen CSS
+ * budget does not move. Only existing classes are reused for the trigger in the
+ * settings drawer (`.settings-row`, `.roll-btn`), so nothing here has to be
+ * eager.
+ */
+
+.project-body{display:flex;flex-direction:column;gap:10px;padding:10px 0 24px}
+.project-hint{margin:0;color:var(--txt-dim);font:500 10.5px/1.55 var(--grot)}
+.project-warn{
+  padding:8px 10px;border:1px solid var(--danger-border);border-radius:9px;
+  background:var(--danger-bg);color:var(--txt-1);font:600 10.5px/1.5 var(--grot)}
+.project-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.project-actions .project-input{flex:1 1 120px}
+.project-empty{padding:14px 0;text-align:center;color:var(--txt-dim);font:500 10.5px/1.6 var(--grot)}
+.project-list{display:flex;flex-direction:column;gap:8px}
+.project-row{
+  display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-radius:10px;
+  border:1px solid var(--border);background:var(--bg-inset)}
+.project-row.active{border-color:var(--accent-dim);box-shadow:inset 0 0 0 1px var(--accent-dim)}
+.project-row.damaged{opacity:.62}
+.project-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.project-name{font:600 11.5px/1.3 var(--grot);color:var(--txt-1);min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-flag{
+  flex:none;padding:1px 5px;border-radius:5px;border:1px solid var(--accent-dim);
+  color:var(--accent);font:600 9px/1.4 var(--mono);letter-spacing:.04em}
+.project-flag.bad{border-color:var(--danger-border);color:var(--danger)}
+.project-meta{margin-left:auto;flex:none;color:var(--txt-dim);font:500 9.5px/1.4 var(--mono)}
+.project-chips{display:flex;flex-wrap:wrap;gap:4px}
+.project-chip{
+  padding:1px 7px;border-radius:999px;border:1px solid var(--border);
+  color:var(--txt-2);font:500 9.5px/1.5 var(--mono)}
+.project-row-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.project-row-actions .roll-btn{min-height:26px;padding:0 8px;font-size:9.5px}
+.project-input{
+  min-width:0;padding:6px 8px;border-radius:8px;border:1px solid var(--border);
+  background:var(--bg-panel);color:var(--txt-1);font:500 11px/1.3 var(--grot)}
+.project-input:focus{outline:none;border-color:var(--accent-dim)}
+.project-snaps{
+  display:flex;flex-direction:column;gap:8px;margin-top:4px;padding-top:10px;
+  border-top:1px solid var(--border)}
+.project-snap{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.project-snap .project-meta{margin-left:0}

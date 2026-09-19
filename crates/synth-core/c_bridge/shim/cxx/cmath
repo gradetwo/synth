@@ -1,0 +1,29 @@
+// Minimal <cmath> shim exposing the C math functions and the two std:: helpers
+// DaisySP's dsp.h relies on.
+#pragma once
+#include <math.h>
+
+namespace std {
+
+inline bool isnormal(float x)
+{
+    return x != 0.0f && __builtin_isnormal(x);
+}
+
+inline bool isnormal(double x)
+{
+    return x != 0.0 && __builtin_isnormal(x);
+}
+
+using ::fabsf;
+using ::floorf;
+using ::log10f;
+using ::log2f;
+using ::powf;
+using ::expf;
+using ::sqrtf;
+using ::fmodf;
+using ::sinf;
+using ::cosf;
+
+} // namespace std

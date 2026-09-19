@@ -1,0 +1,2441 @@
+//! Parameter model shared with the TypeScript UI.
+//!
+//! The numeric ids below are the wire format for `gs_set_param`; they must stay
+//! in sync with `src/audio/params.ts`. The engine keeps a plain struct so the
+//! render loop never touches a map or allocates.
+
+pub const MAX_VOICES: usize = 32;
+pub const MAX_BLOCK_SIZE: usize = 1024;
+pub const SPECTRUM_BINS: usize = 36;
+pub const MOD_ROUTES: usize = 8;
+
+/// Highest unison stack size per oscillator (keep in sync with GS_MAX_UNISON).
+pub const MAX_UNISON: u32 = 7;
+
+/// Numeric parameter identifiers (`gs_set_param` / `gs_set_int_param`).
+pub mod id {
+    pub const MASTER_VOLUME: u32 = 0;
+    pub const OSC1_ON: u32 = 1;
+    pub const OSC1_WAVE: u32 = 2;
+    pub const OSC1_PITCH: u32 = 3;
+    pub const OSC1_DETUNE: u32 = 4;
+    pub const OSC1_LEVEL: u32 = 5;
+    pub const OSC1_PW: u32 = 6;
+    pub const OSC2_ON: u32 = 7;
+    pub const OSC2_WAVE: u32 = 8;
+    pub const OSC2_PITCH: u32 = 9;
+    pub const OSC2_DETUNE: u32 = 10;
+    pub const OSC2_LEVEL: u32 = 11;
+    pub const OSC2_PW: u32 = 12;
+    pub const FILTER_TYPE: u32 = 13;
+    pub const FILTER_CUTOFF: u32 = 14;
+    pub const FILTER_RES: u32 = 15;
+    pub const FILTER_DRIVE: u32 = 16;
+    pub const FILTER_ENV_AMT: u32 = 17;
+    pub const FILTER_KBD: u32 = 18;
+    pub const ENV_ATTACK: u32 = 19;
+    pub const ENV_DECAY: u32 = 20;
+    pub const ENV_SUSTAIN: u32 = 21;
+    pub const ENV_RELEASE: u32 = 22;
+    pub const LFO_ON: u32 = 23;
+    pub const LFO_WAVE: u32 = 24;
+    pub const LFO_RATE: u32 = 25;
+    pub const LFO_DEPTH: u32 = 26;
+    pub const LFO_TARGET: u32 = 27;
+    pub const LFO_SYNC: u32 = 28;
+    pub const FX_REVERB_ON: u32 = 29;
+    pub const FX_REVERB_SIZE: u32 = 30;
+    pub const FX_REVERB_MIX: u32 = 31;
+    pub const FX_DELAY_ON: u32 = 32;
+    pub const FX_DELAY_SYNC: u32 = 33;
+    pub const FX_DELAY_FB: u32 = 34;
+    pub const FX_DELAY_MIX: u32 = 35;
+    pub const GLIDE: u32 = 36;
+    pub const TEMPO: u32 = 37;
+    pub const PITCH_BEND_RANGE: u32 = 38;
+    pub const OSC1_PAN: u32 = 39;
+    pub const OSC2_PAN: u32 = 40;
+    pub const MASTER_TUNE: u32 = 41;
+    pub const VOICE_MODE: u32 = 42;
+    pub const FX_CHORUS_ON: u32 = 43;
+    pub const FX_CHORUS_DEPTH: u32 = 44;
+    pub const FX_CHORUS_RATE: u32 = 45;
+    pub const FX_CHORUS_MIX: u32 = 46;
+    pub const FX_FLANGER_ON: u32 = 47;
+    pub const FX_FLANGER_RATE: u32 = 48;
+    pub const FX_FLANGER_FB: u32 = 49;
+    pub const FX_FLANGER_MIX: u32 = 50;
+    pub const FX_PHASER_ON: u32 = 51;
+    pub const FX_PHASER_RATE: u32 = 52;
+    pub const FX_PHASER_FB: u32 = 53;
+    pub const FX_PHASER_MIX: u32 = 54;
+    pub const FX_DRIVE_ON: u32 = 55;
+    pub const FX_DRIVE_AMT: u32 = 56;
+    pub const FX_DRIVE_MIX: u32 = 57;
+    pub const FILTER_ENV_ATTACK: u32 = 58;
+    pub const FILTER_ENV_DECAY: u32 = 59;
+    pub const FILTER_ENV_SUSTAIN: u32 = 60;
+    pub const FILTER_ENV_RELEASE: u32 = 61;
+    pub const LFO2_ON: u32 = 62;
+    pub const LFO2_WAVE: u32 = 63;
+    pub const LFO2_RATE: u32 = 64;
+    pub const LFO2_DEPTH: u32 = 65;
+    pub const LFO2_TARGET: u32 = 66;
+    pub const FX_REVERB_DAMP: u32 = 67;
+    pub const FX_REVERB_WIDTH: u32 = 68;
+    pub const FX_REVERB_PREDELAY: u32 = 69;
+    pub const OSC1_UNISON: u32 = 70;
+    pub const OSC1_SPREAD: u32 = 71;
+    pub const OSC2_UNISON: u32 = 72;
+    pub const OSC2_SPREAD: u32 = 73;
+    pub const LFO_RETRIG: u32 = 74;
+    pub const LFO_ONESHOT: u32 = 75;
+    pub const LFO2_RETRIG: u32 = 76;
+    pub const LFO2_ONESHOT: u32 = 77;
+    /// Per-patch output trim (presets only; no UI control).
+    pub const PATCH_GAIN: u32 = 78;
+    /// Play the imported single-cycle wavetable instead of a factory bank
+    /// (A6.2). Ignored when nothing has been imported.
+    pub const WT_USER: u32 = 79;
+    /// Delay feedback damping: how much top end each repeat loses (A5).
+    pub const FX_DELAY_DAMP: u32 = 80;
+    /// Delay ping-pong: cross-feed the channels so echoes alternate (A5).
+    pub const FX_DELAY_PINGPONG: u32 = 81;
+    /// Chain position 1..6: which effect runs there (`FxKind`).
+    pub const FX_CHAIN1: u32 = 82;
+    pub const FX_CHAIN2: u32 = 83;
+    pub const FX_CHAIN3: u32 = 84;
+    pub const FX_CHAIN4: u32 = 85;
+    pub const FX_CHAIN5: u32 = 86;
+    pub const FX_CHAIN6: u32 = 87;
+    /// Which engine the reverb section runs: 0 = algorithmic, 1 = an imported
+    /// impulse response (A5).
+    pub const FX_REVERB_MODE: u32 = 94;
+    /// Output trim for the impulse-response reverb, whose level depends on the
+    /// response rather than on a `SIZE` control.
+    pub const FX_CONV_TRIM: u32 = 95;
+    /// Sampler: the MIDI note at which the imported sample plays at its recorded
+    /// pitch (A).
+    pub const SMP_ROOT: u32 = 96;
+    /// Sampler: 0 = one-shot, 1 = loop, 2 = ping-pong.
+    pub const SMP_MODE: u32 = 97;
+    pub const SMP_LOOP_START: u32 = 98;
+    pub const SMP_LOOP_END: u32 = 99;
+    /// 1 = the effect at that position runs as a *send* (its wet output is added
+    /// to the unprocessed signal) instead of an insert.
+    pub const FX_PARALLEL1: u32 = 88;
+    pub const FX_PARALLEL2: u32 = 89;
+    pub const FX_PARALLEL3: u32 = 90;
+    pub const FX_PARALLEL4: u32 = 91;
+    pub const FX_PARALLEL5: u32 = 92;
+    pub const FX_PARALLEL6: u32 = 93;
+    /// 1 = route the effect positions through the graph below instead of the
+    /// legacy chain (A1). 0 keeps every old patch exactly as it was.
+    pub const FX_GRAPH: u32 = 100;
+    /// Node input 1 source, one per node: 0 = nothing, 1 = the dry bus,
+    /// 2..=7 = the output of node 1..6.
+    pub const FX_NODE_IN1: u32 = 101;
+    /// Gain on node input 1.
+    pub const FX_NODE_IN1_GAIN: u32 = 107;
+    /// Node input 2 source (same encoding); 0 unless a node sums two signals.
+    pub const FX_NODE_IN2: u32 = 113;
+    pub const FX_NODE_IN2_GAIN: u32 = 119;
+    /// 1 = this node's output reaches the mix bus.
+    pub const FX_NODE_TO_OUT: u32 = 125;
+    /// Gain on the way to the mix bus.
+    pub const FX_NODE_OUT_GAIN: u32 = 131;
+    /// How far OSC 2 pushes OSC 1's phase around, 0..1 (P6.1). 0 keeps the
+    /// oscillators exactly as they were before this existed, which is why the
+    /// parameter is appended here rather than slotted in next to the other
+    /// oscillator controls: ids are the share-code wire format.
+    pub const OSC_FM: u32 = 137;
+    /// Ring modulation between OSC 1 and OSC 2, 0 = the plain mix, 1 = only the
+    /// product (P6.1).
+    pub const OSC_RING: u32 = 138;
+    /// Hard sync: OSC 2 restarts OSC 1's cycle (P6.2).
+    pub const OSC1_SYNC: u32 = 139;
+    /// Sub oscillator per oscillator: 0 = off, 1 = one octave down, 2 = two.
+    pub const OSC1_SUB: u32 = 140;
+    pub const OSC1_SUB_LEVEL: u32 = 141;
+    pub const OSC2_SUB: u32 = 142;
+    pub const OSC2_SUB_LEVEL: u32 = 143;
+    /// White noise blended into the voice, after the oscillators (P6.2).
+    pub const NOISE_MIX: u32 = 144;
+    /// Continuous multimode position for `FilterType::Sem` (P6.3a): the
+    /// response travels 0 = low-pass, 1/3 = band-pass, 2/3 = notch (the exact
+    /// `low + high` null) and 1 = high-pass, with straight ramps between the
+    /// four. Ignored by every other type, so the default 0 — the low-pass end,
+    /// where every older patch already sits — leaves existing sounds untouched.
+    pub const FILTER_MORPH: u32 = 145;
+    /// How the second filter stage is wired to the first (P6.3b): 0 = the stage
+    /// is switched off, 1 = the second stage filters the first stage's output
+    /// (serial), 2 = both stages process the same input and are mixed
+    /// (parallel). 0 is the default, and at 0 the render path is exactly the one
+    /// that existed before this parameter did — that is what keeps every older
+    /// patch bit-for-bit unchanged.
+    pub const FILTER_ROUTING: u32 = 146;
+    /// Second filter stage's type, in the same `FilterType` wire order as
+    /// `FILTER_TYPE`. The UI offers the five single-filter shapes (lp, hp, bp,
+    /// nt, sem); a patch that stores `comb` or `formant` here renders as a
+    /// 12 dB/oct SVF low-pass, because those two keep per-voice state that only
+    /// exists once (see `render_voice`).
+    pub const FILTER2_TYPE: u32 = 147;
+    pub const FILTER2_CUTOFF: u32 = 148;
+    pub const FILTER2_RES: u32 = 149;
+    pub const FILTER2_DRIVE: u32 = 150;
+    /// Parallel mix between the stages (P6.3b): `out = (1 - b) * A + b * B`,
+    /// linear rather than equal-power, so that b = 0 is *exactly* stage 1 and
+    /// b = 1 is *exactly* stage 2 and both endpoints can be asserted bit for
+    /// bit. Ignored while `FILTER_ROUTING` is 0 or 1.
+    pub const FILTER_BLEND: u32 = 151;
+    /// Bit-crusher (P6.4): on/off, then bit depth 4..16, sample-rate divisor
+    /// 1..64, anti-alias amount 0..1 and the insert mix.
+    pub const FX_CRUSH_ON: u32 = 152;
+    pub const FX_CRUSH_BITS: u32 = 153;
+    pub const FX_CRUSH_DOWN: u32 = 154;
+    pub const FX_CRUSH_AA: u32 = 155;
+    pub const FX_CRUSH_MIX: u32 = 156;
+    /// Shaping EQ (P6.4): on/off, then low shelf (gain, corner), sweepable mid
+    /// peak (gain, centre, Q), high shelf (gain, corner) and the insert mix.
+    pub const FX_EQ_ON: u32 = 157;
+    pub const FX_EQ_LOW_GAIN: u32 = 158;
+    pub const FX_EQ_LOW_FREQ: u32 = 159;
+    pub const FX_EQ_MID_GAIN: u32 = 160;
+    pub const FX_EQ_MID_FREQ: u32 = 161;
+    pub const FX_EQ_MID_Q: u32 = 162;
+    pub const FX_EQ_HIGH_GAIN: u32 = 163;
+    pub const FX_EQ_HIGH_FREQ: u32 = 164;
+    pub const FX_EQ_MIX: u32 = 165;
+    /// P6.5: run the saturating filter path at 2x and band-limit back to 1x.
+    /// Off by default, so a patch that predates it renders unchanged.
+    pub const OVERSAMPLE: u32 = 166;
+    /// First in-graph modulation edge (P7.2): three ids per edge and
+    /// [`MOD_SLOTS`] edges. `SRC` = 0 off / 1 LFO 1 / 2 LFO 2 / 3 the
+    /// envelope, `DST` = 0 off or `1 + node * 3 + which` (input 1 gain, input 2
+    /// gain, output gain) and `DEPTH` the signed amount the edge adds to that
+    /// gain. Appended after `OVERSAMPLE` so every existing share code still
+    /// lines up; every depth starts at 0, which is what keeps a pre-P7.2 graph
+    /// bit for bit its old self.
+    pub const FX_MOD1_SRC: u32 = 167;
+    pub const FX_MOD1_DST: u32 = 168;
+    pub const FX_MOD1_DEPTH: u32 = 169;
+    pub const FX_MOD2_SRC: u32 = 170;
+    pub const FX_MOD2_DST: u32 = 171;
+    pub const FX_MOD2_DEPTH: u32 = 172;
+    pub const FX_MOD3_SRC: u32 = 173;
+    pub const FX_MOD3_DST: u32 = 174;
+    pub const FX_MOD3_DEPTH: u32 = 175;
+    pub const FX_MOD4_SRC: u32 = 176;
+    pub const FX_MOD4_DST: u32 = 177;
+    pub const FX_MOD4_DEPTH: u32 = 178;
+    /// Transient shaper (P9.2): on/off, the two signed amounts in dB of gain
+    /// move per unit of transient at full scale, and the insert mix. Both
+    /// amounts default to 0, which makes the node a mathematical identity — so
+    /// a patch written before P9.2 renders bit for bit unchanged.
+    pub const FX_TRANSIENT_ON: u32 = 179;
+    pub const FX_TRANSIENT_ATTACK: u32 = 180;
+    pub const FX_TRANSIENT_SUSTAIN: u32 = 181;
+    pub const FX_TRANSIENT_MIX: u32 = 182;
+    /// Per-node effect parameter overrides (P9.3): [`OVR_SLOTS`] shared slot
+    /// values per effect node, six nodes. A slot's *meaning* depends on the
+    /// node's kind (see [`ovr_slot_base`]); its value is the override, or
+    /// [`FX_OVR_UNSET`] for "follow the kind's own knob", which is the default
+    /// and the reason an existing patch renders bit for bit its old self.
+    ///
+    /// The pool is shared across kinds so that six nodes cost
+    /// `OVR_KINDS * FX_SLOTS` ids for every kind put together instead of
+    /// `6 * 9` separate sets — the id budget in the batch report.
+    pub const FX_OVR1_1: u32 = 183;
+    pub const FX_OVR1_2: u32 = 184;
+    pub const FX_OVR1_3: u32 = 185;
+    pub const FX_OVR1_4: u32 = 186;
+    pub const FX_OVR2_1: u32 = 187;
+    pub const FX_OVR2_2: u32 = 188;
+    pub const FX_OVR2_3: u32 = 189;
+    pub const FX_OVR2_4: u32 = 190;
+    pub const FX_OVR3_1: u32 = 191;
+    pub const FX_OVR3_2: u32 = 192;
+    pub const FX_OVR3_3: u32 = 193;
+    pub const FX_OVR3_4: u32 = 194;
+    pub const FX_OVR4_1: u32 = 195;
+    pub const FX_OVR4_2: u32 = 196;
+    pub const FX_OVR4_3: u32 = 197;
+    pub const FX_OVR4_4: u32 = 198;
+    pub const FX_OVR5_1: u32 = 199;
+    pub const FX_OVR5_2: u32 = 200;
+    pub const FX_OVR5_3: u32 = 201;
+    pub const FX_OVR5_4: u32 = 202;
+    pub const FX_OVR6_1: u32 = 203;
+    pub const FX_OVR6_2: u32 = 204;
+    pub const FX_OVR6_3: u32 = 205;
+    pub const FX_OVR6_4: u32 = 206;
+    /// The override modulation bus (P9.3), the per-node counterpart of the
+    /// P7.2 in-graph edges: one source sweeping a **set** of override slots,
+    /// with the amount carried per slot so one LFO can push a delay time and a
+    /// reverb size by different amounts.
+    ///
+    /// `TARGETk` picks the override slot bus slot `k` sweeps: 0 = off,
+    /// otherwise `1 + node * OVR_SLOTS + slot`. `SRC` is the source code
+    /// (0 off, 1 LFO 1, 2 LFO 2, 3 the envelope) shared by every bus slot, and
+    /// `DEPTHk` is the signed fraction of that slot's own range — so **up to
+    /// [`OVR_MOD_SLOTS`] override slots are modulatable at once**, each by its
+    /// own amount. A slot that has no override of its own sweeps from its
+    /// kind's value, so a sweep is audible without setting a base first.
+    ///
+    /// Every value defaults to 0, which is exactly the "no modulation" of a
+    /// patch written before this existed.
+    pub const FX_OVR_TARGET1: u32 = 207;
+    pub const FX_OVR_TARGET2: u32 = 208;
+    pub const FX_OVR_TARGET3: u32 = 209;
+    pub const FX_OVR_TARGET4: u32 = 210;
+    pub const FX_OVR_TARGET5: u32 = 211;
+    pub const FX_OVR_TARGET6: u32 = 212;
+    pub const FX_OVR_TARGET7: u32 = 213;
+    pub const FX_OVR_TARGET8: u32 = 214;
+    pub const FX_OVR_DEPTH1: u32 = 215;
+    pub const FX_OVR_DEPTH2: u32 = 216;
+    pub const FX_OVR_DEPTH3: u32 = 217;
+    pub const FX_OVR_DEPTH4: u32 = 218;
+    pub const FX_OVR_DEPTH5: u32 = 219;
+    pub const FX_OVR_DEPTH6: u32 = 220;
+    pub const FX_OVR_DEPTH7: u32 = 221;
+    pub const FX_OVR_DEPTH8: u32 = 222;
+    /// One source code for the whole override bus.
+    pub const FX_OVR_SRC: u32 = 223;
+}
+
+/// Highest parameter id + 1.
+pub const PARAM_COUNT: usize = 224;
+
+/// Override slots the modulation bus can sweep at once (P9.3). Eight covers
+/// "a couple of nodes of each kind" without spending an id per pool slot; the
+/// id budget in the batch report is the reason it is not [`FX_OVR_POOL`].
+pub const OVR_MOD_SLOTS: usize = 8;
+
+/// Parameter id of one override modulation target: `index` is 0-based.
+pub const fn ovr_target_id(index: usize) -> u32 {
+    id::FX_OVR_TARGET1 + index as u32
+}
+
+/// Parameter id of one override modulation depth: `index` is 0-based.
+pub const fn ovr_depth_id(index: usize) -> u32 {
+    id::FX_OVR_DEPTH1 + index as u32
+}
+
+/// Which bus slot a target or depth parameter id addresses: the pair is
+/// contiguous, `OVR_MOD_SLOTS` targets then `OVR_MOD_SLOTS` depths.
+pub fn ovr_bus_param_index(param_id: u32) -> Option<usize> {
+    if let Some(offset) = param_id.checked_sub(id::FX_OVR_TARGET1) {
+        let index = offset as usize;
+        if index < OVR_MOD_SLOTS {
+            return Some(index);
+        }
+    }
+    let offset = param_id.checked_sub(id::FX_OVR_DEPTH1)?;
+    let index = offset as usize;
+    (index < OVR_MOD_SLOTS).then_some(index)
+}
+
+/// Overridable slots per effect node (P9.3). Every kind uses at most four, and
+/// the slots a kind does not use stay [`FX_OVR_UNSET`] for ever.
+pub const OVR_SLOTS: usize = 4;
+
+/// Slot values in the pool, one per node and slot.
+pub const FX_OVR_POOL: usize = FX_SLOTS * OVR_SLOTS;
+
+/// The value that means "this slot is not overridden, use the kind's own knob".
+///
+/// Deliberately below every legal range ([`ovr_slot_range`] starts at -1), so a
+/// slot that is set can always be told from one that is not, even for the
+/// controls whose range reaches -1: `Params::set` stores override slots
+/// verbatim (including this sentinel) instead of clamping them, so the flag
+/// cannot be rounded or clamped away.
+pub const FX_OVR_UNSET: f32 = -2.0;
+
+/// Parameter id of one override slot: node 0-based, slot 0-based.
+pub const fn ovr_id(node: usize, slot: usize) -> u32 {
+    id::FX_OVR1_1 + (node * OVR_SLOTS + slot) as u32
+}
+
+/// (node, slot) of an override slot parameter id, or `None` for any other id.
+pub fn ovr_param_slot(param_id: u32) -> Option<(usize, usize)> {
+    let offset = param_id.checked_sub(id::FX_OVR1_1)?;
+    let index = offset as usize;
+    (index < FX_OVR_POOL).then(|| (index / OVR_SLOTS, index % OVR_SLOTS))
+}
+
+/// Which slot of its kind an override index addresses. `0` is the knob a player
+/// reaches for first (delay time, reverb size, chorus depth, …), `1` the second
+/// and so on; a kind with fewer than four overridable controls leaves the tail
+/// unused.
+pub const fn ovr_slot_base(kind: FxKind, slot: usize) -> u32 {
+    let table: &[u32] = match kind {
+        FxKind::Delay => &[
+            // Slot 0 is delay time, which has no kind-level id of its own: it
+            // is derived from tempo and the sync division. `0` marks the tail
+            // that only a kind-level parameter could have addressed.
+            0,
+            id::FX_DELAY_FB,
+            id::FX_DELAY_MIX,
+            id::FX_DELAY_DAMP,
+        ],
+        FxKind::Reverb => &[
+            id::FX_REVERB_SIZE,
+            id::FX_REVERB_MIX,
+            id::FX_REVERB_DAMP,
+            id::FX_REVERB_PREDELAY,
+        ],
+        FxKind::Chorus => &[id::FX_CHORUS_DEPTH, id::FX_CHORUS_RATE, id::FX_CHORUS_MIX, 0],
+        FxKind::Flanger => &[id::FX_FLANGER_FB, id::FX_FLANGER_RATE, id::FX_FLANGER_MIX, 0],
+        FxKind::Phaser => &[id::FX_PHASER_FB, id::FX_PHASER_RATE, id::FX_PHASER_MIX, 0],
+        FxKind::Drive => &[id::FX_DRIVE_AMT, id::FX_DRIVE_MIX, 0, 0],
+        FxKind::Crush => &[id::FX_CRUSH_BITS, id::FX_CRUSH_DOWN, id::FX_CRUSH_AA, id::FX_CRUSH_MIX],
+        FxKind::Eq => &[
+            id::FX_EQ_LOW_GAIN,
+            id::FX_EQ_MID_GAIN,
+            id::FX_EQ_HIGH_GAIN,
+            id::FX_EQ_MID_FREQ,
+        ],
+        FxKind::Transient => &[
+            id::FX_TRANSIENT_ATTACK,
+            id::FX_TRANSIENT_SUSTAIN,
+            id::FX_TRANSIENT_MIX,
+            0,
+        ],
+        FxKind::None => &[0, 0, 0, 0],
+    };
+    table[if slot < OVR_SLOTS { slot } else { OVR_SLOTS - 1 }]
+}
+
+/// Whether an override slot addresses delay time, which is derived from tempo
+/// and the sync division rather than stored as a knob of its own.
+pub const fn ovr_slot_is_time(kind: FxKind, slot: usize) -> bool {
+    matches!(kind, FxKind::Delay) && slot == 0
+}
+
+/// Legal range of one override slot, as `(min, max)`.
+///
+/// Delay time is the odd one out: it is measured in seconds and its top end is
+/// the pool's own line length, so the slot carries seconds rather than a
+/// fraction. Every other slot mirrors the range its kind-level knob already
+/// accepts in [`Params::set`], which is what lets an override be clamped in
+/// exactly one place.
+pub fn ovr_slot_range(kind: FxKind, slot: usize, max_delay_seconds: f32) -> (f32, f32) {
+    if ovr_slot_is_time(kind, slot) {
+        return (0.001, max_delay_seconds.clamp(0.001, 4.0));
+    }
+    match (kind, slot) {
+        (FxKind::Delay, 1) => (0.0, 0.95),
+        (FxKind::Delay, _) => (0.0, 1.0),
+        (FxKind::Reverb, 3) => (0.0, 0.1),
+        (FxKind::Reverb, _) => (0.0, 1.0),
+        (FxKind::Chorus, 1) => (0.02, 10.0),
+        (FxKind::Chorus, _) => (0.0, 1.0),
+        (FxKind::Flanger, 1) => (0.02, 10.0),
+        (FxKind::Flanger, 0) => (0.0, 0.95),
+        (FxKind::Flanger, _) => (0.0, 1.0),
+        (FxKind::Phaser, 1) => (0.02, 10.0),
+        (FxKind::Phaser, 0) => (0.0, 0.95),
+        (FxKind::Phaser, _) => (0.0, 1.0),
+        (FxKind::Drive, _) => (0.0, 1.0),
+        (FxKind::Crush, 0) => (4.0, 16.0),
+        (FxKind::Crush, 1) => (1.0, 64.0),
+        (FxKind::Crush, _) => (0.0, 1.0),
+        (FxKind::Eq, 3) => (200.0, 8000.0),
+        (FxKind::Eq, _) => (-18.0, 18.0),
+        (FxKind::Transient, _) => (-1.0, 1.0),
+        (FxKind::None, _) => (0.0, 1.0),
+    }
+}
+
+/// Positions in the effect chain (A5). Six is one per effect: the chain is a
+/// permutation, so reordering can never lose an effect or double one up.
+pub const FX_SLOTS: usize = 6;
+
+/// In-graph modulation edges (P7.2). Four covers what the built-in templates
+/// need and keeps the parameter block small; the matrix's own eight routes are
+/// a different mechanism and keep running per voice.
+pub const MOD_SLOTS: usize = 4;
+
+/// Gain targets an in-graph edge can address: three per node.
+pub const GRAPH_GAINS: usize = FX_SLOTS * 3;
+
+/// Which field of an in-graph modulation edge a parameter id addresses.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ModField {
+    Src,
+    Dst,
+    Depth,
+}
+
+/// Decode an in-graph modulation parameter id into (edge, field).
+pub fn mod_param_field(param_id: u32) -> Option<(usize, ModField)> {
+    let offset = param_id.checked_sub(id::FX_MOD1_SRC)?;
+    let slot = (offset / 3) as usize;
+    (slot < MOD_SLOTS).then(|| {
+        let field = match offset % 3 {
+            0 => ModField::Src,
+            1 => ModField::Dst,
+            _ => ModField::Depth,
+        };
+        (slot, field)
+    })
+}
+
+/// Clamp a written destination into a valid gain target. Anything outside the
+/// three gains per node reads as "not connected".
+pub fn mod_dst_code(value: f32) -> u8 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+    (value as u32).min(GRAPH_GAINS as u32) as u8
+}
+
+/// Mask of the slot code inside one override modulation target value.
+pub const OVR_TARGET_SLOT_MASK: u8 = 0x1f;
+
+/// Slot code of one override slot: `1 + node * OVR_SLOTS + slot`, and 0 means
+/// "this bus slot is off". This is the whole wire format of an
+/// [`id::FX_OVR_TARGET1`] parameter.
+pub const fn ovr_slot_code(node: usize, slot: usize) -> u8 {
+    (1 + node * OVR_SLOTS + slot) as u8
+}
+
+/// Clamp a written target into a slot code: anything past the pool reads as
+/// "off" rather than wrapping onto another node's slot.
+pub fn ovr_target_code(value: f32) -> u8 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+    let code = value as u32;
+    if code > FX_OVR_POOL as u32 {
+        0
+    } else {
+        code as u8
+    }
+}
+
+/// The slot a target code sweeps, or `None` when it is off.
+pub fn ovr_target_slot(value: u8) -> Option<(usize, usize)> {
+    let slot = (value & OVR_TARGET_SLOT_MASK) as usize;
+    if slot == 0 || slot > FX_OVR_POOL {
+        return None;
+    }
+    let index = slot - 1;
+    Some((index / OVR_SLOTS, index % OVR_SLOTS))
+}
+
+/// Which effect runs at a chain position.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FxKind {
+    /// Empty position: nothing runs here.
+    None,
+    Delay,
+    Reverb,
+    Chorus,
+    Flanger,
+    Phaser,
+    Drive,
+    /// Bit-crusher (P6.4): quantiser + sample-rate divider with anti-aliasing.
+    Crush,
+    /// Shaping EQ (P6.4): low shelf, sweepable mid peak, high shelf.
+    Eq,
+    /// Transient shaper (P9.2): fast/slow envelope difference driving a signed
+    /// gain on the attack and on the sustain of a note.
+    Transient,
+}
+
+impl FxKind {
+    pub fn from_u32(value: u32) -> Self {
+        match value {
+            1 => FxKind::Delay,
+            2 => FxKind::Reverb,
+            3 => FxKind::Chorus,
+            4 => FxKind::Flanger,
+            5 => FxKind::Phaser,
+            6 => FxKind::Drive,
+            7 => FxKind::Crush,
+            8 => FxKind::Eq,
+            9 => FxKind::Transient,
+            _ => FxKind::None,
+        }
+    }
+
+    /// Insert effects are blended with the dry signal; a send is added.
+    ///
+    /// Delay and reverb already add their wet signal inside their own mix, so
+    /// for them the parallel switch has nothing to change (and the UI does not
+    /// offer it).
+    pub fn can_be_parallel(self) -> bool {
+        matches!(
+            self,
+            FxKind::Chorus
+                | FxKind::Flanger
+                | FxKind::Phaser
+                | FxKind::Drive
+                | FxKind::Crush
+                | FxKind::Eq
+                | FxKind::Transient
+        )
+    }
+}
+
+/// Number of keys the tuning table covers (MIDI 0..127).
+pub const TUNING_NOTES: usize = 128;
+
+/// Continuous parameters are smoothed across blocks (one-pole, ~20 ms) so the
+/// host can drag a knob without producing zipper noise. Discrete/stepped
+/// parameters (waveforms, switches, sync, voice mode) change immediately.
+pub fn is_continuous(param_id: u32) -> bool {
+    use id as p;
+    matches!(
+        param_id,
+        p::OSC1_PITCH
+            | p::OSC1_DETUNE
+            | p::OSC1_LEVEL
+            | p::OSC1_PW
+            | p::OSC1_PAN
+            | p::OSC2_PITCH
+            | p::OSC2_DETUNE
+            | p::OSC2_LEVEL
+            | p::OSC2_PW
+            | p::OSC2_PAN
+            | p::FILTER_CUTOFF
+            | p::FILTER_RES
+            | p::FILTER_DRIVE
+            | p::FILTER_ENV_AMT
+            | p::ENV_ATTACK
+            | p::ENV_DECAY
+            | p::ENV_SUSTAIN
+            | p::ENV_RELEASE
+            | p::LFO_RATE
+            | p::LFO_DEPTH
+            | p::FX_REVERB_SIZE
+            | p::FX_REVERB_MIX
+            | p::FX_REVERB_DAMP
+            | p::FX_REVERB_WIDTH
+            | p::FX_REVERB_PREDELAY
+            | p::OSC1_SPREAD
+            | p::OSC2_SPREAD
+            | p::OSC_FM
+            | p::OSC_RING
+            | p::OSC1_SUB_LEVEL
+            | p::OSC2_SUB_LEVEL
+            | p::NOISE_MIX
+            | p::FILTER_MORPH
+            | p::FILTER2_CUTOFF
+            | p::FILTER2_RES
+            | p::FILTER2_DRIVE
+            | p::FILTER_BLEND
+            | p::FX_DELAY_FB
+            | p::FX_DELAY_MIX
+            | p::GLIDE
+            | p::TEMPO
+            | p::PITCH_BEND_RANGE
+            | p::MASTER_TUNE
+            | p::FX_CHORUS_DEPTH
+            | p::FX_CHORUS_RATE
+            | p::FX_CHORUS_MIX
+            | p::FX_FLANGER_RATE
+            | p::FX_FLANGER_FB
+            | p::FX_FLANGER_MIX
+            | p::FX_PHASER_RATE
+            | p::FX_PHASER_FB
+            | p::FX_PHASER_MIX
+            | p::FX_DRIVE_AMT
+            | p::FX_DRIVE_MIX
+            | p::FILTER_ENV_ATTACK
+            | p::FILTER_ENV_DECAY
+            | p::FILTER_ENV_SUSTAIN
+            | p::FILTER_ENV_RELEASE
+            | p::LFO2_RATE
+            | p::LFO2_DEPTH
+            // Bit-crusher and shaping EQ (P6.4): smoothed so a knob drag does
+            // not click. Their on/off switches stay stepped.
+            | p::FX_CRUSH_BITS
+            | p::FX_CRUSH_DOWN
+            | p::FX_CRUSH_AA
+            | p::FX_CRUSH_MIX
+            | p::FX_EQ_LOW_GAIN
+            | p::FX_EQ_LOW_FREQ
+            | p::FX_EQ_MID_GAIN
+            | p::FX_EQ_MID_FREQ
+            | p::FX_EQ_MID_Q
+            | p::FX_EQ_HIGH_GAIN
+            | p::FX_EQ_HIGH_FREQ
+            | p::FX_EQ_MIX
+            // Transient shaper (P9.2): the three continuous controls are
+            // smoothed like every other knob; the on/off switch is stepped.
+            | p::FX_TRANSIENT_ATTACK
+            | p::FX_TRANSIENT_SUSTAIN
+            | p::FX_TRANSIENT_MIX
+            // In-graph modulation depths (P7.2): smoothed like every other
+            // gain, so an edge drawn onto a live graph ramps instead of
+            // stepping. The source and destination codes are stepped.
+            | p::FX_MOD1_DEPTH
+            | p::FX_MOD2_DEPTH
+            | p::FX_MOD3_DEPTH
+            | p::FX_MOD4_DEPTH
+            // Per-node override slots (P9.3) are smoothed so a knob drag on a
+            // node does not click. The slot that addresses delay time rides the
+            // same smoother and is one of the controls that most needs it. The
+            // target code is stepped; the sweep amount is a depth and ramps.
+            | p::FX_OVR1_1
+            | p::FX_OVR1_2
+            | p::FX_OVR1_3
+            | p::FX_OVR1_4
+            | p::FX_OVR2_1
+            | p::FX_OVR2_2
+            | p::FX_OVR2_3
+            | p::FX_OVR2_4
+            | p::FX_OVR3_1
+            | p::FX_OVR3_2
+            | p::FX_OVR3_3
+            | p::FX_OVR3_4
+            | p::FX_OVR4_1
+            | p::FX_OVR4_2
+            | p::FX_OVR4_3
+            | p::FX_OVR4_4
+            | p::FX_OVR5_1
+            | p::FX_OVR5_2
+            | p::FX_OVR5_3
+            | p::FX_OVR5_4
+            | p::FX_OVR6_1
+            | p::FX_OVR6_2
+            | p::FX_OVR6_3
+            | p::FX_OVR6_4
+            | p::FX_OVR_DEPTH1
+            | p::FX_OVR_DEPTH2
+            | p::FX_OVR_DEPTH3
+            | p::FX_OVR_DEPTH4
+            | p::FX_OVR_DEPTH5
+            | p::FX_OVR_DEPTH6
+            | p::FX_OVR_DEPTH7
+            | p::FX_OVR_DEPTH8
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Wave {
+    Sine,
+    Triangle,
+    Saw,
+    Square,
+    Pulse,
+    Noise,
+    /// Pink noise (-3 dB/octave), generated in Rust.
+    Pink,
+    /// Brown noise (-6 dB/octave), generated in Rust.
+    Brown,
+    /// Harmonic-table oscillator (A6.2). The pulse-width control picks the
+    /// recipe, since a table has no pulse width of its own.
+    Wavetable,
+    /// Imported sample, played back at the note's rate (A). Needs a file: with
+    /// nothing imported it is silent rather than a factory sound.
+    Sample,
+}
+
+impl Wave {
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => Wave::Triangle,
+            2 => Wave::Saw,
+            3 => Wave::Square,
+            4 => Wave::Pulse,
+            5 => Wave::Noise,
+            6 => Wave::Pink,
+            7 => Wave::Brown,
+            8 => Wave::Wavetable,
+            9 => Wave::Sample,
+            _ => Wave::Sine,
+        }
+    }
+
+    /// Waveform id understood by the DaisySP bridge, or `None` for noise, which
+    /// is generated in Rust.
+    pub fn daisy_id(self) -> Option<u32> {
+        match self {
+            Wave::Sine => Some(0),                    // WAVE_SIN
+            Wave::Triangle => Some(5),                // WAVE_POLYBLEP_TRI
+            Wave::Saw => Some(6),                     // WAVE_POLYBLEP_SAW
+            Wave::Square => Some(7),                  // WAVE_POLYBLEP_SQUARE
+            Wave::Pulse => Some(7),                   // POLYBLEP_SQUARE + narrow pw
+            Wave::Noise | Wave::Pink | Wave::Brown | Wave::Wavetable | Wave::Sample => None,
+        }
+    }
+
+    pub fn is_pulse(self) -> bool {
+        matches!(self, Wave::Pulse)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FilterType {
+    Lp,
+    Hp,
+    Bp,
+    Notch,
+    /// Feedback comb tuned to the cutoff: rings at that pitch.
+    Comb,
+    /// Three parallel band-passes tuned to the vowels A-E-I-O-U; the cutoff
+    /// knob morphs between them.
+    Formant,
+    /// SEM-style continuous multimode (P6.3a): one 12 dB state-variable filter
+    /// whose low/band/high outputs are crossfaded by `FILTER_MORPH`, so the
+    /// response travels LP → BP → (notch) → HP without a switch. Appended
+    /// after `Formant` so the ids above keep their numbering.
+    Sem,
+}
+
+impl FilterType {
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => FilterType::Hp,
+            2 => FilterType::Bp,
+            3 => FilterType::Notch,
+            4 => FilterType::Comb,
+            5 => FilterType::Formant,
+            6 => FilterType::Sem,
+            _ => FilterType::Lp,
+        }
+    }
+
+    pub fn to_u32(self) -> u32 {
+        match self {
+            FilterType::Lp => 0,
+            FilterType::Hp => 1,
+            FilterType::Bp => 2,
+            FilterType::Notch => 3,
+            FilterType::Comb => 4,
+            FilterType::Formant => 5,
+            FilterType::Sem => 6,
+        }
+    }
+
+    /// The id the C bridge knows this type by.
+    ///
+    /// Deliberately not `to_u32() as i32`: the enum above is the parameter wire
+    /// format (append-only, shared with the UI), while the C bridge's ids are
+    /// an implementation detail with their own numbering — `sem` is 6 on the
+    /// wire and `GS_FILTER_SEM` is 4 in `gs_daisy.h`. Casting between them
+    /// silently lands on the wrong filter, which is a bug that sounds like a
+    /// feature (a `sem` patch quietly becomes a low-pass).
+    pub fn bridge_id(self) -> i32 {
+        match self {
+            FilterType::Lp => 0,
+            FilterType::Hp => 1,
+            FilterType::Bp => 2,
+            FilterType::Notch => 3,
+            FilterType::Sem => 4,
+            // The comb and the formant filters run in Rust and never reach the
+            // bridge; the engine branches on them before this is called.
+            FilterType::Comb | FilterType::Formant => {
+                debug_assert!(false, "comb and formant have no bridge id");
+                0
+            }
+        }
+    }
+
+    /// The bridge id for the *second* stage (P6.3b).
+    ///
+    /// Deliberately separate from `bridge_id`: the second stage is one SVF per
+    /// side, so a comb or a formant selected there renders as that SVF's
+    /// low-pass. Calling `bridge_id` would trip its debug assertion — which is
+    /// there to catch a *stage one* patch quietly becoming a low-pass, not to
+    /// forbid a stage two that has nowhere else to put a delay line.
+    pub fn second_stage_id(self) -> i32 {
+        match self {
+            FilterType::Comb | FilterType::Formant => 0,
+            other => other.bridge_id(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FilterRouting {
+    /// The second stage does not run at all. Every patch written before P6.3b
+    /// lives here, so this arm has to stay a pure bypass.
+    Off,
+    /// Stage 2 filters stage 1's output: one 12 dB/oct slope on top of another.
+    Serial,
+    /// Both stages see the same input and their outputs are mixed by
+    /// [`FilterParams::blend`].
+    Parallel,
+}
+
+impl FilterRouting {
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => FilterRouting::Serial,
+            2 => FilterRouting::Parallel,
+            _ => FilterRouting::Off,
+        }
+    }
+
+    pub fn to_u32(self) -> u32 {
+        match self {
+            FilterRouting::Off => 0,
+            FilterRouting::Serial => 1,
+            FilterRouting::Parallel => 2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LfoTarget {
+    Cutoff,
+    Pitch,
+    Volume,
+    Pwm,
+}
+
+impl LfoTarget {
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => LfoTarget::Pitch,
+            2 => LfoTarget::Volume,
+            3 => LfoTarget::Pwm,
+            _ => LfoTarget::Cutoff,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LfoWave {
+    Sine,
+    Triangle,
+    Square,
+    Saw,
+}
+
+impl LfoWave {
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => LfoWave::Triangle,
+            2 => LfoWave::Square,
+            3 => LfoWave::Saw,
+            _ => LfoWave::Sine,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ModSrc {
+    Lfo,
+    Env,
+    ModWheel,
+    Velocity,
+    /// Second LFO (free-running, same signal for every voice).
+    Lfo2,
+    /// Channel pressure from the controller.
+    Aftertouch,
+    /// A different random value per note, held for the note's lifetime.
+    Random,
+    /// Note position relative to middle C, ±1 over ±48 semitones.
+    KeyTrack,
+}
+
+impl ModSrc {
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => ModSrc::Env,
+            2 => ModSrc::ModWheel,
+            3 => ModSrc::Velocity,
+            4 => ModSrc::Lfo2,
+            5 => ModSrc::Aftertouch,
+            6 => ModSrc::Random,
+            7 => ModSrc::KeyTrack,
+            _ => ModSrc::Lfo,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ModDst {
+    Cutoff,
+    Pitch,
+    Volume,
+    Pwm,
+    Pan,
+    Resonance,
+    /// Phase-modulation depth (P6.1) — an envelope here is the classic FM
+    /// brightness sweep.
+    Fm,
+    /// Ring-modulation amount (P6.1).
+    Ring,
+}
+
+impl ModDst {
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => ModDst::Pitch,
+            2 => ModDst::Volume,
+            3 => ModDst::Pwm,
+            4 => ModDst::Pan,
+            5 => ModDst::Resonance,
+            6 => ModDst::Fm,
+            7 => ModDst::Ring,
+            _ => ModDst::Cutoff,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ModRoute {
+    pub src: ModSrc,
+    pub dst: ModDst,
+    pub amount: f32,
+    pub enabled: bool,
+}
+
+impl ModRoute {
+    pub const fn empty() -> Self {
+        Self {
+            src: ModSrc::Lfo,
+            dst: ModDst::Cutoff,
+            amount: 0.0,
+            enabled: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct OscParams {
+    pub on: bool,
+    pub wave: Wave,
+    pub pitch: f32,
+    pub detune: f32,
+    pub level: f32,
+    pub pw: f32,
+    pub pan: f32,
+    /// Unison stack size, 1..=MAX_UNISON.
+    pub unison: u32,
+    /// Detune spread across the stack, 0..1 (±35 cents at full).
+    pub spread: f32,
+    /// Sub oscillator: 0 = off, 1 = one octave below, 2 = two octaves below.
+    pub sub: u32,
+    /// Sub oscillator level, 0..1.
+    pub sub_level: f32,
+}
+
+impl OscParams {
+    pub const fn new(wave: Wave) -> Self {
+        Self {
+            on: true,
+            wave,
+            pitch: 0.0,
+            detune: 0.0,
+            level: 0.6,
+            pw: 0.5,
+            pan: 0.0,
+            unison: 1,
+            spread: 0.35,
+            sub: 0,
+            sub_level: 0.4,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FilterParams {
+    pub kind: FilterType,
+    pub cutoff: f32,
+    pub res: f32,
+    pub drive: f32,
+    /// Continuous multimode position for [`FilterType::Sem`] (P6.3a). Read by
+    /// nothing else.
+    pub morph: f32,
+    pub env_amt: f32,
+    pub kbd: bool,
+    /// The second, optional stage (P6.3b). It has its own cutoff, resonance and
+    /// drive, and it never reads the filter envelope, the keyboard tracking or
+    /// the modulation matrix: those follow stage 1, the stage the player already
+    /// has a knob for.
+    pub routing: FilterRouting,
+    pub kind2: FilterType,
+    pub cutoff2: f32,
+    pub res2: f32,
+    pub drive2: f32,
+    /// Parallel mix, 0 = stage 1 only, 1 = stage 2 only (linear law).
+    pub blend: f32,
+    /// P6.5: run the drive-bearing filter stages at 2x and decimate back. The
+    /// linear filter types (comb, formant) have no saturator and are skipped.
+    pub oversample: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct EnvParams {
+    pub attack: f32,
+    pub decay: f32,
+    pub sustain: f32,
+    pub release: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LfoParams {
+    pub on: bool,
+    pub wave: LfoWave,
+    pub rate: f32,
+    pub depth: f32,
+    pub target: LfoTarget,
+    pub sync: bool,
+    /// Restart the cycle for every new note (per-voice LFO) instead of running
+    /// free for the whole patch.
+    pub retrigger: bool,
+    /// Run a single cycle and hold its final value.
+    pub one_shot: bool,
+}
+
+/// Where a node input takes its signal from (A1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GraphInput {
+    /// 0 = nothing, 1 = the dry (pre-effect) bus, 2..=7 = node 1..=6.
+    pub src: u8,
+    pub gain: f32,
+}
+
+impl GraphInput {
+    pub const NONE: Self = Self { src: 0, gain: 1.0 };
+}
+
+/// The dry bus; the first source a node can read.
+pub const GRAPH_DRY: u8 = 1;
+/// Source code for node `slot` (0-based).
+pub const fn graph_node_src(slot: usize) -> u8 {
+    slot as u8 + 2
+}
+
+/// Which per-node graph field a parameter id addresses.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GraphParam {
+    In1Src,
+    In1Gain,
+    In2Src,
+    In2Gain,
+    ToOut,
+    OutGain,
+}
+
+/// Decode a graph parameter id into (node index, field). `None` for every other
+/// parameter.
+///
+/// The six field bases are `FX_SLOTS` apart, so their half-open ranges tile
+/// `[FX_NODE_IN1, FX_NODE_OUT_GAIN + FX_SLOTS)` with no overlap and no gap: an
+/// id in that run is claimed by exactly one field and always resolves to a node
+/// inside `0..FX_SLOTS`. The id one past the run belongs to the parameter
+/// appended after it (`OSC_FM`) and gets `None` here.
+pub fn graph_param_field(param_id: u32) -> Option<(u32, GraphParam)> {
+    let ranges: [(u32, GraphParam); 6] = [
+        (id::FX_NODE_IN1, GraphParam::In1Src),
+        (id::FX_NODE_IN1_GAIN, GraphParam::In1Gain),
+        (id::FX_NODE_IN2, GraphParam::In2Src),
+        (id::FX_NODE_IN2_GAIN, GraphParam::In2Gain),
+        (id::FX_NODE_TO_OUT, GraphParam::ToOut),
+        (id::FX_NODE_OUT_GAIN, GraphParam::OutGain),
+    ];
+    for (base, field) in ranges {
+        if param_id >= base && param_id < base + FX_SLOTS as u32 {
+            return Some((param_id - base, field));
+        }
+    }
+    None
+}
+
+/// Clamp a written value into a valid source code. A code that names nothing
+/// reads as "not connected", which is what the renderer does with it anyway.
+pub fn graph_src_code(value: f32) -> u8 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+    (value as u32).min(FX_SLOTS as u32 + 1) as u8
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FxParams {
+    pub reverb_on: bool,
+    pub reverb_size: f32,
+    pub reverb_mix: f32,
+    pub reverb_damp: f32,
+    pub reverb_width: f32,
+    pub reverb_predelay: f32,
+    /// 0 = algorithmic reverb, 1 = imported impulse response.
+    pub reverb_mode: u32,
+    pub conv_trim: f32,
+    pub delay_on: bool,
+    pub delay_sync: u32,
+    pub delay_fb: f32,
+    pub delay_mix: f32,
+    pub delay_damp: f32,
+    pub delay_ping_pong: bool,
+    /// Effect chain, one [`FxKind`] per position, in signal order (A5).
+    pub chain: [FxKind; FX_SLOTS],
+    /// Positions that run as sends rather than inserts.
+    pub parallel: [bool; FX_SLOTS],
+    /// Feed-forward routing for the effect nodes (A1). While this is false the
+    /// chain above runs exactly as it always has, which is how every patch
+    /// written before the graph existed keeps its sound.
+    pub graph: bool,
+    /// Up to two inputs per node. An input's `src` may only point at the dry
+    /// bus or at an *earlier* node; anything else is ignored when rendering, so
+    /// the graph can never contain a loop.
+    pub node_in: [[GraphInput; 2]; FX_SLOTS],
+    /// Nodes whose output reaches the mix bus, and at what gain.
+    pub node_to_out: [bool; FX_SLOTS],
+    pub node_out_gain: [f32; FX_SLOTS],
+    /// In-graph modulation (P7.2): four `source → gain target` edges whose
+    /// depth is carried on the edge itself. They run at block rate and add to
+    /// the node gain a host parameter sets; the eight-slot modulation matrix
+    /// elsewhere in this struct is untouched and still runs per voice.
+    pub mod_src: [u8; MOD_SLOTS],
+    pub mod_dst: [u8; MOD_SLOTS],
+    pub mod_depth: [f32; MOD_SLOTS],
+    pub chorus_on: bool,
+    pub chorus_depth: f32,
+    pub chorus_rate: f32,
+    pub chorus_mix: f32,
+    pub flanger_on: bool,
+    pub flanger_rate: f32,
+    pub flanger_fb: f32,
+    pub flanger_mix: f32,
+    pub phaser_on: bool,
+    pub phaser_rate: f32,
+    pub phaser_fb: f32,
+    pub phaser_mix: f32,
+    pub drive_on: bool,
+    pub drive_amt: f32,
+    pub drive_mix: f32,
+    /// Bit-crusher (P6.4). Off by default so every patch written before it
+    /// existed renders through exactly the code path it did before.
+    pub crush_on: bool,
+    /// Quantiser bit depth, 4..16 (continuous so an abrupt change is smoothed).
+    pub crush_bits: f32,
+    /// Sample-and-hold divisor, 1..64: the sample rate is divided by this.
+    pub crush_down: f32,
+    /// Anti-alias amount, 0..1: how much of the pre-decimation low-pass and the
+    /// post sample-and-hold interpolation is mixed in. 0 is the raw, aliased
+    /// crusher; 1 is the smoothest.
+    pub crush_aa: f32,
+    pub crush_mix: f32,
+    /// Shaping EQ (P6.4): low shelf, sweepable mid peak, high shelf.
+    pub eq_on: bool,
+    pub eq_low_gain: f32,
+    pub eq_low_freq: f32,
+    pub eq_mid_gain: f32,
+    pub eq_mid_freq: f32,
+    pub eq_mid_q: f32,
+    pub eq_high_gain: f32,
+    pub eq_high_freq: f32,
+    pub eq_mix: f32,
+    /// Transient shaper (P9.2). Both amounts start at 0 and the switch at off,
+    /// so an older patch renders exactly as it did.
+    pub transient_on: bool,
+    /// Signed gain on a note's onset, -1..1 (0 = leave it alone).
+    pub transient_attack: f32,
+    /// Signed gain on a note's falling envelope, -1..1 (0 = leave it alone).
+    pub transient_sustain: f32,
+    pub transient_mix: f32,
+    /// Per-node effect parameter overrides (P9.3), one row per effect node and
+    /// [`OVR_SLOTS`] columns. Every cell starts at [`FX_OVR_UNSET`], which
+    /// reads as "whatever the kind-level knob above says": a patch that never
+    /// touches them renders through exactly the code path it always did.
+    ///
+    /// The columns are *shared* across kinds — column `k` means
+    /// [`ovr_slot_base`]`(kind, k)` — so six nodes cost
+    /// `FX_SLOTS * OVR_SLOTS` ids for every kind together.
+    pub ovr: [[f32; OVR_SLOTS]; FX_SLOTS],
+    /// The override modulation bus (P9.3): a source code (0 off, 1 LFO 1,
+    /// 2 LFO 2, 3 the envelope) and, per bus slot, which override slot it
+    /// sweeps plus the signed fraction of that slot's own range. `src == 0`
+    /// means no sweep, which is what keeps an untouched patch bit for bit its
+    /// old self.
+    pub ovr_src: u8,
+    /// Slot each bus slot sweeps: 0 = off, else `1 + node * OVR_SLOTS + slot`.
+    pub ovr_target: [u8; OVR_MOD_SLOTS],
+    /// Signed fraction of the target slot's own range, -1..1, per bus slot.
+    pub ovr_depth: [f32; OVR_MOD_SLOTS],
+}
+
+/// Complete engine parameter snapshot. `Copy` keeps the render loop allocation
+/// free and lets the ABI publish a consistent view.
+#[derive(Clone, Copy, Debug)]
+pub struct Params {
+    pub master_volume: f32,
+    /// Per-patch output trim, set by presets so switching patches does not jump
+    /// in level. Deliberately not a UI control: it belongs to the patch, not to
+    /// the player's master volume.
+    pub patch_gain: f32,
+    /// Prefer the imported single-cycle wavetable over the factory banks.
+    pub wt_user: bool,
+    /// Sampler settings (A): the note the imported sample plays at its recorded
+    /// pitch, how it loops, and where the loop sits inside it.
+    pub sample_root: f32,
+    pub sample_mode: u32,
+    pub sample_loop_start: f32,
+    pub sample_loop_end: f32,
+    pub master_tune: f32,
+    /// 0 = poly, 1 = mono (retrigger), 2 = legato.
+    pub voice_mode: u32,
+    pub pitch_bend_range: f32,
+    pub tempo: f32,
+    pub glide: f32,
+    /// OSC 2 -> OSC 1 phase-modulation depth, 0..1 (0 = no modulation).
+    pub osc_fm: f32,
+    /// Ring-modulation amount between the two oscillators, 0..1.
+    pub osc_ring: f32,
+    /// Hard sync: OSC 2 restarts OSC 1's cycle (P6.2).
+    pub osc_sync: bool,
+    /// White noise blended into the voice after the oscillators, 0..1.
+    pub noise_mix: f32,
+    pub osc: [OscParams; 2],
+    pub filter: FilterParams,
+    pub env: EnvParams,
+    pub lfo: LfoParams,
+    pub lfo2: LfoParams,
+    pub filter_env: EnvParams,
+    pub fx: FxParams,
+    pub routes: [ModRoute; MOD_ROUTES],
+}
+
+impl Params {
+    pub const fn new() -> Self {
+        Self {
+            master_volume: 0.75,
+            patch_gain: 1.0,
+            wt_user: false,
+            // C4 is the note most one-shots are played at, and the default loop
+            // covers the whole sample.
+            sample_root: 60.0,
+            sample_mode: 0,
+            sample_loop_start: 0.0,
+            sample_loop_end: 1.0,
+            master_tune: 0.0,
+            voice_mode: 0,
+            pitch_bend_range: 2.0,
+            tempo: 120.0,
+            glide: 0.0,
+            osc_fm: 0.0,
+            osc_ring: 0.0,
+            osc_sync: false,
+            noise_mix: 0.0,
+            osc: [OscParams::new(Wave::Sine), OscParams::new(Wave::Saw)],
+            filter: FilterParams {
+                kind: FilterType::Lp,
+                cutoff: 18000.0,
+                res: 0.05,
+                drive: 0.0,
+                // 0 is the low-pass end, which is where every patch written
+                // before `sem` existed already sits.
+                morph: 0.0,
+                env_amt: 0.0,
+                kbd: false,
+                // The second stage starts switched off, so a patch that never
+                // touches it renders through exactly the code path it did
+                // before P6.3b existed.
+                routing: FilterRouting::Off,
+                kind2: FilterType::Lp,
+                cutoff2: 9000.0,
+                res2: 0.25,
+                drive2: 0.15,
+                blend: 0.5,
+                // Off: the compatibility story for every patch written before
+                // P6.5, and the reason the default render stays sample-exact.
+                oversample: false,
+            },
+            env: EnvParams {
+                attack: 0.002,
+                decay: 0.2,
+                sustain: 0.8,
+                release: 0.3,
+            },
+            lfo: LfoParams {
+                on: false,
+                wave: LfoWave::Sine,
+                rate: 5.0,
+                depth: 0.3,
+                target: LfoTarget::Cutoff,
+                sync: false,
+                retrigger: false,
+                one_shot: false,
+            },
+            lfo2: LfoParams {
+                on: false,
+                wave: LfoWave::Triangle,
+                rate: 0.5,
+                depth: 0.3,
+                target: LfoTarget::Cutoff,
+                sync: false,
+                retrigger: false,
+                one_shot: false,
+            },
+            filter_env: EnvParams {
+                attack: 0.01,
+                decay: 0.3,
+                sustain: 0.5,
+                release: 0.3,
+            },
+            fx: FxParams {
+                reverb_on: false,
+                reverb_size: 0.4,
+                reverb_mix: 0.1,
+                reverb_damp: 0.35,
+                reverb_width: 0.8,
+                reverb_predelay: 0.012,
+                reverb_mode: 0,
+                conv_trim: 1.0,
+                delay_on: false,
+                delay_sync: 2,
+                delay_fb: 0.3,
+                delay_mix: 0.1,
+                delay_damp: 0.35,
+                delay_ping_pong: false,
+                // The order effects have always run in. Keeping it as the
+                // default is what makes every existing patch sound the same.
+                chain: [
+                    FxKind::Delay,
+                    FxKind::Reverb,
+                    FxKind::Chorus,
+                    FxKind::Flanger,
+                    FxKind::Phaser,
+                    FxKind::Drive,
+                ],
+                parallel: [false; FX_SLOTS],
+                graph: false,
+                // The default graph is the legacy chain: node 1 reads the dry
+                // bus, each later node reads the one before it, and the last
+                // node feeds the output.
+                node_in: [
+                    [GraphInput { src: GRAPH_DRY, gain: 1.0 }, GraphInput::NONE],
+                    [GraphInput { src: graph_node_src(0), gain: 1.0 }, GraphInput::NONE],
+                    [GraphInput { src: graph_node_src(1), gain: 1.0 }, GraphInput::NONE],
+                    [GraphInput { src: graph_node_src(2), gain: 1.0 }, GraphInput::NONE],
+                    [GraphInput { src: graph_node_src(3), gain: 1.0 }, GraphInput::NONE],
+                    [GraphInput { src: graph_node_src(4), gain: 1.0 }, GraphInput::NONE],
+                ],
+                node_to_out: [false, false, false, false, false, true],
+                node_out_gain: [1.0; FX_SLOTS],
+                // No in-graph edge exists until one is drawn, and a depth of 0
+                // is the same as none at all.
+                mod_src: [0; MOD_SLOTS],
+                mod_dst: [0; MOD_SLOTS],
+                mod_depth: [0.0; MOD_SLOTS],
+                chorus_on: false,
+                chorus_depth: 0.5,
+                chorus_rate: 0.6,
+                chorus_mix: 0.4,
+                flanger_on: false,
+                flanger_rate: 0.3,
+                flanger_fb: 0.5,
+                flanger_mix: 0.4,
+                phaser_on: false,
+                phaser_rate: 0.4,
+                phaser_fb: 0.6,
+                phaser_mix: 0.5,
+                drive_on: false,
+                drive_amt: 0.4,
+                drive_mix: 0.6,
+                // Both new effects start switched off, so a patch that predates
+                // them renders bit-for-bit as it did (P6.4).
+                crush_on: false,
+                crush_bits: 8.0,
+                crush_down: 4.0,
+                crush_aa: 0.5,
+                crush_mix: 1.0,
+                eq_on: false,
+                eq_low_gain: 0.0,
+                eq_low_freq: 200.0,
+                eq_mid_gain: 0.0,
+                eq_mid_freq: 1000.0,
+                eq_mid_q: 0.9,
+                eq_high_gain: 0.0,
+                eq_high_freq: 4000.0,
+                eq_mix: 1.0,
+                // The transient shaper (P9.2) starts off with both amounts at
+                // zero: a node that runs it is a mathematical identity.
+                transient_on: false,
+                transient_attack: 0.0,
+                transient_sustain: 0.0,
+                transient_mix: 1.0,
+                // Every override slot starts unset and the modulation bus
+                // starts disconnected, so the kind-level knobs above are the
+                // only thing the renderer reads (P9.3).
+                ovr: [[FX_OVR_UNSET; OVR_SLOTS]; FX_SLOTS],
+                ovr_src: 0,
+                ovr_target: [0; OVR_MOD_SLOTS],
+                ovr_depth: [0.0; OVR_MOD_SLOTS],
+            },
+            routes: [
+                ModRoute {
+                    src: ModSrc::Lfo,
+                    dst: ModDst::Cutoff,
+                    amount: 0.8,
+                    enabled: true,
+                },
+                ModRoute {
+                    src: ModSrc::Env,
+                    dst: ModDst::Cutoff,
+                    amount: 0.55,
+                    enabled: true,
+                },
+                ModRoute {
+                    src: ModSrc::Lfo,
+                    dst: ModDst::Pitch,
+                    amount: 0.18,
+                    enabled: false,
+                },
+                ModRoute {
+                    src: ModSrc::ModWheel,
+                    dst: ModDst::Cutoff,
+                    amount: 0.4,
+                    enabled: false,
+                },
+                ModRoute::empty(),
+                ModRoute::empty(),
+                ModRoute::empty(),
+                ModRoute::empty(),
+            ],
+        }
+    }
+
+    /// Apply a continuous parameter. Out-of-range values are clamped so a
+    /// malformed message can never destabilise the DSP.
+    pub fn set(&mut self, param_id: u32, value: f32) {
+        use id as p;
+        // A non-finite value can never reach the DSP (f32::clamp propagates NaN).
+        let value = if value.is_finite() { value } else { 0.0 };
+        // The graph parameters are contiguous per-node ranges, and Rust match
+        // patterns cannot hold a range bound computed from a constant.
+        if let Some((index, field)) = graph_param_field(param_id) {
+            let slot = index as usize;
+            if slot < FX_SLOTS {
+                match field {
+                    GraphParam::In1Src => self.fx.node_in[slot][0].src = graph_src_code(value),
+                    GraphParam::In1Gain => self.fx.node_in[slot][0].gain = value.clamp(0.0, 4.0),
+                    GraphParam::In2Src => self.fx.node_in[slot][1].src = graph_src_code(value),
+                    GraphParam::In2Gain => self.fx.node_in[slot][1].gain = value.clamp(0.0, 4.0),
+                    GraphParam::ToOut => self.fx.node_to_out[slot] = value >= 0.5,
+                    GraphParam::OutGain => self.fx.node_out_gain[slot] = value.clamp(0.0, 4.0),
+                }
+            }
+            return;
+        }
+        if let Some((slot, field)) = mod_param_field(param_id) {
+            match field {
+                ModField::Src => self.fx.mod_src[slot] = (value as u32).min(3) as u8,
+                ModField::Dst => self.fx.mod_dst[slot] = mod_dst_code(value),
+                ModField::Depth => self.fx.mod_depth[slot] = value.clamp(-1.0, 1.0),
+            }
+            return;
+        }
+        // Per-node override slots (P9.3). Stored **verbatim**, sentinel and all:
+        // [`FX_OVR_UNSET`] is below every legal range and is the flag that says
+        // "no override here", so clamping it would turn every unset slot into a
+        // real override sitting at its minimum. The renderer clamps the value it
+        // actually uses, in one place ([`ovr_slot_range`]).
+        if let Some((node, slot)) = ovr_param_slot(param_id) {
+            self.fx.ovr[node][slot] = value;
+            return;
+        }
+        // A modulation-bus slot (P9.3): each bus slot owns one target code and
+        // one amount, addressed by its own id so several slots can be live at
+        // once. The blocks are contiguous rather than named, which is what the
+        // index helper above is for.
+        if let Some(index) = ovr_bus_param_index(param_id) {
+            if param_id < p::FX_OVR_DEPTH1 {
+                self.fx.ovr_target[index] = ovr_target_code(value);
+            } else {
+                self.fx.ovr_depth[index] = value.clamp(-1.0, 1.0);
+            }
+            return;
+        }
+        match param_id {
+            p::MASTER_VOLUME => self.master_volume = clamp01(value),
+            p::PATCH_GAIN => self.patch_gain = value.clamp(0.0, 8.0),
+            p::WT_USER => self.wt_user = value >= 0.5,
+            p::MASTER_TUNE => self.master_tune = value.clamp(-24.0, 24.0),
+            p::VOICE_MODE => self.voice_mode = (value as u32).min(2),
+            p::PITCH_BEND_RANGE => self.pitch_bend_range = value.clamp(0.0, 24.0),
+            p::TEMPO => self.tempo = value.clamp(20.0, 300.0),
+            p::GLIDE => self.glide = clamp01(value),
+            p::OSC_FM => self.osc_fm = clamp01(value),
+            p::OSC_RING => self.osc_ring = clamp01(value),
+            p::OSC1_SYNC => self.osc_sync = value >= 0.5,
+            p::NOISE_MIX => self.noise_mix = clamp01(value),
+            p::OSC1_SUB => self.osc[0].sub = (value as u32).min(2),
+            p::OSC1_SUB_LEVEL => self.osc[0].sub_level = clamp01(value),
+            p::OSC2_SUB => self.osc[1].sub = (value as u32).min(2),
+            p::OSC2_SUB_LEVEL => self.osc[1].sub_level = clamp01(value),
+            p::OSC1_ON => self.osc[0].on = value > 0.5,
+            p::OSC1_WAVE => self.osc[0].wave = Wave::from_u32(value as u32),
+            p::OSC1_PITCH => self.osc[0].pitch = value.clamp(-48.0, 48.0),
+            p::OSC1_DETUNE => self.osc[0].detune = value.clamp(-100.0, 100.0),
+            p::OSC1_LEVEL => self.osc[0].level = clamp01(value),
+            p::OSC1_PW => self.osc[0].pw = value.clamp(0.05, 0.95),
+            p::OSC1_PAN => self.osc[0].pan = value.clamp(-1.0, 1.0),
+            p::OSC1_UNISON => self.osc[0].unison = (value as u32).clamp(1, MAX_UNISON),
+            p::OSC1_SPREAD => self.osc[0].spread = clamp01(value),
+            p::OSC2_ON => self.osc[1].on = value > 0.5,
+            p::OSC2_WAVE => self.osc[1].wave = Wave::from_u32(value as u32),
+            p::OSC2_PITCH => self.osc[1].pitch = value.clamp(-48.0, 48.0),
+            p::OSC2_DETUNE => self.osc[1].detune = value.clamp(-100.0, 100.0),
+            p::OSC2_LEVEL => self.osc[1].level = clamp01(value),
+            p::OSC2_PW => self.osc[1].pw = value.clamp(0.05, 0.95),
+            p::OSC2_PAN => self.osc[1].pan = value.clamp(-1.0, 1.0),
+            p::OSC2_UNISON => self.osc[1].unison = (value as u32).clamp(1, MAX_UNISON),
+            p::OSC2_SPREAD => self.osc[1].spread = clamp01(value),
+            p::FILTER_TYPE => self.filter.kind = FilterType::from_u32(value as u32),
+            p::FILTER_CUTOFF => self.filter.cutoff = value.clamp(20.0, 20000.0),
+            p::FILTER_RES => self.filter.res = clamp01(value),
+            p::FILTER_DRIVE => self.filter.drive = clamp01(value),
+            p::FILTER_MORPH => self.filter.morph = clamp01(value),
+            p::FILTER_ENV_AMT => self.filter.env_amt = clamp01(value),
+            p::FILTER_KBD => self.filter.kbd = value > 0.5,
+            p::FILTER_ROUTING => {
+                self.filter.routing = FilterRouting::from_u32(value as u32);
+            }
+            // Stage 2 ignores the comb and the formant: both keep a single
+            // per-voice state that stage 1 already owns, so a patch that asks
+            // for one here gets the 12 dB/oct low-pass the C bridge can run a
+            // second time instead of a silently shared delay line.
+            p::FILTER2_TYPE => {
+                let kind = FilterType::from_u32(value as u32);
+                self.filter.kind2 = match kind {
+                    FilterType::Comb | FilterType::Formant => FilterType::Lp,
+                    other => other,
+                };
+            }
+            p::FILTER2_CUTOFF => self.filter.cutoff2 = value.clamp(20.0, 20000.0),
+            p::FILTER2_RES => self.filter.res2 = clamp01(value),
+            p::FILTER2_DRIVE => self.filter.drive2 = clamp01(value),
+            p::FILTER_BLEND => self.filter.blend = clamp01(value),
+            p::OVERSAMPLE => self.filter.oversample = value > 0.5,
+            p::ENV_ATTACK => self.env.attack = value.clamp(0.0005, 8.0),
+            p::ENV_DECAY => self.env.decay = value.clamp(0.001, 12.0),
+            p::ENV_SUSTAIN => self.env.sustain = clamp01(value),
+            p::ENV_RELEASE => self.env.release = value.clamp(0.005, 16.0),
+            p::LFO_ON => self.lfo.on = value > 0.5,
+            p::LFO_WAVE => self.lfo.wave = LfoWave::from_u32(value as u32),
+            p::LFO_RATE => self.lfo.rate = value.clamp(0.02, 40.0),
+            p::LFO_DEPTH => self.lfo.depth = clamp01(value),
+            p::LFO_TARGET => self.lfo.target = LfoTarget::from_u32(value as u32),
+            p::LFO_SYNC => self.lfo.sync = value > 0.5,
+            p::FX_REVERB_ON => self.fx.reverb_on = value > 0.5,
+            p::FX_REVERB_SIZE => self.fx.reverb_size = clamp01(value),
+            p::FX_REVERB_MIX => self.fx.reverb_mix = clamp01(value),
+            p::FX_REVERB_DAMP => self.fx.reverb_damp = clamp01(value),
+            p::FX_REVERB_WIDTH => self.fx.reverb_width = clamp01(value),
+            p::FX_REVERB_PREDELAY => self.fx.reverb_predelay = value.clamp(0.0, 0.1),
+            p::FX_REVERB_MODE => self.fx.reverb_mode = if value >= 0.5 { 1 } else { 0 },
+            p::FX_CONV_TRIM => self.fx.conv_trim = value.clamp(0.0, 4.0),
+            p::SMP_ROOT => self.sample_root = value.clamp(0.0, 127.0),
+            p::SMP_MODE => self.sample_mode = (value as u32).min(2),
+            p::SMP_LOOP_START => self.sample_loop_start = clamp01(value),
+            p::SMP_LOOP_END => self.sample_loop_end = clamp01(value),
+            p::FX_DELAY_ON => self.fx.delay_on = value > 0.5,
+            p::FX_DELAY_SYNC => self.fx.delay_sync = (value as u32).min(3),
+            p::FX_DELAY_FB => self.fx.delay_fb = value.clamp(0.0, 0.95),
+            p::FX_DELAY_MIX => self.fx.delay_mix = clamp01(value),
+            p::FX_DELAY_DAMP => self.fx.delay_damp = clamp01(value),
+            p::FX_DELAY_PINGPONG => self.fx.delay_ping_pong = value >= 0.5,
+            p::FX_CHAIN1..=p::FX_CHAIN6 => {
+                let slot = (param_id - p::FX_CHAIN1) as usize;
+                self.fx.chain[slot] = FxKind::from_u32(value as u32);
+            }
+            p::FX_PARALLEL1..=p::FX_PARALLEL6 => {
+                let slot = (param_id - p::FX_PARALLEL1) as usize;
+                self.fx.parallel[slot] = value >= 0.5;
+            }
+            p::FX_GRAPH => self.fx.graph = value >= 0.5,
+            p::FX_CHORUS_ON => self.fx.chorus_on = value > 0.5,
+            p::FX_CHORUS_DEPTH => self.fx.chorus_depth = clamp01(value),
+            p::FX_CHORUS_RATE => self.fx.chorus_rate = value.clamp(0.02, 10.0),
+            p::FX_CHORUS_MIX => self.fx.chorus_mix = clamp01(value),
+            p::FX_FLANGER_ON => self.fx.flanger_on = value > 0.5,
+            p::FX_FLANGER_RATE => self.fx.flanger_rate = value.clamp(0.02, 10.0),
+            p::FX_FLANGER_FB => self.fx.flanger_fb = value.clamp(0.0, 0.95),
+            p::FX_FLANGER_MIX => self.fx.flanger_mix = clamp01(value),
+            p::FX_PHASER_ON => self.fx.phaser_on = value > 0.5,
+            p::FX_PHASER_RATE => self.fx.phaser_rate = value.clamp(0.02, 10.0),
+            p::FX_PHASER_FB => self.fx.phaser_fb = value.clamp(0.0, 0.95),
+            p::FX_PHASER_MIX => self.fx.phaser_mix = clamp01(value),
+            p::FX_DRIVE_ON => self.fx.drive_on = value > 0.5,
+            p::FX_DRIVE_AMT => self.fx.drive_amt = clamp01(value),
+            p::FX_DRIVE_MIX => self.fx.drive_mix = clamp01(value),
+            p::FILTER_ENV_ATTACK => self.filter_env.attack = value.clamp(0.0005, 8.0),
+            p::FILTER_ENV_DECAY => self.filter_env.decay = value.clamp(0.001, 12.0),
+            p::FILTER_ENV_SUSTAIN => self.filter_env.sustain = clamp01(value),
+            p::FILTER_ENV_RELEASE => self.filter_env.release = value.clamp(0.005, 16.0),
+            p::LFO2_ON => self.lfo2.on = value > 0.5,
+            p::LFO2_WAVE => self.lfo2.wave = LfoWave::from_u32(value as u32),
+            p::LFO2_RATE => self.lfo2.rate = value.clamp(0.02, 40.0),
+            p::LFO2_DEPTH => self.lfo2.depth = clamp01(value),
+            p::LFO2_TARGET => self.lfo2.target = LfoTarget::from_u32(value as u32),
+            p::LFO_RETRIG => self.lfo.retrigger = value > 0.5,
+            p::LFO_ONESHOT => self.lfo.one_shot = value > 0.5,
+            p::LFO2_RETRIG => self.lfo2.retrigger = value > 0.5,
+            p::LFO2_ONESHOT => self.lfo2.one_shot = value > 0.5,
+            p::FX_CRUSH_ON => self.fx.crush_on = value > 0.5,
+            p::FX_CRUSH_BITS => self.fx.crush_bits = value.clamp(4.0, 16.0),
+            p::FX_CRUSH_DOWN => self.fx.crush_down = value.clamp(1.0, 64.0),
+            p::FX_CRUSH_AA => self.fx.crush_aa = clamp01(value),
+            p::FX_CRUSH_MIX => self.fx.crush_mix = clamp01(value),
+            p::FX_EQ_ON => self.fx.eq_on = value > 0.5,
+            p::FX_EQ_LOW_GAIN => self.fx.eq_low_gain = value.clamp(-18.0, 18.0),
+            p::FX_EQ_LOW_FREQ => self.fx.eq_low_freq = value.clamp(40.0, 1000.0),
+            p::FX_EQ_MID_GAIN => self.fx.eq_mid_gain = value.clamp(-18.0, 18.0),
+            p::FX_EQ_MID_FREQ => self.fx.eq_mid_freq = value.clamp(200.0, 8000.0),
+            p::FX_EQ_MID_Q => self.fx.eq_mid_q = value.clamp(0.3, 6.0),
+            p::FX_EQ_HIGH_GAIN => self.fx.eq_high_gain = value.clamp(-18.0, 18.0),
+            p::FX_EQ_HIGH_FREQ => self.fx.eq_high_freq = value.clamp(1000.0, 16000.0),
+            p::FX_EQ_MIX => self.fx.eq_mix = clamp01(value),
+            p::FX_TRANSIENT_ON => self.fx.transient_on = value > 0.5,
+            p::FX_TRANSIENT_ATTACK => self.fx.transient_attack = value.clamp(-1.0, 1.0),
+            p::FX_TRANSIENT_SUSTAIN => self.fx.transient_sustain = value.clamp(-1.0, 1.0),
+            p::FX_TRANSIENT_MIX => self.fx.transient_mix = clamp01(value),
+            // The override modulation bus (P9.3): the source is one code for
+            // the whole bus, and each depth id names the slot it sweeps, so a
+            // patch can push several override slots at once (up to
+            // `OVR_MOD_SLOTS`) without an id per slot in the pool.
+            p::FX_OVR_SRC => self.fx.ovr_src = (value as u32).min(3) as u8,
+            _ => {}
+        }
+    }
+
+    /// The four override values one node resolves to this block (P9.3).
+    ///
+    /// `kind` is the effect the node runs, `delay_time` is what the tempo and
+    /// sync division say the node would delay by with no override, and
+    /// `scale`/`source` are the global override modulation bus (a zero `scale`
+    /// is "no sweep", which is the default). Every returned cell is either
+    /// exactly the kind-level value the engine always used, or the override —
+    /// the two are never blended, which is what keeps an unset slot bit for bit
+    /// its old self.
+    pub fn ovr_values(
+        &self,
+        node: usize,
+        kind: FxKind,
+        delay_time: f32,
+        max_delay_seconds: f32,
+        source: f32,
+    ) -> [f32; OVR_SLOTS] {
+        let mut out = [0.0f32; OVR_SLOTS];
+        for slot in 0..OVR_SLOTS {
+            let base = if ovr_slot_is_time(kind, slot) {
+                delay_time
+            } else {
+                self.fx_base(ovr_slot_base(kind, slot))
+            };
+            let scale = self.ovr_scale(node, slot);
+            out[slot] = self.resolve_ovr(node, slot, kind, base, max_delay_seconds, scale, source);
+        }
+        out
+    }
+
+    /// One slot, resolved: the kind's own value unless this node overrides it,
+    /// plus the global modulation bus when one is live.
+    ///
+    /// The `scale == 0.0` arm is the compatibility rule: with no sweep the
+    /// stored value comes back untouched, so an unset slot is *the* base value
+    /// rather than the same number recomputed through a multiply.
+    fn resolve_ovr(
+        &self,
+        node: usize,
+        slot: usize,
+        kind: FxKind,
+        base: f32,
+        max_delay_seconds: f32,
+        scale: f32,
+        source: f32,
+    ) -> f32 {
+        if node >= FX_SLOTS || slot >= OVR_SLOTS {
+            return base;
+        }
+        let stored = self.fx.ovr[node][slot];
+        if scale == 0.0 {
+            // No sweep: the stored value is either the sentinel (use the base)
+            // or the node's own value. Nothing is recomputed.
+            if stored == FX_OVR_UNSET {
+                return base;
+            }
+            let (lo, hi) = ovr_slot_range(kind, slot, max_delay_seconds);
+            return stored.clamp(lo, hi);
+        }
+        let (lo, hi) = ovr_slot_range(kind, slot, max_delay_seconds);
+        let start = if stored == FX_OVR_UNSET { base } else { stored };
+        let start = start.clamp(lo, hi);
+        (start + scale * source * (hi - lo)).clamp(lo, hi)
+    }
+
+    /// The value a kind-level parameter id holds today. Every override slot
+    /// maps onto one of these, except delay time, which the caller supplies.
+    fn fx_base(&self, base: u32) -> f32 {
+        use id as p;
+        match base {
+            p::FX_DELAY_FB => self.fx.delay_fb,
+            p::FX_DELAY_MIX => self.fx.delay_mix,
+            p::FX_DELAY_DAMP => self.fx.delay_damp,
+            p::FX_REVERB_SIZE => self.fx.reverb_size,
+            p::FX_REVERB_MIX => self.fx.reverb_mix,
+            p::FX_REVERB_DAMP => self.fx.reverb_damp,
+            p::FX_REVERB_PREDELAY => self.fx.reverb_predelay,
+            p::FX_CHORUS_DEPTH => self.fx.chorus_depth,
+            p::FX_CHORUS_RATE => self.fx.chorus_rate,
+            p::FX_CHORUS_MIX => self.fx.chorus_mix,
+            p::FX_FLANGER_FB => self.fx.flanger_fb,
+            p::FX_FLANGER_RATE => self.fx.flanger_rate,
+            p::FX_FLANGER_MIX => self.fx.flanger_mix,
+            p::FX_PHASER_FB => self.fx.phaser_fb,
+            p::FX_PHASER_RATE => self.fx.phaser_rate,
+            p::FX_PHASER_MIX => self.fx.phaser_mix,
+            p::FX_DRIVE_AMT => self.fx.drive_amt,
+            p::FX_DRIVE_MIX => self.fx.drive_mix,
+            p::FX_CRUSH_BITS => self.fx.crush_bits,
+            p::FX_CRUSH_DOWN => self.fx.crush_down,
+            p::FX_CRUSH_AA => self.fx.crush_aa,
+            p::FX_CRUSH_MIX => self.fx.crush_mix,
+            p::FX_EQ_LOW_GAIN => self.fx.eq_low_gain,
+            p::FX_EQ_MID_GAIN => self.fx.eq_mid_gain,
+            p::FX_EQ_HIGH_GAIN => self.fx.eq_high_gain,
+            p::FX_EQ_MID_FREQ => self.fx.eq_mid_freq,
+            p::FX_TRANSIENT_ATTACK => self.fx.transient_attack,
+            p::FX_TRANSIENT_SUSTAIN => self.fx.transient_sustain,
+            p::FX_TRANSIENT_MIX => self.fx.transient_mix,
+            _ => 0.0,
+        }
+    }
+
+    /// Delay time in seconds one node runs with, once its override is applied.
+    ///
+    /// The engine uses [`Self::ovr_values`] instead (it needs all four slots at
+    /// once); this is the single-slot view the tests pin the sentinel with.
+    pub fn ovr_delay_time(&self, node: usize, delay_time: f32, max_delay_seconds: f32) -> f32 {
+        let scale = self.ovr_scale(node, 0);
+        self.resolve_ovr(
+            node,
+            0,
+            FxKind::Delay,
+            delay_time,
+            max_delay_seconds,
+            scale,
+            self.ovr_source() as f32,
+        )
+    }
+
+    /// Fraction of slot `(node, slot)`'s own range this block's sweep adds.
+    ///
+    /// Zero unless one of the bus's slots names exactly this `(node, slot)`
+    /// pair, which is what keeps a sweep from leaking into the other five nodes
+    /// and the other three columns of the same node. Up to
+    /// [`OVR_MOD_SLOTS`] pairs can be live at once, each with its own amount.
+    pub fn ovr_scale(&self, node: usize, slot: usize) -> f32 {
+        if self.fx.ovr_src == 0 {
+            return 0.0;
+        }
+        let code = ovr_slot_code(node, slot);
+        let mut scale = 0.0f32;
+        for index in 0..OVR_MOD_SLOTS {
+            if self.fx.ovr_target[index] == code {
+                // Two entries may name the same pair; the amounts add, exactly
+                // like two P7.2 in-graph edges landing on one gain.
+                scale += self.fx.ovr_depth[index];
+            }
+        }
+        scale.clamp(-1.0, 1.0)
+    }
+
+    /// Source code the override modulation bus reads: 0 off, 1 LFO 1, 2 LFO 2,
+    /// 3 the envelope — the same four codes an in-graph edge carries (P7.2).
+    pub fn ovr_source(&self) -> u8 {
+        self.fx.ovr_src.min(3)
+    }
+
+
+    pub fn set_route(&mut self, index: usize, src: u32, dst: u32, amount: f32, enabled: bool) {
+        if index >= MOD_ROUTES {
+            return;
+        }
+        self.routes[index] = ModRoute {
+            src: ModSrc::from_u32(src),
+            dst: ModDst::from_u32(dst),
+            amount: amount.clamp(-1.0, 1.0),
+            enabled,
+        };
+    }
+
+    /// Delay time in seconds for the current sync division and tempo.
+    pub fn delay_time_seconds(&self) -> f32 {
+        let quarter = 60.0 / self.tempo.max(20.0);
+        match self.fx.delay_sync {
+            0 => quarter,          // 1/4
+            1 => quarter * 0.75,   // 1/8 dotted
+            2 => quarter * 0.5,    // 1/8
+            _ => quarter * 0.25,   // 1/16
+        }
+    }
+}
+
+impl Default for Params {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[inline]
+pub fn clamp01(v: f32) -> f32 {
+    if v.is_nan() {
+        0.0
+    } else {
+        v.clamp(0.0, 1.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamps_extreme_values() {
+        let mut p = Params::new();
+        p.set(id::FILTER_CUTOFF, 1.0e9);
+        assert_eq!(p.filter.cutoff, 20000.0);
+        p.set(id::FILTER_CUTOFF, -5.0);
+        assert_eq!(p.filter.cutoff, 20.0);
+        p.set(id::ENV_SUSTAIN, f32::NAN);
+        assert_eq!(p.env.sustain, 0.0);
+        p.set(id::ENV_ATTACK, 0.0);
+        assert!(p.env.attack >= 0.0005);
+    }
+
+    /// P7.2: every in-graph edge decodes to its own (slot, field), the block is
+    /// contiguous from `FX_MOD1_SRC`, and nothing outside it is mistaken for an
+    /// edge. A drift here would show up as edges writing to each other's slots.
+    #[test]
+    fn in_graph_modulation_ids_decode() {
+        assert_eq!(
+            id::FX_MOD1_SRC + (MOD_SLOTS as u32 * 3) - 1,
+            id::FX_MOD4_DEPTH,
+            "the edge block is three contiguous ids per slot"
+        );
+        assert_eq!(PARAM_COUNT, id::FX_OVR_SRC as usize + 1);
+        // The per-node override block (P9.3) is `FX_SLOTS * OVR_SLOTS` ids,
+        // four per node and shared across every kind, followed by the two-id
+        // modulation bus: 26 ids for the whole feature, which is what keeps it
+        // off the "one set per kind, per node" path.
+        assert_eq!(ovr_id(0, 0), id::FX_OVR1_1);
+        assert_eq!(ovr_id(FX_SLOTS - 1, OVR_SLOTS - 1), id::FX_OVR6_4);
+        assert_eq!(id::FX_OVR6_4 + 1, id::FX_OVR_TARGET1);
+        assert_eq!(id::FX_OVR_TARGET1 + (OVR_MOD_SLOTS as u32 - 1), id::FX_OVR_TARGET8);
+        assert_eq!(id::FX_OVR_TARGET8 + 1, id::FX_OVR_DEPTH1);
+        assert_eq!(id::FX_OVR_DEPTH1 + (OVR_MOD_SLOTS as u32 - 1), id::FX_OVR_DEPTH8);
+        assert_eq!(id::FX_OVR_DEPTH8 + 1, id::FX_OVR_SRC);
+        assert_eq!(id::FX_OVR1_1, id::FX_TRANSIENT_MIX + 1);
+        assert_eq!(ovr_param_slot(id::FX_OVR1_1), Some((0, 0)));
+        assert_eq!(ovr_param_slot(id::FX_OVR6_4), Some((FX_SLOTS - 1, OVR_SLOTS - 1)));
+        assert_eq!(ovr_param_slot(id::FX_OVR1_1 - 1), None);
+        assert_eq!(ovr_param_slot(id::FX_OVR_DEPTH1), None);
+        // Every id from `FX_MOD1_SRC` to `FX_MOD4_DEPTH` belongs to the edge
+        // block and nothing past it does, so an edge can never be confused with
+        // the effect parameters appended after it.
+        assert_eq!(id::FX_MOD4_DEPTH + 1, id::FX_TRANSIENT_ON);
+        for slot in 0..MOD_SLOTS {
+            let base = id::FX_MOD1_SRC + slot as u32 * 3;
+            assert_eq!(mod_param_field(base), Some((slot, ModField::Src)));
+            assert_eq!(mod_param_field(base + 1), Some((slot, ModField::Dst)));
+            assert_eq!(mod_param_field(base + 2), Some((slot, ModField::Depth)));
+        }
+        assert_eq!(mod_param_field(id::FX_MOD1_SRC - 1), None);
+        assert_eq!(mod_param_field(id::FX_MOD4_DEPTH + 1), None);
+    }
+
+    /// The destination and depth clamps: a malformed value reads as "no edge"
+    /// or stays inside the three gains per node, and the source cannot name a
+    /// signal the engine does not have.
+    #[test]
+    fn in_graph_modulation_values_clamp() {
+        assert_eq!(mod_dst_code(f32::NAN), 0);
+        assert_eq!(mod_dst_code(-1.0), 0);
+        assert_eq!(mod_dst_code(0.0), 0);
+        assert_eq!(mod_dst_code(1.0), 1);
+        assert_eq!(mod_dst_code(GRAPH_GAINS as f32), GRAPH_GAINS as u8);
+        assert_eq!(mod_dst_code(1.0e9), GRAPH_GAINS as u8);
+
+        let mut p = Params::new();
+        p.set(id::FX_MOD1_SRC, 99.0);
+        p.set(id::FX_MOD1_DST, 99.0);
+        p.set(id::FX_MOD1_DEPTH, 5.0);
+        assert_eq!(p.fx.mod_src[0], 3);
+        assert_eq!(p.fx.mod_dst[0], GRAPH_GAINS as u8);
+        assert_eq!(p.fx.mod_depth[0], 1.0);
+        p.set(id::FX_MOD1_DEPTH, -5.0);
+        assert_eq!(p.fx.mod_depth[0], -1.0);
+        // A fresh patch has no live edge in any slot; the three writes above
+        // only touched edge 1.
+        assert!(p.fx.mod_src[1..].iter().all(|src| *src == 0));
+        assert!(p.fx.mod_dst[1..].iter().all(|dst| *dst == 0));
+        assert!(p.fx.mod_depth[1..].iter().all(|depth| *depth == 0.0));
+    }
+
+    /// The per-node override slots (P9.3): the sentinel, the one-place clamp,
+    /// and the rule that an unset slot is the kind's own value *exactly*.
+    #[test]
+    fn node_overrides_are_bit_exact_until_set() {
+        let mut p = Params::new();
+        // A fresh patch: every slot unset, and every resolved value is the
+        // kind-level number itself, compared bit for bit rather than with a
+        // tolerance — this is the claim the whole backward-compatibility story
+        // rests on.
+        let delay_time = p.delay_time_seconds();
+        let base = p.ovr_values(0, FxKind::Delay, delay_time, 2.0, 0.0);
+        assert!(base[0].to_bits() == delay_time.to_bits());
+        assert!(base[1].to_bits() == p.fx.delay_fb.to_bits());
+        assert!(base[2].to_bits() == p.fx.delay_mix.to_bits());
+        assert!(base[3].to_bits() == p.fx.delay_damp.to_bits());
+        let reverb = p.ovr_values(3, FxKind::Reverb, delay_time, 2.0, 0.0);
+        assert!(reverb[0].to_bits() == p.fx.reverb_size.to_bits());
+        assert!(reverb[1].to_bits() == p.fx.reverb_mix.to_bits());
+        assert!(reverb[2].to_bits() == p.fx.reverb_damp.to_bits());
+        assert!(reverb[3].to_bits() == p.fx.reverb_predelay.to_bits());
+
+        // Overriding one node must not touch another node of the same kind.
+        p.set(ovr_id(1, 1), 0.7); // node 2's delay feedback
+        let two = p.ovr_values(1, FxKind::Delay, delay_time, 2.0, 0.0);
+        let one = p.ovr_values(0, FxKind::Delay, delay_time, 2.0, 0.0);
+        assert_eq!(two[1], 0.7);
+        assert!(one[1].to_bits() == p.fx.delay_fb.to_bits());
+
+        // The sentinel survives `set` (it is *not* clamped into a real value),
+        // and a value out of range is clamped in the one place that owns the
+        // ranges.
+        p.set(ovr_id(1, 1), FX_OVR_UNSET);
+        assert_eq!(p.fx.ovr[1][1], FX_OVR_UNSET);
+        assert!(p.ovr_values(1, FxKind::Delay, delay_time, 2.0, 0.0)[1].to_bits()
+            == p.fx.delay_fb.to_bits());
+        p.set(ovr_id(0, 1), 9.0);
+        assert_eq!(p.ovr_values(0, FxKind::Delay, delay_time, 2.0, 0.0)[1], 0.95);
+        p.set(ovr_id(0, 1), -9.0);
+        assert_eq!(p.ovr_values(0, FxKind::Delay, delay_time, 2.0, 0.0)[1], 0.0);
+        // Delay time is the one slot measured in seconds, and its top end is
+        // the pool's line length rather than 1.
+        p.set(ovr_id(0, 0), 1.5);
+        assert_eq!(p.ovr_values(0, FxKind::Delay, delay_time, 2.0, 0.0)[0], 1.5);
+        p.set(ovr_id(0, 0), 99.0);
+        assert_eq!(p.ovr_values(0, FxKind::Delay, delay_time, 2.0, 0.0)[0], 2.0);
+    }
+
+    /// What a node's slots hold when its kind changes (P9.3).
+    ///
+    /// The columns are a shared pool: column `k` means *this node's* column
+    /// `k`, interpreted by whatever kind the node runs now. A value is
+    /// therefore **kept and reinterpreted**, not cleared — switching delay →
+    /// reverb → delay gives the delay settings back, which is the only
+    /// behaviour that does not silently destroy work when a player auditions a
+    /// different effect in the same node. The re-interpretation is visible, not
+    /// hidden: the value is clamped to the new kind's range on read, so an
+    /// EQ mid frequency (200..8000) landing in a delay's feedback column reads
+    /// as the feedback ceiling rather than as a wild number.
+    #[test]
+    fn a_slot_keeps_its_value_when_the_node_changes_kind() {
+        let mut p = Params::new();
+        // Node 4 (index 3) is a delay with a 0.4 s time and heavy feedback.
+        p.set(id::FX_CHAIN4, 1.0);
+        p.set(ovr_id(3, 0), 0.4);
+        p.set(ovr_id(3, 1), 0.8);
+        let delay = p.ovr_values(3, FxKind::Delay, p.delay_time_seconds(), 2.0, 0.0);
+        assert_eq!(delay[0], 0.4);
+        assert_eq!(delay[1], 0.8);
+        // The same columns as a reverb: kept, read as size and mix.
+        p.set(id::FX_CHAIN4, 2.0);
+        let reverb = p.ovr_values(3, FxKind::Reverb, p.delay_time_seconds(), 2.0, 0.0);
+        assert_eq!(reverb[0], 0.4, "size, reinterpreted from the delay time");
+        assert_eq!(reverb[1], 0.8, "mix, reinterpreted from the feedback");
+        // The stored values are untouched by the read, so going back is exact.
+        assert_eq!(p.fx.ovr[3][0], 0.4);
+        assert_eq!(p.fx.ovr[3][1], 0.8);
+        p.set(id::FX_CHAIN4, 1.0);
+        let back = p.ovr_values(3, FxKind::Delay, p.delay_time_seconds(), 2.0, 0.0);
+        assert_eq!(back[0], 0.4);
+        assert_eq!(back[1], 0.8);
+        // A value outside the new kind's range clamps on read rather than
+        // reaching the DSP: an EQ mid frequency in a delay's feedback column.
+        p.set(id::FX_CHAIN4, 8.0);
+        p.set(ovr_id(3, 1), 2000.0);
+        let eq = p.ovr_values(3, FxKind::Eq, p.delay_time_seconds(), 2.0, 0.0);
+        assert_eq!(eq[0], 0.4, "0.4 is a legal +0.4 dB low gain, so it stays");
+        p.set(id::FX_CHAIN4, 1.0);
+        let clamped = p.ovr_values(3, FxKind::Delay, p.delay_time_seconds(), 2.0, 0.0);
+        assert_eq!(clamped[1], 0.95, "2000 in the feedback column reads as the ceiling");
+        assert_eq!(p.fx.ovr[3][1], 2000.0, "and the stored value is still 2000");
+    }
+
+    /// The override modulation bus (P9.3): a slot code per bus slot, one
+    /// source, one amount each, and a sweep that moves a slot by a fraction of
+    /// *its own* range.
+    #[test]
+    fn node_override_modulation_bus() {
+        assert_eq!(ovr_target_slot(0), None);
+        assert_eq!(ovr_slot_code(0, 0), 1);
+        assert_eq!(ovr_slot_code(FX_SLOTS - 1, OVR_SLOTS - 1), FX_OVR_POOL as u8);
+        assert_eq!(ovr_target_slot(ovr_slot_code(0, 0)), Some((0, 0)));
+        assert_eq!(
+            ovr_target_slot(ovr_slot_code(FX_SLOTS - 1, OVR_SLOTS - 1)),
+            Some((FX_SLOTS - 1, OVR_SLOTS - 1))
+        );
+        assert_eq!(ovr_target_slot(5), Some((1, 0)));
+        assert_eq!(ovr_target_code(-1.0), 0);
+        assert_eq!(ovr_target_code(f32::NAN), 0);
+        assert_eq!(ovr_target_code(0.0), 0);
+        assert_eq!(ovr_target_slot(ovr_target_code((FX_OVR_POOL + 1) as f32)), None);
+        assert_eq!(ovr_target_slot(ovr_target_code(FX_OVR_POOL as f32)), Some((5, 3)));
+        assert_eq!(ovr_bus_param_index(id::FX_OVR_TARGET1), Some(0));
+        assert_eq!(ovr_bus_param_index(id::FX_OVR_TARGET8), Some(OVR_MOD_SLOTS - 1));
+        assert_eq!(ovr_bus_param_index(id::FX_OVR_DEPTH1), Some(0));
+        assert_eq!(ovr_bus_param_index(id::FX_OVR_DEPTH8), Some(OVR_MOD_SLOTS - 1));
+        assert_eq!(ovr_bus_param_index(id::FX_OVR_DEPTH8 + 1), None);
+        assert_eq!(ovr_bus_param_index(id::FX_OVR_SRC), None);
+
+        let mut p = Params::new();
+        // No source: the amounts are irrelevant and every slot's scale is zero.
+        p.set(id::FX_OVR_DEPTH1, 1.0);
+        assert_eq!(p.ovr_scale(1, 0), 0.0);
+        p.set(ovr_target_id(0), ovr_slot_code(1, 0) as f32);
+        assert_eq!(p.ovr_scale(1, 0), 0.0, "a target without a source is silent");
+        p.set(id::FX_OVR_SRC, 1.0);
+        assert_eq!(p.ovr_source(), 1);
+        assert_eq!(p.ovr_scale(1, 0), 1.0);
+        // The sweep touches the slots named, and nothing else: not the node's
+        // other columns, not another node's identical column.
+        assert_eq!(p.ovr_scale(1, 1), 0.0);
+        assert_eq!(p.ovr_scale(0, 0), 0.0);
+
+        // Several slots at once, each with its own amount: this is what the
+        // per-slot depth ids exist for. Slot 0 sweeps node 2's time, slot 1
+        // node 4's time, slot 2 node 1's feedback.
+        p.set(ovr_target_id(0), ovr_slot_code(1, 0) as f32);
+        p.set(ovr_depth_id(0), 0.5);
+        assert_eq!(p.ovr_scale(1, 0), 0.5, "the bus slot took its own target");
+        assert_eq!(p.ovr_scale(1, 1), 0.0);
+        p.set(ovr_target_id(1), ovr_slot_code(3, 0) as f32);
+        p.set(ovr_depth_id(1), 0.25);
+        assert_eq!(p.ovr_scale(3, 0), 0.25);
+        p.set(id::FX_OVR_SRC, 3.0);
+        // A full bus: all eight slots name a different pair, so eight override
+        // slots across the six nodes are modulatable at once.
+        for index in 0..OVR_MOD_SLOTS {
+            p.set(ovr_target_id(index), ovr_slot_code(index, 1) as f32);
+            p.set(ovr_depth_id(index), 0.25);
+        }
+        // Six nodes, eight bus slots: every node can have a live sweep at once,
+        // and the code for a node past the pool reads as "off" rather than
+        // wrapping onto another node.
+        for index in 0..FX_SLOTS {
+            assert_eq!(p.ovr_scale(index, 1), 0.25);
+            assert_eq!(p.ovr_scale(index, 0), 0.0);
+        }
+        assert_eq!(ovr_target_code(ovr_slot_code(FX_SLOTS, 0) as f32), 0);
+
+        // A live sweep walks a slot by a fraction of its own range: slot 0 of a
+        // delay is time, and its range is 0.001..2 s.
+        // Back to a single live sweep for the range checks.
+        for index in 0..OVR_MOD_SLOTS {
+            p.set(ovr_target_id(index), 0.0);
+            p.set(ovr_depth_id(index), 0.0);
+        }
+        p.set(ovr_target_id(0), ovr_slot_code(1, 0) as f32);
+        p.set(ovr_depth_id(0), 1.0);
+        let swept = p.ovr_values(1, FxKind::Delay, 0.001, 2.0, 1.0);
+        assert_eq!(swept[0], 2.0, "the sweep travels the whole 0.001..2 s range");
+        p.set(ovr_depth_id(0), 0.5);
+        let swept = p.ovr_values(1, FxKind::Delay, 0.001, 2.0, 1.0);
+        assert!((swept[0] - (0.001 + 0.9995)).abs() < 1e-3);
+        p.set(ovr_depth_id(0), 1.0);
+        let swept = p.ovr_values(1, FxKind::Delay, 0.25, 2.0, 1.0);
+        assert_eq!(swept[0], 2.0, "a sweep past the top clamps at the slot's own top");
+        assert!(swept[1].to_bits() == p.fx.delay_fb.to_bits());
+        let swept = p.ovr_values(1, FxKind::Delay, 0.1, 2.0, -1.0);
+        assert!((swept[0] - 0.001).abs() < 1e-6);
+        // A slot that is not the target stays exactly the kind's value, even
+        // while a sweep is live: that is what keeps an unrelated node bit for
+        // bit what it was.
+        assert!(p.ovr_values(0, FxKind::Delay, 1.0, 2.0, 1.0)[0].to_bits() == 1.0f32.to_bits());
+        // ...and with no source at all, the targeted node is the kind's value
+        // too, bit for bit: the bus is the only thing that changes anything.
+        p.set(id::FX_OVR_SRC, 0.0);
+        assert!(p.ovr_values(1, FxKind::Delay, 1.0, 2.0, 1.0)[0].to_bits() == 1.0f32.to_bits());
+    }
+
+    #[test]
+    fn delay_sync_maps_to_tempo() {
+        let mut p = Params::new();
+        p.set(id::TEMPO, 120.0);
+        p.set(id::FX_DELAY_SYNC, 0.0);
+        assert!((p.delay_time_seconds() - 0.5).abs() < 1e-6);
+        p.set(id::FX_DELAY_SYNC, 3.0);
+        assert!((p.delay_time_seconds() - 0.125).abs() < 1e-6);
+    }
+
+    #[test]
+    fn wave_and_filter_enums_round_trip() {
+        for (raw, wave) in [
+            (0, Wave::Sine),
+            (1, Wave::Triangle),
+            (2, Wave::Saw),
+            (3, Wave::Square),
+            (4, Wave::Pulse),
+            (5, Wave::Noise),
+        ] {
+            assert_eq!(Wave::from_u32(raw), wave);
+        }
+        for (raw, kind) in [
+            (0, FilterType::Lp),
+            (1, FilterType::Hp),
+            (2, FilterType::Bp),
+            (3, FilterType::Notch),
+            (4, FilterType::Comb),
+            (5, FilterType::Formant),
+            (6, FilterType::Sem),
+        ] {
+            assert_eq!(FilterType::from_u32(raw), kind);
+            assert_eq!(kind.to_u32(), raw);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // The node-parameter id block (NEXT-PLAN-2 §一.11, P9.4).
+    //
+    // `graph_param_field` matches `base <= id < base + FX_SLOTS`, with the six
+    // field bases `101 / 107 / 113 / 119 / 125 / 131` and `FX_SLOTS = 6`. Those
+    // six half-open ranges tile `[101, 137)` exactly — adjacent, pairwise
+    // disjoint, no gap — so each id in the block is claimed by exactly one
+    // field and always decodes to a node inside `0..FX_SLOTS`. The `slot <
+    // FX_SLOTS` guard in `Params::set` is therefore defensive, not load-bearing:
+    // no id the host can write reaches it. The parameter appended after the
+    // block (`OSC_FM`, 137) is claimed by no field and takes the ordinary path.
+    //
+    // These tests pin that published mapping — one id is the wire format for a
+    // `.gs1proj`/share code/preset, so it cannot change without a migration.
+    // They exist so a future change to the block (or a new parameter landing
+    // inside it) has to be deliberate: without them a "fix" would silently
+    // re-point old files. See `docs/notes/node-param-ids.md`.
+    // ------------------------------------------------------------------
+
+    /// Walk every id in the node block and pin what the decoder answers. This is
+    /// the authority for the batch report's per-id table.
+    #[test]
+    fn graph_node_ids_resolve_to_their_documented_field() {
+        use GraphParam::{In1Gain, In1Src, In2Gain, In2Src, OutGain, ToOut};
+        // Field order is the order the block lays the fields out in.
+        let fields: [(GraphParam, u32); 6] = [
+            (In1Src, id::FX_NODE_IN1),
+            (In1Gain, id::FX_NODE_IN1_GAIN),
+            (In2Src, id::FX_NODE_IN2),
+            (In2Gain, id::FX_NODE_IN2_GAIN),
+            (ToOut, id::FX_NODE_TO_OUT),
+            (OutGain, id::FX_NODE_OUT_GAIN),
+        ];
+        // The block is exactly the six field ranges laid end to end.
+        for pair in fields.windows(2) {
+            assert_eq!(
+                pair[0].1 + FX_SLOTS as u32,
+                pair[1].1,
+                "field {} must start where {:?} ends",
+                pair[1].1,
+                pair[0].0
+            );
+        }
+        let lo = id::FX_NODE_IN1;
+        let hi = id::FX_NODE_OUT_GAIN + FX_SLOTS as u32;
+        assert_eq!(hi, id::OSC_FM, "the block ends where OSC_FM begins");
+        for param in lo..hi {
+            // Exactly one field claims the id: its own. (The `find` below is a
+            // uniqueness check as much as a lookup — `expect` fails if any id
+            // in the block belongs to no field.)
+            let (owner_slot, owner_field) = fields
+                .iter()
+                .find(|(_, b)| param >= *b && param < *b + FX_SLOTS as u32)
+                .map(|(f, b)| ((param - b) as usize, *f))
+                .expect("every id in the block is claimed by some field");
+            assert_eq!(
+                graph_param_field(param),
+                Some((owner_slot as u32, owner_field)),
+                "id {param} decodes to the one field that claims it"
+            );
+            assert!(
+                owner_slot < FX_SLOTS,
+                "id {param} must land on one of the six nodes"
+            );
+        }
+        // The boundary ids, which are also the proof that the ranges tile: each
+        // field's last id and the next field's first id are consecutive, and
+        // each decodes into its own field. The plan's two examples, measured,
+        // are wrong geometry: the block runs 101..136, so 35 (FX_DELAY_MIX) and
+        // 157 (FX_EQ_ON) are nowhere near it, and 132..136 are *vacant* ids, not
+        // OSC_FM..OSC1_SUB_LEVEL. See
+        // `node_block_does_not_shadow_any_ordinary_parameter`.
+        assert_eq!(graph_param_field(id::FX_NODE_IN1 + 5), Some((5, In1Src)));
+        assert_eq!(graph_param_field(id::FX_NODE_IN1 + 6), Some((0, In1Gain)));
+        assert_eq!(
+            graph_param_field(id::FX_NODE_IN1_GAIN + 5),
+            Some((5, In1Gain))
+        );
+        assert_eq!(
+            graph_param_field(id::FX_NODE_IN1_GAIN + 6),
+            Some((0, In2Src))
+        );
+        assert_eq!(graph_param_field(id::FX_NODE_IN2 + 5), Some((5, In2Src)));
+        assert_eq!(graph_param_field(id::FX_NODE_IN2 + 6), Some((0, In2Gain)));
+        assert_eq!(graph_param_field(id::FX_NODE_OUT_GAIN), Some((0, OutGain)));
+        assert_eq!(
+            graph_param_field(id::FX_NODE_OUT_GAIN + 1),
+            Some((1, OutGain))
+        );
+        assert_eq!(
+            graph_param_field(id::FX_NODE_OUT_GAIN + 5),
+            Some((5, OutGain))
+        );
+    }
+
+    /// Every id the host writes for a node field reaches *that* field. This is
+    /// the measurement that decides whether the host can configure all six
+    /// nodes, and it says yes — each of the 36 ids is claimed by exactly one
+    /// field, its own.
+    #[test]
+    fn every_node_field_id_reaches_its_own_field() {
+        use GraphParam::{In1Gain, In1Src, In2Gain, In2Src, OutGain, ToOut};
+        // Field order is the order the block lays the fields out in.
+        let fields: [(&str, u32, GraphParam); 6] = [
+            ("IN1", id::FX_NODE_IN1, In1Src),
+            ("IN1_GAIN", id::FX_NODE_IN1_GAIN, In1Gain),
+            ("IN2", id::FX_NODE_IN2, In2Src),
+            ("IN2_GAIN", id::FX_NODE_IN2_GAIN, In2Gain),
+            ("TO_OUT", id::FX_NODE_TO_OUT, ToOut),
+            ("OUT_GAIN", id::FX_NODE_OUT_GAIN, OutGain),
+        ];
+        let mut own_name = 0;
+        for (name, base, field) in fields {
+            for slot in 0..FX_SLOTS as u32 {
+                let param = base + slot;
+                assert_eq!(
+                    graph_param_field(param),
+                    Some((slot, field)),
+                    "id {param} ({name} of node {}) must decode to itself",
+                    slot + 1
+                );
+                own_name += 1;
+            }
+        }
+        assert_eq!(own_name, 36, "all 36 node field ids decode to themselves");
+        // 132..136 are vacant ids in the engine's table — the next parameter is
+        // 137 (OSC_FM) — which is why the JS node-out gains write a gain the
+        // graph reads while an unrelated parameter is never touched.
+        for slot in 1..FX_SLOTS as u32 {
+            let param = id::FX_NODE_OUT_GAIN + slot;
+            assert_eq!(graph_param_field(param), Some((slot, GraphParam::OutGain)));
+            assert!(param < id::OSC_FM, "132..136 sit before OSC_FM");
+        }
+    }
+
+    /// The block does **not** reach any ordinary parameter: its ids stop at 136
+    /// and the next parameter is 137. This is the fact the batch report's
+    /// "which host path misreads what" table rests on — the symptom is entirely
+    /// inside the graph, not a cross-feature collision.
+    #[test]
+    fn node_block_does_not_shadow_any_ordinary_parameter() {
+        // Every ordinary id the plan listed as colliding, checked directly:
+        // none of them is inside the block.
+        for (param, name) in [
+            (id::FX_DELAY_MIX, "FX_DELAY_MIX"),
+            (id::FX_PARALLEL5, "FX_PARALLEL5"),
+            (id::FX_PARALLEL6, "FX_PARALLEL6"),
+            (id::OSC_FM, "OSC_FM"),
+            (id::OSC_RING, "OSC_RING"),
+            (id::OSC1_SYNC, "OSC1_SYNC"),
+            (id::OSC1_SUB, "OSC1_SUB"),
+            (id::OSC1_SUB_LEVEL, "OSC1_SUB_LEVEL"),
+            (id::FX_EQ_ON, "FX_EQ_ON"),
+        ] {
+            assert_eq!(
+                graph_param_field(param),
+                None,
+                "{name} ({param}) must NOT be inside the node block"
+            );
+        }
+        // The block is one contiguous run: the id before it and the six ids
+        // after it belong to no node field, and the first id past the block is
+        // exactly the parameter appended after it.
+        assert_eq!(graph_param_field(id::FX_NODE_IN1 - 1), None);
+        assert_eq!(id::FX_NODE_IN1 - 1, id::FX_GRAPH);
+        assert_eq!(id::FX_NODE_OUT_GAIN + FX_SLOTS as u32, id::OSC_FM);
+        assert_eq!(graph_param_field(id::OSC_FM), None);
+        assert_eq!(
+            graph_param_field(id::OSC_FM - 1),
+            Some((5, GraphParam::OutGain))
+        );
+    }
+
+    /// Which state word each write lands on. Because the six field ranges tile
+    /// the block, every one of the 36 node ids writes its own field and no id
+    /// can reach another node or an ordinary parameter. The batch report's
+    /// per-id table is this test's content, one id at a time.
+    #[test]
+    fn node_field_ids_write_their_own_state() {
+        let mut p = Params::new();
+        // Fields in block order, each with its base id. Nodes 1..6 of all six
+        // fields: each id must land on its own field and node.
+        for slot in 0..FX_SLOTS {
+            let v1 = 0.11 + slot as f32 * 0.01;
+            p.set(id::FX_NODE_IN1 + slot as u32, v1);
+            assert_eq!(
+                p.fx.node_in[slot][0].src,
+                graph_src_code(v1),
+                "node {} IN1 src",
+                slot + 1
+            );
+            let v1g = 0.21 + slot as f32 * 0.01;
+            p.set(id::FX_NODE_IN1_GAIN + slot as u32, v1g);
+            assert_eq!(
+                p.fx.node_in[slot][0].gain,
+                v1g,
+                "node {} IN1 gain",
+                slot + 1
+            );
+            let v2 = 0.31 + slot as f32 * 0.01;
+            p.set(id::FX_NODE_IN2 + slot as u32, v2);
+            assert_eq!(
+                p.fx.node_in[slot][1].src,
+                graph_src_code(v2),
+                "node {} IN2 src",
+                slot + 1
+            );
+            let v2g = 0.41 + slot as f32 * 0.01;
+            p.set(id::FX_NODE_IN2_GAIN + slot as u32, v2g);
+            assert_eq!(
+                p.fx.node_in[slot][1].gain,
+                v2g,
+                "node {} IN2 gain",
+                slot + 1
+            );
+            p.set(id::FX_NODE_TO_OUT + slot as u32, 1.0);
+            assert!(p.fx.node_to_out[slot], "node {} TO_OUT", slot + 1);
+            let vog = 0.51 + slot as f32 * 0.01;
+            p.set(id::FX_NODE_OUT_GAIN + slot as u32, vog);
+            assert_eq!(p.fx.node_out_gain[slot], vog, "node {} OUT gain", slot + 1);
+        }
+        // The six OUT gain ids are six distinct fields, so no two of them can be
+        // two names for one state word — the collision the plan reported would
+        // show up here as a duplicate (field, slot) pair.
+        let mut owners = Vec::new();
+        for slot in 0..FX_SLOTS as u32 {
+            owners.push(graph_param_field(id::FX_NODE_OUT_GAIN + slot).expect("in the block"));
+        }
+        let mut unique = owners.clone();
+        unique.sort_by_key(|(slot, _)| *slot);
+        unique.dedup();
+        assert_eq!(unique.len(), FX_SLOTS, "each node has its own OUT gain id");
+        // And the ordinary parameters the plan named are reached by their own
+        // ids, unimpeded: no ordinary id is inside the block.
+        let mut s = Params::new();
+        s.set(id::FX_DELAY_MIX, 0.9);
+        s.set(id::OSC1_SUB_LEVEL, 0.9);
+        assert_eq!(s.fx.delay_mix, 0.9);
+        assert_eq!(s.osc[0].sub_level, 0.9);
+    }
+}

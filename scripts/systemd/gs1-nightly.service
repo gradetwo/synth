@@ -1,0 +1,53 @@
+# Nightly browser E2E for this checkout.
+#
+# Install as a user unit (see scripts/install-nightly.sh): the run needs no
+# root, only a session bus so that a display server and the browsers can start.
+[Unit]
+Description=GROOVE SYNTH GS-1 nightly browser E2E
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/music/synth
+# The script picks the display path itself -- Weston first, then Xvfb, then
+# headless -- and writes the one it actually used into the `显示` column of
+# docs/notes/nightly.md. WebKit needs a compositor: headless WebKit never fires
+# requestAnimationFrame, so every click would wait for ever.
+#
+# `--core`, not the default subset and not `--all` (2026-09-15/16 slow-lane
+# measurement; the numbers below are the reason, not a guess):
+#
+#   * `--all` stays CI's job. The schedule-gated `nightly` job in
+#     `.github/workflows/ci.yml` runs it once per engine -- WebKit and Firefox --
+#     so leaving it off the timer drops no coverage; `scripts/verify-ci.mjs`
+#     asserts both halves (CI still runs `--all` twice, the timer runs
+#     `--core` and never `--all`).
+#   * the *default* subset (core + visual smoke + audio, 18 files) did not
+#     finish here: Firefox's default subset passed in 14.8 min
+#     (68 passed / 4 skipped -- the four skips mean the host has no audio
+#     backend, not green), but WebKit's default subset was still running at
+#     >96 min when it was cut short, and WebKit's `--all` was still running at
+#     >132 min. Two engines serial => a >111 min floor and no upper bound on
+#     WebKit, which is why the timer used to end in a timeout with no result
+#     row at all.
+#   * `--core` (8 files: iPhone/iPad viewports, touch, text fit, boot, the
+#     routing graph, sharing, the drawer, the theme; the list is the CORE_SUBSET
+#     constant in `scripts/nightly-e2e.mjs`) is the slice that has finished
+#     here: WebKit took 22.7 min historically and was still running at >28 min
+#     in the 2026-09-15/16 run; Firefox's default subset, a superset of core,
+#     passed in 14.8 min. `npm run nightly` with no flag still runs the default
+#     set for a human who wants to watch it.
+ExecStart=/usr/bin/env npm run nightly -- --engines=webkit,firefox --core --update
+# 5h, up from 3h: the only *completed* local numbers are 22.7 min (WebKit
+# `--core`) and 14.8 min (Firefox, core + visual + audio); the 2026-09-15/16
+# WebKit `--core` run was still going at >28 min when it was cut short. 3h
+# (180 min) was not safe for the default subset either: its measured floor is
+# >111 min and WebKit has no upper-bound evidence (>132 min for `--all`), so the
+# timeout could land mid-run and discard the run with no result row. 5h leaves
+# room for a 2-3x slowdown on a loaded host without letting a wedged run hold
+# the timer for a day. If 5h ever stops being enough, the fix is a smaller
+# subset, not a larger timeout.
+# This value is pinned by `scripts/verify-ci.mjs` ("the nightly timer keeps the
+# 5h timeout"): changing it means changing that assertion in the same commit and
+# recording which new measurement justifies it.
+TimeoutStartSec=5h
+Nice=10

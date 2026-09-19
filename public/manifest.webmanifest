@@ -1,0 +1,49 @@
+{
+  "name": "GROOVE SYNTH GS-1",
+  "short_name": "GS-1 Synth",
+  "description": "基于 Rust + WebAssembly 与 AudioWorklet 的工业级网页复音合成器，支持完整离线使用。",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "fullscreen", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#0b0d11",
+  "theme_color": "#0b0d11",
+  "categories": ["music", "productivity", "entertainment"],
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "./icons/icon-512.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "预设库",
+      "short_name": "Presets",
+      "url": "./?view=presets",
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

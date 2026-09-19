@@ -1,0 +1,283 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    # Nightly at 19:00 UTC (03:00 Beijing): the engines that are not worth a run
+    # on every commit, plus the long benchmark. Waiting for a push let a
+    # WebKit-only start-button regression sit unnoticed for days.
+    - cron: '0 19 * * *'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install clang (vendored C/C++ -> wasm)
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      # §一.39: `dtolnay/rust-toolchain@stable` pins no version, and a clippy
+      # 1.98 upgrade turned the *first* step of this job (`verify:clippy`) red
+      # with nobody expecting it. Printing the versions makes "which toolchain
+      # judged this commit" a fact in the log instead of a guess after the
+      # fact. `scripts/verify-ci.mjs` asserts this step exists and still comes
+      # before the clippy gate.
+      - name: Toolchain versions (rustc / clippy / node / npm)
+        run: |
+          rustc --version
+          cargo clippy --version
+          node --version
+          npm --version
+
+      - run: npm ci
+
+      - name: Clippy (correctness / suspicious / perf)
+        run: npm run verify:clippy
+
+      - name: Rust DSP tests
+        run: npm run test:rust
+
+      # The build comes *before* the tests on purpose: `src/generated/*.wasm`
+      # is a build artefact and is gitignored, so on a fresh runner the unit
+      # tests cannot resolve `@/generated/synth_core.wasm?url` until the cores
+      # exist. Running them first failed sixteen files with "Failed to resolve
+      # import" on a clean checkout (found by the second full sweep), and
+      # `npm run verify` had the same ordering bug.
+      - name: Production build (WASM + SW)
+        run: npm run build
+
+      - name: Front-end unit + worklet integration tests
+        run: npm test
+
+      # binaryen (wasm-opt / wasm-dis) is a devDependency, so `npm ci` above
+      # installs it and `npm run build` (the step before this one) already
+      # optimised both cores. Nothing extra to install here; if the binary is
+      # ever unavailable the build degrades to unoptimised cores and
+      # `verify:budget` fails on the dist total instead of the build breaking.
+      - name: WASM quality gates (SIMD + scalar)
+        run: node scripts/verify-wasm.mjs && node scripts/verify-wasm.mjs src/generated/synth_core_scalar.wasm && node scripts/verify-wasm-features.mjs
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Release preflight (version / changelog)
+        run: npm run verify:release
+
+      - name: Dist integrity
+        run: npm run verify:dist
+
+      - name: Payload budget
+        run: npm run verify:budget
+
+      - name: Audio quality gates (time + frequency domain)
+        run: npm run verify:audio
+
+      - name: Preset fingerprints (every factory preset)
+        run: npm run verify:presets
+
+      - name: Preset fingerprints (2x oversampling)
+        run: npm run verify:presets:2x
+
+      - name: Sustained-load benchmark
+        run: npm run verify:bench
+
+      - name: DSP regression baseline
+        run: npm run test:dsp
+
+      - name: DSP regression baseline (2x oversampling)
+        run: npm run verify:dsp:2x
+
+      # P13.2: the tool server is a gate too. This runs the same golden session
+      # the tools' tests do — every P13.2 tool called twice, compared
+      # byte-for-byte — through the `npm run mcp` entry point itself.
+      - name: MCP tool server golden session
+        run: npm run mcp -- --self-test
+
+      # P13.5: the two LLM-interface documents are a contract, so a gate checks
+      # they do not drift from the tool registry and the code's own limits and
+      # error codes. No browser, no dist — it only reads the docs and the
+      # registry (and runs before the Chromium install below).
+      - name: LLM interface docs vs the live registry
+        run: npm run verify:llm-docs
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser E2E (Chromium)
+        run: npm run test:e2e
+
+      # The performance spec is not in the Chromium suite: the chromium project
+      # ignores it and it runs here on its own, single worker, so its frame-rate
+      # windows measure the app instead of the other workers (v1.111.0: the same
+      # build read 13.8-20.0 fps inside the parallel suite against 60.0 alone).
+      # `npm run release` runs these two commands in the same order.
+      - name: Performance E2E (Chromium, isolated single worker)
+        run: npm run test:perf
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dist
+          path: dist
+          retention-days: 7
+
+  # P0.5 used to live here: an `e2e-engines` job that ran the whole suite on
+  # WebKit and Firefox on every push. It is gone on purpose.
+  #
+  # WebKit on this app needs more than twenty minutes for a full pass even on a
+  # warm workstation (measured: 19.1 min for the *fifty* most relevant tests,
+  # 42.7 min for all 147 in v2.0.3), and the user's rule is that anything that
+  # slow does not sit in the regular gate — it belongs to the slow lane. Firefox
+  # was already slow-lane-only for the same reason. Both now run in `nightly`
+  # below, which is schedule-gated and therefore cannot block a push or a PR.
+  #
+  # The coverage itself did not shrink: `nightly` runs both engines over `--all`
+  # (it used to run WebKit `--all` and only the nightly subset for Firefox, because the
+  # full Firefox pass was here).
+
+  # The scheduled run: both other engines, the whole suite, plus the long
+  # benchmark. It reports rather than blocks a development push — a nightly that
+  # goes red for a flaky click teaches everyone to ignore it — but its artefacts
+  # are kept. Only the schedule reaches it, so a red WebKit run never blocks a
+  # PR; `scripts/verify-ci.mjs` asserts that gate as well, because "the slow
+  # lane quietly stopped running" is exactly how a WebKit-only regression
+  # survived for days.
+  #
+  # Neither step writes `docs/notes/nightly.md`: this workspace is thrown away,
+  # so the record is the local/systemd run's job.
+  #
+  # On this runner there is no weston, so the script's `auto` display resolves to
+  # `xvfb` and WebKit runs headed under it; Firefox runs headless. Both are
+  # recorded in the log line and (locally) in the table's `显示` column.
+  nightly:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # §一.39: this job pins `@stable` too, so a toolchain bump can break the
+      # nightly the same way it broke the verify job. Print the versions before
+      # anything that can fail, so a red nightly can be read against the
+      # toolchain that produced it (`scripts/verify-ci.mjs` asserts the step).
+      - name: Toolchain versions
+        run: rustc --version && cargo --version && node --version && npm --version
+
+      - name: Install clang and Xvfb
+        run: sudo apt-get update && sudo apt-get install -y clang llvm xvfb
+
+      - run: npm ci
+
+      - name: Production build (WASM + SW)
+        run: npm run build
+
+      - name: Install Playwright WebKit + Firefox
+        run: npx playwright install --with-deps webkit firefox
+
+      - name: Browser E2E (WebKit, whole suite, headed under Xvfb)
+        run: npm run nightly -- --engines=webkit --all
+
+      - name: Browser E2E (Firefox, whole suite)
+        run: npm run nightly -- --engines=firefox --all
+
+      - name: Long sustained-load benchmark
+        run: npm run bench:long
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-logs
+          path: |
+            .tmp/nightly
+            test-results
+          retention-days: 14
+
+  # §一.12 / §一.20⑦: the 48 visual baselines exist, are calibrated, and until
+  # now nobody ran them on a schedule — the suite that was "optional" drifted
+  # ten baselines out of date before P11.3 noticed. This job is the smallest
+  # honest step that stops the drift without inventing a verdict:
+  #
+  #   * **schedule-only.** The baselines were recorded on the development
+  #     workstation (CachyOS); text rasterisation is a property of the *host's*
+  #     font stack, not of this repository. A comparison on an Ubuntu runner can
+  #     be red for "different freetype" alone, and a red that means "different
+  #     freetype" trains people to ignore red (`e2e/visual.spec.ts`, and the
+  #     optional-suite section of `docs/notes/visual-regression.md`). So it runs
+  #     where the slow lane runs: on the schedule, never on a push or a PR.
+  #     `scripts/verify-ci.mjs` asserts exactly that, and that no other job runs
+  #     the suite outside the schedule.
+  #   * **continue-on-error.** The first runs are a *report*, not a verdict:
+  #     nobody has yet seen what this runner's font stack does to the checked-in
+  #     baselines. `docs/notes/visual-regression.md` ("接进 CI") writes down the
+  #     two outcomes of the first real run and the tightening step for each; do
+  #     not treat a green compare here as "the visual gate is on" until that
+  #     step is done.
+  #   * **`--update-snapshots=none`.** The command itself promises the job
+  #     reports a diff and never records one. Playwright's default for a
+  #     *missing* baseline is to write one and fail, which on a runner whose
+  #     font stack differs would mint a "baseline" instead of showing the diff.
+  #
+  # This job's own artefacts are the `-expected`/`-actual`/`-diff` triple, kept
+  # for two weeks, so the tightening decision can be made from pictures rather
+  # than from a one-line failure.
+  visual:
+    if: github.event_name == 'schedule'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install clang (vendored C/C++ -> wasm)
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      - run: npm ci
+
+      # The suite compares against `dist/`: a fresh runner has no build, and
+      # `vite preview` serves the built app, not the sources.
+      - name: Production build (WASM + SW)
+        run: npm run build
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Visual baselines (report only, records nothing)
+        run: npm run test:visual -- --update-snapshots=none
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-diffs
+          path: test-results
+          retention-days: 14

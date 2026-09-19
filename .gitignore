@@ -1,0 +1,44 @@
+# dependencies
+node_modules/
+.npm-cache/
+.pnpm-store/
+
+# build output
+dist/
+release/*.zip
+release/*.tar.gz
+release/SHA256SUMS
+# retained rollback store (P12.4): local, machine-specific copies of the last N releases
+release/retained/
+*.tsbuildinfo
+
+# rust
+crates/synth-core/target/
+**/*.rs.bk
+
+# generated wasm (produced by `npm run build:wasm`)
+src/generated/*.wasm
+# generated minified AudioWorklet asset (the build's copy of
+# `src/audio/worklet-processor.js`, which stays the readable single truth)
+src/generated/worklet-processor.min.js
+crates/synth-core/c_bridge/soundpipe.h
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.log
+
+# scratch
+.feas/
+.tmp/
+.serve/
+
+# playwright
+.pw-browsers/
+test-results/
+playwright-report/
+e2e/visual.spec.ts-snapshots/
+wrangler.toml
