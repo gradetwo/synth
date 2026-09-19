@@ -31,7 +31,7 @@ import { loadLayer } from './server.mjs';
 import { loadUiTools, uiToolFiles } from './registry.mjs';
 import { BrowserSession } from './lib/session.mjs';
 import { startPreview, previewPort, DEFAULT_PORT, E2E_PORT } from './lib/preview.mjs';
-import { baselineFor, DIST_BASELINES } from './lib/baselines.mjs';
+import { baselineFor, DIST_BASELINES, BASELINE_DIR } from './lib/baselines.mjs';
 import openTool from './tools/open.mjs';
 import clickTool from './tools/click.mjs';
 import textTool from './tools/text.mjs';
@@ -134,7 +134,13 @@ describe('B. gs1.ui.open — only this server\'s own preview', () => {
 
   it('reports the 1440x900 baseline for its default viewport', () => {
     const baseline = baselineFor(DIST_BASELINES[0]);
-    expect(baseline.names.length).toBeGreaterThan(0);
+    // The 48 baselines are committed under `e2e/visual.spec.ts-snapshots/`
+    // (see `docs/notes/visual-regression.md`). An empty list here means this
+    // checkout does not carry them -- do not make this directory gitignored.
+    expect(
+      baseline.names,
+      `no *-desktop-chromium-linux.png under ${BASELINE_DIR}`,
+    ).not.toHaveLength(0);
     expect(baseline.width).toBe(1440);
     expect(baseline.height).toBe(900);
   });

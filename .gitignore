@@ -1,7 +1,6 @@
 # dependencies
 node_modules/
 .npm-cache/
-.pnpm-store/
 
 # build output
 dist/
@@ -40,5 +39,3 @@ crates/synth-core/c_bridge/soundpipe.h
 .pw-browsers/
 test-results/
 playwright-report/
-e2e/visual.spec.ts-snapshots/
-wrangler.toml
