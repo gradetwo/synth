@@ -26,8 +26,14 @@ Firefox 默认子集（核心 + 视觉 + 音频，18 个 spec）**14.8 min** 通
 unit 失败且**没有结果行**。`--core` 有完成记录：WebKit **22.7 min**（2026-09-15/16 本轮 >28 min 未完成）。
 所以定时器取
 `--core` + `TimeoutStartSec=5h`——这**不是**丢覆盖：CI 的 schedule `nightly` 作业仍对 WebKit 与 Firefox
-**各跑一遍 `--all`**。两条都由 `scripts/verify-ci.mjs` 断言钉住（CI 必须 `--all`×2；timer 必须含 `--core`
-且不得含 `--all`），不能静默改回去。不带参数的 `npm run nightly` 仍然跑默认全子集，留给想现场盯着看的人。
+**各跑一遍 `--all`**。两条都由 `scripts/verify-ci.mjs` 断言钉住（CI 的 schedule 必须 `--all`×2；timer 必须含
+`--core` 且不得含 `--all`），不能静默改回去。不带参数的 `npm run nightly` 仍然跑默认全子集，留给想现场盯着看的人。
+
+**CI 的 `nightly` 作业现在也在 push/PR 上跑**（2026-09-19 起）。那一半是 `--engines=webkit,firefox --core`
+（有界子集），并且除 schedule 外带 `continue-on-error`：慢引擎的偶发红只留在这次运行的日志与 `nightly-logs`
+制品里，不会挡 PR；schedule 那一半仍是 `--all`×2 + `bench:long` 的硬信号。`scripts/verify-ci.mjs` 把这两点
+都断言了——作业必须能到 push/PR，且不能在 push/PR 上失败——所以「顺手把豁免去掉」或「顺手改回
+schedule-only」都会让门禁变红。
 
 日志是**边跑边写**的：每个引擎一份 `.tmp/nightly/<日期>-<内核>.log`，引擎一开始就在开头写下
 `[nightly] <内核>: starting …`（含显示路径、子集、端口），结束时再写一行耗时与计数。所以

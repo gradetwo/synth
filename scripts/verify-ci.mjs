@@ -8,8 +8,10 @@
  * reader is enough for the shape GitHub Actions uses) and asserts that the gates
  * we promise — Rust, unit, lint, build, wasm, dist, budget, audio, DSP, Chromium
  * E2E — are still wired up, that the two slow engines still run somewhere, and
- * that they run *only* from the schedule-gated job (see the twenty-minute rule
- * in `docs/notes/release.md`).
+ * that a push or a PR cannot be failed by one of the slow jobs (WebKit/Firefox
+ * and the visual baselines; see the twenty-minute rule in
+ * `docs/notes/release.md`). Those jobs now run on push/PR too, and each carries
+ * a `continue-on-error` guard that keeps it a report there.
  *
  * It checks both halves of that promise. A command named in the workflow is only
  * real if `package.json` still defines it: a script can vanish (a bad merge, a
@@ -52,8 +54,9 @@ const scriptOf = (command) => {
   return name === 'run' ? null : name;
 };
 
-/** Job name -> the text of its steps, plus the whole job body. */
+/** Job name -> the text of its steps, and its job-level keys (`if:`, `continue-on-error:`, …). */
 const jobs = new Map();
+const headers = new Map();
 let job = null;
 let inSteps = false;
 for (const raw of lines) {
@@ -63,6 +66,7 @@ for (const raw of lines) {
   if (indent === 2 && trimmed.endsWith(':') && !trimmed.startsWith('-')) {
     job = trimmed.slice(0, -1);
     jobs.set(job, []);
+    headers.set(job, []);
     inSteps = false;
     continue;
   }
@@ -71,12 +75,49 @@ for (const raw of lines) {
     inSteps = true;
     continue;
   }
-  if (!inSteps) continue;
+  if (!inSteps) {
+    // Job-level keys sit at indent 4, before `steps:`.
+    if (indent === 4) headers.get(job).push(trimmed);
+    continue;
+  }
   if (indent <= 4 && trimmed !== '') inSteps = false;
   if (inSteps) jobs.get(job).push(trimmed);
 }
 
 const body = (name) => (jobs.get(name) ?? []).join('\n');
+/** The job-level keys of a job, joined (`if:`, `continue-on-error:`, …). */
+const jobHeader = (name) => (headers.get(name) ?? []).join('\n');
+
+/** The job's `if:` expression, or '' when it has none, so every trigger reaches it. */
+const jobIf = (name) => {
+  const m = /^if:\s*(.+)$/m.exec(jobHeader(name));
+  return m ? m[1].trim() : '';
+};
+
+/** True when both a push and a PR reach the job. */
+const runsOnPush = (name) => {
+  const cond = jobIf(name);
+  if (cond === '') return true;
+  return /'push'/.test(cond) && /'pull_request'/.test(cond);
+};
+
+/**
+ * True when the job cannot fail a push/PR run on a slow engine. Two shapes
+ * count: the job-level guard (`continue-on-error` limited to the schedule), or
+ * a `continue-on-error: true` on the step that runs the slow engines on push --
+ * the nightly job's shape, where the scheduled steps are different steps and
+ * stay hard. A job that simply excludes push and PR also passes.
+ */
+const guardedForPush = (name) => {
+  const cond = jobIf(name);
+  if (cond !== '' && !/'push'/.test(cond) && !/'pull_request'/.test(cond)) return true;
+  const m = /^continue-on-error:\s*(.+)$/m.exec(jobHeader(name));
+  if (m && /github\.event_name/.test(m[1]) && /'schedule'/.test(m[1])) return true;
+  return (jobs.get(name) ?? []).some((line) => /^continue-on-error:\s*true\s*$/.test(line));
+};
+
+/** True for a job that never fails the run at all (`continue-on-error: true`). */
+const reportOnly = (name) => /^continue-on-error:\s*true\s*$/m.test(jobHeader(name));
 console.log('[ci] workflow gates');
 
 check('has a verify job', jobs.has('verify'), [...jobs.keys()].join(', '));
@@ -168,35 +209,44 @@ check(
   versionLogAt >= 0 && clippyAt >= 0 && versionLogAt < clippyAt ? '' : 'print the versions before `verify:clippy`, or the log is useless when clippy is the thing that broke',
 );
 
-// The slow engines may not sit in a push-triggered job. WebKit needs 42.7 min
-// for the whole suite on a warm workstation (and 19.1 min for the fifty most
-// relevant tests), Firefox is slow-lane only by the same decision, and the rule
-// in `docs/notes/release.md` sends anything over twenty minutes to the slow
-// lane. `e2e-engines` used to run both of them on every push and PR; this is the
-// check that keeps that from being added back, by naming the engines anywhere in
-// a job that the schedule guard does not cover.
-const scheduledOnly = (name) => new RegExp(`\\n  ${name}:\\n\\s+if:\\s*github\\.event_name\\s*==\\s*'schedule'`).test(text);
+// The slow engines now run on push/PR too, but they may not *fail* one. WebKit
+// needs 42.7 min for the whole suite on a warm workstation (and 19.1 min for the
+// fifty most relevant tests), Firefox is slow by the same measure, and the rule
+// in `docs/notes/release.md` is that anything over twenty minutes does not sit
+// in the blocking set. So the promise is no longer "schedule-only": a job that
+// names WebKit or Firefox has to reach push and PR (the results should arrive
+// with the commit) and carry a guard that keeps a flake or a host difference
+// from failing the run there. `e2e-engines` used to run both engines on every
+// push with no guard; this is the check that keeps that shape from coming back.
 for (const [name, steps] of jobs) {
   const slow = steps.some((line) => /--project=(webkit|firefox)\b|--engines=[^\n]*(webkit|firefox)/.test(line));
   if (!slow) continue;
-  const gated = scheduledOnly(name);
-  check(`the "${name}" job runs the slow engines only on the schedule`, gated,
-    gated ? '' : `"${name}" names WebKit or Firefox but is not schedule-gated`);
+  check(`the "${name}" job reaches push and PR`, runsOnPush(name));
+  const guarded = guardedForPush(name) || reportOnly(name);
+  check(
+    `the "${name}" job cannot fail a push/PR run on a slow engine`,
+    guarded,
+    guarded ? '' : `"${name}" names WebKit or Firefox and is not guarded for push/PR`,
+  );
 }
 check('no push-triggered cross-engine job', !jobs.has('e2e-engines'),
   jobs.has('e2e-engines') ? 'e2e-engines ran the whole WebKit suite on every push and is meant to stay gone' : '');
 
 // The nightly job is a promise too: a scheduled run that quietly disappears is
-// how a WebKit-only regression survives for days. It owns the two slow engines
-// now, and it has to keep covering both of them over the whole suite — that was
+// how a WebKit-only regression survives for days. It owns the two slow engines,
+// and it has to keep covering both of them over the whole suite — that was
 // `e2e-engines`' job before, and dropping Firefox's full pass would be a silent
-// coverage loss.
+// coverage loss. Push runs the bounded subset instead, and the schedule keeps
+// `--all`; both stay in this one job so there is one place to read.
 const nightly = body('nightly');
 check('a nightly job exists', text.includes('  nightly:'));
 check('it is scheduled', /cron:\s*'[^']+'/.test(text));
-// The `if:` sits on the job, not inside its steps, so it is read from the whole
-// file rather than from the step list.
-check('it only runs on the schedule', scheduledOnly('nightly'));
+check('it runs on push, PR and the schedule', runsOnPush('nightly'));
+check('it cannot fail a push/PR run (the schedule stays hard)', guardedForPush('nightly'));
+check('its push/PR pass is the bounded core subset', nightly.includes('--core'));
+const guardCount = (nightly.match(/^continue-on-error:\s*true$/gm) ?? []).length;
+check('only that pass is guarded, not the scheduled steps', guardCount === 1,
+  guardCount === 1 ? '' : `the nightly job should tolerate exactly the push/PR \`--core\` step (found ${guardCount})`);
 check('it installs WebKit and Firefox', /playwright install[^\n]*webkit[^\n]*firefox/.test(nightly));
 check('it builds the app before the browser run', nightly.includes('npm run build'));
 check('it runs WebKit', nightly.includes('--engines=webkit'));
@@ -256,16 +306,19 @@ if (existsSync(unitPath)) {
 }
 
 // §一.12 / §一.20⑦: the visual baselines are a gate nobody ran, and they drifted
-// ten baselines out of date before P11.3 noticed. Both halves of the promise are
-// asserted here. The job has to exist and actually run the suite (deleting it is
-// exactly how "nobody runs it" started), and it may not run anywhere a push or
-// a PR can be blocked by it: the baselines encode the recording host's font
-// stack, so a red comparison on an Ubuntu runner means "different freetype" and
-// nothing else. `continue-on-error` is deliberately *not* asserted — tightening
-// that is the documented next step once the runner has shown what it does.
+// ten baselines out of date before P11.3 noticed. The job has to exist and
+// actually run the suite (deleting it is exactly how "nobody runs it" started),
+// and it now runs on push/PR as well as on the schedule. It therefore has to be
+// report-only: the baselines encode the recording host's font stack, so a red
+// comparison on an Ubuntu runner means "different freetype" and nothing else.
+// Asserting `continue-on-error` is the point now -- dropping it would turn that
+// known-false red into a blocked PR. Tightening to a hard signal is still the
+// documented next step once the runner has shown what it does, and that step has
+// to change this check and the docs on purpose.
 const visual = body('visual');
 check('a visual-baseline job exists', jobs.has('visual'));
-check('it only runs on the schedule', scheduledOnly('visual'));
+check('it runs on push, PR and the schedule', runsOnPush('visual'));
+check('it is report-only, so a font-stack difference cannot fail a push', reportOnly('visual'));
 check('it builds the app before comparing', visual.includes('npm run build'));
 check('it installs Chromium', /playwright install[^\n]*chromium/.test(visual));
 check('it runs the visual suite', visual.includes('npm run test:visual'));
@@ -273,15 +326,17 @@ check('it never records a baseline (--update-snapshots=none)', visual.includes('
 check('it keeps the diff images for the tightening decision', visual.includes('visual-diffs'));
 check('package.json defines "test:visual"', Object.prototype.hasOwnProperty.call(scripts, 'test:visual'));
 // The general form of "not in the blocking set": *any* job that runs the suite
-// has to be schedule-gated, so adding it to a push job later reads as a failure
-// here rather than as a red PR that means "different freetype".
+// has to be guarded for push/PR, so adding it to an unguarded push job later
+// reads as a failure here rather than as a red PR that means "different
+// freetype".
 for (const [name, steps] of jobs) {
   if (name === 'visual') continue;
   if (!steps.some((line) => line.includes('test:visual'))) continue;
+  const guarded = guardedForPush(name) || reportOnly(name);
   check(
-    `the "${name}" job runs the visual suite only on the schedule`,
-    scheduledOnly(name),
-    `"${name}" runs the visual suite but is not schedule-gated`,
+    `the "${name}" job cannot fail a push/PR run on the visual suite`,
+    guarded,
+    guarded ? '' : `"${name}" runs the visual suite but is not guarded for push/PR`,
   );
 }
 

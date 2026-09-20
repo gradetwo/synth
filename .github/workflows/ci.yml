@@ -148,22 +148,26 @@ jobs:
   # (it used to run WebKit `--all` and only the nightly subset for Firefox, because the
   # full Firefox pass was here).
 
-  # The scheduled run: both other engines, the whole suite, plus the long
-  # benchmark. It reports rather than blocks a development push — a nightly that
-  # goes red for a flaky click teaches everyone to ignore it — but its artefacts
-  # are kept. Only the schedule reaches it, so a red WebKit run never blocks a
-  # PR; `scripts/verify-ci.mjs` asserts that gate as well, because "the slow
-  # lane quietly stopped running" is exactly how a WebKit-only regression
-  # survived for days.
+  # The slow engines, on the schedule *and* on every push/PR.
   #
-  # Neither step writes `docs/notes/nightly.md`: this workspace is thrown away,
+  # The schedule run is the original promise: both other engines over the whole
+  # suite plus the long benchmark, as a hard signal (a scheduled red does not
+  # block a PR, but it has to be visible).
+  #
+  # A push/PR run covers the bounded `--core` subset for both engines, and that
+  # one step is `continue-on-error`: a WebKit/Firefox flake or a host difference
+  # is a report there, exactly the reason this job used to be schedule-only. The
+  # step is the *only* thing tolerated -- a failed `npm ci` or build still fails
+  # the job -- and the scheduled steps below are not guarded at all, so the
+  # schedule keeps the hard signal.
+  #
+  # Neither run writes `docs/notes/nightly.md`: this workspace is thrown away,
   # so the record is the local/systemd run's job.
   #
   # On this runner there is no weston, so the script's `auto` display resolves to
   # `xvfb` and WebKit runs headed under it; Firefox runs headless. Both are
   # recorded in the log line and (locally) in the table's `显示` column.
   nightly:
-    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -196,13 +200,23 @@ jobs:
       - name: Install Playwright WebKit + Firefox
         run: npx playwright install --with-deps webkit firefox
 
+      # Push/PR: both engines, the bounded core subset. The whole suite is the
+      # schedule's job; a push should not wait on an `--all` WebKit pass.
+      - name: Browser E2E (WebKit + Firefox, core subset; push/PR)
+        if: github.event_name != 'schedule'
+        continue-on-error: true
+        run: npm run nightly -- --engines=webkit,firefox --core
+
       - name: Browser E2E (WebKit, whole suite, headed under Xvfb)
+        if: github.event_name == 'schedule'
         run: npm run nightly -- --engines=webkit --all
 
       - name: Browser E2E (Firefox, whole suite)
+        if: github.event_name == 'schedule'
         run: npm run nightly -- --engines=firefox --all
 
       - name: Long sustained-load benchmark
+        if: github.event_name == 'schedule'
         run: npm run bench:long
 
       - uses: actions/upload-artifact@v4
@@ -219,15 +233,16 @@ jobs:
   # ten baselines out of date before P11.3 noticed. This job is the smallest
   # honest step that stops the drift without inventing a verdict:
   #
-  #   * **schedule-only.** The baselines were recorded on the development
+  #   * **never a blocking gate.** The baselines were recorded on the development
   #     workstation (CachyOS); text rasterisation is a property of the *host's*
   #     font stack, not of this repository. A comparison on an Ubuntu runner can
   #     be red for "different freetype" alone, and a red that means "different
   #     freetype" trains people to ignore red (`e2e/visual.spec.ts`, and the
-  #     optional-suite section of `docs/notes/visual-regression.md`). So it runs
-  #     where the slow lane runs: on the schedule, never on a push or a PR.
-  #     `scripts/verify-ci.mjs` asserts exactly that, and that no other job runs
-  #     the suite outside the schedule.
+  #     optional-suite section of `docs/notes/visual-regression.md`). The job now
+  #     runs on push/PR as well as on the schedule, so `continue-on-error` is
+  #     what keeps that red from blocking a merge -- the schedule run is the
+  #     regular report the baselines drifted without. `scripts/verify-ci.mjs`
+  #     asserts that no job can run the suite and fail a push or a PR.
   #   * **continue-on-error.** The first runs are a *report*, not a verdict:
   #     nobody has yet seen what this runner's font stack does to the checked-in
   #     baselines. `docs/notes/visual-regression.md` ("接进 CI") writes down the
@@ -243,7 +258,6 @@ jobs:
   # for two weeks, so the tightening decision can be made from pictures rather
   # than from a one-line failure.
   visual:
-    if: github.event_name == 'schedule'
     continue-on-error: true
     runs-on: ubuntu-latest
     steps:

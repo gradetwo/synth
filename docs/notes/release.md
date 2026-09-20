@@ -96,7 +96,7 @@ preflight → package → **产物门禁** → deploy → 线上哈希核对 →
 
 **慢轨（每 3–4 个版本一次）**：另开一个 agent 在**安静主机**上做全面回归 —— 完整 `npm run verify`、
 全量 E2E（app 套件 + 隔离的 perf 套件）、视觉基线、**WebKit 与 Firefox**（`npm run nightly -- --all`；
-CI 侧同样只在 schedule 的 `nightly` 作业里跑）、
+CI 侧由 `nightly` 作业承接，schedule 跑 `--all`、push/PR 跑有界的 `--core` 且只报告）、
 以及一段时间的连续观察；
 > **Firefox / WebKit 只在慢轨测**（用户 2026-09-14 明确指示）：日常批次只跑 chromium，不碰 firefox/webkit project，也不跑 nightly。
 它**只报告**，发现的问题回头**单独立批**修。慢轨与开发**解耦**：它慢它的，迭代继续。
@@ -329,9 +329,12 @@ fps 守卫会得到「idle 61 但 playback 15」这种**纯争用**的读数并�
 **规矩**：`release:fast` 之前不要紧接重活；跑完重活等负载降到个位数（`cat /proc/loadavg`）再发，或让完整 `release` 先跑 app 套件（它要 5–6 分钟，正好把负载耗掉）。
 判据：如果 `idle-with-engine` 高而 `playback`/`graph-edit` 塌，那是争用；两者一起低才是真回归。
 
-## WebKit 的归属：以 **20 分钟**为界（用户 2026-09-14 定）
-**规则**：**WebKit 总耗时 > 20 分钟 ⇒ 不进常规门禁**（`verify` / `release*` / `ci.yml` 的常规路径），**只留慢轨**（本机 `npm run nightly`、CI 里 schedule 触发的 `nightly` 作业、或专门的全面回归扫描）。
-**已经落地（2026-09-14）**：CI 里那个每次 push/PR 都跑的 `e2e-engines` 作业**已删除**（它跑的正是超界的整包 WebKit），两个慢引擎改由 schedule 触发的 `nightly` 作业各跑一遍 `--all`；`scripts/verify-ci.mjs` 现在会**拒绝**把 `--project=webkit|firefox` 写进任何非 schedule 的作业，也会**拒绝**删掉 `nightly` 的 `--all`（否则删 `e2e-engines` 就成了静默的覆盖率损失）。
+## WebKit 的归属：以 **20 分钟**为界（用户 2026-09-14 定；2026-09-19 放宽了「能不能跑」）
+**规则**：**WebKit 总耗时 > 20 分钟 ⇒ 不进常规的「必过」集合**（`verify` / `release*` / `ci.yml` 里 push/PR 的必过路径）。它**可以**在这些路径上跑，前提是有豁免（`continue-on-error`）——红了只报告，不挡合并。
+**已经落地**：
+- **2026-09-14**：CI 里每次 push/PR 都跑的 `e2e-engines` 作业**已删除**（它跑的正是超界的整包 WebKit），两个慢引擎改由 `nightly` 作业各跑一遍 `--all`。
+- **2026-09-19**（用户要求「nightly / visual 也配置用起来」）：`nightly` 与 `visual` 作业现在也在 **push/PR** 上跑。`nightly` 的 push/PR 那一半是**有界**的 `--engines=webkit,firefox --core`，并且除 schedule 外带 `continue-on-error`；schedule 那一半仍是 `--all`×2 + `bench:long` 的硬信号。`visual` 保持 `continue-on-error: true`（只报告）。
+- `scripts/verify-ci.mjs` 现在的断言是「作业必须能到 push/PR，且**不能在 push/PR 上失败**」（要有 `continue-on-error` 这类豁免，或干脆不进 push/PR），同时继续**拒绝**删掉 `nightly` 的 `--all`（否则删 `e2e-engines` 就成了静默的覆盖率损失）。
 
 **已有实测**（本机，`--workers=1`，帧无关交互生效后）：
 

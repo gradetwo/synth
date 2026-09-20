@@ -63,27 +63,28 @@ Ubuntu runner 的对错；一条含义为「freetype 版本不同」的红灯，
 「不进 CI」在 §一.12 里被证明是有代价的：没人跑 ⇒ 基线漂了十张没人知道。下一节是修这个代价的
 **第一步**，它没有推翻上面这段前提。
 
-## 从「可选套件」到「schedule 上的报告」（§一.12 / §一.20⑦）
+## 从「可选套件」到 CI 上的报告（§一.12 / §一.20⑦）
 
-`.github/workflows/ci.yml` 多了一个 `visual` 作业，只做一件事：在 **schedule** 上跑
+`.github/workflows/ci.yml` 里有一个 `visual` 作业：跑
 `npm run test:visual -- --update-snapshots=none`，把 48 张基线比一遍、把差异作为制品留下来。
+它现在在 **schedule 与 push/PR** 上都跑（2026-09-19 起；之前只在 schedule 上）。
 
-### 为什么是 schedule + `continue-on-error`，而不是 push 作业里的一步
+### 为什么是 `continue-on-error`，而不是 push 作业里的必过一步
 
-- **schedule-only**（`if: github.event_name == 'schedule'`）：push/PR **永远不会**被它挡住。基线录在
-  开发机，CI runner 是 `ubuntu-latest`，两边字体栈不同是**已知**的；把这条红放进取 PR 的必过集合，
-  就是上面说的「教人忽略红灯」。20 分钟判据（`docs/notes/release.md`）也把它归到慢轨。
-- **`continue-on-error: true`**：第一次实跑是**报告**不是判决，schedule 跑红了也不把工作流判死。
+- **`continue-on-error: true`**：作业在 push/PR 上也会跑，但**永远不会**挡住它们。基线录在开发机，
+  CI runner 是 `ubuntu-latest`，两边字体栈不同是**已知**的；把这条红放进 PR 的必过集合，就是上面说的
+  「教人忽略红灯」。20 分钟判据（`docs/notes/release.md`）也是同一个结论：它可以跑，但不能进必过集合。
+  第一次实跑仍然是**报告**不是判决，schedule 跑红了也不把工作流判死。
 - **`--update-snapshots=none`**：命令本身承诺「只报差异、不录基线」。Playwright 对**缺失**基线的默认
   行为是「写一张然后判失败」——在字体栈不同的 runner 上，那等于**悄悄铸出一张假基线**，而不是把差异
   摆出来。这一条把「别让本地基线被静默覆盖」变成命令行里的硬约束。
 - 失败时的 `-expected` / `-actual` / `-diff` 三张图作为 `visual-diffs` 制品留 14 天，让「收紧还是不管」
   这个决定能看着图做。
 
-`scripts/verify-ci.mjs` 对**两半**都做了断言：作业必须存在、必须构建后跑套件、必须装 Chromium、必须带
-`--update-snapshots=none`；并且**任何**跑 `test:visual` 的作业都必须是 schedule-gated —— 所以以后把
-它塞回 `verify`（或任何 push 作业）会在 `verify:ci` 红，而不是变成每个 PR 一条「不同 freetype」的红灯。
-它**不**断言 `continue-on-error` 一定在：那正是收紧时要动的东西。
+`scripts/verify-ci.mjs` 的断言：作业必须存在、必须构建后跑套件、必须装 Chromium、必须带
+`--update-snapshots=none`；它必须能到 push/PR，且**不能在 push/PR 上失败**（`continue-on-error`）。
+**任何**跑 `test:visual` 的作业都受同一条约束——所以以后把它塞进一个必过的 push 作业会在 `verify:ci`
+红，而不是变成每个 PR 一条「不同 freetype」的红灯。
 
 ### 第一次实跑之后怎么收紧（**未做：本机验证不了 runner 的字体/渲染**）
 
@@ -98,13 +99,13 @@ Ubuntu runner 的对错；一条含义为「freetype 版本不同」的红灯，
    之后该作业比对的是 CI 自己的基线，本机那套 `-chromium-linux` 一张都不动、也不允许被覆盖。
 2. **差异是真界面差异**（大面积、结构性、能指到某个选择器）⇒ 那是真回归，按「维护」一节走：本机
    `npm run test:visual` 复现、确认是有意改动再重录。
-3. **绿** ⇒ 说明两边渲染一致到阈值以内，此时可以去掉 `continue-on-error`，让 schedule 那次的失败变成
-   硬信号。**无论哪种情况都不要**把这条作业移进 push/PR 的必过集合：schedule 只是「定期真跑」，
-   不是「每次提交都判」。
+3. **绿** ⇒ 说明两边渲染一致到阈值以内，此时可以去掉 `continue-on-error`。但要去掉的是「豁免」，不是
+   「作业在 push/PR 上跑」：`scripts/verify-ci.mjs` 现在断言这条 `continue-on-error`，所以收紧必须同时
+   改门禁与本节的结论，是有意为之的一步，不会因为某次绿跑悄悄发生。
 
 在没做完上面那一步之前，**不要**把这条作业的绿读成「视觉门禁已经接上」。它现在的定位是
-**定期报告 + 制品留存**，真正意义上的「门禁」还差第 1/2/3 步里的一个。改界面的批次照旧要自觉跑
-`npm run test:visual` 并重录（见「维护」一节）——CI 这条作业**不替代**那件事，它替代的是
+**每次提交与定期的报告 + 制品留存**，真正意义上的「门禁」还差第 1/2/3 步里的一个。改界面的批次照旧要
+自觉跑 `npm run test:visual` 并重录（见「维护」一节）——CI 这条作业**不替代**那件事，它替代的是
 「没人跑所以漂到过期」。
 
 ## 阈值：0.01 像素占比 + 0.05 单像素色距（实测标定）
