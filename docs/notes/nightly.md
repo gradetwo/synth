@@ -38,8 +38,8 @@ push/PR 是 `--engines=chromium,webkit,firefox --all` 一条带 `continue-on-err
 
 `--all` 会把 `e2e/visual.spec.ts` 也带上：Chromium 比对仓库里的基线，WebKit/Firefox 走
 `GS1_VISUAL_SMOKE=1` 的**只渲染不比对**模式（`scripts/nightly-e2e.mjs` 按引擎自动选）。所以「视觉在其它
-引擎上跑」这条覆盖在 `nightly` 里，而不在单独的 `visual` 作业里；那个作业负责的是 Chromium 的基线比对，
-基线是「内核 + 宿主」相关的，换引擎没有可比的对象（`e2e/visual.spec.ts` 顶部有完整说明）。
+引擎上跑」这条覆盖在 `nightly` 里；单独的 `visual` 作业**只在手工触发时跑**，是按需看 Chromium 基线差异
+的入口，因为基线是「内核 + 宿主」相关的，换引擎没有可比的对象（`e2e/visual.spec.ts` 顶部有完整说明）。
 
 日志是**边跑边写**的：每个引擎一份 `.tmp/nightly/<日期>-<内核>.log`，引擎一开始就在开头写下
 `[nightly] <内核>: starting …`（含显示路径、子集、端口），结束时再写一行耗时与计数。所以

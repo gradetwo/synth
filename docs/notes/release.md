@@ -333,7 +333,7 @@ fps 守卫会得到「idle 61 但 playback 15」这种**纯争用**的读数并�
 **规则**：**WebKit 总耗时 > 20 分钟 ⇒ 不进常规的「必过」集合**（`verify` / `release*` / `ci.yml` 里 push/PR 的必过路径）。它**可以**在这些路径上跑，前提是有豁免（`continue-on-error`）——红了只报告，不挡合并。
 **已经落地**：
 - **2026-09-14**：CI 里每次 push/PR 都跑的 `e2e-engines` 作业**已删除**（它跑的正是超界的整包 WebKit），两个慢引擎改由 `nightly` 作业各跑一遍 `--all`。
-- **2026-09-19**（用户要求「nightly / visual 也配置用起来」，随后要求「nightly 跑三个引擎的全集」）：`nightly` 与 `visual` 作业现在也在 **push/PR** 上跑。`nightly` 三个引擎都跑全集：push/PR 是 `--engines=chromium,webkit,firefox --all` 一条带 `continue-on-error` 的 step，schedule 是三个引擎各自一条不带豁免的 `--all` + `bench:long`（硬信号）。`visual` 保持 `continue-on-error: true`（只报告）；WebKit/Firefox 上的视觉覆盖是 `nightly --all` 里的只渲染冒烟。
+- **2026-09-19**（用户要求「nightly / visual 也配置用起来」，随后要求「nightly 跑三个引擎的全集」「visual 手工触发」）：`nightly` 作业现在也在 **push/PR** 上跑，三个引擎都跑全集：push/PR 是 `--engines=chromium,webkit,firefox --all` 一条带 `continue-on-error` 的 step，schedule 是三个引擎各自一条不带豁免的 `--all` + `bench:long`（硬信号）。`visual` 改成**只在手工触发（`workflow_dispatch`）时跑**、保持 `continue-on-error: true`：`nightly --all` 已经在每个引擎上跑视觉（Chromium 比对基线，WebKit/Firefox 只渲染冒烟），这个作业留给「需要看图时点一下」；`verify` 与 `nightly` 的 `if:` 排除了 `workflow_dispatch`，所以手工触发只跑它一个。
 - `scripts/verify-ci.mjs` 现在的断言是「作业必须能到 push/PR，且**不能在 push/PR 上失败**」（要有 `continue-on-error` 这类豁免，或干脆不进 push/PR），同时继续**拒绝**删掉 `nightly` 的 `--all`（否则删 `e2e-engines` 就成了静默的覆盖率损失）。
 
 **已有实测**（本机，`--workers=1`，帧无关交互生效后）：

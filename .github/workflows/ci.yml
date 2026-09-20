@@ -9,9 +9,15 @@ on:
     # on every commit, plus the long benchmark. Waiting for a push let a
     # WebKit-only start-button regression sit unnoticed for days.
     - cron: '0 19 * * *'
+  # Manual runs exist for `visual` only: everything else runs on its own
+  # trigger, so a dispatch skips `verify` and `nightly` (their `if:` below) and
+  # runs just the baseline comparison, on demand. The Actions page gets a
+  # "Run workflow" button; the `visual` job uploads its diff images either way.
+  workflow_dispatch:
 
 jobs:
   verify:
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -174,6 +180,7 @@ jobs:
   # The display path is recorded in the log line and (locally) in the table's
   # `显示` column.
   nightly:
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -238,36 +245,31 @@ jobs:
             test-results
           retention-days: 14
 
-  # §一.12 / §一.20⑦: the 48 visual baselines exist, are calibrated, and until
-  # now nobody ran them on a schedule — the suite that was "optional" drifted
-  # ten baselines out of date before P11.3 noticed. This job is the smallest
-  # honest step that stops the drift without inventing a verdict:
+  # §一.12 / §一.20⑦: the 48 visual baselines are a gate nobody ran, and they
+  # drifted ten out of date before P11.3 noticed. `nightly --all` now runs
+  # `e2e/visual.spec.ts` on every engine -- Chromium compares these baselines
+  # there -- so this job is the *on-demand* view: dispatch it from the Actions
+  # page when a diff needs pictures, and it uploads the
+  # `-expected`/`-actual`/`-diff` triple for two weeks. It runs on nothing else;
+  # `scripts/verify-ci.mjs` asserts that it is manual-dispatch only.
   #
-  #   * **never a blocking gate.** The baselines were recorded on the development
-  #     workstation (CachyOS); text rasterisation is a property of the *host's*
-  #     font stack, not of this repository. A comparison on an Ubuntu runner can
-  #     be red for "different freetype" alone, and a red that means "different
-  #     freetype" trains people to ignore red (`e2e/visual.spec.ts`, and the
-  #     optional-suite section of `docs/notes/visual-regression.md`). The job now
-  #     runs on push/PR as well as on the schedule, so `continue-on-error` is
-  #     what keeps that red from blocking a merge -- the schedule run is the
-  #     regular report the baselines drifted without. `scripts/verify-ci.mjs`
-  #     asserts that no job can run the suite and fail a push or a PR.
-  #   * **continue-on-error.** The first runs are a *report*, not a verdict:
-  #     nobody has yet seen what this runner's font stack does to the checked-in
-  #     baselines. `docs/notes/visual-regression.md` ("接进 CI") writes down the
-  #     two outcomes of the first real run and the tightening step for each; do
-  #     not treat a green compare here as "the visual gate is on" until that
-  #     step is done.
-  #   * **`--update-snapshots=none`.** The command itself promises the job
-  #     reports a diff and never records one. Playwright's default for a
-  #     *missing* baseline is to write one and fail, which on a runner whose
-  #     font stack differs would mint a "baseline" instead of showing the diff.
+  #   * **continue-on-error.** A red comparison on this runner can mean
+  #     "different freetype" rather than "the app changed": the baselines were
+  #     recorded on the development workstation (CachyOS). The job still reports
+  #     failed and still uploads the diffs, but it never turns the run red on its
+  #     own -- with a manual trigger there is no push to block, and this keeps
+  #     the result readable as a report. Tightening that is the documented next
+  #     step once the runner has shown what it does.
+  #   * **`--update-snapshots=none`.** The command promises the job reports a
+  #     diff and never records one. Playwright's default for a *missing*
+  #     baseline is to write one and fail, which on a runner whose font stack
+  #     differs would mint a "baseline" instead of showing the diff.
   #
   # This job's own artefacts are the `-expected`/`-actual`/`-diff` triple, kept
   # for two weeks, so the tightening decision can be made from pictures rather
   # than from a one-line failure.
   visual:
+    if: github.event_name == 'workflow_dispatch'
     continue-on-error: true
     runs-on: ubuntu-latest
     steps:

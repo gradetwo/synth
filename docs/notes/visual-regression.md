@@ -67,14 +67,17 @@ Ubuntu runner 的对错；一条含义为「freetype 版本不同」的红灯，
 
 `.github/workflows/ci.yml` 里有一个 `visual` 作业：跑
 `npm run test:visual -- --update-snapshots=none`，把 48 张基线比一遍、把差异作为制品留下来。
-它现在在 **schedule 与 push/PR** 上都跑（2026-09-19 起；之前只在 schedule 上）。
+**它只在手工触发（`workflow_dispatch`）时跑**（2026-09-19 起）：`nightly --all` 现在每个引擎都跑一遍，
+Chromium 那一遍已经在对这套基线，所以这个作业是「需要看图时点一下」的按需入口——在 Actions 页点
+「Run workflow」，它上传 `-expected`/`-actual`/`-diff` 三张图（留 14 天）。`verify` 与 `nightly` 的
+`if:` 都排除了 `workflow_dispatch`，所以手工触发只跑这一个作业。
 
-### 为什么是 `continue-on-error`，而不是 push 作业里的必过一步
+### 为什么保留 `continue-on-error`
 
-- **`continue-on-error: true`**：作业在 push/PR 上也会跑，但**永远不会**挡住它们。基线录在开发机，
-  CI runner 是 `ubuntu-latest`，两边字体栈不同是**已知**的；把这条红放进 PR 的必过集合，就是上面说的
-  「教人忽略红灯」。20 分钟判据（`docs/notes/release.md`）也是同一个结论：它可以跑，但不能进必过集合。
-  第一次实跑仍然是**报告**不是判决，schedule 跑红了也不把工作流判死。
+- **`continue-on-error: true`**：手工跑出来的红也可能是「runner 的字体栈不同」而不是「界面变了」——
+  基线录在开发机（CachyOS），CI runner 是 `ubuntu-latest`。作业本身仍然报 failed、仍然留下图，但它
+  不会单独把整次运行判死；手工触发本来也没有 PR 可以挡，保留它是为了让结果按「报告」来读。收紧成硬
+  信号是下面「收紧」一节写的下一步，等 runner 的表现明确了再做。
 - **`--update-snapshots=none`**：命令本身承诺「只报差异、不录基线」。Playwright 对**缺失**基线的默认
   行为是「写一张然后判失败」——在字体栈不同的 runner 上，那等于**悄悄铸出一张假基线**，而不是把差异
   摆出来。这一条把「别让本地基线被静默覆盖」变成命令行里的硬约束。
@@ -82,25 +85,26 @@ Ubuntu runner 的对错；一条含义为「freetype 版本不同」的红灯，
   这个决定能看着图做。
 
 `scripts/verify-ci.mjs` 的断言：作业必须存在、必须构建后跑套件、必须装 Chromium、必须带
-`--update-snapshots=none`；它必须能到 push/PR，且**不能在 push/PR 上失败**（`continue-on-error`）。
-**任何**跑 `test:visual` 的作业都受同一条约束——所以以后把它塞进一个必过的 push 作业会在 `verify:ci`
-红，而不是变成每个 PR 一条「不同 freetype」的红灯。
+`--update-snapshots=none`；它**只能由手工触发**（`if:` 里只有 `workflow_dispatch`），而且
+`verify`/`nightly` 的 `if:` 必须排除 `workflow_dispatch`（手工触发不会顺带跑它们）。
+**任何**跑 `test:visual` 的作业都还受「不能在 push/PR 上失败」这条约束——所以以后把它塞进一个必过的
+push 作业会在 `verify:ci` 红，而不是变成每个 PR 一条「不同 freetype」的红灯。
 
 ### 其它引擎的视觉覆盖在 `nightly` 里，不在这里
 
-`visual` 作业只比对 Chromium 的基线。基线文件名是「内核 + 宿主」相关的
+这个手工作业只比对 Chromium 的基线。基线文件名是「内核 + 宿主」相关的
 （Playwright 模板 `{arg}{-projectName}{-snapshotSuffix}`）：WebKit 会去找 `*-webkit-linux.png`，
 Firefox 会去找 `*-firefox-linux.png`，两套都不存在、也不该由开发机录——在 runner 上录它们，等于把
 runner 的字体栈与软件渲染固化成「正确」。其它引擎的视觉覆盖因此由 `nightly` 的 `--all` 承担：
 `e2e/visual.spec.ts` 在 WebKit/Firefox 上以 `GS1_VISUAL_SMOKE=1` **只渲染、不比对**
 （`scripts/nightly-e2e.mjs` 按引擎自动选），证明「这些界面在那两个引擎上画得出来」。
 要在这两个引擎上做真正的像素比对，唯一诚实的路是给每个引擎单独录一套基线（见下面「收紧」第 1 条），
-而那要先看第一次 schedule 跑的 `visual-diffs` 再决定。
+而那要先看一次 `visual-diffs` 再决定。
 
 ### 第一次实跑之后怎么收紧（**未做：本机验证不了 runner 的字体/渲染**）
 
-本机**无法**验证 CI runner 的字体栈与渲染是否与开发机一致，所以本批只交付「定期报告 + 制品留存」，
-把收紧步骤写死，免得下一次靠感觉决定。看第一次 schedule 跑的 `visual-diffs`：
+本机**无法**验证 CI runner 的字体栈与渲染是否与开发机一致，所以本批只交付「按需报告 + 制品留存」，
+把收紧步骤写死，免得下一次靠感觉决定。手工跑一次 `visual`，看它上传的 `visual-diffs`：
 
 1. **差异只落在文字边缘/字形**（典型：每张图几百到几千像素、占比 < 1%，人眼只看出抗锯齿不同）
    ⇒ 这是字体栈差异，**不要**用 runner 的输出覆盖仓库里的基线。正确做法是给 CI 单独一套基线：
@@ -110,14 +114,14 @@ runner 的字体栈与软件渲染固化成「正确」。其它引擎的视觉�
    之后该作业比对的是 CI 自己的基线，本机那套 `-chromium-linux` 一张都不动、也不允许被覆盖。
 2. **差异是真界面差异**（大面积、结构性、能指到某个选择器）⇒ 那是真回归，按「维护」一节走：本机
    `npm run test:visual` 复现、确认是有意改动再重录。
-3. **绿** ⇒ 说明两边渲染一致到阈值以内，此时可以去掉 `continue-on-error`。但要去掉的是「豁免」，不是
-   「作业在 push/PR 上跑」：`scripts/verify-ci.mjs` 现在断言这条 `continue-on-error`，所以收紧必须同时
-   改门禁与本节的结论，是有意为之的一步，不会因为某次绿跑悄悄发生。
+3. **绿** ⇒ 说明两边渲染一致到阈值以内，此时可以去掉 `continue-on-error`。但要去掉的是「豁免」，而且
+   要顺带想清楚这条作业还要不要留在手工触发上：`scripts/verify-ci.mjs` 现在断言这条 `continue-on-error`
+   与「只能手工触发」，所以收紧必须同时改门禁与本节的结论，是有意为之的一步，不会因为某次绿跑悄悄发生。
 
 在没做完上面那一步之前，**不要**把这条作业的绿读成「视觉门禁已经接上」。它现在的定位是
-**每次提交与定期的报告 + 制品留存**，真正意义上的「门禁」还差第 1/2/3 步里的一个。改界面的批次照旧要
-自觉跑 `npm run test:visual` 并重录（见「维护」一节）——CI 这条作业**不替代**那件事，它替代的是
-「没人跑所以漂到过期」。
+**按需报告 + 制品留存**（每个引擎的自动覆盖在 `nightly`），真正意义上的「门禁」还差第 1/2/3 步里的一个。
+改界面的批次照旧要自觉跑 `npm run test:visual` 并重录（见「维护」一节）——CI 这条作业**不替代**那件事，
+它替代的是「没人跑所以漂到过期」。
 
 ## 阈值：0.01 像素占比 + 0.05 单像素色距（实测标定）
 

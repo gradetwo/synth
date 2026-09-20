@@ -8,10 +8,10 @@
  * reader is enough for the shape GitHub Actions uses) and asserts that the gates
  * we promise — Rust, unit, lint, build, wasm, dist, budget, audio, DSP, Chromium
  * E2E — are still wired up, that the slow engines still run somewhere, and
- * that a push or a PR cannot be failed by one of the slow jobs (WebKit/Firefox
- * and the visual baselines; see the twenty-minute rule in
- * `docs/notes/release.md`). Those jobs now run on push/PR too, and each carries
- * a `continue-on-error` guard that keeps it a report there.
+ * that a push or a PR cannot be failed by one of the slow jobs (WebKit/Firefox;
+ * see the twenty-minute rule in `docs/notes/release.md`). `nightly` runs on
+ * push/PR too, guarded by `continue-on-error` so it stays a report there; the
+ * baseline comparison is a manual-dispatch-only job.
  *
  * It checks both halves of that promise. A command named in the workflow is only
  * real if `package.json` still defines it: a script can vanish (a bad merge, a
@@ -310,19 +310,32 @@ if (existsSync(unitPath)) {
 }
 
 // §一.12 / §一.20⑦: the visual baselines are a gate nobody ran, and they drifted
-// ten baselines out of date before P11.3 noticed. The job has to exist and
-// actually run the suite (deleting it is exactly how "nobody runs it" started),
-// and it now runs on push/PR as well as on the schedule. It therefore has to be
-// report-only: the baselines encode the recording host's font stack, so a red
-// comparison on an Ubuntu runner means "different freetype" and nothing else.
-// Asserting `continue-on-error` is the point now -- dropping it would turn that
-// known-false red into a blocked PR. Tightening to a hard signal is still the
-// documented next step once the runner has shown what it does, and that step has
-// to change this check and the docs on purpose.
+// ten baselines out of date before P11.3 noticed. `nightly --all` now runs the
+// suite on every engine (Chromium compares the baselines there), so this job is
+// the on-demand view: it has to exist, it has to actually run the suite
+// (deleting it is exactly how "nobody runs it" started), and it may run *only*
+// on a manual dispatch -- a scheduled or push-triggered copy would duplicate
+// nightly and, on a runner whose font stack differs, put a known-false red in
+// front of a push. `continue-on-error` keeps the manual run a report rather
+// than a verdict; tightening to a hard signal is still the documented next step
+// once the runner has shown what it does, and that step has to change this
+// check and the docs on purpose.
 const visual = body('visual');
 check('a visual-baseline job exists', jobs.has('visual'));
-check('it runs on push, PR and the schedule', runsOnPush('visual'));
-check('it is report-only, so a font-stack difference cannot fail a push', reportOnly('visual'));
+check('the workflow can be dispatched manually', /^ {2}workflow_dispatch:\s*$/m.test(text));
+const visualIf = jobIf('visual');
+check('the visual job runs only on manual dispatch',
+  /workflow_dispatch/.test(visualIf) && !/'push'/.test(visualIf) && !/'pull_request'/.test(visualIf) && !/'schedule'/.test(visualIf),
+  /workflow_dispatch/.test(visualIf) && !/'push'/.test(visualIf) && !/'pull_request'/.test(visualIf) && !/'schedule'/.test(visualIf)
+    ? ''
+    : `the visual job's if: must be a workflow_dispatch guard, not an automatic event (got "${visualIf || '(none)'}")`);
+for (const name of ['verify', 'nightly']) {
+  const cond = jobIf(name);
+  const skipsManual = !/workflow_dispatch/.test(cond) && /'push'/.test(cond) && /'pull_request'/.test(cond) && /'schedule'/.test(cond);
+  check(`a manual dispatch does not run "${name}"`, skipsManual,
+    skipsManual ? '' : `"${name}" should name the three automatic events and not workflow_dispatch (got "${cond || '(none)'}")`);
+}
+check('it is report-only', reportOnly('visual'));
 check('it builds the app before comparing', visual.includes('npm run build'));
 check('it installs Chromium', /playwright install[^\n]*chromium/.test(visual));
 check('it runs the visual suite', visual.includes('npm run test:visual'));
