@@ -96,7 +96,7 @@ preflight → package → **产物门禁** → deploy → 线上哈希核对 →
 
 **慢轨（每 3–4 个版本一次）**：另开一个 agent 在**安静主机**上做全面回归 —— 完整 `npm run verify`、
 全量 E2E（app 套件 + 隔离的 perf 套件）、视觉基线、**WebKit 与 Firefox**（`npm run nightly -- --all`；
-CI 侧由 `nightly` 作业承接，schedule 跑 `--all`、push/PR 跑有界的 `--core` 且只报告）、
+CI 侧由 `nightly` 作业承接，三个引擎的 `--all`，push/PR 只报告、schedule 是硬信号）、
 以及一段时间的连续观察；
 > **Firefox / WebKit 只在慢轨测**（用户 2026-09-14 明确指示）：日常批次只跑 chromium，不碰 firefox/webkit project，也不跑 nightly。
 它**只报告**，发现的问题回头**单独立批**修。慢轨与开发**解耦**：它慢它的，迭代继续。
@@ -333,7 +333,7 @@ fps 守卫会得到「idle 61 但 playback 15」这种**纯争用**的读数并�
 **规则**：**WebKit 总耗时 > 20 分钟 ⇒ 不进常规的「必过」集合**（`verify` / `release*` / `ci.yml` 里 push/PR 的必过路径）。它**可以**在这些路径上跑，前提是有豁免（`continue-on-error`）——红了只报告，不挡合并。
 **已经落地**：
 - **2026-09-14**：CI 里每次 push/PR 都跑的 `e2e-engines` 作业**已删除**（它跑的正是超界的整包 WebKit），两个慢引擎改由 `nightly` 作业各跑一遍 `--all`。
-- **2026-09-19**（用户要求「nightly / visual 也配置用起来」）：`nightly` 与 `visual` 作业现在也在 **push/PR** 上跑。`nightly` 的 push/PR 那一半是**有界**的 `--engines=webkit,firefox --core`，并且除 schedule 外带 `continue-on-error`；schedule 那一半仍是 `--all`×2 + `bench:long` 的硬信号。`visual` 保持 `continue-on-error: true`（只报告）。
+- **2026-09-19**（用户要求「nightly / visual 也配置用起来」，随后要求「nightly 跑三个引擎的全集」）：`nightly` 与 `visual` 作业现在也在 **push/PR** 上跑。`nightly` 三个引擎都跑全集：push/PR 是 `--engines=chromium,webkit,firefox --all` 一条带 `continue-on-error` 的 step，schedule 是三个引擎各自一条不带豁免的 `--all` + `bench:long`（硬信号）。`visual` 保持 `continue-on-error: true`（只报告）；WebKit/Firefox 上的视觉覆盖是 `nightly --all` 里的只渲染冒烟。
 - `scripts/verify-ci.mjs` 现在的断言是「作业必须能到 push/PR，且**不能在 push/PR 上失败**」（要有 `continue-on-error` 这类豁免，或干脆不进 push/PR），同时继续**拒绝**删掉 `nightly` 的 `--all`（否则删 `e2e-engines` 就成了静默的覆盖率损失）。
 
 **已有实测**（本机，`--workers=1`，帧无关交互生效后）：

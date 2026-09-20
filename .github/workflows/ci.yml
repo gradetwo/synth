@@ -148,25 +148,31 @@ jobs:
   # (it used to run WebKit `--all` and only the nightly subset for Firefox, because the
   # full Firefox pass was here).
 
-  # The slow engines, on the schedule *and* on every push/PR.
+  # Every engine over the whole suite, on the schedule *and* on every push/PR.
   #
-  # The schedule run is the original promise: both other engines over the whole
-  # suite plus the long benchmark, as a hard signal (a scheduled red does not
-  # block a PR, but it has to be visible).
+  # The schedule run is the hard signal: all three engines over `--all` plus the
+  # long benchmark (a scheduled red does not block a PR, but it has to be
+  # visible).
   #
-  # A push/PR run covers the bounded `--core` subset for both engines, and that
-  # one step is `continue-on-error`: a WebKit/Firefox flake or a host difference
-  # is a report there, exactly the reason this job used to be schedule-only. The
-  # step is the *only* thing tolerated -- a failed `npm ci` or build still fails
-  # the job -- and the scheduled steps below are not guarded at all, so the
-  # schedule keeps the hard signal.
+  # A push/PR run covers the same three engines and the same whole suite, as one
+  # guarded step: a slow-engine flake or a host difference is a report there,
+  # exactly the reason this job used to be schedule-only. That step is the
+  # *only* thing tolerated -- a failed `npm ci` or build still fails the job --
+  # and the scheduled steps below are not guarded at all, so the schedule keeps
+  # the hard signal per engine.
+  #
+  # `--all` includes `e2e/visual.spec.ts` for every engine. Chromium compares the
+  # committed baselines; WebKit and Firefox run it in the render-only smoke mode
+  # `scripts/nightly-e2e.mjs` selects for them (the baselines are engine- and
+  # host-specific, so there is nothing to compare against there).
   #
   # Neither run writes `docs/notes/nightly.md`: this workspace is thrown away,
   # so the record is the local/systemd run's job.
   #
   # On this runner there is no weston, so the script's `auto` display resolves to
-  # `xvfb` and WebKit runs headed under it; Firefox runs headless. Both are
-  # recorded in the log line and (locally) in the table's `显示` column.
+  # `xvfb` and WebKit runs headed under it; Chromium and Firefox run headless.
+  # The display path is recorded in the log line and (locally) in the table's
+  # `显示` column.
   nightly:
     runs-on: ubuntu-latest
     steps:
@@ -197,15 +203,19 @@ jobs:
       - name: Production build (WASM + SW)
         run: npm run build
 
-      - name: Install Playwright WebKit + Firefox
-        run: npx playwright install --with-deps webkit firefox
+      - name: Install Playwright Chromium + WebKit + Firefox
+        run: npx playwright install --with-deps chromium webkit firefox
 
-      # Push/PR: both engines, the bounded core subset. The whole suite is the
-      # schedule's job; a push should not wait on an `--all` WebKit pass.
-      - name: Browser E2E (WebKit + Firefox, core subset; push/PR)
+      # Push/PR: all three engines, the whole suite, one report.
+      - name: Browser E2E (Chromium + WebKit + Firefox, whole suite; push/PR)
         if: github.event_name != 'schedule'
         continue-on-error: true
-        run: npm run nightly -- --engines=webkit,firefox --core
+        run: npm run nightly -- --engines=chromium,webkit,firefox --all
+
+      # Schedule: the same coverage as one unguarded step per engine.
+      - name: Browser E2E (Chromium, whole suite)
+        if: github.event_name == 'schedule'
+        run: npm run nightly -- --engines=chromium --all
 
       - name: Browser E2E (WebKit, whole suite, headed under Xvfb)
         if: github.event_name == 'schedule'

@@ -1,7 +1,7 @@
 # 夜间浏览器跑 / Nightly browser runs
 
-由 `npm run nightly -- --update`（本机 / systemd 定时器）写入。CI 的 `nightly` 作业跑同一套
-子集但不写这张表：它的工作区是一次性的，写不进仓库。表、每行的通过率与下面的趋势都由
+由 `npm run nightly -- --update`（本机 / systemd 定时器）写入。CI 的 `nightly` 作业跑同一套脚本
+（三个引擎的 `--all`）但不写这张表：它的工作区是一次性的，写不进仓库。表、每行的通过率与下面的趋势都由
 `scripts/nightly-report.mjs` 生成；`node scripts/nightly-report.mjs --self-test` 会校验**本文件
 就是脚本会写出的样子**，所以手工改过的、会过期的趋势过不了自测。
 
@@ -25,15 +25,21 @@ Firefox 默认子集（核心 + 视觉 + 音频，18 个 spec）**14.8 min** 通
 两个引擎串行 ⇒ 下界 **>111 min** 且 WebKit 没有上限证据，3h（180 min）的 `TimeoutStartSec` 可能被超过、超时后
 unit 失败且**没有结果行**。`--core` 有完成记录：WebKit **22.7 min**（2026-09-15/16 本轮 >28 min 未完成）。
 所以定时器取
-`--core` + `TimeoutStartSec=5h`——这**不是**丢覆盖：CI 的 schedule `nightly` 作业仍对 WebKit 与 Firefox
-**各跑一遍 `--all`**。两条都由 `scripts/verify-ci.mjs` 断言钉住（CI 的 schedule 必须 `--all`×2；timer 必须含
+`--core` + `TimeoutStartSec=5h`——这**不是**丢覆盖：CI 的 schedule `nightly` 作业仍对 Chromium、WebKit 与
+Firefox **各跑一遍 `--all`**。两条都由 `scripts/verify-ci.mjs` 断言钉住（CI 每个引擎一遍 `--all`；timer 必须含
 `--core` 且不得含 `--all`），不能静默改回去。不带参数的 `npm run nightly` 仍然跑默认全子集，留给想现场盯着看的人。
 
-**CI 的 `nightly` 作业现在也在 push/PR 上跑**（2026-09-19 起）。那一半是 `--engines=webkit,firefox --core`
-（有界子集），并且除 schedule 外带 `continue-on-error`：慢引擎的偶发红只留在这次运行的日志与 `nightly-logs`
-制品里，不会挡 PR；schedule 那一半仍是 `--all`×2 + `bench:long` 的硬信号。`scripts/verify-ci.mjs` 把这两点
-都断言了——作业必须能到 push/PR，且不能在 push/PR 上失败——所以「顺手把豁免去掉」或「顺手改回
-schedule-only」都会让门禁变红。
+**CI 的 `nightly` 作业现在也在 push/PR 上跑**（2026-09-19 起），并且**三个引擎都跑全集**：
+push/PR 是 `--engines=chromium,webkit,firefox --all` 一条带 `continue-on-error` 的 step——慢引擎的偶发红
+只留在这次运行的日志与 `nightly-logs` 制品里，不会挡 PR；schedule 是三个引擎各自一条**不带豁免**的
+`--all` step，外加 `bench:long`，也就是硬信号。`scripts/verify-ci.mjs` 断言：作业必须能到 push/PR、
+不能在 push/PR 上失败、三个引擎各有一遍 `--all`、且只有 push/PR 那一条 step 带豁免——所以「顺手把豁免
+去掉」「顺手改回 schedule-only」或「少跑一个引擎」都会让门禁变红。
+
+`--all` 会把 `e2e/visual.spec.ts` 也带上：Chromium 比对仓库里的基线，WebKit/Firefox 走
+`GS1_VISUAL_SMOKE=1` 的**只渲染不比对**模式（`scripts/nightly-e2e.mjs` 按引擎自动选）。所以「视觉在其它
+引擎上跑」这条覆盖在 `nightly` 里，而不在单独的 `visual` 作业里；那个作业负责的是 Chromium 的基线比对，
+基线是「内核 + 宿主」相关的，换引擎没有可比的对象（`e2e/visual.spec.ts` 顶部有完整说明）。
 
 日志是**边跑边写**的：每个引擎一份 `.tmp/nightly/<日期>-<内核>.log`，引擎一开始就在开头写下
 `[nightly] <内核>: starting …`（含显示路径、子集、端口），结束时再写一行耗时与计数。所以

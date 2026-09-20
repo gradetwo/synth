@@ -86,6 +86,17 @@ Ubuntu runner 的对错；一条含义为「freetype 版本不同」的红灯，
 **任何**跑 `test:visual` 的作业都受同一条约束——所以以后把它塞进一个必过的 push 作业会在 `verify:ci`
 红，而不是变成每个 PR 一条「不同 freetype」的红灯。
 
+### 其它引擎的视觉覆盖在 `nightly` 里，不在这里
+
+`visual` 作业只比对 Chromium 的基线。基线文件名是「内核 + 宿主」相关的
+（Playwright 模板 `{arg}{-projectName}{-snapshotSuffix}`）：WebKit 会去找 `*-webkit-linux.png`，
+Firefox 会去找 `*-firefox-linux.png`，两套都不存在、也不该由开发机录——在 runner 上录它们，等于把
+runner 的字体栈与软件渲染固化成「正确」。其它引擎的视觉覆盖因此由 `nightly` 的 `--all` 承担：
+`e2e/visual.spec.ts` 在 WebKit/Firefox 上以 `GS1_VISUAL_SMOKE=1` **只渲染、不比对**
+（`scripts/nightly-e2e.mjs` 按引擎自动选），证明「这些界面在那两个引擎上画得出来」。
+要在这两个引擎上做真正的像素比对，唯一诚实的路是给每个引擎单独录一套基线（见下面「收紧」第 1 条），
+而那要先看第一次 schedule 跑的 `visual-diffs` 再决定。
+
 ### 第一次实跑之后怎么收紧（**未做：本机验证不了 runner 的字体/渲染**）
 
 本机**无法**验证 CI runner 的字体栈与渲染是否与开发机一致，所以本批只交付「定期报告 + 制品留存」，

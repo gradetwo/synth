@@ -7,7 +7,7 @@
  * locally would notice. This walks the workflow (a small indentation-aware
  * reader is enough for the shape GitHub Actions uses) and asserts that the gates
  * we promise — Rust, unit, lint, build, wasm, dist, budget, audio, DSP, Chromium
- * E2E — are still wired up, that the two slow engines still run somewhere, and
+ * E2E — are still wired up, that the slow engines still run somewhere, and
  * that a push or a PR cannot be failed by one of the slow jobs (WebKit/Firefox
  * and the visual baselines; see the twenty-minute rule in
  * `docs/notes/release.md`). Those jobs now run on push/PR too, and each carries
@@ -233,27 +233,31 @@ check('no push-triggered cross-engine job', !jobs.has('e2e-engines'),
   jobs.has('e2e-engines') ? 'e2e-engines ran the whole WebKit suite on every push and is meant to stay gone' : '');
 
 // The nightly job is a promise too: a scheduled run that quietly disappears is
-// how a WebKit-only regression survives for days. It owns the two slow engines,
-// and it has to keep covering both of them over the whole suite — that was
-// `e2e-engines`' job before, and dropping Firefox's full pass would be a silent
-// coverage loss. Push runs the bounded subset instead, and the schedule keeps
-// `--all`; both stay in this one job so there is one place to read.
+// how a WebKit-only regression survives for days. It owns all three engines and
+// has to keep covering each of them over the whole suite — that was
+// `e2e-engines`' job before, and dropping Firefox's or Chromium's full pass
+// would be a silent coverage loss. Push runs the same three-engine whole suite
+// as one guarded step; the schedule keeps the unguarded per-engine `--all` and
+// the benchmark. Both stay in this one job so there is one place to read.
 const nightly = body('nightly');
 check('a nightly job exists', text.includes('  nightly:'));
 check('it is scheduled', /cron:\s*'[^']+'/.test(text));
 check('it runs on push, PR and the schedule', runsOnPush('nightly'));
 check('it cannot fail a push/PR run (the schedule stays hard)', guardedForPush('nightly'));
-check('its push/PR pass is the bounded core subset', nightly.includes('--core'));
+check('its push/PR pass is the whole suite on all three engines',
+  /--engines=chromium,webkit,firefox\s+--all/.test(nightly));
 const guardCount = (nightly.match(/^continue-on-error:\s*true$/gm) ?? []).length;
 check('only that pass is guarded, not the scheduled steps', guardCount === 1,
-  guardCount === 1 ? '' : `the nightly job should tolerate exactly the push/PR \`--core\` step (found ${guardCount})`);
-check('it installs WebKit and Firefox', /playwright install[^\n]*webkit[^\n]*firefox/.test(nightly));
+  guardCount === 1 ? '' : `the nightly job should tolerate exactly the push/PR three-engine step (found ${guardCount})`);
+check('it installs Chromium, WebKit and Firefox',
+  /playwright install[^\n]*chromium[^\n]*webkit[^\n]*firefox/.test(nightly));
 check('it builds the app before the browser run', nightly.includes('npm run build'));
+check('it runs Chromium', nightly.includes('--engines=chromium'));
 check('it runs WebKit', nightly.includes('--engines=webkit'));
 check('it runs Firefox', nightly.includes('--engines=firefox'));
 const wholeSuite = (nightly.match(/--all\b/g) ?? []).length;
-check('it runs both engines over the whole suite', wholeSuite >= 2,
-  wholeSuite >= 2 ? '' : 'each engine needs an `--all` pass now that `e2e-engines` is gone');
+check('every engine gets a whole-suite pass', wholeSuite >= 3,
+  wholeSuite >= 3 ? '' : 'Chromium, WebKit and Firefox each need an `--all` pass');
 check('it runs the long benchmark', nightly.includes('npm run bench:long'));
 check('it keeps its logs', nightly.includes('nightly-logs'));
 // §一.39 again: the nightly installs `dtolnay/rust-toolchain@stable` too, so a
