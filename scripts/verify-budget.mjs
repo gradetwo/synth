@@ -305,7 +305,8 @@ const BUDGETS = {
   // (75.0 KB before and after), so there is no trade to declare; it stays at
   // 75 KB with effectively no headroom and the next batch that needs wasm bytes
   // -- P9.10's clamp hoisting is the one already queued -- has to buy them back
-  // or re-base with its own numbers.
+  // or re-base with its own numbers. (It was later re-based to 76 KB for
+  // toolchain variance, with its own numbers -- see the `wasm` entry below.)
   // **p141 capped the in-app changelog at 30 releases, and this line went *down*
   // 1619 -> 1550 KB.** The 1619 line existed because the release history grew by
   // ~1.2 KB per release for ever, and it broke on the v2.1.0 tag itself:
@@ -437,7 +438,23 @@ const BUDGETS = {
   // trip (the 2x branch, its scratch and its tests). If `wasm-opt` is ever
   // skipped, the raw core is ~290 KB and this line fails, which is the intended
   // alarm.
-  wasm: 75 * 1024,
+  //
+  // **Re-based 75 -> 76 KB on 2026-09-19, because 75 KB was measuring the
+  // compiler rather than the payload.** The same sources built twice gave
+  // **74.9 KB** on the workstation (clang 22.1.8, rustc 1.98.1) and **75.5 KB**
+  // on the Ubuntu runner (apt `clang`, Rust from the floating `@stable`). The
+  // two builds differ in nothing else that can move the number: `binaryen` is
+  // pinned by `package-lock.json` (132.0.0, `wasm-opt version 132`), the app
+  // sources are identical, and only the vendored C/C++ is compiler-specific
+  // (`clang -O3` in `crates/synth-core/build.rs`). With the old line's 0.1 KB of
+  // room, CI failed while the workstation passed -- and a contributor on any
+  // other clang would hit it too, since the README allows `clang >= 16`. 76 KB
+  // is the runner's 75.5 KB + ~0.5 KB, so the "measured + small margin" shape is
+  // unchanged and the next real growth still has to be declared here. (Extra
+  // `wasm-opt` stripping was measured and rejected as the fix: `--strip-producers`
+  // buys 197 B, not the ~0.6 KB the compiler drifts by.) If this line fails
+  // again on toolchain drift, pin the toolchain in CI instead of raising it.
+  wasm: 76 * 1024,
 };
 
 let failures = 0;
