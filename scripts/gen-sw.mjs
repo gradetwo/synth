@@ -104,6 +104,23 @@ const legal = async (response) => {
   return new Response(body, { status: 200, statusText: 'OK', headers: response.headers });
 };
 
+/**
+ * Cache lookup that ignores Vary.
+ *
+ * The preview server answers assets with 'Vary: Origin' (its CORS middleware),
+ * and a module/stylesheet preload is requested with a 'crossorigin' attribute,
+ * so the request carries an 'Origin' header. The precached entry was stored by
+ * cache.addAll without one, so the default Vary check in Cache.match finds
+ * nothing: the worker falls through to the network, and offline that is
+ * ERR_FAILED for a chunk that is sitting in the cache. The app then dies,
+ * because Vite's stylesheet preload rejects and nothing catches it (the
+ * e2e/pwa.spec.ts offline case). Every asset is content-hashed and the shell is
+ * a single document, so Vary has nothing to select between here -- the lookup
+ * ignores it. This also makes the worker correct on a host that adds a
+ * different Vary value than the development preview does.
+ */
+const matchCache = (request) => caches.match(request, { ignoreVary: true });
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET') return;
@@ -145,9 +162,8 @@ self.addEventListener('fetch', (event) => {
           return legal(response);
         })
         .catch(() =>
-          caches
-            .match('./index.html')
-            .then((cached) => cached || caches.match('./'))
+          matchCache('./index.html')
+            .then((cached) => cached || matchCache('./'))
             .then((cached) => cached || fetch(request, { cache: 'no-store' })),
         )
         .then(legal)
@@ -156,7 +172,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => {
+    matchCache(request).then((cached) => {
       if (cached) return cached;
       return fetch(request).then((response) => {
         if (response.ok && response.type === 'basic') {

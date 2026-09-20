@@ -76,3 +76,27 @@ PLAYWRIGHT_BROWSERS_PATH=.pw-browsers npx playwright test e2e/pwa.spec.ts --proj
 
 要点：**必须真的把网络关掉**（Playwright 的 `context.setOffline(true)`）才算测到；只验证「受 worker 控制」
 和「缓存列表齐全」曾经看起来通过，而问题恰恰在这两者之间。
+
+## 后续：缓存里明明有，`caches.match` 却找不到（2026-09-19）
+
+同样的那条 E2E 在 CI 上变成偶发红（本机 5 次里红 3 次），但症状换了一个：断网重载后**启动按钮正常出现**，
+点击启动之后 `.kbd-dock.open` 找不到，`#root` 是空的。
+
+失败的请求是启动后才懒加载的几个 chunk（`Projects-*.{js,css}`、`Teaching-*.{js,css}`、`FxGraphEditor-*.js`），
+而它们**都在预缓存里**：`caches.keys()` 里 44 条按 URL 一条不少。原因在 `Vary`：
+
+- `vite preview` 的 CORS 中间件给资源响应加了 `Vary: Origin`；
+- Vite 给 modulepreload / stylesheet 链接带 `crossorigin`，这些请求于是**带着 `Origin` 头**；
+- `cache.addAll` 预缓存时存下的请求**没有** `Origin` 头。
+
+`Cache.match` 默认按 `Vary` 比对请求头，URL 在缓存里也匹配不到 → worker 落到网络 → 断网 `ERR_FAILED`。
+CSS 预加载失败会让 Vite 的 preload helper 抛错，而应用没有 error boundary，React 就把整棵树卸载了。
+
+修法：`scripts/gen-sw.mjs` 里所有缓存查找都走 `caches.match(request, { ignoreVary: true })`（`matchCache()`）。
+资源都是内容哈希、shell 只有一份，`Vary` 在这里没有要区分的东西；宿主将来加别的 `Vary` 值也一样成立。
+
+为什么是偶发：只有这些懒加载 chunk 带 `crossorigin`，而它们第一次是否真的经过 worker，还取决于 HTTP
+磁盘缓存的状态。不带 `Origin` 的路径（例如页面里直接 `fetch()`）一直匹配得到，所以「缓存齐全」与
+「受 worker 控制」这两项单独看都正常——和上一次事故同一类，问题都在两者之间。
+
+验证：`e2e/pwa.spec.ts` 连跑 4 遍共 16/16 全绿；整套 Chromium E2E 157 passed / 10 skipped。
