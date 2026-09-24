@@ -47,7 +47,7 @@ const peak = (ptr, frames) => {
 console.log('[verify] WASM core');
 
 // Bump this together with `ABI_VERSION` in crates/synth-core/src/abi.rs.
-check('ABI version', ex.gs_abi_version() === 8, `v${ex.gs_abi_version()}`);
+check('ABI version', ex.gs_abi_version() === 9, `v${ex.gs_abi_version()}`);
 check('exposes the meter exports', typeof ex.gs_take_true_peak === 'function' && typeof ex.gs_loudness_rms === 'function');
 check(
   'exposes the second instance',

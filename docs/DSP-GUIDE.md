@@ -1982,7 +1982,7 @@ i. 若 !gate && !env.is_active() → vm.release_slot(slot) 并复位包络
 
 ### 12.4 ABI 与导出面
 
-`crates/synth-core/src/abi.rs` 定义 `extern "C"` 面。**`ABI_VERSION: u32 = 8`**，
+`crates/synth-core/src/abi.rs` 定义 `extern "C"` 面。**`ABI_VERSION: u32 = 9`**，
 版本历史（源码注释）：
 
 | 版本 | 增加的内容 |
@@ -1992,7 +1992,8 @@ i. 若 !gate && !env.is_active() → vm.release_slot(slot) 并复位包络
 | 4 | 脉冲响应导入 |
 | 5 | 采样导入 |
 | 6 | 第二实例（参数 + 键/力度路由） |
-| **8** | （当前）覆盖槽 + 覆盖槽调制总线（P9.3）等 |
+| **8** | 覆盖槽 + 覆盖槽调制总线（P9.3）等 |
+| **9** | （当前）逐音弯音 `gs_note_bend` 与逐键微分音 `gs_set_tuning_note` |
 
 导出函数分组（全部 `gs_*`）：
 
@@ -2001,7 +2002,8 @@ i. 若 !gate && !env.is_active() → vm.release_slot(slot) 并复位包络
 | 生命周期 | `gs_init(sample_rate, max_polyphony)`、`gs_reset` | `gs_init` **不复位**参数块/调制矩阵/相位计数器 |
 | 渲染 | `gs_process(frames)` → 活跃声部数 | `frames` 被钳到 `MAX_BLOCK_SIZE` |
 | 缓冲指针 | `gs_left_ptr` / `gs_right_ptr` / `gs_spectrum_ptr` | 原始指针进静态缓冲 |
-| 查询 | `gs_spectrum_bins`(=36)、`gs_max_block_size`(=1024)、`gs_max_voices`(=32)、`gs_abi_version`(=8) | |
+| 查询 | `gs_spectrum_bins`(=36)、`gs_max_block_size`(=1024)、`gs_max_voices`(=32)、`gs_abi_version`(=9) | |
+| 逐音音高 | `gs_pitch_bend`（全通道）、`gs_note_bend(note, semitones)`（MPE，逐音）、`gs_set_tuning_note(note, cents)`（逐键微分音） | 引擎的 `bends`/`tuning` 表与逐声部读取早已存在，此前只缺这三个入口中的后两个 |
 | 波表 | `gs_wavetable_import_ptr/capacity/import/clear/has` | `import` 返回 0 ok / 1 too short / 2 silent / 3 not finite |
 | 采样 | `gs_sample_import_ptr/capacity/import/clear/has` | `import` 另加 **4 = arena 装不下（NoRoom）** |
 | 脉冲响应 | `gs_ir_import_ptr/capacity/import/clear/has` | 同样有 **4 = NoRoom** |

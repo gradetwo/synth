@@ -13,7 +13,11 @@ use crate::params::{MAX_BLOCK_SIZE, MAX_VOICES, SPECTRUM_BINS};
 /// 4 added the impulse-response import.
 /// 5 added the sample import.
 /// 6 added the second instance (parameters + key/velocity routing).
-pub const ABI_VERSION: u32 = 8;
+/// 9 added the per-note bend and the per-key tuning setter (`gs_note_bend`, `gs_set_tuning_note`).
+///
+/// 7 is skipped rather than reused: the vendored pin that ships elsewhere recorded 8 as its current
+/// version, and a number that was published once cannot be handed to a different surface later.
+pub const ABI_VERSION: u32 = 9;
 
 /// Initialise the engine. Returns 1 on success.
 #[no_mangle]
@@ -314,6 +318,21 @@ pub extern "C" fn gs_all_notes_off() {
 #[no_mangle]
 pub extern "C" fn gs_pitch_bend(semitones: f32) {
     engine().pitch_bend(semitones);
+}
+
+/// Bend **one** note, in semitones (MPE).
+///
+/// The engine's `bends` table and its per-voice read of it have existed since the MPE work; only this
+/// entry point was missing, which is why a host could bend the whole channel and not a single key.
+#[no_mangle]
+pub extern "C" fn gs_note_bend(note: u32, semitones: f32) {
+    engine().note_bend(note.min(127), semitones);
+}
+
+/// Set **one** key's microtuning offset, in cents (bounded to ±1 octave by the engine).
+#[no_mangle]
+pub extern "C" fn gs_set_tuning_note(note: u32, cents: f32) {
+    engine().set_tuning_note(note.min(127), cents);
 }
 
 #[no_mangle]
