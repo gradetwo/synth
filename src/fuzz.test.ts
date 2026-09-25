@@ -22,7 +22,7 @@
  * range, inside the caps — not about matching the parser's own code.
  */
 
-import { beforeEach, describe, expect, it, type TaskContext } from 'vitest';
+import { beforeEach, describe, expect, it, type TestContext } from 'vitest';
 import { DEFAULT_PARAMS } from '@/audio/params';
 // P14.2: the budget below is a *timing* gate, so it asks the host the same
 // question `scripts/bench.mjs` and `scripts/verify-audio.mjs` ask, through the
@@ -237,7 +237,7 @@ function runFuzz<T, O>(spec: FuzzSpec<T, O>): void {
  * Judge the timing readings this test collected — or say, visibly, why the host
  * cannot. Called at the end of every `it`, after all of its parsers have run.
  */
-function finishTiming(ctx: TaskContext): void {
+function finishTiming(ctx: TestContext): void {
   const collected = timings.splice(0, timings.length);
   if (collected.length === 0) return;
   const host = timingTrust();

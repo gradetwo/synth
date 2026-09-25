@@ -60,7 +60,12 @@ function phraseLoudness(params: Record<number, number>): { db: number; peak: num
   return { db: 20 * Math.log10(Math.sqrt(sum / count) + 1e-12), peak };
 }
 
-describe.skipIf(!existsSync(wasmPath))('preset loudness', () => {
+// Every factory preset is rendered through WASM in one synchronous pass, so the
+// event loop never gets a turn and a timeout cannot preempt it — vitest 4
+// measures the elapsed time anyway, and that pass runs past the 30 s default
+// (vitest.config.ts). The suite says its own budget out loud instead of
+// loosening the global one for every test.
+describe.skipIf(!existsSync(wasmPath))('preset loudness', { timeout: 120_000 }, () => {
   it('keeps every factory preset within a few dB of the others', () => {
     const levels = FACTORY_PRESETS.map((preset) => {
       const measured = phraseLoudness(presetParams(preset));

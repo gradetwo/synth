@@ -296,7 +296,12 @@ const fmt = (r: Report) =>
     `allocs ${r.allocs}`,
   ].join(' · ');
 
-describe.skipIf(!hasWasm)('song audio quality', () => {
+// These render a whole song through WASM in one synchronous pass, so the event
+// loop never gets a turn and a timeout cannot preempt them — vitest 4 measures
+// the elapsed time anyway, and the densest case (the three electric pianos) runs
+// past the 30 s default (vitest.config.ts) on a warm workstation. The suite says
+// its own budget out loud instead of loosening the global one for every test.
+describe.skipIf(!hasWasm)('song audio quality', { timeout: 120_000 }, () => {
   it('renders Für Elise on Digital Bell without crackle', () => {
     const report = renderSong('bell', 'elise');
     console.log('[song] bell + elise →', fmt(report));
