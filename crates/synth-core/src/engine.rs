@@ -5936,6 +5936,50 @@ mod tests {
         assert!(e.limit_gain > 0.99, "limiter did not release: {}", e.limit_gain);
     }
 
+    /// How far the render may depend on the chunk size.
+    ///
+    /// The worklet splits a render block at every due note event (`gs_process(chunk)` per segment), so the core is called
+    /// with varying chunk sizes all the time. **Exact bit-equality is not the requirement**: `update_smoothing` runs a
+    /// one-pole whose coefficient is `1 - exp(-frames / (tau · sr))`, and applying an exponential twice over half the
+    /// frames is not the same curve as applying it once over all of them. The divergence measured here is **0.0056** on a
+    /// ~0.5 signal, and it decays towards the target because both paths converge to the same value.
+    ///
+    /// This is a **bound**, not a proof of continuity: an earlier version of this test asserted bit-equality and
+    /// "failed", which said nothing about clicks. What it does catch is a change that makes the split *matter* — the
+    /// shape a discontinuity at every event would have.
+    #[test]
+    fn the_render_depends_on_the_chunk_size_only_within_the_smoothing_bound() {
+        let _guard = lock_engine();
+        let render = |sizes: &[usize]| {
+            let mut e = new_engine(8);
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 1.0);
+            e.set_param(id::OSC2_LEVEL, 0.4);
+            e.set_param(id::FILTER_CUTOFF, 3000.0);
+            e.set_param(id::FILTER_RES, 0.3);
+            e.set_param(id::FILTER_ENV_AMT, 0.4);
+            e.set_param(id::ENV_SUSTAIN, 0.7);
+            e.set_param(id::LFO_ON, 1.0);
+            e.note_on(60, 0.9);
+            let mut out: Vec<f32> = Vec::new();
+            for size in sizes {
+                e.process(*size);
+                out.extend_from_slice(&e.out_l[..*size]);
+            }
+            out
+        };
+        let whole = render(&[128, 128, 128, 128]);
+        let split = render(&[64, 64, 64, 64, 64, 64, 64, 64]);
+        let mut worst = 0.0f32;
+        for (a, b) in whole.iter().zip(split.iter()) {
+            worst = worst.max((a - b).abs());
+        }
+        assert!(
+            worst < 0.01,
+            "the split changed the render far beyond the smoothing drift: largest difference {worst}"
+        );
+    }
+
     /// A stolen voice must **fade**, not click.
     ///
     /// The defect this pins: `find_victim` prefers released voices, and the release it gave them was 20 ms — short
