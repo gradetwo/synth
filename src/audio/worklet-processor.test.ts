@@ -951,6 +951,45 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
    * queue the documented `noteAt` / `noteOffAt` messages build — same validator, same fields — so
    * the fallback is not a second, weaker scheduling path.
    */
+  describe('a new note-on supersedes an earlier queued release', () => {
+    /**
+     * The defect this holds shut: retriggering a key before its release left the *old* release in the queue, where it
+     * fired after the new note-on and released the new voice — a lane that goes silent or fragments when a preview
+     * button is tapped twice. A keyboard's rule is the fix: the key was let go and pressed again, so only the new
+     * press is still owed a release.
+     */
+    it('drops the superseded note-off and keeps the new one', async () => {
+      const processor = instantiate();
+      // The processor drops messages until its core reports ready; every test that inspects the queue waits first.
+      await waitReady(processor);
+      processor.port.onmessage({ data: { type: 'noteOnAt', atFrame: 0, note: 60, velocity: 1 } });
+      processor.port.onmessage({ data: { type: 'noteOffAt', atFrame: 1000, note: 60 } });
+      // The retrigger lands before the first release, and asks for its own, later one.
+      processor.port.onmessage({ data: { type: 'noteOnAt', atFrame: 400, note: 60, velocity: 1 } });
+      processor.port.onmessage({ data: { type: 'noteOffAt', atFrame: 1400, note: 60 } });
+
+      const queue = processor.scheduledNotes;
+      const offs = queue.filter((e: { off: boolean; note: number }) => e.off && e.note === 60);
+      expect(offs.map((e: { frame: number }) => e.frame), 'only the new release survives').toEqual([1400]);
+      // …and the two note-ons are both still there: superseding a *release* must not swallow a press.
+      expect(queue.filter((e: { off: boolean }) => !e.off)).toHaveLength(2);
+    });
+
+    it('leaves releases on other keys alone', async () => {
+      const processor = instantiate();
+      await waitReady(processor);
+      processor.port.onmessage({ data: { type: 'noteOnAt', atFrame: 0, note: 60 } });
+      processor.port.onmessage({ data: { type: 'noteOffAt', atFrame: 1000, note: 60 } });
+      processor.port.onmessage({ data: { type: 'noteOnAt', atFrame: 0, note: 64 } });
+      processor.port.onmessage({ data: { type: 'noteOffAt', atFrame: 1000, note: 64 } });
+      processor.port.onmessage({ data: { type: 'noteOnAt', atFrame: 400, note: 60 } });
+
+      const queue = processor.scheduledNotes;
+      expect(queue.filter((e: { off: boolean; note: number }) => e.off && e.note === 64)).toHaveLength(1);
+      expect(queue.filter((e: { off: boolean; note: number }) => e.off && e.note === 60)).toHaveLength(0);
+    });
+  });
+
   describe('offline prefill (processorOptions.notes)', () => {
     const prefill = (notes: unknown[]) => {
       const bytes = new Uint8Array(readFileSync(wasmPath)).buffer;

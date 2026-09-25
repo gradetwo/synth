@@ -705,6 +705,23 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
   scheduleTimedNote(event) {
     const queue = this.scheduledNotes;
     if (queue.length >= MAX_SCHEDULED_EVENTS) queue.shift();
+    /**
+     * A new note-on **supersedes** an earlier queued note-off on the same key.
+     *
+     * Retriggering a key before its release is the most ordinary thing a player does, and the old release used to
+     * survive in this queue and fire *after* the new note-on — where `gs_note_off(note)` releases whatever is sounding
+     * on that key, which by then is the **new** voice. The audible result is a note cut microseconds after it starts,
+     * or a fragment of one: reported as "tap a track's preview button twice and the lane goes silent or wrong",
+     * reproducible wherever the same key is previewed repeatedly, and worst where the release tail is longest.
+     *
+     * Dropping the superseded release is also what a keyboard does: the key was let go, then pressed again, and only
+     * the new press is still owed a release. The new event carries its own note-off, scheduled normally below.
+     */
+    if (!event.off) {
+      for (let i = queue.length - 1; i >= 0; i -= 1) {
+        if (queue[i].off && queue[i].note === event.note && queue[i].frame > event.frame) queue.splice(i, 1);
+      }
+    }
     let i = queue.length;
     while (i > 0 && queue[i - 1].frame > event.frame) i -= 1;
     queue.splice(i, 0, event);
