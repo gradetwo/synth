@@ -48,7 +48,7 @@ npm run ui:smoke                              # 端到端冒烟：开页 → 启
   `gs1.sample.import`、`gs1.songs.list`、`gs1.wavetable.import`；
   `gs1.ui.click`、`gs1.ui.gate`、`gs1.ui.open`、`gs1.ui.screenshot`、`gs1.ui.text`。
 - **版本**：引擎与工具都读 `package.json` 的 `version`（当前 **2.1.1**）。`gs1.describe` 的 `version`
-  与 `initialize` 的 `serverInfo.version` 都是它；ABI 是 **8**。
+  与 `initialize` 的 `serverInfo.version` 都是它；ABI 是 **9**。
 
 ## 二、目标与非目标
 
@@ -129,7 +129,7 @@ npm run ui:smoke                              # 端到端冒烟：开页 → 启
 真跑片段（`gs1.describe` 截断）：
 
 ```json
-{"name":"GS-1","version":"2.1.1","abi":8,"paramCount":224,"sampleRate":48000,"blockSize":128,
+{"name":"GS-1","version":"2.1.1","abi":9,"paramCount":224,"sampleRate":48000,"blockSize":128,
  "maxBlockSize":1024,"maxVoices":32,
  "arena":{"capacityBytes":12582912,"freeBytes":12582912,"allocViolations":0},
  "sampler":{"maxBaseSamples":192000,"importCapacity":192000,

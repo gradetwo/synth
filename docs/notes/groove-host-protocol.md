@@ -27,13 +27,13 @@ AudioWorklet 的 `port.postMessage` 只能在**消息到达时**生效（`proces
 ```js
 port.onmessage = (e) => {
   if (e.data.type === 'ready') {
-    // e.data.abi === 8，e.data.scheduledNoteLatencyFrames === 128
+    // e.data.abi === 9，e.data.scheduledNoteLatencyFrames === 128
     start();
   }
 };
 ```
 
-`ready` 的两个字段见下面第二节表格；`abi` 是核心 ABI 版本（当前 **8**），
+`ready` 的两个字段见下面第二节表格；`abi` 是核心 ABI 版本（当前 **9**），
 `abi` 与 `scheduledNoteLatencyFrames` 都由核心/处理器**运行时给出**，主机不要抄成常数。
 
 ## 三、按帧寻址的消息

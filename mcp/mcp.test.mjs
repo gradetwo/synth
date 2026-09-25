@@ -617,7 +617,7 @@ describe('audit log', () => {
 describe('tool outputs', () => {
   it('describes the engine from the wasm and the Rust constants', async () => {
     const result = await ok('gs1.describe', {});
-    expect(result.abi).toBe(8);
+    expect(result.abi).toBe(9);
     expect(result.paramCount).toBe(224);
     expect(result.sampleRate).toBe(48000);
     expect(result.arena.capacityBytes).toBe(12 * 1024 * 1024);

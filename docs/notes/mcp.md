@@ -51,7 +51,7 @@ POST 一个 JSON-RPC 2.0 消息（`initialize` / `tools/list` / `tools/call`）�
 
 | 工具 | 输入 | 输出（要点） |
 | :--- | :--- | :--- |
-| `gs1.describe` | — | 版本、ABI 8、`paramCount` 224、48000 Hz、128 块、arena 容量/余量、采样器上限与 P9.8 返回码、全部枚举、预设数 |
+| `gs1.describe` | — | 版本、ABI 9、`paramCount` 224、48000 Hz、128 块、arena 容量/余量、采样器上限与 P9.8 返回码、全部枚举、预设数 |
 | `gs1.params.list` | `{ filter? }` | `{ count, total, params:[{ id, key, nameEn, nameZh, min, max, default, unit, discrete }] }` |
 | `gs1.presets.list` | — | `{ count, categories, presets:[{ id, name, tag, cat, wave, tags, user, hasLayer, instanceMode }] }`（91 条） |
 | `gs1.patch.get` | `{ presetId?, patch? }` | `shareCode`（**分享码同格式**）+ 解码后的完整 `patch`；无参数时给**会话当前 patch** |
@@ -63,7 +63,7 @@ POST 一个 JSON-RPC 2.0 消息（`initialize` / `tools/list` / `tools/call`）�
 
 `gs1.describe`（截断）：
 ```json
-{"name":"GS-1","version":"2.1.1","abi":8,"paramCount":224,"sampleRate":48000,"blockSize":128,
+{"name":"GS-1","version":"2.1.1","abi":9,"paramCount":224,"sampleRate":48000,"blockSize":128,
  "maxBlockSize":1024,"maxVoices":32,
  "arena":{"capacityBytes":12582912,"freeBytes":12582912,"allocViolations":0},
  "sampler":{"maxBaseSamples":192000,"importCapacity":192000,

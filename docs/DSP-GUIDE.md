@@ -3841,7 +3841,7 @@ return (Math.hypot(re, im) / windowSum) * 2;      // 除以 windowSum，不是 n
 `severity = delta / tolerance`；`failures = entries.filter(severity > 1)`。
 
 **ABI 保护**：`baseline.abi !== abi` **直接红**并要求重生成
-（`the parameter ABI changed (8 -> N)`）——当前 `"abi": 8`。
+（`the parameter ABI changed (8 -> N)`）——当前 `"abi": 9`。
 
 **`--update` 必须给 `--reason`**（否则 `exit 2`），理由写进基线 JSON：
 
@@ -5005,9 +5005,9 @@ P9.3 的覆盖槽 + 覆盖槽调制总线**部分解决**了这个问题（4 个
 | :-- | :-- |
 | DSP 指纹 1× | `rms 0.061470` |
 | DSP 指纹 2× | `rms 0.061703` |
-| 预设指纹 | **91 条 × 2**（`abi: 8`） |
+| 预设指纹 | **91 条 × 2**（`abi: 9`） |
 | 零分配 | `gs_alloc_violations() == 0` |
-| ABI 版本 | **8** |
+| ABI 版本 | **9** |
 
 **历史上被记账式改动的红线**（每一次都有理由与实测）：
 
