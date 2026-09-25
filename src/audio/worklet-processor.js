@@ -884,7 +884,17 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     //    measuring the cost against the render-quantum budget so we can shed
     //    voices smoothly before the audio thread misses its deadline.
     const block = Math.min(frames, this.maxBlock);
-    const blockStart = this.renderedFrames;
+    /**
+     * **The host addresses events in the context's frames, so this must too.**
+     *
+     * `renderedFrames` counts from this processor's first block, which is not the same clock: a worklet node is built
+     * when its host is (lazily — on the first routed note), so everything already rendered before that, and everything
+     * rendered while muted, is missing from this counter. Using it as the base made every timed event land that much
+     * in the future — measured as a lane that is **silent** for the first taps of a preview button and then fires the
+     * whole queue at once, and worse the longer the context had been running. `currentFrame` is the context's own
+     * frame (the one thing `AudioWorkletGlobalScope` guarantees, as the header of this file already notes).
+     */
+    const blockStart = typeof currentFrame === "number" ? currentFrame : this.renderedFrames;
     const t0 = nowMs();
     if (this.scheduledNotes.length === 0) {
       // The overwhelmingly common case: no timed events, so render the block in one call and
