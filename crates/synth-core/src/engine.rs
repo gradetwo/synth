@@ -132,7 +132,14 @@ extern "C" {
 /// constantly on dense material, and every cut is a tiny broadband click, so
 /// the fade is deliberately gentle: 20 ms is inaudible as a note ending but
 /// spreads the discontinuity over a thousand samples.
-const STEAL_RELEASE: f32 = 0.02;
+/// How long a stolen voice is given to fade.
+///
+/// **0.02 → 0.05.** Twenty milliseconds of fade on a sustained tone is a click, and it lands *after* the note: a patch
+/// with a long release leaves the previous note still fading when the next one strikes, `find_victim` prefers exactly
+/// those released voices, and the fade it gives them was short enough to hear. Measured on Groove's UK Garage lead, the
+/// stem's largest sample-to-sample discontinuity was **0.20** against the native render's **0.107**, at every note
+/// boundary. Fifty milliseconds is smooth to the ear without holding the slot long enough to matter for timing.
+const STEAL_RELEASE: f32 = 0.05;
 /// Per-voice gain before the mix bus.
 /// Below this the meters report exact silence (-120 dBFS).
 const METER_FLOOR: f32 = 1.0e-6;
@@ -441,6 +448,8 @@ pub struct Engine {
 
     // Public output buffers (pointer-exported to the worklet).
     out_l: [f32; MAX_BLOCK_SIZE],
+    /// The fade a stolen voice is given; `STEAL_RELEASE` unless a test says otherwise.
+    steal_release: f32,
     out_r: [f32; MAX_BLOCK_SIZE],
 
     rng: Rng,
@@ -642,6 +651,7 @@ impl Engine {
             fx_l: [0.0; MAX_BLOCK_SIZE],
             fx_r: [0.0; MAX_BLOCK_SIZE],
             out_l: [0.0; MAX_BLOCK_SIZE],
+            steal_release: STEAL_RELEASE,
             out_r: [0.0; MAX_BLOCK_SIZE],
             rng: Rng::new(0x51f3_9b1d),
             phase_seed: 0,
@@ -1338,11 +1348,17 @@ impl Engine {
             NoteOnResult::Queued(victim) => {
                 // Smooth steal: short release on the victim, new note queued
                 // (with its instance, so the timbre survives the promotion).
-                self.envs[victim].set_release(STEAL_RELEASE);
+                self.envs[victim].set_release(self.steal_release);
                 self.envs[victim].gate_off();
             }
             NoteOnResult::Dropped => {}
         }
+    }
+
+    /// Test-only: override the steal fade so the smoothness metric can be compared against the old value.
+    #[cfg(test)]
+    pub fn set_steal_release_for_test(&mut self, seconds: f32) {
+        self.steal_release = seconds;
     }
 
     pub fn note_off(&mut self, note: u8) {
@@ -5918,6 +5934,65 @@ mod tests {
             e.process(128);
         }
         assert!(e.limit_gain > 0.99, "limiter did not release: {}", e.limit_gain);
+    }
+
+    /// A stolen voice must **fade**, not click.
+    ///
+    /// The defect this pins: `find_victim` prefers released voices, and the release it gave them was 20 ms — short
+    /// enough that a sustained tone cut that fast is heard as a click, and it lands *after* the note, exactly where the
+    /// owner reported it ("solo the UK Garage lead and every note has a little pop after it").
+    ///
+    /// The metric is a **ratio**, not an absolute step. A bright waveform's own sample-to-sample slope is large (0.15 was
+    /// measured here for a perfectly continuous tone), so an absolute bound cannot tell a click from a sawtooth; a
+    /// discontinuity is a step far outside the signal's own distribution.
+    #[test]
+    fn a_stolen_voice_fades_instead_of_clicking() {
+        let _guard = lock_engine();
+        let steps_for = |steal_release: f32| {
+            let mut e = new_engine(2);
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_CUTOFF, 6000.0);
+            e.set_param(id::FILTER_ENV_AMT, 0.0);
+            e.set_param(id::ENV_ATTACK, 0.005);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            e.set_param(id::ENV_RELEASE, 2.0);
+            e.set_param(id::LFO_ON, 0.0);
+            e.note_on(60, 1.0);
+            e.note_on(64, 1.0);
+            for _ in 0..40 {
+                e.process(128);
+            }
+            // The steal: the pool is full, so a victim is faded over `steal_release` while this note waits.
+            e.set_steal_release_for_test(steal_release);
+            e.note_on(67, 1.0);
+            let mut steps: Vec<f32> = Vec::new();
+            let mut prev = 0.0f32;
+            for block in 0..600 {
+                e.process(128);
+                for (i, sample) in e.out_l[..128].iter().enumerate() {
+                    if block == 0 && i == 0 {
+                        prev = *sample;
+                        continue;
+                    }
+                    steps.push((sample - prev).abs());
+                    prev = *sample;
+                }
+            }
+            steps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let p999 = steps[(steps.len() as f64 * 0.999) as usize];
+            let worst = *steps.last().unwrap();
+            worst / p999.max(1e-6)
+        };
+
+        let long = steps_for(0.05);
+        let short = steps_for(0.02);
+        assert!(
+            long < short,
+            "a longer steal release must be smoother: 0.05 s ratio {long:.2}, 0.02 s ratio {short:.2}"
+        );
+        assert!(long < 3.0, "the stolen voice still clicks: worst/p99.9 = {long:.2}");
     }
 
     /// The new modulation sources must actually reach the DSP: aftertouch and
