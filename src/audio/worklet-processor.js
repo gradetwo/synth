@@ -347,7 +347,17 @@ function timedEventFrom(payload) {
   }
   let pan;
   if (typeof payload.pan === 'number' && Number.isFinite(payload.pan)) pan = payload.pan;
-  return { frame: Math.round(payload.atFrame), off: isOff, note: payload.note, velocity, pan };
+  /**
+   * Per-note microtuning, carried **with the note**.
+   *
+   * It used to be a separate `tuning` message, applied when it arrived — so a host scheduling a note for a future
+   * frame retuned that key *now*, bending whatever voice was still sounding on it. That is inaudible when the host's
+   * message and the frame are close together and obvious when they are not, which is how a lead came to sound wrong
+   * in one browser and fine in another. A note's tuning belongs to the note.
+   */
+  let cents;
+  if (typeof payload.cents === 'number' && Number.isFinite(payload.cents)) cents = payload.cents;
+  return { frame: Math.round(payload.atFrame), off: isOff, note: payload.note, velocity, pan, cents };
 }
 
 class SynthWorkletProcessor extends AudioWorkletProcessor {
@@ -470,11 +480,17 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
 
     switch (data.type) {
       case 'noteOn':
-        this.wasm.gs_note_on(data.note, data.velocity);
+      case 'noteOnPan': {
+        // An immediate note may carry its own tuning too, and takes the same route as a scheduled one: set it, then
+        // play. `noteOnPan` is `noteOn` with a pan, so they share the branch.
+        const cents = Number(data.cents);
+        if (data.cents !== undefined && Number.isFinite(cents) && this.wasm.gs_set_tuning_note) {
+          this.wasm.gs_set_tuning_note(Number(data.note) | 0, cents);
+        }
+        if (data.type === 'noteOnPan') this.wasm.gs_note_on_pan(data.note, data.velocity, data.pan);
+        else this.wasm.gs_note_on(data.note, data.velocity);
         break;
-      case 'noteOnPan':
-        this.wasm.gs_note_on_pan(data.note, data.velocity, data.pan);
-        break;
+      }
       case 'noteOff':
         this.wasm.gs_note_off(data.note);
         break;
@@ -499,6 +515,7 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
           note: data.note,
           velocity: data.velocity,
           pan: data.pan,
+          cents: data.cents,
         });
         if (event) this.scheduleTimedNote(event);
         break;
@@ -740,10 +757,17 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
       const event = queue.shift();
       if (event.off) {
         this.wasm.gs_note_off(event.note);
-      } else if (event.pan !== undefined) {
-        this.wasm.gs_note_on_pan(event.note, event.velocity, event.pan);
       } else {
-        this.wasm.gs_note_on(event.note, event.velocity);
+        // A note's tuning is applied in the same breath as the note, at the note's own frame: a separate `tuning`
+        // message applied on arrival retunes a key that is *already sounding* when the host is scheduling ahead.
+        if (event.cents !== undefined && this.wasm.gs_set_tuning_note) {
+          this.wasm.gs_set_tuning_note(event.note, event.cents);
+        }
+        if (event.pan !== undefined) {
+          this.wasm.gs_note_on_pan(event.note, event.velocity, event.pan);
+        } else {
+          this.wasm.gs_note_on(event.note, event.velocity);
+        }
       }
       applied += 1;
     }

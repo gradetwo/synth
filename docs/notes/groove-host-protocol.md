@@ -128,11 +128,11 @@ node.port.postMessage({ type: 'noteOffAt', atFrame: atFrame + 24000 }); // 0.5 s
 
 | 方向 | 消息 | 字段 | 语义 |
 | :--- | :--- | :--- | :--- |
-| `host→worklet` | `noteOn` | `{ note, velocity }` | 立即起音 |
-| `host→worklet` | `noteOnPan` | `{ note, velocity, pan }` | 立即起音并定位 |
+| `host→worklet` | `noteOn` | `{ note, velocity, cents? }` | 立即起音（`cents` 可选：该音符的微分音偏移） |
+| `host→worklet` | `noteOnPan` | `{ note, velocity, pan, cents? }` | 立即起音并定位 |
 | `host→worklet` | `noteOff` | `{ note }` | 立即止音 |
-| `host→worklet` | `noteAt` | `{ atFrame, note, velocity, pan }` | 在绝对帧 `atFrame` 起音（输入校验见第三节） |
-| `host→worklet` | `noteOnAt` | `{ atFrame, note, velocity, pan }` | `noteAt` 的别名（含同一套输入校验） |
+| `host→worklet` | `noteAt` | `{ atFrame, note, velocity, pan, cents? }` | 在绝对帧 `atFrame` 起音（输入校验见第三节） |
+| `host→worklet` | `noteOnAt` | `{ atFrame, note, velocity, pan, cents? }` | `noteAt` 的别名（含同一套输入校验） |
 | `host→worklet` | `noteOffAt` | `{ atFrame, note }` | 在绝对帧 `atFrame` 止音（`velocity` 强制 0） |
 | `host→worklet` | `allNotesOff` | `{}` | 清队列 + 全部止音 |
 | `host→worklet` | `panic` | `{}` | `allNotesOff` 的别名（同样清队列） |
@@ -171,7 +171,10 @@ node.port.postMessage({ type: 'noteOffAt', atFrame: atFrame + 24000 }); // 0.5 s
    the core without losing the note`。
 5. **`noteOffAt` 的 `pan` 与 `velocity` 被静默忽略**（`velocity` 强制 0，走 `gs_note_off`）。
    与 `noteAt` 的字段表看似对称、实际不对称：文档里按实际行为写。
-6. **`noteAt` 与 `noteOnAt` 是完全的别名**（同一 `case` 分支、同一套校验）。保留两个名字是为了
+6. **`cents` 可选，随音符一起下发并在该音符自己的帧上生效**。它曾经是一条独立的 `tuning` 消息、到达即写：
+   宿主给未来的帧排音时，那条消息会去改**正在响的**同一个键，于是"预排"的音符会把当前声音弯走——同一个
+   仓库里一个浏览器听得出、另一个听不出，就是这种时序差。微分音属于它自己的那个音符，所以现在走同一条事件。
+7. **`noteAt` 与 `noteOnAt` 是完全的别名**（同一 `case` 分支、同一套校验）。保留两个名字是为了
    主机侧可读性，不是两种语义。
 7. **上界淘汰是「丢最旧」，不是「拒绝新的」**：队列按帧排序，所以长期漏事件的宿主会**静默丢掉
    时间上最早**的音符（而不是丢掉刚发来的那条）。1024 条对「合法 lookahead 主机只持有几百条」
