@@ -5936,6 +5936,176 @@ mod tests {
         assert!(e.limit_gain > 0.99, "limiter did not release: {}", e.limit_gain);
     }
 
+    /// The **shipped patch, exactly**, released where the lane releases it.
+    ///
+    /// Every earlier case used plausible settings rather than Groove's own, and the difference matters: `organStab` is
+    /// `attack 0.014 s, decay 0.22 s, sustain 0.22, release 1.3 s`, and the UK Garage lead's notes are ~0.148 s long — so
+    /// the release lands **during the decay**, 148 ms into a 220 ms decay, which is a stage-switch path none of the earlier
+    /// tests reached (they released during the attack, or after it, or used a sustain of 0.9 where the patch uses 0.22).
+    ///
+    /// The parameters below are the patch's own ids and values, copied from `GS1_PATCHES.organStab`.
+    #[test]
+    fn the_shipped_patch_released_mid_decay_does_not_step_the_output() {
+        let _guard = lock_engine();
+        let mut e = new_engine(8);
+        e.set_param(1, 1.0); // OSC1_ON
+        e.set_param(2, 1.0); // OSC1_WAVE: triangle
+        e.set_param(5, 0.6); // OSC1_LEVEL
+        e.set_param(7, 1.0); // OSC2_ON
+        e.set_param(8, 0.0); // OSC2_WAVE: sine
+        e.set_param(9, 19.0); // OSC2_PITCH
+        e.set_param(11, 0.34); // OSC2_LEVEL
+        e.set_param(13, 0.0); // FILTER_TYPE: lowpass
+        e.set_param(14, 5200.0); // FILTER_CUTOFF
+        e.set_param(15, 0.14); // FILTER_RES
+        e.set_param(17, 0.12); // FILTER_ENV_AMT
+        e.set_param(18, 0.3); // FILTER_ENV_DECAY
+        e.set_param(19, 0.014); // ENV_ATTACK
+        e.set_param(20, 0.22); // ENV_DECAY
+        e.set_param(21, 0.22); // ENV_SUSTAIN
+        e.set_param(22, 1.3); // ENV_RELEASE
+        e.set_param(23, 0.0); // LFO_ON
+        e.set_param(78, 0.46); // PATCH_GAIN
+        e.set_param(140, 1.0); // OSC1_SUB
+        e.set_param(141, 0.22); // OSC1_SUB_LEVEL
+
+        e.note_on(72, 0.9);
+        // 0.148 s at 48 kHz is 7104 frames: 55 full 128-frame blocks, then 64 frames, and the release mid-block.
+        for _ in 0..55 {
+            e.process(128);
+        }
+        let mut samples: Vec<f32> = Vec::new();
+        e.process(64);
+        samples.extend_from_slice(&e.out_l[..64]);
+        e.note_off(72);
+        e.process(64);
+        samples.extend_from_slice(&e.out_l[..64]);
+        for _ in 0..100 {
+            e.process(128);
+            samples.extend_from_slice(&e.out_l[..128]);
+        }
+
+        let mut steps: Vec<f32> = Vec::new();
+        for i in 1..samples.len() {
+            steps.push((samples[i] - samples[i - 1]).abs());
+        }
+        let window = (0.010 * 48000.0) as usize;
+        let worst = steps[..window.min(steps.len())].iter().copied().fold(0.0f32, f32::max);
+        let mut sorted = steps.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let p999 = sorted[(sorted.len() as f64 * 0.999) as usize];
+        assert!(
+            worst < p999 * 3.0,
+            "the shipped patch steps the output at its release: worst {worst} against p99.9 {p999}"
+        );
+    }
+
+    /// A note-off applied **inside** a block, the way the worklet does it.
+    ///
+    /// Every earlier case released the note *between* `process` calls, which is a block boundary — and the worklet never
+    /// does that: it splits the block at the event's frame (`gs_process(before)`, `note_off`, `gs_process(after)`), so the
+    /// release begins **mid-block**. That difference is invisible to a test that calls `note_off` between blocks, and it is
+    /// the last mechanical difference between Groove's path and the core tests that keep passing.
+    #[test]
+    fn a_note_off_inside_a_block_does_not_step_the_output() {
+        let _guard = lock_engine();
+        let mut e = new_engine(8);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC1_WAVE, 1.0);
+        e.set_param(id::OSC2_ON, 1.0);
+        e.set_param(id::OSC2_LEVEL, 0.34);
+        e.set_param(id::OSC2_PITCH, 19.0);
+        e.set_param(id::FILTER_TYPE, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 5200.0);
+        e.set_param(id::FILTER_RES, 0.14);
+        e.set_param(id::FILTER_ENV_AMT, 0.12);
+        e.set_param(id::ENV_ATTACK, 0.15);
+        e.set_param(id::ENV_DECAY, 0.4);
+        e.set_param(id::ENV_SUSTAIN, 0.9);
+        e.set_param(id::ENV_RELEASE, 1.3);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::OSC1_SUB, 1.0);
+        e.set_param(id::OSC1_SUB_LEVEL, 0.22);
+
+        e.note_on(72, 0.9);
+        // Hold across several blocks, then release 20 ms in (mid-attack), **split inside the block**.
+        for _ in 0..8 {
+            e.process(128);
+        }
+        e.note_off(72);
+        let mut samples: Vec<f32> = Vec::new();
+        for _ in 0..200 {
+            e.process(128);
+            samples.extend_from_slice(&e.out_l[..128]);
+        }
+
+        // Now the same note, released with the block split at the same musical offset: 64 frames rendered, the release
+        // applied, then the remaining 64.
+        let mut e2 = new_engine(8);
+        e2.set_param(id::OSC1_LEVEL, 0.8);
+        e2.set_param(id::OSC1_WAVE, 1.0);
+        e2.set_param(id::OSC2_ON, 1.0);
+        e2.set_param(id::OSC2_LEVEL, 0.34);
+        e2.set_param(id::OSC2_PITCH, 19.0);
+        e2.set_param(id::FILTER_TYPE, 0.0);
+        e2.set_param(id::FILTER_CUTOFF, 5200.0);
+        e2.set_param(id::FILTER_RES, 0.14);
+        e2.set_param(id::FILTER_ENV_AMT, 0.12);
+        e2.set_param(id::ENV_ATTACK, 0.15);
+        e2.set_param(id::ENV_DECAY, 0.4);
+        e2.set_param(id::ENV_SUSTAIN, 0.9);
+        e2.set_param(id::ENV_RELEASE, 1.3);
+        e2.set_param(id::LFO_ON, 0.0);
+        e2.set_param(id::OSC1_SUB, 1.0);
+        e2.set_param(id::OSC1_SUB_LEVEL, 0.22);
+        e2.note_on(72, 0.9);
+        for _ in 0..8 {
+            e2.process(128);
+        }
+        // The split: half a block, the release, the rest — and repeat for the following blocks.
+        let mut split: Vec<f32> = Vec::new();
+        e2.process(64);
+        split.extend_from_slice(&e2.out_l[..64]);
+        e2.note_off(72);
+        e2.process(64);
+        split.extend_from_slice(&e2.out_l[..64]);
+        for _ in 0..199 {
+            e2.process(128);
+            split.extend_from_slice(&e2.out_l[..128]);
+        }
+
+        /**
+         * Compare the **step** in the release window, not the difference between the renders.
+         *
+         * The first version of this assertion compared the two renders sample-by-sample with a 25 % tolerance, which is a
+         * measurement that cannot see a 0.09 step on a 0.5 peak — i.e. the size of the symptom — and passed while doing so.
+         * The symptom's own metric is the one to use: the largest single-sample step in the 10 ms after the release,
+         * against the signal's own p99.9 step.
+         */
+        let step_report = |samples: &[f32]| {
+            let mut steps: Vec<f32> = Vec::new();
+            for i in 1..samples.len() {
+                steps.push((samples[i] - samples[i - 1]).abs());
+            }
+            let window = (0.010 * 48000.0) as usize;
+            let worst = steps[..window.min(steps.len())].iter().copied().fold(0.0f32, f32::max);
+            let mut sorted = steps.clone();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let p999 = sorted[(sorted.len() as f64 * 0.999) as usize];
+            (worst, p999)
+        };
+        let (edgeWorst, edgeP999) = step_report(&samples);
+        let (splitWorst, splitP999) = step_report(&split);
+        assert!(
+            edgeWorst < edgeP999 * 3.0,
+            "the block-edge release steps the output: {edgeWorst} against p99.9 {edgeP999}"
+        );
+        assert!(
+            splitWorst < splitP999 * 3.0,
+            "the in-block release steps the output: {splitWorst} against p99.9 {splitP999}"
+        );
+    }
+
     /// Does releasing a note **mid-attack** step the output?
     ///
     /// The first version of this test released after the attack had finished, and passed. But the lane that shows the pop has
@@ -5960,6 +6130,15 @@ mod tests {
         e.set_param(id::ENV_SUSTAIN, 0.9);
         e.set_param(id::ENV_RELEASE, 1.3);
         e.set_param(id::LFO_ON, 0.0);
+        /**
+         * The shipped patch's own sub oscillator, which the first two versions of this test left out.
+         *
+         * `organStab` sets `OSC1_SUB` and a 0.22 level, and the sub is a **separate oscillator with its own phase
+         * accumulator** (`add_sub`), so a release that steps the output only there would have been invisible to both earlier
+         * cases.
+         */
+        e.set_param(id::OSC1_SUB, 1.0);
+        e.set_param(id::OSC1_SUB_LEVEL, 0.22);
 
         e.note_on(72, 0.9);
         // ~20 ms into a 150 ms attack: the envelope is around a seventh of its peak when the release begins.
