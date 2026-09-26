@@ -5936,6 +5936,64 @@ mod tests {
         assert!(e.limit_gain > 0.99, "limiter did not release: {}", e.limit_gain);
     }
 
+    /// Does a **note-off** put a step in the output?
+    ///
+    /// Groove's own reviewer measured the symptom precisely on a rendered lead stem: a **single-sample vertical step** at
+    /// every note's release, with no amplitude ramp at all, peaking around −20 dBFS in the file I inspected and described as
+    /// a broadband impulse flat to Nyquist. The step's position matches the note-off frame exactly, so this asks the core
+    /// the direct question — play a note, release it, and compare the largest sample-to-sample step around the release with
+    /// the signal's own typical step. A release that ramps cannot produce an outlier; a cut can.
+    #[test]
+    fn a_note_off_does_not_step_the_output() {
+        let _guard = lock_engine();
+        let mut e = new_engine(8);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC1_WAVE, 1.0); // triangle, like the patch that showed it
+        e.set_param(id::OSC2_ON, 1.0);
+        e.set_param(id::OSC2_LEVEL, 0.34);
+        e.set_param(id::OSC2_PITCH, 19.0);
+        e.set_param(id::FILTER_TYPE, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 5200.0);
+        e.set_param(id::FILTER_RES, 0.14);
+        e.set_param(id::FILTER_ENV_AMT, 0.12);
+        e.set_param(id::ENV_ATTACK, 0.15);
+        e.set_param(id::ENV_DECAY, 0.4);
+        e.set_param(id::ENV_SUSTAIN, 0.9);
+        e.set_param(id::ENV_RELEASE, 1.3);
+        e.set_param(id::LFO_ON, 0.0);
+
+        e.note_on(72, 0.9);
+        // Hold for ~150 ms (the shipped lane's note length at 132 bpm), then release.
+        for _ in 0..50 {
+            e.process(128);
+        }
+        e.note_off(72);
+
+        // Collect the samples around and after the release.
+        let mut samples: Vec<f32> = Vec::new();
+        for _ in 0..200 {
+            e.process(128);
+            samples.extend_from_slice(&e.out_l[..128]);
+        }
+        // The signal's own step distribution, and the largest one in the first 10 ms of the release.
+        let mut steps: Vec<f32> = Vec::new();
+        for i in 1..samples.len() {
+            steps.push((samples[i] - samples[i - 1]).abs());
+        }
+        let releaseWindow = (0.010 * 48000.0) as usize;
+        let worstAtRelease = steps[..releaseWindow.min(steps.len())]
+            .iter()
+            .copied()
+            .fold(0.0f32, f32::max);
+        let mut sorted = steps.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let p999 = sorted[(sorted.len() as f64 * 0.999) as usize];
+        assert!(
+            worstAtRelease < p999 * 3.0,
+            "the release steps the output: worst step in the first 10 ms is {worstAtRelease} against a p99.9 of {p999}"
+        );
+    }
+
     /// Does *when* a note-on lands inside a block change the sound?
     ///
     /// The worklet splits a block at each due event, so a note can start mid-block: `gs_process(before)`, `note_on`,
