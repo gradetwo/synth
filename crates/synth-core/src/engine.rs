@@ -5950,7 +5950,7 @@ mod tests {
     #[test]
     fn the_render_depends_on_the_chunk_size_only_within_the_smoothing_bound() {
         let _guard = lock_engine();
-        let render = |sizes: &[usize]| {
+        let render = |sizes: &[usize], with_fx: bool| {
             let mut e = new_engine(8);
             e.set_param(id::OSC1_LEVEL, 0.8);
             e.set_param(id::OSC2_ON, 1.0);
@@ -5960,6 +5960,16 @@ mod tests {
             e.set_param(id::FILTER_ENV_AMT, 0.4);
             e.set_param(id::ENV_SUSTAIN, 0.7);
             e.set_param(id::LFO_ON, 1.0);
+            if with_fx {
+                // The effects are where a fixed-block assumption would hide: they run *after* the voices, and a split
+                // render hands them short blocks.
+                e.set_param(id::FX_CHORUS_ON, 1.0);
+                e.set_param(id::FX_CHORUS_MIX, 0.6);
+                e.set_param(id::FX_DELAY_ON, 1.0);
+                e.set_param(id::FX_DELAY_MIX, 0.4);
+                e.set_param(id::FX_REVERB_ON, 1.0);
+                e.set_param(id::FX_REVERB_MIX, 0.4);
+            }
             e.note_on(60, 0.9);
             let mut out: Vec<f32> = Vec::new();
             for size in sizes {
@@ -5968,15 +5978,24 @@ mod tests {
             }
             out
         };
-        let whole = render(&[128, 128, 128, 128]);
-        let split = render(&[64, 64, 64, 64, 64, 64, 64, 64]);
-        let mut worst = 0.0f32;
-        for (a, b) in whole.iter().zip(split.iter()) {
-            worst = worst.max((a - b).abs());
-        }
+        let divergence = |with_fx: bool| {
+            let whole = render(&[128, 128, 128, 128], with_fx);
+            let split = render(&[64, 64, 64, 64, 64, 64, 64, 64], with_fx);
+            let mut worst = 0.0f32;
+            for (a, b) in whole.iter().zip(split.iter()) {
+                worst = worst.max((a - b).abs());
+            }
+            worst
+        };
+        let dry = divergence(false);
+        let wet = divergence(true);
         assert!(
-            worst < 0.01,
-            "the split changed the render far beyond the smoothing drift: largest difference {worst}"
+            dry < 0.01,
+            "the split changed the dry render far beyond the smoothing drift: largest difference {dry}"
+        );
+        assert!(
+            wet < 0.05,
+            "the split changed the effected render far beyond the smoothing drift: {wet} (dry: {dry})"
         );
     }
 
