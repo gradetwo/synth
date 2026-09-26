@@ -454,7 +454,26 @@ const BUDGETS = {
   // `wasm-opt` stripping was measured and rejected as the fix: `--strip-producers`
   // buys 197 B, not the ~0.6 KB the compiler drifts by.) If this line fails
   // again on toolchain drift, pin the toolchain in CI instead of raising it.
-  wasm: 76 * 1024,
+  //
+  // **Re-based 76 -> 77 KB on 2026-09-26, for a source-level trade and not for
+  // toolchain drift.** The note above is explicit that drift is to be fixed by
+  // pinning, so it is worth proving this is not that: the runner produced
+  // **75.6 KB** at `b2ad231` and **76.2 KB** at `9550b7d`, on the same pinned
+  // `binaryen` and the same apt `clang`, and the only *shipping* Rust between
+  // those two commits is `alloc_arena.rs` (the rest of the `engine.rs` diff is
+  // inside `mod tests`, which the release core does not compile). A workstation
+  // A/B with one rustc and one clang measures the change itself at
+  // **75.0 -> 75.5 KB** gzip, so the 0.5 KB is the change and not the compiler.
+  //
+  // What it buys: the two free-list cursors became `Option<*mut Block>` instead
+  // of being seeded with `core::ptr::null_mut()`. CodeQL models `null_mut()` as
+  // a pointer-*invalidation* source, so every later `(*prev)` read looked like a
+  // dereference of an invalidated pointer — three `rust/access-invalid-pointer`
+  // alerts at security severity 7.5 that the existing `is_null()` checks did not
+  // clear. 0.5 KB of wasm gzip is the whole price, and 77 KB is the runner's
+  // 76.2 KB + ~0.8 KB, the same "measured + small margin" shape this line has
+  // always had. The next real growth still has to be declared here.
+  wasm: 77 * 1024,
 };
 
 let failures = 0;
