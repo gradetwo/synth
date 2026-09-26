@@ -5936,6 +5936,58 @@ mod tests {
         assert!(e.limit_gain > 0.99, "limiter did not release: {}", e.limit_gain);
     }
 
+    /// Does releasing a note **mid-attack** step the output?
+    ///
+    /// The first version of this test released after the attack had finished, and passed. But the lane that shows the pop has
+    /// a **0.15 s attack** and notes of about **0.148 s** — the release lands while the envelope is still rising, which is a
+    /// different code path in any envelope that switches stage on gate-off. This case releases 20 ms in and asks the same
+    /// question: is the largest step in the 10 ms after the release an outlier against the signal's own p99.9?
+    #[test]
+    fn releasing_mid_attack_does_not_step_the_output() {
+        let _guard = lock_engine();
+        let mut e = new_engine(8);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC1_WAVE, 1.0);
+        e.set_param(id::OSC2_ON, 1.0);
+        e.set_param(id::OSC2_LEVEL, 0.34);
+        e.set_param(id::OSC2_PITCH, 19.0);
+        e.set_param(id::FILTER_TYPE, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 5200.0);
+        e.set_param(id::FILTER_RES, 0.14);
+        e.set_param(id::FILTER_ENV_AMT, 0.12);
+        e.set_param(id::ENV_ATTACK, 0.15);
+        e.set_param(id::ENV_DECAY, 0.4);
+        e.set_param(id::ENV_SUSTAIN, 0.9);
+        e.set_param(id::ENV_RELEASE, 1.3);
+        e.set_param(id::LFO_ON, 0.0);
+
+        e.note_on(72, 0.9);
+        // ~20 ms into a 150 ms attack: the envelope is around a seventh of its peak when the release begins.
+        for _ in 0..8 {
+            e.process(128);
+        }
+        e.note_off(72);
+
+        let mut samples: Vec<f32> = Vec::new();
+        for _ in 0..200 {
+            e.process(128);
+            samples.extend_from_slice(&e.out_l[..128]);
+        }
+        let mut steps: Vec<f32> = Vec::new();
+        for i in 1..samples.len() {
+            steps.push((samples[i] - samples[i - 1]).abs());
+        }
+        let window = (0.010 * 48000.0) as usize;
+        let worst = steps[..window.min(steps.len())].iter().copied().fold(0.0f32, f32::max);
+        let mut sorted = steps.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let p999 = sorted[(sorted.len() as f64 * 0.999) as usize];
+        assert!(
+            worst < p999 * 3.0,
+            "releasing mid-attack steps the output: worst step {worst} against p99.9 {p999}"
+        );
+    }
+
     /// Does a **note-off** put a step in the output?
     ///
     /// Groove's own reviewer measured the symptom precisely on a rendered lead stem: a **single-sample vertical step** at
