@@ -42,6 +42,17 @@ import { CHANGELOG_HEAD } from './changelog-head';
 export const CHANGELOG: Release[] = [
   CHANGELOG_HEAD,
   {
+    version: '2.1.6',
+    date: '2026-09-16',
+    kind: 'feature',
+    items: [
+      [
+        '**采样引擎的处理器改为「压缩后发运」：首次访问要下载的东西少了约 20 KB**（那段代码里的注释与空白不再跟着上线），功能与声音一字未改。另外**给外部宿主补上了「按帧寻址的音符事件」**（`noteAt` / `noteOffAt`：可以指定**绝对帧号**，事件就落在那一帧而不是下一个渲染块边界；队列有 1024 的上限；握手消息会告知固定 **128 帧**的起声延迟），并把它写成了**对外契约文档** + 一条「文档与代码必须一致」的防漂移门禁；输入也做了校验——**省略力度按满力度**，**非有限值整条忽略**（以前缺字段会把 NaN 送进引擎，坏帧号还会被当成第 0 帧立刻发声）。**合成器默认的声音没有任何变化。**',
+        '**The sampler engine\'s processor now ships minified: a first visit downloads about 20 KB less** (the comments and whitespace in that file no longer travel with it), with no change in behaviour or sound. Also, **external hosts get frame-addressed note events** (`noteAt` / `noteOffAt`: name an **absolute frame** and the note lands on exactly that frame instead of the next render-block boundary; the queue is bounded at 1024; the ready handshake reports the fixed **128-frame** voice-start latency), written up as an **external contract** with a drift gate that keeps the document and the code in step. Input is validated too: **a missing velocity means full velocity**, and **non-finite values drop the whole event** (previously a missing field could send NaN into the engine, and a malformed frame number was treated as frame 0 and sounded immediately). **The synth sounds the same by default.**',
+      ],
+    ],
+  },
+  {
     version: '2.1.5',
     date: '2026-09-16',
     kind: 'fix',
@@ -346,17 +357,6 @@ export const CHANGELOG: Release[] = [
       [
         '**音质门禁换了一把更可靠的尺子**：旧的「精确 bin 相减」在两数相减时会留下假底噪，纯正弦被读成 −84…−102 dB；改用 7 项 Blackman-Harris 窗（4 秒整窗、每谐波 ±2 Hz 带外功率求和）后读数稳定，正弦离谐波能量最差 **−119.1 dB**，断言收紧到 **−105 dB**。另新增「同场景连做 8 次」的稳定性断言（实测离散度 **0.00 dB**），并记录锯齿/方波/三角的真实混叠底，供下一批带限使用。引擎与音色**逐位未变**。',
         '**The audio gate now measures with a ruler that does not lie.** Its old "exact-bin subtraction" left a false floor when two nearly equal numbers were subtracted, so a pure sine read -84...-102 dB; a 7-term Blackman-Harris window (four whole seconds, power summed outside +/-2 Hz of each harmonic) is stable, puts the sine at a worst case of **-119.1 dB**, and lets the assertion tighten to **-105 dB**. A new assertion renders one scene eight times and demands agreement (measured spread **0.00 dB**), and the saw/square/triangle alias floors are recorded for the next band-limiting batch. The engine and every sound are **bit-for-bit unchanged**.',
-      ],
-    ],
-  },
-  {
-    version: '1.98.0',
-    date: '2026-09-13',
-    kind: 'feature',
-    items: [
-      [
-        '**多了一个瞬态整形效果**：路由图里新增「TRANSIENT」——ATTACK 与 SUSTAIN 两个双向旋钮，用来提升或压低一个打点的起音与延音（满档约 ±7 dB，0 表示不变），另配 MIX 干湿比；默认关闭，持续音上不引入额外谐波（实测 THD 增量 0.00），关闭或中性设置时与之前逐位相同。',
-        '**A transient shaper**: the routing graph gained TRANSIENT — attack and sustain knobs that lift or push down a hit’s onset and its tail (about ±7 dB at full, 0 is unchanged), plus a dry/wet mix. It is off by default, adds no harmonic content to a held note (measured THD increase 0.00), and off or neutral renders bit-for-bit what it did before.',
       ],
     ],
   },
