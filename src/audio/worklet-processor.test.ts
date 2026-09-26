@@ -28,6 +28,16 @@ interface Registered {
   };
 }
 
+/**
+ * The worklet is a plain JS asset, so the two internals the queue tests read — a `port` that is null until the core
+ * wires it, and the scheduled queue itself — have no declaration to import. One cast names them, the same way the
+ * other queue tests already reach in.
+ */
+type QueueInternals = {
+  port: { onmessage: (e: { data: unknown }) => void };
+  scheduledNotes: { off: boolean; note: number; frame: number }[];
+};
+
 const messages: unknown[] = [];
 let registered: Registered | null = null;
 
@@ -962,13 +972,14 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
       const processor = instantiate();
       // The processor drops messages until its core reports ready; every test that inspects the queue waits first.
       await waitReady(processor);
-      processor.port.onmessage({ data: { type: 'noteOnAt', atFrame: 0, note: 60, velocity: 1 } });
-      processor.port.onmessage({ data: { type: 'noteOffAt', atFrame: 1000, note: 60 } });
+      const internals = processor as unknown as QueueInternals;
+      internals.port.onmessage({ data: { type: 'noteOnAt', atFrame: 0, note: 60, velocity: 1 } });
+      internals.port.onmessage({ data: { type: 'noteOffAt', atFrame: 1000, note: 60 } });
       // The retrigger lands before the first release, and asks for its own, later one.
-      processor.port.onmessage({ data: { type: 'noteOnAt', atFrame: 400, note: 60, velocity: 1 } });
-      processor.port.onmessage({ data: { type: 'noteOffAt', atFrame: 1400, note: 60 } });
+      internals.port.onmessage({ data: { type: 'noteOnAt', atFrame: 400, note: 60, velocity: 1 } });
+      internals.port.onmessage({ data: { type: 'noteOffAt', atFrame: 1400, note: 60 } });
 
-      const queue = processor.scheduledNotes;
+      const queue = internals.scheduledNotes;
       const offs = queue.filter((e: { off: boolean; note: number }) => e.off && e.note === 60);
       expect(offs.map((e: { frame: number }) => e.frame), 'only the new release survives').toEqual([1400]);
       // …and the two note-ons are both still there: superseding a *release* must not swallow a press.
@@ -978,13 +989,14 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
     it('leaves releases on other keys alone', async () => {
       const processor = instantiate();
       await waitReady(processor);
-      processor.port.onmessage({ data: { type: 'noteOnAt', atFrame: 0, note: 60 } });
-      processor.port.onmessage({ data: { type: 'noteOffAt', atFrame: 1000, note: 60 } });
-      processor.port.onmessage({ data: { type: 'noteOnAt', atFrame: 0, note: 64 } });
-      processor.port.onmessage({ data: { type: 'noteOffAt', atFrame: 1000, note: 64 } });
-      processor.port.onmessage({ data: { type: 'noteOnAt', atFrame: 400, note: 60 } });
+      const internals = processor as unknown as QueueInternals;
+      internals.port.onmessage({ data: { type: 'noteOnAt', atFrame: 0, note: 60 } });
+      internals.port.onmessage({ data: { type: 'noteOffAt', atFrame: 1000, note: 60 } });
+      internals.port.onmessage({ data: { type: 'noteOnAt', atFrame: 0, note: 64 } });
+      internals.port.onmessage({ data: { type: 'noteOffAt', atFrame: 1000, note: 64 } });
+      internals.port.onmessage({ data: { type: 'noteOnAt', atFrame: 400, note: 60 } });
 
-      const queue = processor.scheduledNotes;
+      const queue = internals.scheduledNotes;
       expect(queue.filter((e: { off: boolean; note: number }) => e.off && e.note === 64)).toHaveLength(1);
       expect(queue.filter((e: { off: boolean; note: number }) => e.off && e.note === 60)).toHaveLength(0);
     });
