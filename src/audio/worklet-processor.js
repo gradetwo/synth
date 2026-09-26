@@ -416,6 +416,7 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     this.captureEvents = Boolean(opts.captureEvents);
     /** The samples collected since the event being captured; see `finishCapture`. */
     this.captureAfter = [];
+    this.captureAfterRight = [];
     /** The event whose window is open, once `pendingCapture` has been consumed by the first chunk. */
     this.captureMeta = null;
     /** Frames this processor has rendered, i.e. the absolute index of the next block. */
@@ -842,16 +843,21 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     if (this.captureAfter.length === 0) return;
     const capture = this.pendingCapture;
     if (capture) this.pendingCapture = null;
-    const memory = new Float32Array(this.memory.buffer, this.leftPtr, this.maxBlock);
+    const meta = capture ?? this.captureMeta;
     this.port.postMessage({
       type: "eventCapture",
-      note: capture ? capture.note : this.captureMeta.note,
-      off: capture ? capture.off : this.captureMeta.off,
-      frame: capture ? capture.frame : this.captureMeta.frame,
-      before: capture ? capture.before : this.captureMeta.before,
+      note: meta.note,
+      off: meta.off,
+      frame: meta.frame,
+      before: meta.before,
+      /** Both channels: the audio review's one detail was that the step is **larger in the right**, and every capture before
+       * this one read `leftPtr` only — which is exactly where a right-channel-only defect hides. */
       after: Array.from(this.captureAfter),
+      afterRight: Array.from(this.captureAfterRight),
     });
     this.captureAfter = [];
+    this.captureAfterRight = [];
+    this.captureMeta = null;
   }
 
   /** Keep the post-event window open across the chunks that follow it. */
@@ -863,8 +869,12 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     }
     if (this.captureAfter.length === 0 && !this.captureMeta) return;
     const memory = new Float32Array(this.memory.buffer, this.leftPtr, this.maxBlock);
+    const right = new Float32Array(this.memory.buffer, this.rightPtr, this.maxBlock);
     const room = CAPTURE_AFTER_FRAMES - this.captureAfter.length;
-    for (let i = 0; i < Math.min(room, frames); i += 1) this.captureAfter.push(memory[i]);
+    for (let i = 0; i < Math.min(room, frames); i += 1) {
+      this.captureAfter.push(memory[i]);
+      this.captureAfterRight.push(right[i]);
+    }
     if (this.captureAfter.length >= CAPTURE_AFTER_FRAMES) this.finishCapture();
   }
 
@@ -978,6 +988,10 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
       // keep the historical cost profile (a split render would show up as extra per-chunk
       // overhead in the load monitor).
       this.wasm.gs_process(block);
+      const wholeLeft = new Float32Array(this.memory.buffer, this.leftPtr, block);
+      const wholeRight = new Float32Array(this.memory.buffer, this.rightPtr, block);
+      left.set(wholeLeft);
+      if (right !== left) right.set(wholeRight);
     } else {
       /**
        * Split the block at each due event so a note can start mid-block.
@@ -997,6 +1011,22 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
         const untilNext = next === Infinity ? block - offset : Math.max(1, next - (blockStart + offset));
         const chunk = Math.min(block - offset, untilNext);
         this.wasm.gs_process(chunk);
+        /**
+         * **Copy each chunk to its own offset.**
+         *
+         * `gs_process(n)` writes its `n` samples from index 0 of the output buffers, so after a split the buffer holds only
+         * the *last* chunk. Copying `block` frames once, after the loop, therefore placed the final chunk's audio at the
+         * **start** of the block and left the rest stale — and a block is split at exactly the frames where a timed event is
+         * due, which is every note-on and every note-off. That is the one-sample step with broadband content that the audio
+         * review heard after every note-off of Groove's UK Garage lead, that the GS-1 core's own buffer does not contain (the
+         * capture reads it between chunks, where it is correct), and that survived bypassing the entire master graph.
+         */
+        const chunkLeft = new Float32Array(this.memory.buffer, this.leftPtr, chunk);
+        left.set(chunkLeft, offset);
+        if (right !== left) {
+          const chunkRight = new Float32Array(this.memory.buffer, this.rightPtr, chunk);
+          right.set(chunkRight, offset);
+        }
         if (this.captureEvents && (this.pendingCapture || this.captureMeta)) {
           // Collect for the post-event window; the first chunk after the event is where a step would appear.
           this.continueCapture(chunk);
@@ -1016,11 +1046,10 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     const cost = nowMs() - t0;
     this.monitorLoad(block, cost, sampleRate);
 
-    // 3. Rebuild views every block; never cache them across `memory.grow`.
-    const leftView = new Float32Array(this.memory.buffer, this.leftPtr, block);
-    const rightView = new Float32Array(this.memory.buffer, this.rightPtr, block);
-    left.set(leftView);
-    if (right !== left) right.set(rightView);
+    /**
+     * The output is assembled per chunk above; a block that was not split was copied whole, and a split one piece by piece.
+     * (This used to be a single `block`-wide copy here, which is the bug the note about `gs_process` above describes.)
+     */
 
     // 4. Periodic analyser + meter message (small, structured-cloned copy).
     this.blockCount++;
