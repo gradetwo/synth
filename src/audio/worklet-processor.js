@@ -399,6 +399,13 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
      * at scheduling time) or jittery (post from a timer at the last moment).
      */
     this.scheduledNotes = [];
+    /**
+     * Diagnostic event capture (Groove's `captureEvents`).
+     *
+     * A host that is chasing a discontinuity needs to know **which side of this file** it appears on: the host posts the
+     * samples the core wrote around an event, and the caller compares them with the rendered file. Off unless a caller asks.
+     */
+    this.captureEvents = Boolean(opts.captureEvents);
     /** Frames this processor has rendered, i.e. the absolute index of the next block. */
     this.renderedFrames = 0;
     this.paramsB = opts.paramsB || null;
@@ -772,6 +779,7 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     let applied = 0;
     while (queue.length > 0 && queue[0].frame <= frame) {
       const event = queue.shift();
+      if (this.captureEvents) this.captureAround(event);
       if (event.off) {
         this.wasm.gs_note_off(event.note);
       } else {
@@ -789,6 +797,35 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
       applied += 1;
     }
     return applied;
+  }
+
+  /** Post the core's own samples around an event, for the discontinuity investigation. */
+  captureAround(event) {
+    const tail = 8;
+    this.pendingCapture = {
+      note: event.note,
+      off: Boolean(event.off),
+      frame: event.frame,
+      before: Array.from(
+        this.leftViewAtEnd ? this.leftViewAtEnd.slice(-tail) : []
+      ),
+    };
+  }
+
+  /** Finish a capture once the chunk after the event has been rendered. */
+  finishCapture() {
+    const capture = this.pendingCapture;
+    if (!capture) return;
+    this.pendingCapture = null;
+    const memory = new Float32Array(this.memory.buffer, this.leftPtr, this.maxBlock);
+    this.port.postMessage({
+      type: "eventCapture",
+      note: capture.note,
+      off: capture.off,
+      frame: capture.frame,
+      before: capture.before,
+      after: Array.from(memory.slice(0, 8)),
+    });
   }
 
   monitorLoad(frames, cost, rate) {
@@ -912,11 +949,15 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
        */
       let offset = 0;
       while (offset < block) {
+        if (this.captureEvents) {
+          this.leftViewAtEnd = new Float32Array(this.memory.buffer, this.leftPtr, this.maxBlock);
+        }
         this.applyScheduledNotesUpTo(blockStart + offset);
         const next = this.scheduledNotes.length > 0 ? this.scheduledNotes[0].frame : Infinity;
         const untilNext = next === Infinity ? block - offset : Math.max(1, next - (blockStart + offset));
         const chunk = Math.min(block - offset, untilNext);
         this.wasm.gs_process(chunk);
+        if (this.pendingCapture) this.finishCapture();
         offset += chunk;
       }
       // Events queued for the frame right after this block are still pending; ones that were
