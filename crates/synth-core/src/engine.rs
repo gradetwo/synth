@@ -5936,6 +5936,72 @@ mod tests {
         assert!(e.limit_gain > 0.99, "limiter did not release: {}", e.limit_gain);
     }
 
+    /// Does *when* a note-on lands inside a block change the sound?
+    ///
+    /// The worklet splits a block at each due event, so a note can start mid-block: `gs_process(before)`, `note_on`,
+    /// `gs_process(after)`. Groove measures a short high-frequency transient after each note on its GS-1 lanes, and the
+    /// transient disappears when events are aligned to block boundaries — where the note-on is applied *before* any of the
+    /// block is rendered. This asks the core the same question directly: same note, same patch, only the split differs.
+    #[test]
+    fn a_note_on_mid_block_sounds_like_a_note_on_at_the_block_edge() {
+        let _guard = lock_engine();
+        let base = |e: &mut Engine| {
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 1.0);
+            e.set_param(id::OSC2_LEVEL, 0.35);
+            e.set_param(id::OSC2_PITCH, 19.0);
+            e.set_param(id::FILTER_CUTOFF, 5200.0);
+            e.set_param(id::FILTER_RES, 0.14);
+            e.set_param(id::FILTER_ENV_AMT, 0.12);
+            e.set_param(id::ENV_ATTACK, 0.15);
+            e.set_param(id::ENV_SUSTAIN, 0.9);
+            e.set_param(id::ENV_RELEASE, 1.3);
+            e.set_param(id::LFO_ON, 0.0);
+        };
+        // Render the same musical event two ways, and measure the *high-frequency* energy of the result: a click is
+        // broadband, while the note's own tone is not.
+        let render = |split: bool| {
+            let mut e = new_engine(8);
+            base(&mut e);
+            let mut out: Vec<f32> = Vec::new();
+            // Three blocks of lead-in silence so the DSP state is warm either way.
+            for _ in 0..3 {
+                e.process(128);
+                out.extend_from_slice(&e.out_l[..128]);
+            }
+            if split {
+                // The note starts 64 frames into a block: render the first half, apply, render the rest.
+                e.process(64);
+                out.extend_from_slice(&e.out_l[..64]);
+                e.note_on(60, 0.9);
+                e.process(64);
+                out.extend_from_slice(&e.out_l[..64]);
+            } else {
+                // The note starts on the block edge.
+                e.note_on(60, 0.9);
+                e.process(128);
+                out.extend_from_slice(&e.out_l[..128]);
+            }
+            for _ in 0..3 {
+                e.process(128);
+                out.extend_from_slice(&e.out_l[..128]);
+            }
+            // Curvature: |x[n] - 2x[n-1] + x[n-2]|, summed. A broadband edge raises it; the tone does not.
+            let mut curvature = 0.0f32;
+            for i in 2..out.len() {
+                curvature += (out[i] - 2.0 * out[i - 1] + out[i - 2]).abs();
+            }
+            curvature
+        };
+        let edge = render(false);
+        let mid = render(true);
+        let ratio = mid / edge.max(1e-9);
+        assert!(
+            ratio < 1.25,
+            "a mid-block note-on is brighter than a block-edge one: mid {mid:.3}, edge {edge:.3} (ratio {ratio:.2})"
+        );
+    }
+
     /// How far the render may depend on the chunk size.
     ///
     /// The worklet splits a render block at every due note event (`gs_process(chunk)` per segment), so the core is called
@@ -5989,6 +6055,31 @@ mod tests {
         };
         let dry = divergence(false);
         let wet = divergence(true);
+        /**
+         * **One-sample chunks**, which is what the worklet actually does when an event is due one frame after the
+         * current offset: `untilNext = max(1, next - offset)`, so a block can be rendered as `[1, 127]`, `[3, 125]`… If
+         * any per-call step is not proportional to the frame count, that is where it shows, and it is the last suspect
+         * for the per-note transient Groove measures on its GS-1 lanes (see `docs/SYNTH_UPSTREAM_PLAN.md`).
+         */
+        let tiny = |sizes: &[usize]| {
+            let whole = render(&[128, 128, 128, 128], true);
+            let split = render(sizes, true);
+            let mut worst = 0.0f32;
+            for (a, b) in whole.iter().zip(split.iter()) {
+                worst = worst.max((a - b).abs());
+            }
+            worst
+        };
+        let one_sample = tiny(&[1, 127, 128, 128, 128]);
+        let three_then_rest = tiny(&[3, 125, 128, 128, 128]);
+        assert!(
+            one_sample < 0.05,
+            "a one-sample chunk changed the effected render: {one_sample} (dry {dry}, wet {wet})"
+        );
+        assert!(
+            three_then_rest < 0.05,
+            "a three-sample chunk changed the effected render: {three_then_rest}"
+        );
         assert!(
             dry < 0.01,
             "the split changed the dry render far beyond the smoothing drift: largest difference {dry}"
