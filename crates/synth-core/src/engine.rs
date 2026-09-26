@@ -5936,6 +5936,67 @@ mod tests {
         assert!(e.limit_gain > 0.99, "limiter did not release: {}", e.limit_gain);
     }
 
+    /// The **right channel**, with the shipped patch and the lane's own pan.
+    ///
+    /// Every earlier case measured `out_l`, and the reviewer's one detail none of them used is that the step is **larger in
+    /// the right channel** — and the lane is panned +0.6, so the voice is started through `note_on_pan` rather than
+    /// `note_on`. A pan-path defect would be invisible in every test written so far.
+    #[test]
+    fn the_shipped_patch_released_mid_decay_does_not_step_the_right_channel() {
+        let _guard = lock_engine();
+        let mut e = new_engine(8);
+        e.set_param(1, 1.0);
+        e.set_param(2, 1.0);
+        e.set_param(5, 0.6);
+        e.set_param(7, 1.0);
+        e.set_param(8, 0.0);
+        e.set_param(9, 19.0);
+        e.set_param(11, 0.34);
+        e.set_param(13, 0.0);
+        e.set_param(14, 5200.0);
+        e.set_param(15, 0.14);
+        e.set_param(17, 0.12);
+        e.set_param(18, 0.3);
+        e.set_param(19, 0.014);
+        e.set_param(20, 0.22);
+        e.set_param(21, 0.22);
+        e.set_param(22, 1.3);
+        e.set_param(23, 0.0);
+        e.set_param(78, 0.46);
+        e.set_param(140, 1.0);
+        e.set_param(141, 0.22);
+
+        // The lane's pan, through the pan entry point — the patch's own path in the exporter.
+        e.note_on_pan(72, 0.9, 0.6);
+        for _ in 0..55 {
+            e.process(128);
+        }
+        let mut right: Vec<f32> = Vec::new();
+        e.process(64);
+        right.extend_from_slice(&e.out_r[..64]);
+        e.note_off(72);
+        e.process(64);
+        right.extend_from_slice(&e.out_r[..64]);
+        for _ in 0..100 {
+            e.process(128);
+            right.extend_from_slice(&e.out_r[..128]);
+        }
+
+        let mut steps: Vec<f32> = Vec::new();
+        for i in 1..right.len() {
+            steps.push((right[i] - right[i - 1]).abs());
+        }
+        let window = (0.040 * 48000.0) as usize;
+        let worst = steps[..window.min(steps.len())].iter().copied().fold(0.0f32, f32::max);
+        let mut sorted = steps.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let p999 = sorted[(sorted.len() as f64 * 0.999) as usize];
+        assert!(
+            worst < p999 * 3.0,
+            "the shipped patch steps the right channel at its release: worst {worst} against p99.9 {p999}"
+        );
+    }
+
     /// The **shipped patch, exactly**, released where the lane releases it.
     ///
     /// Every earlier case used plausible settings rather than Groove's own, and the difference matters: `organStab` is
@@ -5989,7 +6050,7 @@ mod tests {
         for i in 1..samples.len() {
             steps.push((samples[i] - samples[i - 1]).abs());
         }
-        let window = (0.010 * 48000.0) as usize;
+        let window = (0.040 * 48000.0) as usize;
         let worst = steps[..window.min(steps.len())].iter().copied().fold(0.0f32, f32::max);
         let mut sorted = steps.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -6087,7 +6148,7 @@ mod tests {
             for i in 1..samples.len() {
                 steps.push((samples[i] - samples[i - 1]).abs());
             }
-            let window = (0.010 * 48000.0) as usize;
+            let window = (0.040 * 48000.0) as usize;
             let worst = steps[..window.min(steps.len())].iter().copied().fold(0.0f32, f32::max);
             let mut sorted = steps.clone();
             sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -6156,7 +6217,7 @@ mod tests {
         for i in 1..samples.len() {
             steps.push((samples[i] - samples[i - 1]).abs());
         }
-        let window = (0.010 * 48000.0) as usize;
+        let window = (0.040 * 48000.0) as usize;
         let worst = steps[..window.min(steps.len())].iter().copied().fold(0.0f32, f32::max);
         let mut sorted = steps.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
