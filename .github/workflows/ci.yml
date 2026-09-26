@@ -1,5 +1,14 @@
 name: CI
 
+# CodeQL's `actions/missing-workflow-permissions` raised one alert per job: with
+# no `permissions` block the token inherits the repository default, which is
+# more reach than any job here needs. Every job only checks the repository out,
+# so `contents: read` is the whole grant. `actions/upload-artifact` does not use
+# this token (it authenticates with the workflow's own runtime token), so the
+# artefact uploads in `verify`, `nightly` and `visual` are unaffected.
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, master]

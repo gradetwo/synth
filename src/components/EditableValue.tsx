@@ -22,7 +22,11 @@ const toEdit = (value: number, unit: EditUnit): string => {
 };
 
 const fromEdit = (text: string, unit: EditUnit, min: number, max: number): number | null => {
-  const parsed = Number.parseFloat(text.replace(/[^0-9.+-eE]/g, ''));
+  // The `-` has to sit last: anywhere else it opens a range, and `+-e` used to
+  // swallow `,` through `e` — `A-Z`, `:`, `/` and friends survived the strip
+  // (CodeQL `js/overly-large-range`). Digits, the decimal point and the two
+  // exponent markers are the whole vocabulary `Number.parseFloat` can use.
+  const parsed = Number.parseFloat(text.replace(/[^0-9.eE+-]/g, ''));
   if (!Number.isFinite(parsed)) return null;
   const value = unit === 'ms' ? parsed / 1000 : unit === 'pct' ? parsed / 100 : parsed;
   return clamp(value, min, max);

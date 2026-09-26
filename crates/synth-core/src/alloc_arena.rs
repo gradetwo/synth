@@ -130,7 +130,12 @@ pub fn alloc(size: usize, align: usize) -> *mut u8 {
     let needed = payload + extra_align + HDR;
 
     let st = state();
-    let mut prev: *mut Block = core::ptr::null_mut();
+    // `Option`, not a null raw pointer. The previous node is only ever a node the
+    // free-list walk has already proved non-null, and CodeQL models
+    // `core::ptr::null_mut()` as a *pointer-invalidation source* — so seeding the
+    // cursor with one made every later `(*prev)` read look like a dereference of
+    // an invalidated pointer (`rust/access-invalid-pointer`, three alerts).
+    let mut prev: Option<*mut Block> = None;
     let mut cur = st.free_head;
 
     while !cur.is_null() {
@@ -146,10 +151,9 @@ pub fn alloc(size: usize, align: usize) -> *mut u8 {
                     (*cur).next = split;
                 }
                 // Unlink from the free list.
-                if prev.is_null() {
-                    st.free_head = (*cur).next;
-                } else {
-                    (*prev).next = (*cur).next;
+                match prev {
+                    None => st.free_head = (*cur).next,
+                    Some(link) => (*link).next = (*cur).next,
                 }
                 (*cur).next = core::ptr::null_mut();
                 ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -158,7 +162,7 @@ pub fn alloc(size: usize, align: usize) -> *mut u8 {
                 }
                 return (cur as *mut u8).add(HDR);
             }
-            prev = cur;
+            prev = Some(cur);
             cur = (*cur).next;
         }
     }
@@ -174,19 +178,20 @@ pub fn dealloc(ptr: *mut u8) {
     let block = unsafe { ptr.sub(HDR) as *mut Block };
     let st = state();
 
-    // Insert into the address-ordered free list.
-    let mut prev: *mut Block = core::ptr::null_mut();
+    // Insert into the address-ordered free list. `Option` for the same reason as
+    // `alloc`: a null-seeded cursor is a `null_mut()` invalidation source to
+    // CodeQL, and every `(*prev)` read below then looks like a dereference of it.
+    let mut prev: Option<*mut Block> = None;
     let mut cur = st.free_head;
     while !cur.is_null() && (cur as usize) < (block as usize) {
-        prev = cur;
+        prev = Some(cur);
         cur = unsafe { (*cur).next };
     }
     unsafe {
         (*block).next = cur;
-        if prev.is_null() {
-            st.free_head = block;
-        } else {
-            (*prev).next = block;
+        match prev {
+            None => st.free_head = block,
+            Some(link) => (*link).next = block,
         }
         // Coalesce with the following block.
         if !cur.is_null() && (block as usize) + (*block).size == cur as usize {
@@ -194,9 +199,11 @@ pub fn dealloc(ptr: *mut u8) {
             (*block).next = (*cur).next;
         }
         // Coalesce with the preceding block.
-        if !prev.is_null() && (prev as usize) + (*prev).size == block as usize {
-            (*prev).size += (*block).size;
-            (*prev).next = (*block).next;
+        if let Some(link) = prev {
+            if (link as usize) + (*link).size == block as usize {
+                (*link).size += (*block).size;
+                (*link).next = (*block).next;
+            }
         }
     }
 }

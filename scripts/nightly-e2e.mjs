@@ -580,7 +580,14 @@ try {
     // preview server another run left behind makes this one fail before a single
     // test starts. Retry once on a free port rather than writing that down as an
     // engine failure — the record is the point of this script.
-    const basePort = Number(env.GS1_E2E_PORT ?? DEFAULT_PORT);
+    // Read straight from `process.env`: CodeQL's clear-text-logging query treats a
+    // property read on `process.env` whose name is not sensitive as a *barrier*,
+    // but the `{ ...process.env }` copies above are not, so reading the port back
+    // out of `env` / `runEnv` turned the progress line into a "logs process
+    // environment" alert (`js/clear-text-logging`). The port this attempt will use
+    // is tracked separately, so the log never reaches into an env object again.
+    const basePort = Number(process.env.GS1_E2E_PORT ?? DEFAULT_PORT);
+    let port = basePort;
     let runEnv = envFor(engine);
     let how = howFor(engine);
     let result;
@@ -600,7 +607,7 @@ try {
         how = howFor(engine);
         progress(
           `[nightly] ${engine}: starting (attempt ${attempt}/2) · ${how} · ` +
-            `subset=${subsetName} (${subset.length || 'all'} files) · port=${runEnv.GS1_E2E_PORT ?? basePort}`,
+            `subset=${subsetName} (${subset.length || 'all'} files) · port=${port}`,
         );
         ({ result, how } = await launchEngine(engine, cmd, runEnv, how, log));
         seconds = Math.round((Date.now() - started) / 1000);
@@ -624,6 +631,7 @@ try {
         console.error(
           `[nightly] ${engine}: the suite never started (${launchFailureReason(result.out)}) after ${seconds}s — retrying on port ${next}`,
         );
+        port = next;
         runEnv = { ...runEnv, GS1_E2E_PORT: String(next) };
       }
     } finally {
