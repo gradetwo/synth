@@ -799,16 +799,21 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     return applied;
   }
 
-  /** Post the core's own samples around an event, for the discontinuity investigation. */
+  /**
+   * Post the core's own samples around an event, for the discontinuity investigation.
+   *
+   * **The "before" samples come from the previous chunk's tail, not from a view of the output buffer.** `gs_process(n)`
+   * writes the whole of its `n` samples from index 0, so after a split the buffer holds only the *later* chunk — an earlier
+   * version of this read `slice(-8)` from it and reported eight zeros before every event, which is what a signal that has
+   * been overwritten looks like. `lastChunkTail` is updated after each `gs_process` call, so it is the audio that really
+   * precedes the event.
+   */
   captureAround(event) {
-    const tail = 8;
     this.pendingCapture = {
       note: event.note,
       off: Boolean(event.off),
       frame: event.frame,
-      before: Array.from(
-        this.leftViewAtEnd ? this.leftViewAtEnd.slice(-tail) : []
-      ),
+      before: Array.from(this.lastChunkTail ?? []),
     };
   }
 
@@ -957,6 +962,11 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
         const untilNext = next === Infinity ? block - offset : Math.max(1, next - (blockStart + offset));
         const chunk = Math.min(block - offset, untilNext);
         this.wasm.gs_process(chunk);
+        // The chunk just rendered is the audio that precedes whatever comes next — see `captureAround`.
+        if (this.captureEvents) {
+          const chunkView = new Float32Array(this.memory.buffer, this.leftPtr, Math.max(1, chunk));
+          this.lastChunkTail = Array.from(chunkView.slice(-8));
+        }
         if (this.pendingCapture) this.finishCapture();
         offset += chunk;
       }
