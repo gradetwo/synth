@@ -295,6 +295,14 @@ const OVER_BLOCKS = 12;
  * without bound on the audio thread is not an option. The oldest event is dropped first.
  */
 const MAX_SCHEDULED_EVENTS = 1024;
+
+/**
+ * How much of the core's output a caller gets after a captured event.
+ *
+ * 2048 frames is 46 ms at 44.1 kHz: long enough to cover the 13-15 ms after a note-off where Groove measured a one-sample step
+ * in the rendered file, and to see whether the core wrote it.
+ */
+const CAPTURE_AFTER_FRAMES = 2048;
 /**
  * Frames of constant latency between a frame-addressed note's `atFrame` and its first audible
  * sample.
@@ -406,6 +414,10 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
      * samples the core wrote around an event, and the caller compares them with the rendered file. Off unless a caller asks.
      */
     this.captureEvents = Boolean(opts.captureEvents);
+    /** The samples collected since the event being captured; see `finishCapture`. */
+    this.captureAfter = [];
+    /** The event whose window is open, once `pendingCapture` has been consumed by the first chunk. */
+    this.captureMeta = null;
     /** Frames this processor has rendered, i.e. the absolute index of the next block. */
     this.renderedFrames = 0;
     this.paramsB = opts.paramsB || null;
@@ -818,19 +830,42 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
   }
 
   /** Finish a capture once the chunk after the event has been rendered. */
+  /**
+   * Finish a capture, and keep going for a while.
+   *
+   * The eight samples that first version posted were enough to show that the **core's** output is continuous *at* a note-off —
+   * and not enough for the symptom, which Groove measured 13-15 ms **after** it. So the window stays open across the chunks
+   * that follow, and the samples are posted once it is full: `CAPTURE_AFTER_FRAMES` of the left channel, starting at the
+   * event, which is what a caller needs to compare against the rendered file at the same frames.
+   */
   finishCapture() {
+    if (this.captureAfter.length === 0) return;
     const capture = this.pendingCapture;
-    if (!capture) return;
-    this.pendingCapture = null;
+    if (capture) this.pendingCapture = null;
     const memory = new Float32Array(this.memory.buffer, this.leftPtr, this.maxBlock);
     this.port.postMessage({
       type: "eventCapture",
-      note: capture.note,
-      off: capture.off,
-      frame: capture.frame,
-      before: capture.before,
-      after: Array.from(memory.slice(0, 8)),
+      note: capture ? capture.note : this.captureMeta.note,
+      off: capture ? capture.off : this.captureMeta.off,
+      frame: capture ? capture.frame : this.captureMeta.frame,
+      before: capture ? capture.before : this.captureMeta.before,
+      after: Array.from(this.captureAfter),
     });
+    this.captureAfter = [];
+  }
+
+  /** Keep the post-event window open across the chunks that follow it. */
+  continueCapture(frames) {
+    if (this.pendingCapture) {
+      this.captureMeta = this.pendingCapture;
+      this.pendingCapture = null;
+      this.captureAfter = [];
+    }
+    if (this.captureAfter.length === 0 && !this.captureMeta) return;
+    const memory = new Float32Array(this.memory.buffer, this.leftPtr, this.maxBlock);
+    const room = CAPTURE_AFTER_FRAMES - this.captureAfter.length;
+    for (let i = 0; i < Math.min(room, frames); i += 1) this.captureAfter.push(memory[i]);
+    if (this.captureAfter.length >= CAPTURE_AFTER_FRAMES) this.finishCapture();
   }
 
   monitorLoad(frames, cost, rate) {
@@ -962,6 +997,10 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
         const untilNext = next === Infinity ? block - offset : Math.max(1, next - (blockStart + offset));
         const chunk = Math.min(block - offset, untilNext);
         this.wasm.gs_process(chunk);
+        if (this.captureEvents && (this.pendingCapture || this.captureMeta)) {
+          // Collect for the post-event window; the first chunk after the event is where a step would appear.
+          this.continueCapture(chunk);
+        }
         // The chunk just rendered is the audio that precedes whatever comes next — see `captureAround`.
         if (this.captureEvents) {
           const chunkView = new Float32Array(this.memory.buffer, this.leftPtr, Math.max(1, chunk));
