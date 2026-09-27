@@ -232,12 +232,13 @@ pub extern "C" fn gs_trigger_smooth_downgrade() {
 }
 
 /// Force-release voices beyond the current polyphony cap (used by the worklet's
-/// performance monitor after it lowers the cap itself).
+/// performance monitor after it lowers the cap itself). Goes through the
+/// engine's method, not the voice manager's: the engine is the half that owns
+/// the envelopes, and it is what gives each released voice the steal fade
+/// instead of leaving it on the patch's own release.
 #[no_mangle]
 pub extern "C" fn gs_force_release_excess() {
-    let e = engine();
-    let limit = e.vm.max_polyphony;
-    e.vm.force_release_excess(limit);
+    engine().force_release_excess();
 }
 
 // --------------------------------------------------------------------- events

@@ -1298,8 +1298,31 @@ impl Engine {
         // ceiling, then let the cap apply as usual.
         self.poly_request = self.poly_request.saturating_sub(2).max(4);
         self.apply_polyphony_cap();
-        let cap = self.vm.max_polyphony();
-        self.vm.force_release_excess(cap);
+        self.force_release_excess();
+    }
+
+    /// Release the voices the current polyphony cap no longer allows, and give
+    /// each one **the same fade a queued steal gets**.
+    ///
+    /// The defect this closes: `VoiceManager::force_release_excess` only clears
+    /// the gate, so a voice it released fell back to the *patch's own* release.
+    /// On a short-release patch that is a hard cut — a faint step at every note
+    /// event once a dense arpeggio (sustain pedal down) crosses the cap — and on
+    /// a long-release patch it holds the slot long enough to delay the next
+    /// note. Both are the same omission, and the fix is to route this path
+    /// through `steal_release` exactly like `NoteOnResult::Queued` does.
+    pub fn force_release_excess(&mut self) -> usize {
+        let limit = self.vm.max_polyphony();
+        let forced = self.vm.force_release_excess(limit);
+        for slot in 0..MAX_VOICES {
+            // A slot that is already `stealing` was handled by the note-on path
+            // with the same fade, so this only picks up the ones just released.
+            if self.vm.voices[slot].fading && !self.vm.voices[slot].stealing {
+                self.envs[slot].set_release(self.steal_release);
+                self.envs[slot].gate_off();
+            }
+        }
+        forced
     }
 
     pub fn pitch_bend(&mut self, semitones: f32) {
@@ -1516,7 +1539,12 @@ impl Engine {
             let params = self.params_for(self.voice_instance[slot]);
             let p = params.env;
             let f = params.filter_env;
-            if self.vm.voices[slot].active && !self.vm.voices[slot].stealing {
+            // `stealing` and `fading` voices carry the steal fade's own release;
+            // a parameter push must not overwrite it with the patch's release.
+            if self.vm.voices[slot].active
+                && !self.vm.voices[slot].stealing
+                && !self.vm.voices[slot].fading
+            {
                 self.envs[slot].set_params(p.attack, p.decay, p.sustain, p.release);
                 self.filter_envs[slot].set_params(f.attack, f.decay, f.sustain, f.release);
             }
@@ -6497,6 +6525,70 @@ mod tests {
             "a longer steal release must be smoother: 0.05 s ratio {long:.2}, 0.02 s ratio {short:.2}"
         );
         assert!(long < 3.0, "the stolen voice still clicks: worst/p99.9 = {long:.2}");
+    }
+
+    /// The polyphony downgrade must actually **free** the slots it releases.
+    ///
+    /// The defect this pins: `trigger_smooth_downgrade` → `VoiceManager::force_release_excess`
+    /// only cleared the gate, so each released voice finished on the *patch's* own release. On a
+    /// patch with a long release that means the force-release the worklet's load monitor calls
+    /// frees nothing for as long as the patch rings — measured here, the four slots stayed busy
+    /// for the whole 2.1 s window, so the downgrade did not shed the load it exists to shed.
+    ///
+    /// The engine now gives each released voice the same `steal_release` fade a queued steal
+    /// gets, and the slot comes back inside the fade. (`steal_release` also has an audible job on
+    /// the queued path — see `a_stolen_voice_fades_instead_of_clicking`. This test is the other
+    /// half: a *forced* release has to be bounded, not left to whatever the patch says.)
+    #[test]
+    fn a_downgraded_voice_frees_its_slot_within_the_steal_fade() {
+        let _guard = lock_engine();
+        let blocks_until_free = |through_engine: bool| {
+            let mut e = new_engine(8);
+            e.set_param(id::OSC1_LEVEL, 0.8);
+            e.set_param(id::OSC2_ON, 0.0);
+            e.set_param(id::OSC2_LEVEL, 0.0);
+            e.set_param(id::FILTER_CUTOFF, 6000.0);
+            e.set_param(id::FILTER_ENV_AMT, 0.0);
+            e.set_param(id::ENV_ATTACK, 0.005);
+            e.set_param(id::ENV_SUSTAIN, 1.0);
+            // Two seconds: without the fade the slots are held for all of it.
+            e.set_param(id::ENV_RELEASE, 2.0);
+            e.set_param(id::LFO_ON, 0.0);
+            // The pedal down: eight held notes, so no victim is already released
+            // when the cap drops.
+            for n in 0..8u8 {
+                e.note_on(48 + n, 1.0);
+            }
+            for _ in 0..40 {
+                e.process(128);
+            }
+            e.vm.set_max_polyphony(4);
+            if through_engine {
+                e.force_release_excess();
+            } else {
+                e.vm.force_release_excess(4);
+            }
+            for block in 1..=800 {
+                e.process(128);
+                if (0..8).filter(|&s| !e.vm.voices[s].active).count() >= 4 {
+                    return block;
+                }
+            }
+            800
+        };
+
+        let fixed = blocks_until_free(true);
+        let raw = blocks_until_free(false);
+        assert!(
+            raw > 400,
+            "the control should hold the slots for the patch's own release: {raw} blocks"
+        );
+        // 50 ms at 48 kHz / 128 frames is ~19 blocks; 40 leaves room for the
+        // envelope's idle threshold without letting a real regression through.
+        assert!(
+            fixed <= 40,
+            "a forced release must come back inside the steal fade: {fixed} blocks (raw path {raw})"
+        );
     }
 
     /// The new modulation sources must actually reach the DSP: aftertouch and

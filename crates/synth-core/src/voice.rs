@@ -30,6 +30,14 @@ pub struct Voice {
     pub random: f32,
     /// True while this slot is fading out to make room for a pending note.
     pub stealing: bool,
+    /// True while this slot is fading out because the polyphony cap dropped
+    /// under it (`force_release_excess`). Kept separate from `stealing` on
+    /// purpose: that flag also reserves the slot against a new pending note
+    /// (`note_on_inst`), and a downgrade releases several slots at once, so
+    /// marking them all that way would start dropping notes. This one only says
+    /// "this envelope is under the steal fade — do not overwrite it with the
+    /// patch's own release" (see `Engine::apply_env_to_all`).
+    pub fading: bool,
 }
 
 impl Voice {
@@ -46,6 +54,7 @@ impl Voice {
             env_value: 0.0,
             random: 0.5,
             stealing: false,
+            fading: false,
         }
     }
 
@@ -148,6 +157,7 @@ impl VoiceManager {
             env_value: 0.0,
             random: 0.5,
             stealing: false,
+            fading: false,
         };
         index
     }
@@ -262,12 +272,19 @@ impl VoiceManager {
             self.voices[index].gate = false;
             self.voices[index].released = false;
             self.voices[index].stealing = false;
+            self.voices[index].fading = false;
             self.voices[index].env_value = 0.0;
         }
     }
 
     /// prd.md §7.1: reduce polyphony and force the excess voices into release
     /// instead of hard-cutting them. The `limit` newest voices are kept.
+    ///
+    /// **This only clears the gate** — the caller still owes the voice a fade.
+    /// Each released slot is marked [`Voice::fading`] so the engine can give it
+    /// the same `steal_release` fade a queued steal gets; without that the voice
+    /// falls back to whatever release the *patch* has, which on a short-release
+    /// patch is the hard cut this function exists to avoid.
     pub fn force_release_excess(&mut self, limit: usize) -> usize {
         let limit = limit.clamp(1, MAX_VOICES);
         let mut ages = [0u32; MAX_VOICES];
@@ -297,6 +314,7 @@ impl VoiceManager {
             if v.active && !v.released && v.age < threshold {
                 v.gate = false;
                 v.released = true;
+                v.fading = true;
                 forced += 1;
             }
         }
