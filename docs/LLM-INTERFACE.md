@@ -212,9 +212,9 @@ AudioWorklet / AudioParam 自动化 / Web Audio 图。）
 
 | 工具 | 输入（类型 / 范围 / 默认） | 返回（要点） | 错误码 |
 | :--- | :--- | :--- | :--- |
-| `gs1.render` | `{ patch? \| presetId?, notes(**必填**, 1..512 条), seconds?(0.05..30，默认 2), oversample?(0\|1 或 bool，默认 0), sampleRate?(枚举 `[48000]`，默认 48000), seed?(0..512，默认 0), outPath?(必须在 `.tmp/mcp/` 内) }`；`notes[i] = { note(0..127，必填), velocity?(0..1，默认 1), start?(秒，默认 0), duration?(秒，默认到渲染结束) }`，按 128 样本块边界放置 | `ok`、`wavPath`、`sha256`（WAV 字节）、`byteLength`、`samples`、`channels:2`、`sampleRate`、`seconds`、`blocks`、`seed`、`oversample`、`time{ruler:'time-domain-float',peak,rms,maxStep}`、`nonFinite`、`allocViolations`、`patch{source,presetId,instanceMode,splitNote,routeCount,paramCount,shareCode,layersRendered}` | `E_SCHEMA`、`E_RANGE`、`E_SAMPLE_RATE`、`E_PATCH`、`E_PATH` |
+| `gs1.render` | `{ patch? \| presetId?, notes?(1..4096 条), songId?, midiBase64?, seconds?(0.05..120，默认 2；用 `songId`/`midiBase64` 时默认「曲长 + 0.5 s」), oversample?(0\|1 或 bool，默认 0), sampleRate?(枚举 `[48000]`，默认 48000), seed?(0..512，默认 0), outPath?(必须在 `.tmp/mcp/` 内) }`；**`notes` / `songId` / `midiBase64` 三选一**：`notes[i] = { note(0..127，必填), velocity?(0..1，默认 1), start?(秒，默认 0), duration?(秒，默认到渲染结束) }`，按 128 样本块边界放置；`songId` 取 `gs1.songs.list` 的内置曲（由 `demoSong()` 展开），`midiBase64` 是标准 MIDI 文件（base64，由 `parseMidi()` 解码）——两者的 `MidiNote` 与 `notes[i]` 字段完全同形。**超出窗口的音符会被裁掉，裁了多少在 `notesDropped` 里如实返回**；手写的 `notes` 列表仍然严格拒绝越界，不裁 | `ok`、`wavPath`、`sha256`（WAV 字节）、`byteLength`、`samples`、`channels:2`、`sampleRate`、`seconds`、`blocks`、`seed`、`oversample`、`notes`（实际条数）、`notesSource`(`notes`\|`songId`\|`midiBase64`)、`sourceSeconds`、`truncated`、`notesDropped`、`time{ruler:'time-domain-float',peak,rms,maxStep}`、`nonFinite`、`allocViolations`、`patch{source,presetId,instanceMode,splitNote,routeCount,paramCount,shareCode,layersRendered}` | `E_SCHEMA`、`E_RANGE`、`E_SAMPLE_RATE`、`E_PATCH`、`E_PATH` |
 | `gs1.analyze` | `{ wavPath? \| render? }`——**恰好一个**（`render` 与 `gs1.render` 同 spec，在内存里量、不落盘）；`f0?(1..24000)` 或 `note?(0..127)`（WAV 来源**必须**给其一）；`bins?(0..64，默认 8)`；`probes?(1..16 个 1..24000 的频率，默认门禁的 `[9000,9200,9500]`)` | `ok`、`source`、`sampleRate`、`seconds`、`blocks`、`frames`、`time{ruler,peak,rms,maxStep}`、`aliasing{ruler:'bh7',window:'blackman-harris-7',bins,perNote[{note,f0,floorDb}],worstDb}`、`secondRuler{ruler:'hann-goertzel',window:'hann',f0,fundamental,probes[{frequency,db}],worstDb}`、`thd{ruler,window,maxHarmonic:12,percent}`、`interHarmonic{ruler,window,limitHz:20000,db}`、`rulers{bh7,second}`、`nonFinite`、`allocViolations`（WAV 来源为 `null`） | `E_SCHEMA`、`E_WAV`、`E_SAMPLE_RATE`、`E_RANGE`、`E_PATCH` |
-| `gs1.gate` | `{ patch? \| presetId?, notes(**必填**, 1..512), oversample?, ruler?('bh7'\|'hann'\|'both'，默认 'bh7'), harmonics?(0..64，默认 8), thresholdDb?(-200..0，默认 -60), probes?(1..16 个，默认 `[9000,9200,9500]`) }`；**没有 `seconds`/`seed`**——它自己跑门禁那套 settled 4 秒单音 fixture | `ok`、`ruler`、`bins`、`thresholdDb`、`criteria`、`isGateRuler:true`、`perNote[{note,f0,bh7{ruler,window,bins,floorDb,passed}?,hann{ruler,window,probes,worstDb,passed}?,passed}]`、`worstBh7Db`、`worstHannDb`、`passed`、`nonFinite`、`allocViolations` | `E_SCHEMA`、`E_RANGE`、`E_PATCH` |
+| `gs1.gate` | `{ patch? \| presetId?, notes(**必填**, 1..4096), oversample?, ruler?('bh7'\|'hann'\|'both'，默认 'bh7'), harmonics?(0..64，默认 8), thresholdDb?(-200..0，默认 -60), probes?(1..16 个，默认 `[9000,9200,9500]`) }`；**没有 `seconds`/`seed`**——它自己跑门禁那套 settled 4 秒单音 fixture | `ok`、`ruler`、`bins`、`thresholdDb`、`criteria`、`isGateRuler:true`、`perNote[{note,f0,bh7{ruler,window,bins,floorDb,passed}?,hann{ruler,window,probes,worstDb,passed}?,passed}]`、`worstBh7Db`、`worstHannDb`、`passed`、`nonFinite`、`allocViolations` | `E_SCHEMA`、`E_RANGE`、`E_PATCH` |
 
 `gs1.render { notes:[{note:60,velocity:0.9}], seconds:1, seed:7 }`（真跑，节选）：
 
@@ -520,8 +520,8 @@ gs1.1.eyJzIjo0LCJ2IjpbMC43NSwxLDIsMCw4LDAuNywwLjUsMSwzLDAsLTksMC4zNSwwLjUsMCw2NT
 
 | 量 | 上限 / 取值 | 违反时 |
 | :--- | :--- | :--- |
-| 渲染长度 | `0.05 ≤ seconds ≤ 30` | `E_RANGE`：`{ path:"$.seconds", maximum:30, value }`（下限给 `minimum`） |
-| 音符条数 | `notes ≤ 512`（至少 1 条） | `E_RANGE`：`{ path:"$.notes", maximum:512, length }`；空/非数组是 `E_SCHEMA`：`{ path:"$.notes", expected:["array"], got }` |
+| 渲染长度 | `0.05 ≤ seconds ≤ 120` | `E_RANGE`：`{ path:"$.seconds", maximum:120, value }`（下限给 `minimum`） |
+| 音符条数 | `notes ≤ 4096`（至少 1 条） | `E_RANGE`：`{ path:"$.notes", maximum:4096, length }`；空/非数组是 `E_SCHEMA`：`{ path:"$.notes", expected:["array"], got }` |
 | `gs1.render` 的相位种子 | `seed ≤ 512`（0..512） | `E_RANGE`：`{ path:"$.seed", maximum:512, value }` |
 | `gs1.patch.random` 的种子 | `0..4294967295`（u32），**必填** | `E_SCHEMA`（缺/非整数）、`E_RANGE`（负） |
 | 采样率 | 只有 **48000**（尺子校准在这里） | `E_SAMPLE_RATE`（工具路径）/ `E_SCHEMA`：`{ path:"$.sampleRate", enum:[48000] }` |
@@ -702,7 +702,7 @@ P13.3 才能「改」；P13.4 是给需要看界面的 agent 的，最重、最�
 | **文档与代码分叉**（改名/改上限后文档还在说旧的） | 工具名双向核对 + 上限/错误码从代码常量派生（本批新增，接进 `verify` 与 CI） |
 | MCP 协议演进 / 客户端差异 | framing 与 tools 分层；先只实现 `initialize`/`tools/list`/`tools/call`；HTTP 入口作为退路 |
 | agent 用 `patch.set` 把音色改坏、或让引擎非有限 | 每次 `render`/`analyze` 都返回 `nonFinite`/`allocViolations`；工具**不做**「自动修好」——把判断留给 agent |
-| 无界渲染把内存吃满 | `0.05 ≤ seconds ≤ 30`、`notes ≤ 512` + 12 MiB arena 的既有拒绝路径 |
+| 无界渲染把内存吃满 | `0.05 ≤ seconds ≤ 120`、`notes ≤ 4096` + 12 MiB arena 的既有拒绝路径 |
 | 让 agent 直接驱动浏览器很危险（点击/导航） | `ui.*` 默认关闭、只连本地预览、不接外部 URL；不暴露文件系统；`gs1.ui.gate` 白名单三个 spec |
 | 过度设计成「万能 API」 | 工具**只覆盖这四种动词**（认知/操作/渲染测量/UI）；不做插件系统、不做表达式引擎 |
 
@@ -726,7 +726,8 @@ P13.3 才能「改」；P13.4 是给需要看界面的 agent 的，最重、最�
 3. **`gs1.render` 的 `seconds` 上限是多少、超了返回什么？** 上限 **30**（下限 0.05）；
    超了是结构化拒绝 `E_RANGE`：`{ code:"E_RANGE", path:"$.seconds", maximum:30, value }`，
    不是崩（§4.3、§5.1）。
-4. **`notes` 上限？** 512 条，至少 1 条；超了 `E_RANGE`（§5.1）。
+4. **`notes` 上限？** 4096 条，至少 1 条；超了 `E_RANGE`（§5.1）。内置曲与 MIDI 走的是同一上限，
+   但它们是**裁切 + 报告 `notesDropped`**，手写的 `notes` 列表是严格拒绝。
 5. **`gs1.patch.get` 的 `patch` 与分享码是不是同一格式？** 是。`shareCode` 就是分享链接那串
    `gs1.1.`/`gs1.2.`，`patch` 是它解码后的 `{params, routes, params2?, instanceMode?, splitNote?}`，
    两者 `gs1.render`/`patch.set` 都收（§4.2）。

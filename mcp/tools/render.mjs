@@ -7,7 +7,7 @@
  * verify it got the file the tool says it wrote.
  */
 import { writeFileSync } from 'node:fs';
-import { validateRenderSpec, renderChannels, wavSha256 } from '../lib/render.mjs';
+import { validateRenderSpec, resolveNotesInput, renderChannels, wavSha256 } from '../lib/render.mjs';
 import { resolvePatch, patchSummary } from '../lib/patch.mjs';
 import { resolveOutputPath, repoPath } from '../lib/paths.mjs';
 import { renderFields, patchRef } from './_schemas.mjs';
@@ -15,15 +15,15 @@ import { renderFields, patchRef } from './_schemas.mjs';
 export default {
   name: 'gs1.render',
   description:
-    'Render a patch and a note list through the real WASM core to a 16-bit stereo WAV under .tmp/mcp/, returning the path, peak/rms and the WAV sha256. Deterministic for a given (patch, notes, seconds, seed).',
+    'Render a patch and a performance through the real WASM core to a 16-bit stereo WAV under .tmp/mcp/, returning the path, peak/rms and the WAV sha256. The notes come from exactly one of `notes` (a JSON list), `songId` (a built-in song) or `midiBase64` (a standard MIDI file). Deterministic for a given (patch, notes, seconds, seed).',
   inputSchema: {
     type: 'object',
     properties: { ...patchRef, ...renderFields },
-    required: ['notes'],
     additionalProperties: false,
   },
   handler: async (args, ctx) => {
-    const spec = validateRenderSpec(args);
+    const resolved = resolveNotesInput(ctx.data, args);
+    const spec = validateRenderSpec(args, resolved);
     // Check the write boundary *before* spending seconds in the DSP: a rejected
     // path should be cheap.
     const requested = args.outPath === undefined ? null : resolveOutputPath(args.outPath);
@@ -44,6 +44,12 @@ export default {
       blocks: channels.blocks,
       seed: spec.seed,
       oversample: spec.oversample,
+      /** Which input the notes came from, and what the window did to them. */
+      notes: spec.notes.length,
+      notesSource: spec.source,
+      sourceSeconds: spec.sourceSeconds,
+      truncated: spec.truncated,
+      notesDropped: spec.notesDropped,
       /** Time-domain facts about the float render, before 16-bit quantisation. */
       time: {
         ruler: 'time-domain-float',

@@ -17,7 +17,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { decodeWavBytes } from '../lib/wav.mjs';
-import { validateRenderSpec, renderChannels, noteHz } from '../lib/render.mjs';
+import { validateRenderSpec, resolveNotesInput, renderChannels, noteHz } from '../lib/render.mjs';
 import { resolvePatch } from '../lib/patch.mjs';
 import { resolveReadPath, repoPath } from '../lib/paths.mjs';
 import { bh7Floor, hannProbes, thd, interHarmonic, BH7, HANN, DEFAULT_PROBES, distinctNotes, RULER_SAMPLE_RATE } from '../lib/measure.mjs';
@@ -72,7 +72,7 @@ export default {
     let spec = null;
 
     if (hasRender) {
-      spec = validateRenderSpec(args.render);
+      spec = validateRenderSpec(args.render, resolveNotesInput(ctx.data, args.render));
       const payload = await resolvePatch(ctx.data, args.render, ctx.session);
       const channels = renderChannels(ctx.data, spec, payload, ctx.session);
       samples = channels.left;

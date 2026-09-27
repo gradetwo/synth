@@ -25,7 +25,7 @@ export const renderFields = {
   notes: {
     type: 'array',
     minItems: 1,
-    maxItems: 512,
+    maxItems: 4096,
     items: {
       type: 'object',
       required: ['note'],
@@ -36,13 +36,27 @@ export const renderFields = {
         duration: { type: 'number', minimum: 0 },
       },
     },
-    description: 'At most 512 notes; start/duration are seconds and are placed at 128-sample block boundaries.',
+    description:
+      'At most 4096 notes; start/duration are seconds and are placed at 128-sample block boundaries. One of `notes`, `songId` or `midiBase64` — exactly one.',
+  },
+  songId: {
+    type: 'string',
+    minLength: 1,
+    description:
+      'A built-in song by id (see gs1.songs.list): rendered whole, with no note list to send. `seconds` defaults to the song plus a 0.5 s tail.',
+  },
+  midiBase64: {
+    type: 'string',
+    minLength: 1,
+    description:
+      'A standard MIDI file (SMF), base64-encoded and decoded by the app\'s own parser. The byte-cheap way to send a long arrangement; `seconds` defaults to the file plus a 0.5 s tail.',
   },
   seconds: {
     type: 'number',
     minimum: 0.05,
-    maximum: 30,
-    description: 'Render length in seconds, at most 30.',
+    maximum: 120,
+    description:
+      'Render length in seconds, at most 120. Long enough for a two-minute section; the renderer costs about 5.5x realtime on dense material at 2x oversampling, so this is also the per-call time budget.',
   },
   oversample: { type: ['integer', 'boolean'], enum: [0, 1, true, false] },
   sampleRate: { type: 'integer', enum: [48000], description: 'Only 48 kHz: the rulers are calibrated there.' },

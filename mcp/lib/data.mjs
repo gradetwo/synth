@@ -107,7 +107,10 @@ export async function loadData() {
           // same functions the pickers and the store call, not a second parser.
           export { decodeSampleFile, decodeCycle, extractCycle, CYCLE_LENGTH } from '@/audio/wavefile';
           export { parsePatchFile } from '@/state/patchfile';
-          export { DEMO_SONGS } from '@/midi/songs';
+          export { DEMO_SONGS, demoSong } from '@/midi/songs';
+          // P2: gs1.render takes a standard MIDI file as well as a note list,
+          // decoded by the app's own parser — not a second SMF reader.
+          export { parseMidi, looksLikeMidi } from '@/midi/smf';
         `,
         resolveDir: ROOT,
         sourcefile: 'mcp-app-data-entry.ts',

@@ -281,10 +281,15 @@ P9.8 的数字在 `error.importCode`。
   用 `Math.random()`，无法被重放），一条测试直接从 `src/state/store.ts` 里抽出 `randomize()`
   写的 id 集合与它比对，防止两边悄悄漂移。黄金会话跑两遍的 sha256 相同，
   `npm run mcp -- --self-test` 就是它。
-- **有界**：`seconds ≤ 30`、`notes ≤ 512`、`seed ≤ 512`、`note ∈ 0..127`、`velocity ∈ 0..1`、
+- **有界**：`seconds ≤ 120`、`notes ≤ 4096`、`seed ≤ 512`、`note ∈ 0..127`、`velocity ∈ 0..1`、
   `bins ≤ 64`；参数按 worklet 服务的量程夹取并**报告**；导入的采样遵守 `MAX_BASE_SAMPLES`
   （`gs_sample_capacity()`），**超长是拒绝不是截断**。越界一律**结构化拒绝**
   （`E_SCHEMA`/`E_RANGE`/`E_PARAM`/`E_WAV`/`E_IMPORT`/`E_PATH`），不是崩。
+- **音符输入三选一**（`gs1.render`，以及 `gs1.analyze` 的 `render`）：`notes`（JSON 列表，严格
+  拒绝越界）、`songId`（内置曲，`demoSong()` 展开）、`midiBase64`（标准 MIDI 文件，`parseMidi()`
+  解码）。后两条是**为 token 经济性加的**：240 个音符的编曲约 30 KB JSON，同一份 MIDI 只有几 KB，
+  而内置曲只要一个字符串。解码出来的 `MidiNote` 与 `notes[i]` 字段完全同形，走同一条校验与渲染路径；
+  超出窗口的音符被裁掉，条数在结果的 `notesDropped` 里如实返回（手写 `notes` 不受此裁切影响）。
   `sampleRate` 目前只接受 48000——尺子就校准在这个率，给别的率会让数字失去意义。
 - **无副作用**：只写 `.tmp/mcp/`（`outPath`/`savePath` 解析后必须仍在该目录内，否则 `E_PATH`），
   读也只读仓库内的路径。`preset.save` 写的是 app 自己的 `.gs1.json` 用户库格式，**不碰

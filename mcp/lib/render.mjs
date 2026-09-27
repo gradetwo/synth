@@ -36,16 +36,149 @@ import { paramPairs, applyRoutes } from './patch.mjs';
 import { installInstrument } from './session.mjs';
 import { encodeWavPair, sha256Hex } from './wav.mjs';
 
-export const MAX_SECONDS = 30;
+/**
+ * The render caps.
+ *
+ * `MAX_SECONDS` was 30, which cannot hold a whole demo song: an agent had to
+ * chop one into several calls and stitch the WAVs itself, and the JSON note list
+ * for a long arrangement is the other half of the same problem (see
+ * `resolveNotesInput`). The measured cost of this renderer is **~5.5× realtime**
+ * on a dense 16th-note arrangement at 2× oversampling (30 s in 5.5 s wall), so
+ * 120 s is ~22 s inside one tool call — long enough for a two-minute section,
+ * short enough to stay a call rather than a batch job. `MAX_NOTES` moves with
+ * it: 16ths for 120 s is 960 notes before any chord is added.
+ */
+export const MAX_SECONDS = 120;
 export const MIN_SECONDS = 0.05;
-export const MAX_NOTES = 512;
+export const MAX_NOTES = 4096;
 export const MAX_SEED = 512;
+/** `midiBase64` is decoded before it is trusted; ~1.5 MB of file is plenty. */
+export const MAX_MIDI_BASE64 = 2 * 1024 * 1024;
 /** The only rate the rulers are calibrated at (see `audio-ruler.mjs`). */
 export const SAMPLE_RATES = [48000];
 
-/** Validate `seconds`/`notes`/`seed`/`oversample`/`sampleRate`; throws structured rejections. */
-export function validateRenderSpec(spec) {
-  const seconds = spec?.seconds ?? 2;
+const round3 = (value) => Math.round(value * 1000) / 1000;
+
+/**
+ * Turn whichever note input the caller used into one `notes` array.
+ *
+ * Three ways in, exactly one of them:
+ *
+ *   * `notes`      — the JSON list this tool has always taken;
+ *   * `songId`     — a built-in song, expanded by the app's own `demoSong()`;
+ *   * `midiBase64` — a standard MIDI file, decoded by the app's own `parseMidi()`.
+ *
+ * The last two exist for **token economy**: a 240-note arrangement is roughly
+ * 30 KB of JSON against a few KB of MIDI, and a built-in song that `gs1.songs.list`
+ * already names costs one string. Both produce `MidiNote`s, which are already the
+ * shape `notes` takes — `{ note, velocity, start, duration }`, start and duration
+ * in seconds — so they go through the same validation and the same renderer
+ * rather than a second path.
+ *
+ * @returns {null | { source: 'songId'|'midiBase64', notes: object[], sourceSeconds: number }}
+ *   `null` for the `notes` path, which keeps the strict validation it always had.
+ */
+export function resolveNotesInput(data, spec) {
+  const given = ['notes', 'songId', 'midiBase64'].filter((key) => spec?.[key] !== undefined);
+  if (given.length !== 1) {
+    throw fail(ERRORS.SCHEMA, 'provide exactly one of `notes`, `songId` or `midiBase64`', { given });
+  }
+  // A hand-written list is the caller's own arithmetic, so it is validated
+  // strictly rather than clipped; only a decoded source is fitted to the window.
+  if (given[0] === 'notes') return null;
+
+  if (given[0] === 'songId') {
+    const id = spec.songId;
+    if (typeof id !== 'string' || id.length === 0) {
+      throw fail(ERRORS.SCHEMA, 'songId must be a non-empty string', { field: 'songId', value: id ?? null });
+    }
+    const song = data.demoSong(id);
+    if (!song) {
+      throw fail(ERRORS.SCHEMA, `no built-in song with the id "${id}"`, {
+        field: 'songId',
+        value: id,
+        hint: 'gs1.songs.list names every id',
+      });
+    }
+    if (song.notes.length === 0) {
+      throw fail(ERRORS.SCHEMA, `the built-in song "${id}" has no notes`, { field: 'songId', value: id });
+    }
+    return { source: 'songId', notes: song.notes, sourceSeconds: song.duration };
+  }
+
+  const base64 = spec.midiBase64;
+  if (typeof base64 !== 'string' || base64.length === 0) {
+    throw fail(ERRORS.SCHEMA, 'midiBase64 must be a non-empty base64 string', {
+      field: 'midiBase64',
+      value: typeof base64,
+    });
+  }
+  if (base64.length > MAX_MIDI_BASE64) {
+    throw fail(ERRORS.RANGE, `midiBase64 must hold at most ${MAX_MIDI_BASE64} characters`, {
+      field: 'midiBase64',
+      length: base64.length,
+      max: MAX_MIDI_BASE64,
+    });
+  }
+  const bytes = Buffer.from(base64, 'base64');
+  if (bytes.length === 0 || !data.looksLikeMidi(bytes)) {
+    throw fail(ERRORS.SCHEMA, 'midiBase64 does not hold a standard MIDI file (no MThd header)', {
+      field: 'midiBase64',
+      bytes: bytes.length,
+    });
+  }
+  const song = data.parseMidi(bytes, 'midiBase64');
+  if (song.notes.length === 0) {
+    throw fail(ERRORS.SCHEMA, 'midiBase64 decoded to a song with no notes', {
+      field: 'midiBase64',
+      bytes: bytes.length,
+    });
+  }
+  return { source: 'midiBase64', notes: song.notes, sourceSeconds: song.duration };
+}
+
+/**
+ * Fit a decoded song into the render window.
+ *
+ * A song longer than `MAX_SECONDS` (or a `seconds` the caller chose) has to lose
+ * something, and dropping it silently would be the one thing this server does not
+ * do — so the count comes back in the result as `notesDropped`.
+ */
+function clipToWindow(notes, seconds) {
+  const kept = [];
+  let dropped = 0;
+  for (const entry of notes) {
+    if (!(entry.start < seconds)) {
+      dropped += 1;
+      continue;
+    }
+    const duration = Math.min(entry.duration, seconds - entry.start);
+    if (!(duration > 0)) {
+      dropped += 1;
+      continue;
+    }
+    kept.push({ ...entry, duration });
+  }
+  return { kept, dropped };
+}
+
+/**
+ * Validate `seconds`/`notes`/`seed`/`oversample`/`sampleRate`; throws structured
+ * rejections.
+ *
+ * `resolved` is what `resolveNotesInput` returned, when the caller used `songId`
+ * or `midiBase64`. Those notes are **clipped** to the window (and the count
+ * reported) instead of rejected: a caller who names a song is asking for the
+ * song, not for a validation error about the last note. A hand-written `notes`
+ * list keeps the strict contract it has always had — its notes are the caller's
+ * own arithmetic, and a note that runs past `seconds` is a mistake worth naming.
+ */
+export function validateRenderSpec(spec, resolved = null) {
+  const defaultSeconds =
+    resolved?.sourceSeconds != null
+      ? Math.max(MIN_SECONDS, Math.min(round3(resolved.sourceSeconds + 0.5), MAX_SECONDS))
+      : 2;
+  const seconds = spec?.seconds ?? defaultSeconds;
   if (!Number.isFinite(seconds) || seconds < MIN_SECONDS || seconds > MAX_SECONDS) {
     throw fail(ERRORS.RANGE, `seconds must be between ${MIN_SECONDS} and ${MAX_SECONDS}`, {
       field: 'seconds',
@@ -55,7 +188,10 @@ export function validateRenderSpec(spec) {
     });
   }
 
-  const notes = spec?.notes;
+  const clipped = resolved
+    ? clipToWindow(resolved.notes, seconds)
+    : { kept: spec?.notes, dropped: 0 };
+  const notes = clipped.kept;
   if (!Array.isArray(notes) || notes.length < 1) {
     throw fail(ERRORS.SCHEMA, 'notes must be a non-empty array', { field: 'notes' });
   }
@@ -98,6 +234,18 @@ export function validateRenderSpec(spec) {
     sampleRate,
     seed,
     oversample: oversample ? 1 : 0,
+    /** Which input the notes came from, echoed so a result is self-describing. */
+    source: resolved?.source ?? 'notes',
+    /** How long the song itself is, before the window clipped it (null for `notes`). */
+    sourceSeconds: resolved?.sourceSeconds ?? null,
+    /**
+     * True when the song is longer than the window that was rendered. Measured
+     * against the song's own length and not against the defaulted window: a
+     * caller who rendered `drift` in 2 s asked for a fragment, and one who
+     * rendered all 45 s got the whole piece with the tail on top.
+     */
+    truncated: resolved?.sourceSeconds != null && resolved.sourceSeconds > seconds + 1e-9,
+    notesDropped: clipped.dropped,
     notes: notes.map((entry, index) => validateNote(entry, index, seconds)),
   };
 }

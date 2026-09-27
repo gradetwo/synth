@@ -261,9 +261,9 @@ describe('validation and rejections', () => {
       code: 'E_RANGE',
     },
     {
-      name: 'more than 512 notes',
+      name: 'more than 4096 notes',
       tool: 'gs1.render',
-      args: { notes: Array.from({ length: 513 }, () => ({ note: 60 })), seconds: 1 },
+      args: { notes: Array.from({ length: 4097 }, () => ({ note: 60 })), seconds: 1 },
       code: 'E_RANGE',
     },
     {
@@ -384,7 +384,7 @@ describe('validation and rejections', () => {
     const payload = await rejected('gs1.render', { notes: [{ note: 60 }], seconds: 999 });
     expect(payload.error.code).toBe('E_RANGE');
     expect(payload.error.message).toContain('seconds');
-    expect(payload.error.message).toContain('30');
+    expect(payload.error.message).toContain('120');
   });
 });
 
@@ -420,6 +420,72 @@ describe('determinism', () => {
     const zero = await ok('gs1.render', { ...base, seed: 0 });
     const five = await ok('gs1.render', { ...base, seed: 5 });
     expect(five.sha256).not.toBe(zero.sha256);
+  });
+
+  // --- P2: the other two note inputs, for token economy ---------------------
+
+  it('renders a built-in song by id, with no note list to send', async () => {
+    const result = await ok('gs1.render', { songId: 'drift', seconds: 2, seed: 7 });
+    expect(result.notesSource).toBe('songId');
+    expect(result.notes).toBeGreaterThan(0);
+    expect(result.sourceSeconds).toBeGreaterThan(2);
+    // The window is shorter than the song, and the loss is reported, not silent.
+    expect(result.truncated).toBe(true);
+    expect(result.notesDropped).toBeGreaterThan(0);
+  });
+
+  it('defaults `seconds` to the whole song plus a tail', async () => {
+    // `drift` is ~45 s, well inside the 120 s cap, so nothing is clipped.
+    const result = await ok('gs1.render', { songId: 'drift', seed: 1 });
+    expect(result.seconds).toBeCloseTo(result.sourceSeconds + 0.5, 3);
+    expect(result.truncated).toBe(false);
+    expect(result.notesDropped).toBe(0);
+    expect(result.notes).toBeGreaterThan(100);
+  });
+
+  it('clips a song longer than the cap and says so', async () => {
+    // `greensleeves` runs 175 s: the default window is the 120 s cap, and the
+    // notes outside it come back as a count rather than as a rejection.
+    const result = await ok('gs1.render', { songId: 'greensleeves', seed: 1 });
+    expect(result.seconds).toBe(120);
+    expect(result.sourceSeconds).toBeGreaterThan(120);
+    expect(result.truncated).toBe(true);
+    expect(result.notesDropped).toBeGreaterThan(0);
+  });
+
+  it('renders a standard MIDI file from base64, decoded by the app parser', async () => {
+    // Format 0, one C4 quarter note at 480 ppq: `MThd` + one `MTrk`.
+    const smf = Buffer.from(
+      '4D546864000000060000000101E0' + '4D54726B0000000D' + '00903C64' + '8360803C40' + '00FF2F00',
+      'hex',
+    );
+    const result = await ok('gs1.render', { midiBase64: smf.toString('base64'), seed: 3 });
+    expect(result.notesSource).toBe('midiBase64');
+    expect(result.notes).toBe(1);
+    expect(result.seconds).toBeCloseTo(1, 3);
+    expect(result.time.peak).toBeGreaterThan(0);
+  });
+
+  it('names the note inputs that are not exactly one', async () => {
+    expect((await rejected('gs1.render', {})).error.message).toMatch(/exactly one of/);
+    expect(
+      (await rejected('gs1.render', { notes: [{ note: 60 }], songId: 'drift' })).error.message,
+    ).toMatch(/exactly one of/);
+    expect((await rejected('gs1.render', { songId: 'not-a-song' })).error.message).toMatch(
+      /no built-in song/,
+    );
+    expect((await rejected('gs1.render', { midiBase64: 'bm90IG1pZGk=' })).error.message).toMatch(
+      /MThd/,
+    );
+  });
+
+  it('keeps a hand-written `notes` list strict instead of clipping it', async () => {
+    const payload = await rejected('gs1.render', {
+      notes: [{ note: 60, start: 9.9, duration: 1 }],
+      seconds: 10,
+    });
+    expect(payload.error.code).toBe('E_RANGE');
+    expect(payload.error.message).toMatch(/end within the render/);
   });
 });
 
