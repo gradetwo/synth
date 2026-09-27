@@ -32,13 +32,13 @@ export interface Release {
 export const REPO_URL = 'https://github.com/gradetwo/synth';
 
 export const CHANGELOG_HEAD: Release = {
-    version: '2.1.7',
-    date: '2026-09-26',
-    kind: 'fix',
+    version: '2.1.8',
+    date: '2026-09-27',
+    kind: 'feature',
     items: [
       [
-        '**修好四个能听见的毛病，并给外部宿主补上 ABI 9。** ① 音符事件处不再有爆音——分块渲染时输出缓冲只留下了最后一个子块，而块正好切在音符落下的那一帧；② 连点同一个键不再没声或只响一小截——重按会顶掉同一个键上尚未触发的旧释放；③ 被抢的声部淡出由 20 ms 加长到 50 ms，持续音被抢时不再咔哒（**本版唯一的音色变动**：只有 `futurechord` 会抢声部，它的指纹已按流程重录并写明理由）；④ 定时音符改用音频上下文的时间轴，宿主提前排好的音不再整体迟到。宿主侧新增 `gs_note_bend`（逐音弯音）与 `gs_set_tuning_note`（逐键微分音），音符事件可以带 `cents`。**另外清掉了 GitHub Code Scanning 的全部九条告警**（toast 改为交给 React 转义、数值输入的正则范围、分配器游标、CI 权限、nightly 日志），`vitest` 升到 4、`wrangler` 升到 4.139，Dependabot 的八条告警全部关闭。',
-        '**Four audible defects fixed, and ABI 9 for hosts.** (1) No more click at every note event: a split block kept only its last chunk, and a block splits on exactly the frame a note lands. (2) Tapping the same key twice no longer goes silent or plays a fragment — re-pressing supersedes the untriggered old release. (3) A stolen voice fades over 50 ms instead of 20, so stealing a ringing note no longer clicks (**the release\'s only timbre change**: only `futurechord` steals a voice, and its fingerprint was re-recorded with a written reason). (4) Timed notes use the audio context\'s timeline, so a host that schedules ahead no longer runs late. Hosts gain `gs_note_bend` (per-note bend) and `gs_set_tuning_note` (per-key microtuning), and note events accept `cents`. **All nine GitHub Code Scanning alerts are closed** (React-escaped toasts, the numeric filter\'s character class, the allocator cursor, CI permissions, the nightly log), and `vitest` 4 plus `wrangler` 4.139 close all eight Dependabot advisories.',
+        '**给外部 agent 补上两件工具、放宽渲染的输入与上限，并修好「强制降级其实没释放」。** `gs1.render` 现在三选一：音符列表、内置曲的 `songId`、或 base64 的 MIDI 文件——后两条把一段编曲从几十 KB JSON 变成几 KB；单次渲染上限 30 → **120 秒**、音符 512 → **4096**（旧上限其实会拒绝几乎所有内置曲）。新增 `gs1.patch.morph`：`warmth` / `air` / `brightness` / `width` / `softness`，每个只动三四个参数并如实返回动前动后；新增 `gs1.patch.undo`，写入可以逐步退回。音频侧：被复音上限挤掉的声部原先按**预设自己的 release** 收尾，于是「强制释放」可能几秒内什么都没释放——现在和窃音一样走 50 ms 淡出。**默认声音与 91 条预设指纹未变。**',
+        '**Two more tools for external agents, wider render inputs and limits, and a fix for a force-release that did not release.** `gs1.render` now takes exactly one of a note list, a built-in song by `songId`, or a standard MIDI file as base64 — the last two turn an arrangement from tens of KB of JSON into a few KB. The render cap goes 30 -> **120 seconds** and 512 -> **4096 notes** (the old cap rejected nearly every built-in song). New `gs1.patch.morph`: `warmth` / `air` / `brightness` / `width` / `softness`, each moving three or four parameters and returning every before/after it touched; new `gs1.patch.undo` steps back through writes. On the audio side, a voice pushed out by the polyphony cap used to finish on the **patch\'s own** release, so a "force release" could free nothing for seconds; it now fades over 50 ms like a steal. **The default sound and all 91 preset fingerprints are unchanged.**',
       ],
     ],
   };

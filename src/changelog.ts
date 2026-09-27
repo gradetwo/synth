@@ -42,6 +42,17 @@ import { CHANGELOG_HEAD } from './changelog-head';
 export const CHANGELOG: Release[] = [
   CHANGELOG_HEAD,
   {
+    version: '2.1.7',
+    date: '2026-09-26',
+    kind: 'fix',
+    items: [
+      [
+        '**修好四个能听见的毛病，并给外部宿主补上 ABI 9。** ① 音符事件处不再有爆音——分块渲染时输出缓冲只留下了最后一个子块，而块正好切在音符落下的那一帧；② 连点同一个键不再没声或只响一小截——重按会顶掉同一个键上尚未触发的旧释放；③ 被抢的声部淡出由 20 ms 加长到 50 ms，持续音被抢时不再咔哒（**本版唯一的音色变动**：只有 `futurechord` 会抢声部，它的指纹已按流程重录并写明理由）；④ 定时音符改用音频上下文的时间轴，宿主提前排好的音不再整体迟到。宿主侧新增 `gs_note_bend`（逐音弯音）与 `gs_set_tuning_note`（逐键微分音），音符事件可以带 `cents`。**另外清掉了 GitHub Code Scanning 的全部九条告警**（toast 改为交给 React 转义、数值输入的正则范围、分配器游标、CI 权限、nightly 日志），`vitest` 升到 4、`wrangler` 升到 4.139，Dependabot 的八条告警全部关闭。',
+        '**Four audible defects fixed, and ABI 9 for hosts.** (1) No more click at every note event: a split block kept only its last chunk, and a block splits on exactly the frame a note lands. (2) Tapping the same key twice no longer goes silent or plays a fragment — re-pressing supersedes the untriggered old release. (3) A stolen voice fades over 50 ms instead of 20, so stealing a ringing note no longer clicks (**the release\'s only timbre change**: only `futurechord` steals a voice, and its fingerprint was re-recorded with a written reason). (4) Timed notes use the audio context\'s timeline, so a host that schedules ahead no longer runs late. Hosts gain `gs_note_bend` (per-note bend) and `gs_set_tuning_note` (per-key microtuning), and note events accept `cents`. **All nine GitHub Code Scanning alerts are closed** (React-escaped toasts, the numeric filter\'s character class, the allocator cursor, CI permissions, the nightly log), and `vitest` 4 plus `wrangler` 4.139 close all eight Dependabot advisories.',
+      ],
+    ],
+  },
+  {
     version: '2.1.6',
     date: '2026-09-16',
     kind: 'feature',
@@ -346,17 +357,6 @@ export const CHANGELOG: Release[] = [
       [
         '**硬同步的混叠爆发修好了**：BLEP 表是「带限阶跃 − 朴素阶跃」的残差，直接跨过它的跳变做线性插值会取错边，使每次重启有 1 个过采样样本被整级错修——约每 24 秒里有 ~11 秒爆到 **−33 dB**，听感是一层周期性噪声。改为对连续带限阶跃插值再显式减掉朴素阶跃后，三种波形 × 四个从振比值的**每一个** 4 秒窗都 ≤ **−88 dB**，离散度由 86 dB 降到 8–12 dB；时域相关 ≥0.9988、峰值有界。默认关闭，关闭时逐位不变。',
         '**Hard sync\'s alias bursts are fixed.** The BLEP table is the residual `band-limited step - naive step`, so interpolating across its jump reads the wrong side and hands back a full-magnitude correction of the wrong sign: one oversampled sample per restart was mis-corrected, bursting to **-33 dB** for about 11 s out of every 24 s as an audible periodic layer. Interpolating the continuous band-limited step and subtracting the naive step puts **every** four-second window of three waveforms times four ratios at or below **-88 dB**, cutting the spread from 86 dB to 8-12 dB with the time domain still correlated at 0.9988 or better. Sync is off by default and bit-identical when off.',
-      ],
-    ],
-  },
-  {
-    version: '1.99.0',
-    date: '2026-09-13',
-    kind: 'fix',
-    items: [
-      [
-        '**音质门禁换了一把更可靠的尺子**：旧的「精确 bin 相减」在两数相减时会留下假底噪，纯正弦被读成 −84…−102 dB；改用 7 项 Blackman-Harris 窗（4 秒整窗、每谐波 ±2 Hz 带外功率求和）后读数稳定，正弦离谐波能量最差 **−119.1 dB**，断言收紧到 **−105 dB**。另新增「同场景连做 8 次」的稳定性断言（实测离散度 **0.00 dB**），并记录锯齿/方波/三角的真实混叠底，供下一批带限使用。引擎与音色**逐位未变**。',
-        '**The audio gate now measures with a ruler that does not lie.** Its old "exact-bin subtraction" left a false floor when two nearly equal numbers were subtracted, so a pure sine read -84...-102 dB; a 7-term Blackman-Harris window (four whole seconds, power summed outside +/-2 Hz of each harmonic) is stable, puts the sine at a worst case of **-119.1 dB**, and lets the assertion tighten to **-105 dB**. A new assertion renders one scene eight times and demands agreement (measured spread **0.00 dB**), and the saw/square/triangle alias floors are recorded for the next band-limiting batch. The engine and every sound are **bit-for-bit unchanged**.',
       ],
     ],
   },
