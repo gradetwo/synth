@@ -4,6 +4,7 @@ import { getLang, t } from '@/i18n';
 import { loadDocsStrings } from '@/i18n-panels';
 void loadDocsStrings();
 import { CHANGELOG, CURRENT_VERSION, releaseDateLabel, type Release } from '@/changelog';
+import { REPO_URL } from '@/changelog-head';
 
 const pick = (b: [string, string]): string => (getLang() === 'zh' ? b[0] : b[1]);
 
@@ -100,8 +101,19 @@ export function Changelog({ open, onClose }: { open: boolean; onClose: () => voi
               );
             })}
             {/* P141: the shipped list is capped, so say where the rest lives
-                instead of leaving a list that silently stops in 1.8.x. */}
-            <p className="release-archive-note">{t('changelog.archive')}</p>
+                instead of leaving a list that silently stops in 1.8.x — and point
+                at the repository itself, not just at "the repository". */}
+            <p className="release-archive-note">
+              {t('changelog.archive')}{' '}
+              <a
+                className="release-repo"
+                href={REPO_URL}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                {REPO_URL.replace(/^https?:\/\//, '')} ↗
+              </a>
+            </p>
             <footer className="guide-foot">{t('changelog.footer')}</footer>
           </article>
         </div>

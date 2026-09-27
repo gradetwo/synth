@@ -21,6 +21,16 @@ export interface Release {
   items: [string, string][];
 }
 
+/**
+ * Where the source and the full release history live.
+ *
+ * It sits in this file rather than a new module because the update banner already
+ * imports this one — putting it anywhere that pulls in `CHANGELOG` would drag the
+ * whole history back into the first-screen chunk, which is what this file exists
+ * to avoid.
+ */
+export const REPO_URL = 'https://github.com/gradetwo/synth';
+
 export const CHANGELOG_HEAD: Release = {
     version: '2.1.7',
     date: '2026-09-26',

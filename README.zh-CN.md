@@ -1,11 +1,21 @@
 # GROOVE SYNTH GS-1
 
-中文 · [English](README.md)
+中文 · [English](README.md) · **[在线体验](https://synth.wangda.today/)**
 
-一个完全跑在浏览器里的复音合成器。DSP 核心用 Rust 写成、编译为 WebAssembly，在 `AudioWorklet`
-的音频线程里渲染；界面是 React + TypeScript，整个应用可以作为离线 PWA 安装。
+一个完全跑在浏览器里的复音合成器，自带一个 MCP 服务。
 
-**在线体验：<https://synth.wangda.today/>**
+DSP 核心用 Rust 写成、编译为 WebAssembly，在 `AudioWorklet` 的音频线程里渲染；界面是 React +
+TypeScript。整个应用可以作为离线 PWA 安装，首次访问之后不再发起任何网络请求。
+
+MCP 服务是给别的程序用的入口。agent 可以读写音色、导入采样与波表、把一段演奏渲染成 WAV，并用
+**本仓库门禁自己那套尺子**量出结果——非谐波地板、THD、峰值、最大步进。所有被夹取的数值都会随结果
+返回，调用方看到的是引擎真正接受的量，不用猜。
+
+<img src="docs/images/app-desktop-dark.zh.png" alt="模块视图，深色" width="100%">
+
+<img src="docs/images/app-flow-light.zh.png" alt="信号流，浅色" width="49.5%"> <img src="docs/images/app-roll-dark.zh.png" alt="钢琴卷帘，深色" width="49.5%">
+
+<img src="docs/images/app-phone-dark.zh.png" alt="手机布局" width="240">
 
 ## 功能
 
@@ -18,14 +28,39 @@
   过载，并支持逐节点过采样。
 - **演奏** — 屏幕键盘支持多指和弦、滑奏与按触点位置的力度；弯音 / 调制轮；Web MIDI；MPE；
   微调律（4 种律制与 `.scl`）；和弦识别；练习模式。
-- **创作** — MIDI 播放器（内置 16 首曲目，可导入 `.mid`）、录制、钢琴卷帘、带片段的多轨时间线，
+- **创作** — MIDI 播放器（内置 25 首曲目，可导入 `.mid`）、录制、钢琴卷帘、带片段的多轨时间线，
   以及导出 `.mid`、WAV、MP3。
-- **预设与工程** — 81 个工厂预设、`.gs1.json` 导入导出、分享码、A/B 对比、撤销重做，
+- **预设与工程** — 91 个工厂预设、`.gs1.json` 导入导出、分享码、A/B 对比、撤销重做，
   以及多套工程（`.gs1proj`）。
 - **应用** — 中文 / English 界面，深色 / 浅色 / 跟随系统与高对比模式，桌面、iPad、iPhone 各自
   优化的布局，内置合成原理、合成器简史与各模块详解的离线指南。
-- **离线** — Service Worker 预缓存整个 app shell（JS、CSS、WASM、worklet、字体、图标）；
-  首次访问后不再发起任何网络请求。
+- **离线** — Service Worker 预缓存整个 app shell（JS、CSS、WASM、worklet、字体、图标）。
+
+## MCP 服务
+
+16 个离线工具 + 5 个浏览器工具。契约写在 [`docs/LLM-INTERFACE.md`](docs/LLM-INTERFACE.md)——
+名字、输入、返回字段、错误码与上限——由 `scripts/verify-llm-docs.mjs` 与真实注册表**双向核对**。
+
+```bash
+npm run mcp                  # stdio，给 MCP 客户端用
+npm run mcp -- --http        # 回环 HTTP
+npm run mcp -- --self-test   # 把整个工具面跑两遍并逐字节比对
+```
+
+调用方能做四类事：
+
+- **读** — 参数表、预设、曲库，以及引擎自身的构建信息。`gs1.describe` 报的 ABI、arena 与采样器
+  上限是**从定义它们的 Rust 里读出来的**，不是第二份表。
+- **写** — 用分享码 / 预设 / `{key: value}` 设置音色；随机化；沿一个有名字的属性移动
+  （`gs1.patch.morph`——warmth、air、brightness、width、softness，每个都是一组写明了的参数动作）；
+  用 `gs1.patch.undo` 退回上一步。
+- **演奏** — `gs1.render` 接受音符列表、内置曲的 `songId`，或 base64 的标准 MIDI 文件，写出
+  16 位立体声 WAV。给定 patch、音符、时长与 seed 时逐字节确定。
+- **测量** — `gs1.analyze` 与 `gs1.gate` 用的是 `verify-audio` 那两把 Blackman-Harris 与 Hann
+  尺子，每个数字都标注了它出自哪把尺子。
+
+这些工具同时也是单测的驱动对象：`mcp/mcp.test.mjs` 与 `mcp/ops.test.mjs` 用一套手写的 JSON-RPC
+传输直接调它们，`npm run ui:smoke` 则驱动浏览器层。
 
 ## 架构
 
@@ -85,10 +120,9 @@ Rust 核心不依赖任何 crates.io 包，`cargo build` 可以完全离线完�
 ## 文档
 
 - [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) — 演奏与操作说明。
+- [`docs/LLM-INTERFACE.md`](docs/LLM-INTERFACE.md) — MCP 契约，附一个跑通的范例。
 - [`docs/DSP-GUIDE.md`](docs/DSP-GUIDE.md) — 各模块背后的声学与信号处理原理，对应到真实的
   文件、常量与实测数字。
-- [`docs/LLM-INTERFACE.md`](docs/LLM-INTERFACE.md) — 给外部 agent 的 MCP 接口：读写音色与预设、
-  导入采样与波表、把演奏渲染成 WAV，并用门禁同一套尺子量出结果。
 - [`docs/DEVICE-TESTING.md`](docs/DEVICE-TESTING.md) — 真机回归清单。
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — 已完成与后续规划。
 - [`docs/notes/`](docs/notes/) — 针对具体问题、测量与修复的工程笔记。

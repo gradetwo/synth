@@ -684,6 +684,8 @@ button{touch-action:manipulation}
 .guide-step-b{font:500 12px/1.6 var(--grot);color:var(--txt-2)}
 .guide-foot,.release-archive-note{margin-top:26px;padding-top:14px;border-top:1px solid var(--line-soft);
   font:500 10px/1.5 var(--mono);color:var(--txt-dim);text-align:center}
+.release-repo{color:var(--accent);text-decoration:none;border-bottom:1px dotted currentColor}
+.release-repo:hover{color:var(--txt)}
 @media (max-width:720px){
   .guide{width:100vw;height:100vh;max-height:none;border-radius:0;border:none}
   .guide-head{padding:calc(12px + env(safe-area-inset-top)) 14px 12px}
