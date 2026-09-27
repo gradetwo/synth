@@ -95,6 +95,16 @@ export function goldenSession(data) {
     // out is the one `patch.set` takes back, and `patch.get` reports it again.
     { tool: 'gs1.patch.set', args: { patch: { params: quietSawPatch().params } } },
     { tool: 'gs1.patch.get', args: {} },
+    // A song render, which is the other note input: the window is short, so the
+    // call stays cheap while still pinning the whole `demoSong()` path.
+    { tool: 'gs1.render', args: { songId: 'elise', seconds: 1.5, seed: 7 } },
+    // The semantic macro and the way back out of it: both are writes against the
+    // session, so `patch.get` observes each and the pair has to be deterministic
+    // across passes like every other mutating call here.
+    { tool: 'gs1.patch.morph', args: { attribute: 'warmth', amount: 0.5 } },
+    { tool: 'gs1.patch.get', args: {} },
+    { tool: 'gs1.patch.undo', args: {} },
+    { tool: 'gs1.patch.get', args: {} },
   ];
 }
 

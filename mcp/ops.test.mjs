@@ -160,8 +160,13 @@ describe('gs1.patch.random', () => {
   it('is byte-identical for the same seed', async () => {
     const first = await ok('gs1.patch.random', { seed: 5 });
     const second = await ok('gs1.patch.random', { seed: 5 });
-    expect(canonicalJson(second)).toBe(canonicalJson(first));
+    // The *patch* is what determinism is about: same seed, same parameters, same
+    // share code. The envelope around it is not — `undoDepth` counts session
+    // history, and the second call has one more write behind it by construction.
+    expect(canonicalJson(second.patch)).toBe(canonicalJson(first.patch));
     expect(second.shareCode).toBe(first.shareCode);
+    expect(second.summary).toEqual(first.summary);
+    expect(second.undoDepth).toBe(first.undoDepth + 1);
   });
 
   it('produces a different patch for a different seed, and accepts 0', async () => {
@@ -199,6 +204,97 @@ describe('gs1.patch.random', () => {
 // ---------------------------------------------------------------------------
 // C. `gs1.sample.import`
 // ---------------------------------------------------------------------------
+describe('gs1.patch.morph', () => {
+  it('moves the named attribute and reports every parameter it touched', async () => {
+    const before = (await ok('gs1.patch.set', { presetId: 'pluck' })).patch.params;
+    const result = await ok('gs1.patch.morph', { attribute: 'warmth', amount: 0.5 });
+    expect(result.applied).toBe('morph');
+    expect(result.moved.length).toBeGreaterThan(0);
+    // The attribute's own direction: warmth closes the filter.
+    const cutoff = result.moved.find((move) => move.key === 'filterCutoff');
+    expect(cutoff).toBeTruthy();
+    expect(cutoff.after).toBeLessThan(cutoff.before);
+    expect(cutoff.before).toBe(before[cutoff.id]);
+    // The write reached the session, and the reported `after` is what is served.
+    const after = await ok('gs1.patch.get', {});
+    expect(after.patch.params[cutoff.id]).toBe(cutoff.after);
+  });
+
+  it('is one fixed table: amount 0 is a no-op and the same call reproduces itself', async () => {
+    await ok('gs1.patch.set', { presetId: 'pluck' });
+    const zero = await ok('gs1.patch.morph', { attribute: 'brightness', amount: 0 });
+    for (const move of zero.moved) expect(move.after).toBe(move.before);
+
+    await ok('gs1.patch.set', { presetId: 'pluck' });
+    const first = await ok('gs1.patch.morph', { attribute: 'brightness', amount: 0.4 });
+    await ok('gs1.patch.set', { presetId: 'pluck' });
+    const second = await ok('gs1.patch.morph', { attribute: 'brightness', amount: 0.4 });
+    expect(second.shareCode).toBe(first.shareCode);
+  });
+
+  it('accumulates on the session, and refuses an unknown attribute or a wild amount', async () => {
+    await ok('gs1.patch.set', { presetId: 'pluck' });
+    const once = await ok('gs1.patch.morph', { attribute: 'air', amount: 0.5 });
+    const twice = await ok('gs1.patch.morph', { attribute: 'air', amount: 0.5 });
+    const cutoff = twice.moved.find((move) => move.key === 'filterCutoff');
+    expect(cutoff.after).toBeGreaterThan(cutoff.before);
+    expect(twice.shareCode).not.toBe(once.shareCode);
+
+    expect((await rejected('gs1.patch.morph', { attribute: 'warmthiness', amount: 0.5 })).error.code).toBe(
+      'E_SCHEMA',
+    );
+    expect((await rejected('gs1.patch.morph', { attribute: 'air', amount: 4 })).error.code).toBe('E_RANGE');
+  });
+});
+
+describe('gs1.patch.undo', () => {
+  it('steps back one write, and reports how many steps are left', async () => {
+    const first = await ok('gs1.patch.set', { presetId: 'pluck' });
+    expect(first.undoDepth).toBe(1);
+    const code = first.shareCode;
+    const morphed = await ok('gs1.patch.morph', { attribute: 'warmth', amount: 0.8 });
+    expect(morphed.undoDepth).toBe(2);
+    expect(morphed.shareCode).not.toBe(code);
+
+    const undone = await ok('gs1.patch.undo', {});
+    expect(undone.undone).toBe(true);
+    expect(undone.restoredTo).toBe('previous');
+    expect(undone.shareCode).toBe(code);
+    expect(undone.undoDepth).toBe(1);
+  });
+
+  it('can step all the way back to the default, and an empty history is a no-op', async () => {
+    await ok('gs1.patch.set', { presetId: 'acid' });
+    const back = await ok('gs1.patch.undo', {});
+    expect(back.restoredTo).toBe('default');
+    expect(back.undoDepth).toBe(0);
+    // The session no longer has a patch, so `patch.get` falls back to the default.
+    expect((await ok('gs1.patch.get', {})).source).toBe('default');
+
+    const again = await ok('gs1.patch.undo', {});
+    expect(again.undone).toBe(false);
+    expect(again.undoDepth).toBe(0);
+    expect(typeof again.reason).toBe('string');
+  });
+
+  it('keeps the stack bounded', async () => {
+    for (let i = 0; i < 40; i += 1) {
+      await ok('gs1.patch.set', { params: { osc1Level: 0.3 + (i % 5) * 0.1 } });
+    }
+    const top = await ok('gs1.patch.get', {});
+    let depth = 40;
+    let steps = 0;
+    while (depth > 0) {
+      const undone = await ok('gs1.patch.undo', {});
+      expect(undone.undone).toBe(true);
+      depth = undone.undoDepth;
+      steps += 1;
+    }
+    expect(steps).toBe(32);
+    expect(top.source).toBe('session');
+  });
+});
+
 describe('gs1.sample.import', () => {
   it('imports a WAV from base64 and makes it the session instrument', async () => {
     const result = await ok('gs1.sample.import', { wavBase64: wavBase64(480), name: 'tone.wav' });
@@ -485,7 +581,7 @@ describe('golden session with the mutating tools', () => {
       expect(result.failures).toEqual([]);
       expect(result.identical).toBe(true);
       expect(result.hashA).toBe(result.hashB);
-      expect(result.calls).toBe(21);
+      expect(result.calls).toBe(26);
       expect(result.wavSha256.length).toBeGreaterThanOrEqual(3);
     },
     180_000,

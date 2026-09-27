@@ -328,9 +328,9 @@ describe('G. the layer speaks the protocol: the five tools are dispatchable', ()
   it('registers all 19 tools and refuses a bad argument through `tools/call`', async () => {
     const { tools, ctx, offline, ui } = await loadLayer({ log: false });
     try {
-      expect(offline.size).toBe(14);
+      expect(offline.size).toBe(16);
       expect(ui.size).toBe(5);
-      expect(tools.size).toBe(19);
+      expect(tools.size).toBe(21);
 
       const call = (name, args) =>
         dispatch(tools, ctx, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, { log: false });

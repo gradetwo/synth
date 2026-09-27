@@ -34,9 +34,40 @@
 import { initCore, importSample, importWavetableCycle } from '../../scripts/lib/render-core.mjs';
 import { ERRORS, fail } from './errors.mjs';
 
-/** An empty session: the default patch, no imported instrument. */
+/** An empty session: the default patch, no imported instrument, nothing to undo. */
 export function createSession() {
-  return { patch: null, sample: null, wavetable: null };
+  return { patch: null, sample: null, wavetable: null, history: [] };
+}
+
+/**
+ * How many patches a session can step back through.
+ *
+ * The stack holds the *replaced* patch, `null` included — "there was no session
+ * patch" is a state worth returning to. 32 is well past what a single agent turn
+ * needs and still a fixed, tiny bound.
+ */
+export const UNDO_LIMIT = 32;
+
+/**
+ * Record the patch a mutating call is about to replace.
+ *
+ * The app has its own undo/redo stack, but nothing in the tool surface exposed
+ * one: `patch.set` overwrote the session and an agent that got a morph wrong had
+ * no way back. This is that way back, and it is deliberately a snapshot of what
+ * `patch.set`/`patch.random`/`preset.apply`/`patch.morph` replaced, not a diff —
+ * a diff would have to be replayed to be trusted.
+ */
+export function pushUndo(session, previous) {
+  const history = (session.history ??= []);
+  history.push(previous ?? null);
+  if (history.length > UNDO_LIMIT) history.shift();
+  return history.length;
+}
+
+/** The patch to restore, or `undefined` when there is nothing left to undo. */
+export function popUndo(session) {
+  const history = session.history ?? [];
+  return history.pop();
 }
 
 /** Clear the state and give the process a brand-new wasm engine. */

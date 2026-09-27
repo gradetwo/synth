@@ -2,7 +2,7 @@
 
 **让你的 agent 离线、确定地看懂这台合成器、改它、渲染出 WAV、并用本仓库自己的尺子量它。**
 
-`docs/LLM-INTERFACE.md` 是**外部可读的契约**（19 个工具的名字/输入/返回/错误码/上限 + 接入自查清单）；
+`docs/LLM-INTERFACE.md` 是**外部可读的契约**（21 个工具的名字/输入/返回/错误码/上限 + 接入自查清单）；
 本文件是**实现说明**：协议、会话状态规则、确定性从哪来、工具与门禁为什么是同一份实现，以及
 P13.2–P13.4 的**已知取舍**。两份合起来就是「不读源码也能接上」的全部材料。
 
@@ -12,13 +12,13 @@ P13.2–P13.4 的**已知取舍**。两份合起来就是「不读源码也能�
 npm install                          # 必需；零新增运行时依赖（esbuild 是 vite 带来的既有 devDependency）
 npm run build:wasm                   # 第一次跑工具/门禁前需要 src/generated/*.wasm
 
-# 离线层（14 个工具；不读 dist/、不碰浏览器、不联网）
+# 离线层（16 个工具；不读 dist/、不碰浏览器、不联网）
 npm run mcp                          # MCP over stdio（Claude Desktop、各类 agent SDK）
 npm run mcp -- --http --port 3939    # 同一套工具的 JSON-RPC，只绑 127.0.0.1
 npm run mcp -- --self-test           # 黄金会话跑两遍并逐字节比较，打印结果后退出
 npm run mcp -- --no-log              # 不写 .tmp/mcp/calls.jsonl
 
-# 浏览器层（14 + 5 个工具；要一份 dist/ 与 Chromium，只用自己的端口 4796）
+# 浏览器层（16 + 5 个工具；要一份 dist/ 与 Chromium，只用自己的端口 4796）
 npm run build                        # 产出 dist/（含 wasm 与 sw.js）
 npx playwright install chromium      # 只装 Chromium（本层只用 chromium）
 npm run mcp:ui                       # MCP over stdio
@@ -45,7 +45,7 @@ HTTP 用 `node:http`，WAV 用仓库既有的 `encodeWavBuffer`。读取 app 的
 接不玩 MCP 的客户端：`node mcp/server.mjs --http`，然后向 `http://127.0.0.1:3939/`
 POST 一个 JSON-RPC 2.0 消息（`initialize` / `tools/list` / `tools/call`）；`GET /` 会列出工具名。
 
-## 二、工具清单（离线层 14 个）
+## 二、工具清单（离线层 16 个）
 
 完整契约表（每个字段的范围与默认）在 `docs/LLM-INTERFACE.md` §4.1–§4.3；这里是速查。
 
@@ -55,7 +55,7 @@ POST 一个 JSON-RPC 2.0 消息（`initialize` / `tools/list` / `tools/call`）�
 | `gs1.params.list` | `{ filter? }` | `{ count, total, params:[{ id, key, nameEn, nameZh, min, max, default, unit, discrete }] }` |
 | `gs1.presets.list` | — | `{ count, categories, presets:[{ id, name, tag, cat, wave, tags, user, hasLayer, instanceMode }] }`（91 条） |
 | `gs1.patch.get` | `{ presetId?, patch? }` | `shareCode`（**分享码同格式**）+ 解码后的完整 `patch`；无参数时给**会话当前 patch** |
-| `gs1.render` | `{ patch?/presetId?, notes, seconds?, oversample?, sampleRate?, seed?, outPath? }` | `{ ok, wavPath, sha256, byteLength, samples, channels, sampleRate, seconds, blocks, seed, oversample, time{ruler,peak,rms,maxStep}, nonFinite, allocViolations, patch{…,layersRendered} }` |
+| `gs1.render` | `{ patch?/presetId?, notes \| songId \| midiBase64（三选一）, seconds?, oversample?, sampleRate?, seed?, outPath? }` | `{ ok, wavPath, sha256, byteLength, samples, channels, sampleRate, seconds, blocks, seed, oversample, notes（条数）, notesSource, sourceSeconds, truncated, notesDropped, time{ruler,peak,rms,maxStep}, nonFinite, allocViolations, patch{…,layersRendered} }` |
 | `gs1.analyze` | `{ wavPath }` 或 `{ render }` + `{ f0?, note?, bins?, probes? }` | 时域 + BH-7 + Hann（**每个数都带尺子名**）+ `nonFinite`/`allocViolations` |
 | `gs1.gate` | `{ patch?, notes, ruler?, harmonics?, thresholdDb?, probes?, oversample? }` | 各音高的 BH-7 / Hann 地板（**嵌套对象，各带尺子名**）+ `passed`，判据与 `verify:audio` 相同 |
 
@@ -133,7 +133,7 @@ POST 一个 JSON-RPC 2.0 消息（`initialize` / `tools/list` / `tools/call`）�
 | `gs1.preset.save` | `{ name?, outPath? }` | 把当前 patch 写成**用户库 `.gs1.json` 格式**（默认 `.tmp/mcp/`）+ `sha256` |
 
 > `gs1.songs.list` 与 `gs1.preset.apply` / `gs1.preset.save` 是 P13.3 补进契约表的；现在
-> `docs/LLM-INTERFACE.md` §4 与 `mcp/tools/*.mjs` 的 14 个名字**逐字一致**，并由
+> `docs/LLM-INTERFACE.md` §4 与 `mcp/tools/*.mjs` 的 16 个名字**逐字一致**，并由
 > `scripts/verify-llm-docs.mjs` **双向**核对（漏写一个名字、或文档里写一个不存在的名字，门禁即红）。
 
 ### 输入/输出实例（真跑）
@@ -205,10 +205,12 @@ reload 后 `installUserSample()` 做的事一样。
 （清空 patch/采样/波表 + 换一个新 wasm 实例），所以第二遍不会继承第一遍的 sample pool 或当前
 patch；`npm run mcp -- --self-test` 的第二遍才有意义。
 
-**黄金会话**：21 次调用，覆盖全部 14 个工具。P13.2 的 8 次之后，P13.3 追加 13 次——
+**黄金会话**：26 次调用，覆盖全部 16 个工具。P13.2 的 8 次之后，P13.3 追加 13 次——
 **8 次变异**（`patch.set`（夹取）、`patch.random`、`patch.set{presetId}`、`preset.apply`、
 `sample.import`、`wavetable.import`、`preset.save`、`patch.set{patch}`）与 **5 次观察**
-（4 次无参数 `patch.get` + 1 次无 patch 的 `render`，后者吃会话状态）。两遍的规范化 JSON
+（4 次无参数 `patch.get` + 1 次无 patch 的 `render`，后者吃会话状态）；P2/P4 再追加 5 次——
+一次 `songId` 的 `render`（另一条音符入口）、`patch.morph` + `patch.get`、`patch.undo` +
+`patch.get`。两遍的规范化 JSON
 `sha256` 相同，WAV 与 `.gs1.json` 的字节也相同。
 
 ### 拒绝路径（输入 → 结构化错误）
@@ -368,7 +370,7 @@ worktree**里各加各的文件而零冲突。以 `_` 开头的文件（如 `mcp
 ```bash
 npm run build                          # 先产出 dist/（含 wasm 与 sw.js）
 npx playwright install chromium        # 只装 Chromium（本层只用 chromium）
-npm run mcp:ui                        # MCP over stdio：14 个离线工具 + 5 个浏览器工具
+npm run mcp:ui                        # MCP over stdio：16 个离线工具 + 5 个浏览器工具
 npm run mcp:ui -- --http --port 3939  # 同一套 registry，只绑 127.0.0.1
 npm run ui:smoke                      # 端到端冒烟：开页 → 启动引擎 → 装预设 → 读 DOM → 截图
 ```

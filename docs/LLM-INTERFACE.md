@@ -1,7 +1,7 @@
 # GS-1 的 LLM / MCP 接口：外部可读的契约（P13，2026-09-14 立项）
 
 > 用户要求：「设计规划提供接口让其它 AI/LLM 使用本 app」。
-> 本文是**外部 agent 读的那一份**：19 个工具的名字、输入、返回字段、错误码、资源上限、怎么接、
+> 本文是**外部 agent 读的那一份**：21 个工具的名字、输入、返回字段、错误码、资源上限、怎么接、
 > 以及末尾的**接入自查清单**。另一份 `docs/notes/mcp.md` 是**实现说明**：为什么手写 JSON-RPC、
 > 为什么零新增运行时依赖、目录驱动注册表、确定性的来源、浏览器层为什么独立进程/端口，以及
 > P13.2–P13.4 的已知取舍。**只读这两份文件就能接上**，不必读源码；门禁的自证在
@@ -9,7 +9,7 @@
 
 ## 一、现状：已经交付了什么（v2.1.1，2026-09-15）
 
-一共 **19 个工具**：**14 个离线工具**（`mcp/tools/*.mjs`，入口 `npm run mcp`）+
+一共 **21 个工具**：**16 个离线工具**（`mcp/tools/*.mjs`，入口 `npm run mcp`）+
 **5 个浏览器工具**（`mcp/ui/tools/*.mjs`，入口 `npm run mcp:ui`）。两个 registry 都是**扫目录**：
 按**文件名**排序（不是工具名的字母序——所以 `gs1.patch.random`、`gs1.patch.set` 在前，
 `gs1.patch.get` 在后）、跳过 `_` 前缀的辅助模块；新增一个工具＝加一个文件，不动任何共享清单。
@@ -35,14 +35,14 @@ npm run mcp -- --no-log                       # 不写 .tmp/mcp/calls.jsonl
 
 npm run build                                 # 浏览器层要先有一份 dist/（含 wasm + SW）
 npx playwright install chromium               # 浏览器层要 Chromium
-npm run mcp:ui                                # 浏览器层：14 个离线工具 + 5 个 gs1.ui.*
+npm run mcp:ui                                # 浏览器层：16 个离线工具 + 5 个 gs1.ui.*
 npm run ui:smoke                              # 端到端冒烟：开页 → 启动引擎 → 装预设 → 读 DOM → 截图
 ```
 
 - **两个 script 故意不在 `npm run verify` / CI 里**：`mcp:ui` 与 `ui:smoke` 需要 Chromium 和
   `dist/`，与 `test:e2e` / `test:perf` 同类；`scripts/verify-ci.mjs` 会断言它们**没有**被塞进
   必需门禁。离线层的黄金会话（`npm run mcp -- --self-test`）**在** `verify` 与 CI 链里。
-- **19 个工具的名字**（文档与注册表由 `scripts/verify-llm-docs.mjs` 双向核对）：
+- **21 个工具的名字**（文档与注册表由 `scripts/verify-llm-docs.mjs` 双向核对）：
   `gs1.analyze`、`gs1.describe`、`gs1.gate`、`gs1.params.list`、`gs1.patch.get`、`gs1.patch.random`、
   `gs1.patch.set`、`gs1.preset.apply`、`gs1.preset.save`、`gs1.presets.list`、`gs1.render`、
   `gs1.sample.import`、`gs1.songs.list`、`gs1.wavetable.import`；
@@ -88,7 +88,7 @@ npm run ui:smoke                              # 端到端冒烟：开页 → 启
  │ mcp/server.mjs        手写 JSON-RPC（stdio / 回环 HTTP），只做协议与校验      │
  │ mcp/ui/server.mjs     P13.4 浏览器层入口（同一协议，另一套 registry）         │
  ├──────────────────────────────────────────────────────────────────────────────┤
- │ mcp/tools/*.mjs       14 个离线工具（参数校验 → 调用下层 → 结构化结果）        │
+ │ mcp/tools/*.mjs       16 个离线工具（参数校验 → 调用下层 → 结构化结果）        │
  │ mcp/ui/tools/*.mjs    5 个浏览器工具（Playwright 驱动真实页面）              │
  ├──────────────────────────────────────────────────────────────────────────────┤
  │ scripts/lib/render-core.mjs   在 Node 里起真 wasm 核心（门禁也在用同一份）     │
@@ -103,7 +103,7 @@ npm run ui:smoke                              # 端到端冒烟：开页 → 启
 那次抽取的 `verify-audio.mjs` 是 2814 行 → **2294 行**；此后 P14.2 的负载探针又给它加了 53 行，
 **今天是 2347 行**（`wc -l scripts/verify-audio.mjs`；抽取提交 `0239b41`，负载探针提交 `1458a8f`）。
 
-## 四、工具契约（19 个，实现后）
+## 四、工具契约（21 个，实现后）
 
 命名 `gs1.*`，全部**纯函数式**（给同样的输入，得同样的字节），全部返回**结构化 JSON**
 （大对象用文件路径而不是塞进 base64 里）。
@@ -150,7 +150,7 @@ AudioWorklet / AudioParam 自动化 / Web Audio 图。）
             "min":20,"max":20000,"default":9000,"unit":"kHz","discrete":false}]}
 ```
 
-### 4.2 离线层 · 操作类（7）
+### 4.2 离线层 · 操作类（9）
 
 `gs1.patch.get` / `gs1.patch.set` / `gs1.render` / `gs1.analyze` / `gs1.gate` 都能拿
 `patch`（分享码字符串**或**解码后的 `{params, routes, params2?, instanceMode?, splitNote?}` 对象）
@@ -163,6 +163,8 @@ AudioWorklet / AudioParam 自动化 / Web Audio 图。）
 | `gs1.patch.get` | `{ presetId?: string(≥1), patch?: string \| object }`；给 `presetId` 时它优先，两个都不给＝**会话当前 patch** | `format:'gs1-share-code'`、`abi`、`source`（`preset`\|`session`\|`default`\|`shareCode`\|`object`）、`presetId`、`name`、`tag`、`cat`、`wave`、`shareCode`、`instanceMode`、`splitNote`、`routeCount`、`paramCount`、`patch{params,params2,instanceMode,splitNote,routes}` | `E_SCHEMA`、`E_PATCH` |
 | `gs1.patch.set` | `{ patch? \| presetId? \| params?, partial?: boolean }`——三者**恰好一个**；`params` 是 `{ key\|id: value }`，值会按浏览器服务的量程**夹取**并报告 | `ok`、`applied`（`params`\|`presetId`\|`patch`）、`partial`、`source`、`presetId`、`shareCode`、`summary{presetId,instanceMode,splitNote,routeCount,paramCount,shareCode}`、`clamped[{key,asked,got,reason}]`、`clampedCount`、`patch` | `E_SCHEMA`、`E_PATCH`、`E_PARAM` |
 | `gs1.patch.random` | `{ seed: integer 0..4294967295 }`（**必填**） | 同 `patch.set` 的载荷，外加 `seed` 与 `randomised:[id…]`（本轮被随机化的参数 id；`applied:'random'`） | `E_SCHEMA`（缺 seed / 非整数）、`E_RANGE`（负数） |
+| `gs1.patch.morph` | `{ attribute: 枚举, amount: number(-1..1) }`——`attribute` ∈ `warmth`(温暖)\|`air`(空气感)\|`brightness`(清脆)\|`width`(宽度)\|`softness`(柔和)；`amount` 是**沿该属性的位置**（1 为满档，-1 为反方向满档，0 为无操作），叠加在**会话当前 patch** 上，所以连续两次调用会累积 | 同 `patch.set` 的载荷（`applied:'morph'`），外加 `attribute`、`attributeLabel{zh,en}`、`attributeSummary{zh,en}`、`amount`、**`moved[{key,id,before,after}]`（本次宏实际动了哪些参数、动前动后各是多少）** | `E_SCHEMA`（未知属性 / 缺参）、`E_RANGE`（`amount` 越界） |
+| `gs1.patch.undo` | `{}`（无参数） | `ok`、`undone`（布尔）、`restoredTo`（`previous`\|`default`）、`source`、`shareCode`、`summary`、`patch`、`undoDepth`、`undoLimit`（32）。**会话没有可撤销的写入时不是错误**：返回 `undone:false`、`reason` 与当前 patch | —（空历史是 no-op，非拒绝） |
 | `gs1.preset.apply` | `{ presetId? \| file? }`——**恰好一个**；`file` 是仓库内的 `.gs1.json` | 同 `patch.set` 的结果（`applied:'preset.apply'`）；`file` 来源再加 `name`、`file` | `E_SCHEMA`、`E_PATCH`、`E_PATH` |
 | `gs1.preset.save` | `{ name?: string, outPath?: string }`（默认名 `GS1 Patch`；`outPath` 必须在 `.tmp/mcp/` 内） | `ok`、`format:'gs1-preset'`、`savePath`、`name`、`byteLength`、`sha256`、`paramCount`、`routeCount`、`layered`、`source`（`session`\|`default`）、`note` | `E_PATH`、`E_SCHEMA` |
 | `gs1.sample.import` | `{ path? \| wavBase64?, name?: string }`——**恰好一个**来源；解码用 app 自己的 `src/audio/wavefile.ts` | `ok`、`code`、`note`、`name`、`source`、`samples`、`sampleRate`、`seconds`、`capacity`、`poolBytes`（本次新占的 arena 字节）、`arenaFreeBytes`、`installed` | `E_SCHEMA`、`E_PATH`、`E_WAV`、`E_RANGE`（超 `MAX_BASE_SAMPLES`，**拒绝不截断**）、`E_IMPORT` |
@@ -207,6 +209,23 @@ AudioWorklet / AudioParam 自动化 / Web Audio 图。）
 **引擎不跨调用保留**：每次 `render`/`gate` 都起一个**全新的 wasm 实例**（`phase_seed = 0`，
 这是逐字节确定性的来源），随后 `installInstrument()` 把 `session.sample` / `session.wavetable`
 **重放进新实例**——和浏览器 reload 后装用户采样做的是同一件事。
+
+**`gs1.patch.morph` 的属性表（`mcp/lib/morph.mjs`，改动只有这些）。** `amount` 沿属性从
+-1 到 1，三种响应方式：`add` 是原值加减（0..1 的混合/深度）；`octaves` 是 **× 2^(系数 × amount)**
+（截止频率与时间——耳朵听这两样都是对数的，线性微调在量程顶端听不见、在底端又太猛）；
+`db` 是 **× 10^(dB × amount / 20)**（增益）。夹取仍由 `applyParams` 做并逐条报告。
+
+| 属性 | 中文 | 参数动作（`amount = 1` 时的满档） |
+| :--- | :--- | :--- |
+| `warmth` | 温暖 | `filterCutoff` −0.35 个八度、`filterDrive` +0.18、`fxChorusMix` +0.08、`patchGain` +0.8 dB |
+| `air` | 空气感 | `filterCutoff` +0.40 个八度、`fxReverbMix` +0.10、`fxReverbSize` +0.08、`osc1Spread` +0.12 |
+| `brightness` | 清脆 | `filterCutoff` +0.55 个八度、`filterRes` +0.08、`filterEnvAmt` +0.12 |
+| `width` | 宽度 | `osc1Spread` +0.30、`fxChorusMix` +0.15、`fxReverbMix` +0.05 |
+| `softness` | 柔和 | `filterCutoff` −0.50 个八度、`filterDrive` −0.15、`envAttack` ×2、`envRelease` ×1.62 |
+
+每个属性**只有三到四项**，这是刻意的：一个悄悄动十五个参数的宏没人能预测，而这个接口的意义
+正在于「说了温暖，就知道会发生什么」。`moved[]` 把每个参数的动前动后都返回，所以这句话是可核对的。
+
 
 ### 4.3 离线层 · 渲染与测量类（3）
 
@@ -688,7 +707,7 @@ stdio 是**换行分隔的 JSON-RPC**（一行一条，无 `Content-Length`）�
 | **P13.2 只读 + 渲染 + 测量** ✅ 2026-09-14（v2.1.1）| `mcp/server.mjs` + `mcp/tools/*.mjs`（**目录驱动**：新增工具＝加一个文件，不动共享清单）+ `gs1.describe`/`params.list`/`presets.list`/`patch.get`/`render`/`analyze`/`gate` + `npm run mcp`（stdio / `--http` 回环 / `--self-test`） | ✅ 工具级单测 **54 条**（P13.2 当时；`mcp/mcp.test.mjs` 今天是 **55** 条）：schema、参数校验、20 条拒绝路径、手写 JSON-RPC 的 `initialize`/`tools/list`/`tools/call`（含 `-32700`/`-32601`/`-32602` 错误帧）、黄金会话、共用实现、依赖自证。**黄金会话**：7 次调用（覆盖全部 7 个工具）跑两遍 `sha256` 相同、WAV 字节相同。**与门禁共用**：`gs1.gate` 的地板与 `offGridFloor(renderFloor(...))`（`verify-audio.mjs` P9.1a 的原调用）`toBe` 全等，四个波形逐一比对。**依赖**：`dependencies` 与 v2.1.0 清单一字不差——本仓库该字段本来就不是空对象（6 条：lamejs、两个 fontsource、playwright、react、react-dom），本批**没有新增任何条目**，尤其没有 `@modelcontextprotocol/sdk`（协议手写，esbuild 读取 app TS 但它是既有 devDependency）。`npm run mcp -- --self-test` 已同步进 `.github/workflows/ci.yml`、`scripts/verify-ci.mjs` 与 `verify` 链。实现说明见 `docs/notes/mcp.md` |
 | **P13.3 操作类** ✅ 2026-09-15 | `mcp/tools/` 七个新文件（**只加文件，不动共享清单**）：`patch-set.mjs`/`patch-random.mjs`/`sample-import.mjs`/`wavetable-import.mjs`/`songs.mjs`/`preset-apply.mjs`/`preset-save.mjs`；`mcp/lib/session.mjs`（会话状态）、`mcp/lib/random.mjs`（带种子的 RANDOM 配方）、`mcp/lib/import.mjs`（解码与结构化拒绝） | ✅ 工具级单测 34 条 + P13.2 的 54 条（当时共 88 条绿；今天 `mcp/` 四个测试文件共 **132 条**全绿）：schema、每条拒绝路径、**夹取报告**（`filterCutoff: 99999 → 20000`，`clamped:[{key,asked,got,reason}]`，`partial:true` 叠加）、`noRoom` 结构化拒绝、**patch 往返**（`patch.get`→`patch.set`→`patch.get` 的 `shareCode` 与 224 个参数逐字节相同，含手工分层 `params2`）、**会话状态**（无 patch 的 `render` 播放当前 patch；导入的采样/波表被重放进每次 `initCore()` 的全新引擎）、**黄金会话**扩展到 21 次调用（含全部变异工具）跑两遍 `sha256` 相同。**`dependencies` 仍未变**：6 条，与 v2.1.0 清单一字不差 |
 | **P13.4 浏览器层 + 范例** ✅ 2026-09-15（待随下一个版本发布）| `gs1.ui.*`（Playwright 驱动，复用帧无关交互）+ §4.5 的实战范例 | ✅ 见 §4.4 与 §4.5：五个工具（`mcp/ui/tools/*.mjs`，独立入口 `npm run mcp:ui`，`npm run mcp` 不加载它们）；`gs1.ui.click` 与 `e2e/fixtures.ts` 共用 `e2e/interact.mjs`（抽取时修掉 `force` 不生效的真缺陷）；白名单 `gs1.ui.gate`；截图 1440×900 与视觉基线同尺寸（desktop 24 张）；§4.5 是**真跑过**的范例——`crushlead` 的 ≥1 kHz 非谐波地板（Hann 宽探针）**-4.0170 → -64.8761 dB，改善 60.86 dB**（默认三探针 -13.0589 → -67.7049 dB），改动只有 `fxCrushBits: 6 → 4` |
-| **P13.5 文档 + 门禁** ✅ 2026-09-15 | 本文补齐为**外部可读的契约** + `docs/notes/mcp.md` 补完 + `scripts/verify-llm-docs.mjs`（接进 `verify`、`ci.yml`、`verify-ci.mjs`）| ✅ 门禁双向核对 19 个工具名、上限与码表（错误码 15 条）；三条自证（删工具名 / 写不存在的名字 / 改 `MAX_SECONDS`）都红；一次**外部视角**检验（无上下文的 agent 只读这两份文件跑通 `tools/list → presets.list → render → analyze`） |
+| **P13.5 文档 + 门禁** ✅ 2026-09-15 | 本文补齐为**外部可读的契约** + `docs/notes/mcp.md` 补完 + `scripts/verify-llm-docs.mjs`（接进 `verify`、`ci.yml`、`verify-ci.mjs`）| ✅ 门禁双向核对 21 个工具名、上限与码表（错误码 15 条）；三条自证（删工具名 / 写不存在的名字 / 改 `MAX_SECONDS`）都红；一次**外部视角**检验（无上下文的 agent 只读这两份文件跑通 `tools/list → presets.list → render → analyze`） |
 
 **顺序理由**：P13.1 必须先做（否则工具与门禁会各量各的）；P13.2 是「能用」的最小集（认知 + 听 + 量）；
 P13.3 才能「改」；P13.4 是给需要看界面的 agent 的，最重、最可延后；P13.5 把上面四批的用法

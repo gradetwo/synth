@@ -18,6 +18,7 @@
  */
 import { ERRORS, fail } from './errors.mjs';
 import { parameterTable } from './data.mjs';
+import { pushUndo } from './session.mjs';
 
 /** The routing a payload carries, in the form `encodePatch` takes. */
 function routingOf(payload) {
@@ -266,6 +267,9 @@ export function commitPatch(ctx, payload, meta = {}) {
   };
   const shareCode = encodePayload(data, full);
   const clamped = meta.clamped ?? [];
+  // Every write goes through here, so this is the one place the session's undo
+  // history has to be fed (see `lib/session.mjs`).
+  pushUndo(ctx.session, ctx.session.patch);
   ctx.session.patch = { ...full, shareCode };
   return {
     ok: true,
@@ -277,6 +281,7 @@ export function commitPatch(ctx, payload, meta = {}) {
     summary: patchSummary({ ...full, shareCode }),
     clamped,
     clampedCount: clamped.length,
+    undoDepth: (ctx.session.history ?? []).length,
     patch: {
       params: full.params,
       params2: full.params2,

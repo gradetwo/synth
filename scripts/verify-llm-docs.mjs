@@ -130,7 +130,7 @@ async function main() {
   };
 
   console.log('[llm-docs] registry');
-  check('the registry is 14 offline tools', tools.size === 14, `${tools.size} loaded from mcp/tools/*.mjs`);
+  check('the registry is 16 offline tools', tools.size === 16, `${tools.size} loaded from mcp/tools/*.mjs`);
   check('the registry is 5 browser tools', uiTools.size === 5, `${uiTools.size} loaded from mcp/ui/tools/*.mjs`);
   check('no name is registered twice', registered.size === tools.size + uiTools.size);
   check('the offline registry has no gs1.ui.* tool', [...tools.keys()].every((name) => !name.startsWith('gs1.ui.')));
