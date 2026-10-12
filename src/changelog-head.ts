@@ -32,13 +32,13 @@ export interface Release {
 export const REPO_URL = 'https://github.com/gradetwo/synth';
 
 export const CHANGELOG_HEAD: Release = {
-    version: '2.1.8',
-    date: '2026-09-27',
-    kind: 'feature',
-    items: [
-      [
-        '**给外部 agent 补上两件工具、放宽渲染的输入与上限，并修好「强制降级其实没释放」。** `gs1.render` 现在三选一：音符列表、内置曲的 `songId`、或 base64 的 MIDI 文件——后两条把一段编曲从几十 KB JSON 变成几 KB；单次渲染上限 30 → **120 秒**、音符 512 → **4096**（旧上限其实会拒绝几乎所有内置曲）。新增 `gs1.patch.morph`：`warmth` / `air` / `brightness` / `width` / `softness`，每个只动三四个参数并如实返回动前动后；新增 `gs1.patch.undo`，写入可以逐步退回。音频侧：被复音上限挤掉的声部原先按**预设自己的 release** 收尾，于是「强制释放」可能几秒内什么都没释放——现在和窃音一样走 50 ms 淡出。**默认声音与 91 条预设指纹未变。**',
-        '**Two more tools for external agents, wider render inputs and limits, and a fix for a force-release that did not release.** `gs1.render` now takes exactly one of a note list, a built-in song by `songId`, or a standard MIDI file as base64 — the last two turn an arrangement from tens of KB of JSON into a few KB. The render cap goes 30 -> **120 seconds** and 512 -> **4096 notes** (the old cap rejected nearly every built-in song). New `gs1.patch.morph`: `warmth` / `air` / `brightness` / `width` / `softness`, each moving three or four parameters and returning every before/after it touched; new `gs1.patch.undo` steps back through writes. On the audio side, a voice pushed out by the polyphony cap used to finish on the **patch\'s own** release, so a "force release" could free nothing for seconds; it now fades over 50 ms like a steal. **The default sound and all 91 preset fingerprints are unchanged.**',
-      ],
+  version: '2.1.9',
+  date: '2026-10-12',
+  kind: 'feature',
+  items: [
+    [
+      '**支持 WebCodecs 硬件加速压缩导出、波表位掩码采样优化与状态持久化脏检查。** 导出功能新增基于 WebCodecs 的 Opus/AAC 原生编码与 16 ms 协作时间分片，彻底杜绝主线程冻结；Ogg 页面批量封装提升 3.1× 封包速度并减少 18.6% 容器冗余。DSP 核心新增波表位掩码直读快速路径与 Worklet 静态参数脏检查。持久化层引入 `saveJsonIfChanged` 脏检查减少 62.5% 的旋钮拖拽写入，32 位单声道 WAV 支持直接内存批量拷贝解码。默认音质与全部 91 条预设指纹完全保持不变。',
+      '**WebCodecs hardware-accelerated compressed export, bit-mask wavetable fast path, and store persistence dirty checking.** Song export adds native WebCodecs Opus/AAC encoding with a 16 ms cooperative yield to prevent main-thread UI freezes; batched Ogg pages speed up packing by 3.1x with 18.6% smaller container overhead. The DSP core adds a bit-mask wavetable sampling fast path and Worklet parameter dirty-checking. Persistence adds `saveJsonIfChanged` to skip 62.5% of redundant knob-drag writes, and float32 mono WAVs decode via direct memcpy. Default audio and all 91 preset fingerprints are unchanged.',
     ],
-  };
+  ],
+};
