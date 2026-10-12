@@ -210,11 +210,62 @@ function normalizeUserPresets(raw: unknown): Preset[] {
  * and keeps the old behaviour of carrying on without storage.
  */
 function saveJson(key: string, value: unknown): boolean {
+  // Raw writes replace a document wholesale; drop any cached bytes for the
+  // key first so a later dirty check cannot mistake old storage for these.
+  jsonCache.delete(key);
   try {
     localStorage.setItem(key, JSON.stringify(value));
     return true;
   } catch {
     /* storage may be unavailable (private mode); the synth still works */
+    return false;
+  }
+}
+
+/**
+ * `saveJson` with a dirty check in front of it.
+ *
+ * A knob drag commits once per pointermove, and most of those writes re-encode
+ * byte-identical JSON: the layout document does not change at all while a
+ * parameter moves, and even the patch document repeats itself whenever a value
+ * settles back onto what is already stored. The cache holds the exact string
+ * that last went into storage under each key, so a hit proves the bytes are
+ * already there and the write can be skipped whole; a miss pays one stringify
+ * and one setItem, exactly as before. A rejected write clears the cache so the
+ * next commit retries rather than believing stale bytes are live, and callers
+ * that replace storage behind the cache's back (the constructor's quarantine
+ * of a newer-schema document) keep their direct `saveJson`.
+ */
+const jsonCache = new Map<string, string>();
+
+/**
+ * Forget the cached bytes for `key` (all keys when omitted).
+ *
+ * The cache only proves "these exact strings are in storage". Anything that
+ * writes, deletes, or replaces a document behind the cache's back — the raw
+ * `saveJson` calls, the project manager swapping live documents, a test
+ * clearing localStorage — must invalidate it first, or a later dirty check
+ * would skip a write the storage no longer holds.
+ */
+export function invalidatePersisted(key?: string): void {
+  if (key === undefined) jsonCache.clear();
+  else jsonCache.delete(key);
+}
+
+function saveJsonIfChanged(key: string, value: unknown): boolean {
+  let text: string;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    return false;
+  }
+  if (jsonCache.get(key) === text) return true;
+  try {
+    localStorage.setItem(key, text);
+    jsonCache.set(key, text);
+    return true;
+  } catch {
+    jsonCache.delete(key);
     return false;
   }
 }
@@ -254,6 +305,11 @@ export class SynthStore {
   private snapshot: Snapshot;
 
   constructor() {
+    // A fresh store reads whatever is in storage and makes it its baseline.
+    // Tests (and any other code) may have written or cleared documents behind
+    // the dirty-check cache's back since the last instance, so start clean:
+    // the first commit after construction always pays the real write.
+    invalidatePersisted();
     const rawState = loadJson<unknown>(STORAGE_KEY);
     const stored = unwrap(rawState);
     if (!stored && rawState) {
@@ -338,8 +394,13 @@ export class SynthStore {
     this.version += 1;
     this.snapshot = this.buildSnapshot();
     for (const fn of this.listeners) fn();
+    // Dirty-checked persistence: during a drag only the patch document ever
+    // changes, so the layout write collapses to a map lookup and repeated
+    // values skip storage entirely. The return contract is unchanged — true
+    // means "storage holds these bytes", which is exactly what a cache hit
+    // certifies.
     return (
-      saveJson(
+      saveJsonIfChanged(
         STORAGE_KEY,
         wrap({
           ...this.state,
@@ -347,7 +408,7 @@ export class SynthStore {
           presetName: this.currentPresetName,
           presetTag: this.currentPresetTag,
         }),
-      ) && saveJson(LAYOUT_KEY, wrap(this.layout))
+      ) && saveJsonIfChanged(LAYOUT_KEY, wrap(this.layout))
     );
   }
 
@@ -947,6 +1008,11 @@ export class SynthStore {
     setLang(this.layout.lang);
     this.userPresets = entry.userPresets.map((p) => ({ ...p }));
     this.adoptPresetIdentity(entry.currentPresetId, entry.currentPresetName, entry.currentPresetTag);
+    // A whole-document swap (undo step, project switch, snapshot recall) is a
+    // new baseline for every live key: forget the cached bytes first so the
+    // dirty check in `commit` cannot mistake the *previous* document's stored
+    // strings for these. The writes below are unconditional either way.
+    invalidatePersisted();
     const presets = saveJson(USER_KEY, wrap(this.userPresets));
     const layout = saveJson(LAYOUT_KEY, this.layout);
     midiLibrary.restore(entry.clips, entry.currentClipId);
@@ -1358,7 +1424,7 @@ export class SynthStore {
   /** Bind the controller that just arrived to the armed parameter. */
   bindMidiCc(param: number, cc: number) {
     this.layout = { ...this.layout, ccMap: bindCc(this.layout.ccMap, param, cc) };
-    saveJson(LAYOUT_KEY, this.layout);
+    saveJsonIfChanged(LAYOUT_KEY, wrap(this.layout));
     this.midiLearn = null;
     this.mark();
     this.commit();
@@ -1367,7 +1433,7 @@ export class SynthStore {
 
   clearMidiCc(param: number) {
     this.layout = { ...this.layout, ccMap: unbindParam(this.layout.ccMap, param) };
-    saveJson(LAYOUT_KEY, this.layout);
+    saveJsonIfChanged(LAYOUT_KEY, wrap(this.layout));
     this.mark();
     this.commit();
   }
@@ -1375,7 +1441,7 @@ export class SynthStore {
   /** Change the microtuning temperament and push it to the engine. */
   setTemperament(id: string) {
     this.layout = { ...this.layout, temperament: id };
-    saveJson(LAYOUT_KEY, this.layout);
+    saveJsonIfChanged(LAYOUT_KEY, wrap(this.layout));
     engine.setTuning(this.tuningTableFor(id));
     this.mark();
     this.commit();
@@ -1385,7 +1451,7 @@ export class SynthStore {
   saveScene(name: string) {
     const scene = makeScene(`scene-${Date.now()}`, name, this.layout);
     this.scenes = [...this.scenes, scene];
-    saveJson(SCENES_KEY, wrap(this.scenes));
+    saveJsonIfChanged(SCENES_KEY, wrap(this.scenes));
     this.mark();
     this.commit();
     return scene;
@@ -1396,14 +1462,14 @@ export class SynthStore {
     const scene = this.scenes.find((entry) => entry.id === id);
     if (!scene) return;
     this.layout = applySceneToLayout(this.layout, scene);
-    saveJson(LAYOUT_KEY, this.layout);
+    saveJsonIfChanged(LAYOUT_KEY, wrap(this.layout));
     this.mark();
     this.commit();
   }
 
   deleteScene(id: string) {
     this.scenes = this.scenes.filter((entry) => entry.id !== id);
-    saveJson(SCENES_KEY, wrap(this.scenes));
+    saveJsonIfChanged(SCENES_KEY, wrap(this.scenes));
     this.mark();
     this.commit();
   }
@@ -1415,7 +1481,7 @@ export class SynthStore {
       midiOut: enabled,
       midiOutPort: port ?? this.layout.midiOutPort,
     };
-    saveJson(LAYOUT_KEY, this.layout);
+    saveJsonIfChanged(LAYOUT_KEY, wrap(this.layout));
     setMidiOutEnabled(enabled);
     if (enabled) midiOut.selectPort(this.layout.midiOutPort);
     this.mark();
@@ -1425,7 +1491,7 @@ export class SynthStore {
   /** Quantise grid for recordings. */
   setRecordQuantise(id: string) {
     this.layout = { ...this.layout, recordQuantise: id };
-    saveJson(LAYOUT_KEY, this.layout);
+    saveJsonIfChanged(LAYOUT_KEY, wrap(this.layout));
     this.mark();
     this.commit();
   }
@@ -1433,7 +1499,7 @@ export class SynthStore {
   /** Live-input velocity curve. */
   setVelocityCurve(id: string) {
     this.layout = { ...this.layout, velocityCurve: id };
-    saveJson(LAYOUT_KEY, this.layout);
+    saveJsonIfChanged(LAYOUT_KEY, wrap(this.layout));
     this.mark();
     this.commit();
   }
@@ -1441,7 +1507,7 @@ export class SynthStore {
   /** MPE input mode. */
   setMpe(enabled: boolean) {
     this.layout = { ...this.layout, mpe: enabled };
-    saveJson(LAYOUT_KEY, this.layout);
+    saveJsonIfChanged(LAYOUT_KEY, wrap(this.layout));
     midi.setMpe(enabled);
     this.mark();
     this.commit();
@@ -1450,7 +1516,7 @@ export class SynthStore {
   /** Install an imported Scala scale and switch to it. */
   importTuning(scale: ScalaScale) {
     this.layout = { ...this.layout, temperament: 'custom', customTuning: scale };
-    saveJson(LAYOUT_KEY, this.layout);
+    saveJsonIfChanged(LAYOUT_KEY, wrap(this.layout));
     engine.setTuning(scalaTable(scale));
     this.mark();
     this.commit();
@@ -1465,7 +1531,7 @@ export class SynthStore {
 
   setPolyphony(n: number) {
     this.layout = { ...this.layout, polyphony: n };
-    saveJson(LAYOUT_KEY, this.layout);
+    saveJsonIfChanged(LAYOUT_KEY, wrap(this.layout));
     engine.setPolyphony(n);
   }
 

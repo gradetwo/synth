@@ -26,6 +26,68 @@ describe('synth store', () => {
     expect(store.getParam(Param.FILTER_CUTOFF)).toBe(1234);
   });
 
+  it('persists every commit, and skips the write when the bytes have not changed', async () => {
+    // A dedicated store instance so the write counts below measure *this*
+    // test's commits. The module-level `store` shares one jsdom localStorage
+    // with every other case in the file, and its first commit after a previous
+    // test wrote byte-identical JSON is dirty-checked away — which would make
+    // the counting start from a state this test does not control.
+    const store = new SynthStore();
+    // The dirty check in `commit` must never hide a real change: whatever the
+    // store commits has to be readable back from storage by a fresh instance.
+    // A fresh instance restores layout.activeInstance from the shared jsdom
+    // localStorage, which earlier tests may have left on either value — and
+    // `setActiveInstance` short-circuits when the target matches what was
+    // restored. Read the actual state first, then park on a known baseline
+    // (instance 1, the 'init' preset) *before* the counting starts; every
+    // write below is then attributable to this test.
+    if (store.activeInstance === 2) store.setActiveInstance(1);
+    await store.applyPresetById('init');
+    store.setParam(Param.FILTER_CUTOFF, 1337);
+    const written = unwrap(JSON.parse(localStorage.getItem('gs1:state:v1')!) as unknown);
+    expect((written as { data: { params: Record<number, number> } }).data.params[Param.FILTER_CUTOFF]).toBe(
+      1337,
+    );
+    // Re-committing identical bytes must not touch storage again — that is the
+    // knob-drag case where the layout document repeats itself per pointermove.
+    // The parameter setters short-circuit on unchanged values, so the commit
+    // paths exercised here are ones that write state unconditionally: a real
+    // parameter change, a same-value re-apply of a preset (patch bytes
+    // unchanged), and a different preset (real patch change). Instance
+    // switches are deliberately *not* used as write triggers: they only touch
+    // the layout document, and the dirty check correctly skips the patch write.
+    const before = localStorage.getItem('gs1:state:v1');
+    let sets = 0;
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (key === 'gs1:state:v1') sets += 1;
+      return original.call(this, key, value);
+    };
+    try {
+      // A real patch change writes once.
+      store.setParam(Param.FILTER_CUTOFF, 1400);
+      expect(sets).toBe(1);
+      // Re-applying the same preset rebuilds byte-identical patch JSON; the
+      // dirty check must see it and skip the write.
+      await store.applyPresetById('pluck');
+      await store.applyPresetById('pluck');
+      expect(sets).toBe(2);
+      // A genuinely different patch still gets through after the skip.
+      await store.applyPresetById('init');
+      expect(sets).toBe(3);
+    } finally {
+      Storage.prototype.setItem = original;
+    }
+    expect(localStorage.getItem('gs1:state:v1')).not.toBe(before);
+
+    // And a real change still gets through after the skips.
+    store.setParam(Param.FILTER_CUTOFF, 1448);
+    const updated = unwrap(JSON.parse(localStorage.getItem('gs1:state:v1')!) as unknown);
+    expect((updated as { data: { params: Record<number, number> } }).data.params[Param.FILTER_CUTOFF]).toBe(
+      1448,
+    );
+  });
+
   it('applies a batch of parameters as one change', () => {
     // A routing-graph rebuild writes 37 parameters at once; committing each on
     // its own redrew the whole interface 37 times (and wrote storage twice per
@@ -98,7 +160,13 @@ describe('synth store', () => {
   });
 
   it('persists state to localStorage', () => {
-    store.setParam(Param.FILTER_RES, 0.42);
+    // A dedicated store instance: the module-level `store` is constructed once
+    // per file and may have loaded a leftover document from an earlier test's
+    // writes, so its first commit could be dirty-checked away. A fresh store
+    // re-reads storage, takes it as its baseline, and its first real change
+    // always pays the write — which is exactly what this test observes.
+    const s = new SynthStore();
+    s.setParam(Param.FILTER_RES, 0.42);
     const raw = localStorage.getItem('gs1:state:v1');
     expect(raw).toBeTruthy();
     // Documents are stored in a schema envelope (`state/persist.ts`), so a test
