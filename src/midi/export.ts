@@ -75,10 +75,19 @@ export async function exportSongMp3(song: MidiSong, name: string): Promise<void>
 /**
  * Fast, hardware-accelerated compressed export via WebCodecs (Opus/AAC) with transparent
  * fallback to pure-JS LAME MP3.
+ *
+ * `preferMp3` skips the WebCodecs probe and always runs the LAME path. The
+ * "导出 MP3" button uses it: Chromium's Media Foundation Opus encoder is a
+ * software encoder whose output for this content measured ~50 KB for a render
+ * that is ~1 MB as MP3 — so small that the e2e byte floor failed — and the
+ * browser then renames a `.mp3`-named download to `.opus` from the sniffed
+ * container type. Safari/Firefox have no MP3 encoder at all, so those builds
+ * leave the flag off and keep the fast native Opus/AAC path.
  */
 export async function exportSongCompressed(
   song: MidiSong,
   name: string,
+  opts: { preferMp3?: boolean } = {},
 ): Promise<{ codec: 'opus' | 'aac' | 'mp3'; ext: string }> {
   const notes = mixedNotes(song, midiPlayer.getLayers());
   const buffer = await renderPatchToBuffer(store.getSnapshot().state, {
@@ -90,7 +99,17 @@ export async function exportSongCompressed(
   normalizePeak(channels, EXPORT_CEILING);
 
   const { encodeCompressedAudio } = await import('@/audio/webcodecs');
-  const result = await encodeCompressedAudio(buffer, { bitrateKbps: EXPORT_KBPS });
+  let result: Awaited<ReturnType<typeof encodeCompressedAudio>>;
+  if (opts.preferMp3) {
+    // The one place that promises an actual MP3 file: the LAME encoder, no
+    // WebCodecs probe. Kept out of `encodeCompressedAudio` so its fallback
+    // chain stays honest — a probe failure there is still "no WebCodecs".
+    const { encodeMp3 } = await import('@/audio/mp3');
+    const blob = await encodeMp3(buffer, EXPORT_KBPS);
+    result = { blob, codec: 'mp3' as const, ext: 'mp3', bitrateKbps: EXPORT_KBPS };
+  } else {
+    result = await encodeCompressedAudio(buffer, { bitrateKbps: EXPORT_KBPS });
+  }
   downloadBlob(`${safeName(name)}.${result.ext}`, result.blob);
   return { codec: result.codec, ext: result.ext };
 }
