@@ -228,7 +228,7 @@ export function parseWav(bytes: ArrayBuffer): DecodedWave | null {
   const base = data.offset;
   const total = frames * channels;
 
-  if (format === 3 && bytesPerSample === 4 && channels === 1) {
+  if (format === 3 && bytesPerSample === 4 && channels === 1 && base % 4 === 0) {
     const src = new Float32Array(bytes, base, total);
     const samples = new Float32Array(frames);
     samples.set(src);

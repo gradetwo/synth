@@ -104,6 +104,44 @@ describe('wav parsing', () => {
     bytes.set([0x49, 0x44, 0x33], 0); // "ID3" — an mp3
     expect(parseWav(bytes.buffer)).toBeNull();
   });
+
+  it('reads 32-bit float mono WAV with aligned and unaligned offsets', () => {
+    function wavFloat32(data: Float32Array, padBytes = 0): ArrayBuffer {
+      const buffer = new ArrayBuffer(44 + padBytes + data.length * 4);
+      const view = new DataView(buffer);
+      const text = (offset: number, value: string) => {
+        for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
+      };
+      text(0, 'RIFF');
+      view.setUint32(4, buffer.byteLength - 8, true);
+      text(8, 'WAVE');
+      text(12, 'fmt ');
+      view.setUint32(16, 16 + padBytes, true);
+      view.setUint16(20, 3, true); // IEEE float
+      view.setUint16(22, 1, true); // mono
+      view.setUint32(24, 48000, true);
+      view.setUint32(28, 48000 * 4, true);
+      view.setUint16(32, 4, true);
+      view.setUint16(34, 32, true);
+      const dataOffset = 36 + padBytes;
+      text(dataOffset, 'data');
+      view.setUint32(dataOffset + 4, data.length * 4, true);
+      const start = dataOffset + 8;
+      for (let i = 0; i < data.length; i++) {
+        view.setFloat32(start + i * 4, data[i], true);
+      }
+      return buffer;
+    }
+
+    const cycle = new Float32Array(512).map((_, i) => Math.sin((2 * Math.PI * i) / 512));
+    const aligned = parseWav(wavFloat32(cycle, 0));
+    expect(aligned?.samples.length).toBe(512);
+    expect(aligned!.samples[128]).toBeCloseTo(1, 4);
+
+    const unaligned = parseWav(wavFloat32(cycle, 2));
+    expect(unaligned?.samples.length).toBe(512);
+    expect(unaligned!.samples[128]).toBeCloseTo(1, 4);
+  });
 });
 
 describe('cycle extraction', () => {
