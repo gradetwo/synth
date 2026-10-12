@@ -108,6 +108,8 @@ class RollSession {
   private seekBeats: number | undefined;
   private listeners = new Set<() => void>();
   private cache: RollState;
+  /** The queued live-drag notification, if one is waiting for the next frame. */
+  private liveFrame: number | undefined;
   /** Song object identity the document was built from, to spot outside edits. */
   private source: MidiSong | null = null;
 
@@ -305,12 +307,40 @@ class RollSession {
     this.emit();
   }
 
-  /** A live drag: the document follows the pointer, history waits for the end. */
+  /**
+   * A live drag: the document follows the pointer, history waits for the end.
+   *
+   * The document itself updates on every call — pointerup handlers read
+   * `getDoc()` synchronously and must see the newest position — but React is
+   * only notified once per frame. Pointer events fire faster than the display
+   * refreshes (120 Hz on ProMotion, coalesced batches elsewhere), and each
+   * emit rebuilds the snapshot cache and re-renders both views of the whole
+   * note list. Measured in scripts/bench-js.mjs: a 500-note layer dragged at
+   * 240 input events per second costs 240 renders/s before this gate and ~60
+   * after, with the last word always flushed by settle()/applyGesture() so a
+   * released pointer can never leave the screen one frame behind the document.
+   */
   live(next: RollDoc): void {
     if (next === this.doc) return;
     this.doc = next;
     this.scheduleSync();
-    this.emit();
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      this.emit();
+      return;
+    }
+    if (this.liveFrame !== undefined) return;
+    this.liveFrame = window.requestAnimationFrame(() => {
+      this.liveFrame = undefined;
+      this.emit();
+    });
+  }
+
+  /** Drop a queued live-drag notification without emitting it. */
+  private cancelLive(): void {
+    if (this.liveFrame !== undefined && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(this.liveFrame);
+    }
+    this.liveFrame = undefined;
   }
 
   /**
