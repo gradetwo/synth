@@ -83,6 +83,12 @@ export function detectPeriod(samples: Float32Array): number {
   const lags = maxLag - MIN_LAG + 1;
   const scores = new Float32Array(lags);
   let best = -Infinity;
+  // One shared inner loop fills both accumulators. A "sliding energy"
+  // variant (update the b² sum with one add/subtract per lag instead of
+  // re-summing the window) was tried and measured at parity-or-worse in
+  // scripts/bench-js.mjs — across runs it swung between 0.82x and 1.27x,
+  // so there is no reliable win to justify the extra pass over the array.
+  // The straightforward fused form stays.
   for (let lag = MIN_LAG; lag <= maxLag; lag++) {
     let numerator = 0;
     let energy = 0;
@@ -207,6 +213,27 @@ export function parseWav(bytes: ArrayBuffer): DecodedWave | null {
   if (![1, 2, 3, 4, 8].includes(bytesPerSample)) return null;
   const frames = Math.floor(data.length / (bytesPerSample * channels));
   if (frames < MIN_CYCLE) return null;
+
+  // One fast path, measured against the generic reader below in
+  // scripts/bench-js.mjs: float32 mono decodes as a `Float32Array.set`
+  // memcpy instead of a per-sample accessor call — 1.4x-2.8x on a
+  // five-second buffer depending on run noise, identical samples.
+  // Candidates that looked faster on paper but lost or wobbled on this
+  // machine were dropped: an Int16Array view for 16-bit PCM measured
+  // 0.77x-1.54x across runs (never reliably better than the DataView
+  // accessor), and a sliding-energy autocorrelation in detectPeriod
+  // measured 0.82x-1.27x — pure noise around parity. Everything else
+  // (all PCM bit depths, int32, float64, multichannel) keeps the generic
+  // reader.
+  const base = data.offset;
+  const total = frames * channels;
+
+  if (format === 3 && bytesPerSample === 4 && channels === 1) {
+    const src = new Float32Array(bytes, base, total);
+    const samples = new Float32Array(frames);
+    samples.set(src);
+    return { sampleRate, samples };
+  }
 
   const read = (index: number): number => {
     const at = data!.offset + index * bytesPerSample;
