@@ -428,8 +428,8 @@ $$X[k] = \sum_{n=0}^{N-1} x[n]\, e^{-j 2\pi k n / N}$$
 
 `crates/synth-core/src/fft.rs` 的注释解释了 512 点的选择：
 「512 points at 48 kHz gives **~94 Hz resolution**, which is plenty for a 36-band display.」
-并且它是**唯一**在音频线程上跑的 FFT（每 `ANALYSIS_INTERVAL = 6` 个 block 一次，
-约 16 ms @48k/128，`src/audio/worklet-processor.js`）。
+并且它是**唯一**在音频线程上跑的 FFT（每 `ANALYSIS_INTERVAL = 10` 个 block 一次，
+约 26.7 ms @48k/128，`src/audio/worklet-processor.js`）。
 
 ### 3.2 窗函数
 
@@ -3555,7 +3555,7 @@ jump to the centre」）。单测 `pending_note_keeps_its_pan` 钉住这条。
 | 频率分辨率 | ~**94 Hz** @48 kHz |
 
 预算：**512 点 FFT + 36 个对数 bin**，「which is plenty for a 36-band display」。
-调用频率由宿主决定：`ANALYSIS_INTERVAL = 6` 个 block（约 **16 ms @48k/128**）。
+调用频率由宿主决定：`ANALYSIS_INTERVAL = 10` 个 block（约 **26.7 ms @48k/128**）。
 
 ### 25.2 计量与告警口径
 

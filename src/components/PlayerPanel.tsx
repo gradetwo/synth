@@ -206,7 +206,13 @@ export function PlayerPanel({
       live = false;
     };
   }, [open, playlist]);
-  useEffect(() => midiPlayer.subscribe(setPlayer), []);
+
+  useEffect(() => {
+    if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPlayer(midiPlayer.getState());
+    return midiPlayer.subscribe(setPlayer);
+  }, [open]);
   useEffect(() => recorder.subscribe(setRec), []);
   // Clip templates live in the workspace layout, so saving or deleting one has
   // to redraw the strip; nothing else about the store is read here.
@@ -608,7 +614,20 @@ export function PlayerPanel({
               if (!current) return;
               setBusy(true);
               try {
-                const res = await withPlaybackPaused(() => exportSongCompressed(current.song, trackTitle(current)));
+                // Chromium's WebCodecs Opus encoder wins here on speed, but it
+                // produces an `.opus` container that the download pipeline
+                // sniffs and renames (breaking the "导出 MP3" promise) and whose
+                // output for quiet synth renders can fall far below what users
+                // expect of a 256 kbps MP3. Force the LAME path on Chromium;
+                // Safari/Firefox have no MP3 encoder at all, so they keep the
+                // fast native Opus/AAC route.
+                const isChromium =
+                  typeof navigator !== 'undefined' &&
+                  /\bChrome\/\d/.test(navigator.userAgent) &&
+                  !/Edg\/|OPR\/|OPiOS\//.test(navigator.userAgent);
+                const res = await withPlaybackPaused(() =>
+                  exportSongCompressed(current.song, trackTitle(current), { preferMp3: isChromium }),
+                );
                 toast(t('player.mp3Saved', { name: `${trackTitle(current)}.${res.ext}` }));
               } catch (err) {
                 toast(t('player.mp3Failed', { msg: err instanceof Error ? err.message : String(err) }));

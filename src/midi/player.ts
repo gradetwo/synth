@@ -177,6 +177,7 @@ export class MidiPlayer {
   private map: TempoSegment[] = tempoMapOf(null);
   private song: MidiSong | null = null;
   private layers: LayerState[] = [];
+  private lastEmitTime = 0;
 
   /** Called when a non-looping song reaches its end. */
   onEnded: (() => void) | null = null;
@@ -431,8 +432,15 @@ export class MidiPlayer {
     }
 
     this.fireUpTo(target);
-    this.state = { ...this.state, time: target };
-    this.emit();
+    this.state.time = target;
+    // Throttle UI broadcast during continuous playback ticks to ~30 FPS (33 ms).
+    // On 120Hz ProMotion screens (iPhone), emitting on every rAF triggers 120
+    // full React tree re-renders per second, causing severe thermal throttling.
+    if (now - this.lastEmitTime >= 33) {
+      this.lastEmitTime = now;
+      this.state = { ...this.state, time: target };
+      this.emit();
+    }
     this.raf = requestAnimationFrame(this.tick);
   };
 

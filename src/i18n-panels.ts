@@ -238,7 +238,7 @@ export const PLAYER_STRINGS: StringTable = {
   'player.wavSaved': ['已保存 {name}.wav（无损，体积较大）', 'Saved {name}.wav (lossless, large)'],
   'player.wavHint': ['无损导出：文件更大，但没有任何编码噪声——如果 MP3 听起来有底噪，用它对比', 'Lossless export: larger, no encoder noise at all — use it to check whether an MP3 artefact is the encoder'],
   'player.exportMp3': ['导出 MP3', 'Export MP3'],
-  'player.mp3Saved': ['已导出 <b>{name}.mp3</b>', 'Exported <b>{name}.mp3</b>'],
+  'player.mp3Saved': ['已导出 <b>{name}</b>', 'Exported <b>{name}</b>'],
   'player.mp3Failed': ['MP3 导出失败：{msg}', 'MP3 export failed: {msg}'],
   'player.rendering': ['渲染中…', 'Rendering…'],
   'player.notes': ['音符', 'notes'],

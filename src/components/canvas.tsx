@@ -13,6 +13,15 @@ import { getUserSample } from '@/audio/userSample';
 
 const TAU = Math.PI * 2;
 
+function canGlow(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    (navigator.maxTouchPoints ?? 0) === 0 &&
+    !(window.matchMedia?.('(pointer: coarse)').matches ?? false) &&
+    Math.min(window.innerWidth, window.innerHeight) >= 900
+  );
+}
+
 /**
  * Shared canvas loop. Sizing is handled by a per-canvas ResizeObserver, but all
  * drawing is multiplexed onto one `requestAnimationFrame` via `subscribeFrame`.
@@ -36,6 +45,7 @@ function useRafCanvas(
   const drawRef = useRef(draw);
   const dirtyRef = useRef(dirty);
   const forced = useRef(true);
+  const visible = useRef(true);
 
   useEffect(() => {
     drawRef.current = draw;
@@ -45,6 +55,19 @@ function useRafCanvas(
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
+
+    let io: IntersectionObserver | null = null;
+    if (typeof IntersectionObserver !== 'undefined') {
+      io = new IntersectionObserver(([entry]) => {
+        const isVis = entry ? entry.isIntersecting : true;
+        if (isVis && !visible.current) {
+          forced.current = true;
+        }
+        visible.current = isVis;
+      });
+      io.observe(canvas);
+    }
+
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const rect = canvas.getBoundingClientRect();
@@ -60,6 +83,7 @@ function useRafCanvas(
     ro.observe(canvas);
     resize();
     const unsubscribe = subscribeFrame(() => {
+      if (!visible.current) return;
       if (!forced.current && dirtyRef.current && !dirtyRef.current()) return;
       forced.current = false;
       const ctx = canvas.getContext('2d');
@@ -70,6 +94,7 @@ function useRafCanvas(
     return () => {
       unsubscribe();
       ro.disconnect();
+      if (io) io.disconnect();
     };
   }, []);
 
@@ -169,8 +194,11 @@ export function Scope() {
     ctx.beginPath();
     ctx.lineWidth = 1.6;
     ctx.strokeStyle = ink.accent;
-    ctx.shadowColor = ink.accentFade;
-    ctx.shadowBlur = 7;
+    const glow = canGlow();
+    if (glow) {
+      ctx.shadowColor = ink.accentFade;
+      ctx.shadowBlur = 7;
+    }
     const n = data.length;
     for (let i = 0; i < n; i++) {
       const x = (i / (n - 1)) * w;
@@ -180,7 +208,7 @@ export function Scope() {
       else ctx.lineTo(x, y);
     }
       ctx.stroke();
-      ctx.shadowBlur = 0;
+      if (glow) ctx.shadowBlur = 0;
     },
     () => {
       if (seen.current === analysis.frames) return false;
@@ -277,7 +305,8 @@ export function MiniWave({
     ctx.clearRect(0, 0, w, h);
     ctx.strokeStyle = on ? color : canvasInk().off;
     ctx.lineWidth = 1.6;
-    if (on) {
+    const glow = on && canGlow();
+    if (glow) {
       ctx.shadowColor = color;
       ctx.shadowBlur = 5;
     }
@@ -296,7 +325,7 @@ export function MiniWave({
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
-    ctx.shadowBlur = 0;
+    if (glow) ctx.shadowBlur = 0;
     },
     () => {
       // Nothing here moves on its own: the shape is a function of parameters.
@@ -332,8 +361,11 @@ export function FilterCurve() {
     const peak = res * (h * 0.38);
     ctx.strokeStyle = '#6ee7a0';
     ctx.lineWidth = 2;
-    ctx.shadowColor = '#6ee7a0';
-    ctx.shadowBlur = 5;
+    const glow = canGlow();
+    if (glow) {
+      ctx.shadowColor = '#6ee7a0';
+      ctx.shadowBlur = 5;
+    }
     ctx.beginPath();
     /** The schematic response of one stage, in pixels (y grows downward). */
     const stageY = (
@@ -393,7 +425,7 @@ export function FilterCurve() {
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
-    ctx.shadowBlur = 0;
+    if (glow) ctx.shadowBlur = 0;
     ctx.strokeStyle = 'rgba(110,231,160,.35)';
     ctx.setLineDash([3, 4]);
     ctx.beginPath();
