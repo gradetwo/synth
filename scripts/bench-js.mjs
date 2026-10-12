@@ -356,3 +356,75 @@ console.log('[bench-js] 4. Ogg packaging — one packet per page vs batched page
   const B = time('proposed: 20 packets/page', () => proposed());
   console.log(`  -> speed-up ${(A.best / B.best).toFixed(2)}x; pages ${A.last.count} -> ${B.last.count}; payload bytes ${A.last.bytes} -> ${B.last.bytes} (${(((B.last.bytes - A.last.bytes) / A.last.bytes) * 100).toFixed(1)} % container size)`);
 }
+
+console.log('[bench-js] 5. rollSession.live() — 240 Hz drag gesture: unthrottled vs rAF-throttled React notifies');
+{
+  const N_NOTES = 500;
+  const EVENTS = 240;
+  const DISPLAY_HZ = 60;
+  const EVENTS_PER_FRAME = Math.round(EVENTS / DISPLAY_HZ);
+
+  const simulateRender = (notes) => {
+    let sum = 0;
+    for (let i = 0; i < notes.length; i++) sum += notes[i].start * 10 + notes[i].note;
+    return sum;
+  };
+
+  const notes = Array.from({ length: N_NOTES }, (_, i) => ({
+    id: `n${i}`,
+    start: i * 0.25,
+    note: 60 + (i % 24),
+    length: 0.25,
+  }));
+
+  // Baseline: unthrottled live() notifying listeners on every pointer event
+  let baseRenders = 0;
+  const runUnthrottled = () => {
+    let currentDoc = { notes };
+    let renders = 0;
+    for (let i = 0; i < EVENTS; i++) {
+      currentDoc = {
+        notes: currentDoc.notes.map((n) => ({ ...n, start: n.start + 0.01 })),
+      };
+      // Every pointer event rebuilds state and triggers subscriber render
+      renders++;
+      simulateRender(currentDoc.notes);
+    }
+    baseRenders = renders;
+    return renders;
+  };
+
+  // Landed: rAF-throttled live() coalescing notifications to display refresh rate
+  let throttledRenders = 0;
+  const runThrottled = () => {
+    let currentDoc = { notes };
+    let queued = false;
+    let renders = 0;
+    for (let i = 0; i < EVENTS; i++) {
+      currentDoc = {
+        notes: currentDoc.notes.map((n) => ({ ...n, start: n.start + 0.01 })),
+      };
+      queued = true;
+      if (i % EVENTS_PER_FRAME === EVENTS_PER_FRAME - 1) {
+        if (queued) {
+          renders++;
+          simulateRender(currentDoc.notes);
+          queued = false;
+        }
+      }
+    }
+    if (queued) {
+      renders++;
+      simulateRender(currentDoc.notes);
+    }
+    throttledRenders = renders;
+    return renders;
+  };
+
+  const A = time('unthrottled: 1 render/pointermove (HEAD)', runUnthrottled);
+  const B = time('rAF-throttled: 1 render/frame (landed)', runThrottled);
+  console.log(
+    `  -> speed-up ${(A.best / B.best).toFixed(2)}x; React renders ${baseRenders} -> ${throttledRenders} (-${(((baseRenders - throttledRenders) / baseRenders) * 100).toFixed(1)} % renders during drag)`,
+  );
+}
+

@@ -137,6 +137,7 @@ class RollSession {
   }
 
   private emit(): void {
+    this.cancelLive();
     this.cache = this.build();
     for (const fn of this.listeners) fn();
   }
@@ -324,6 +325,7 @@ class RollSession {
     if (next === this.doc) return;
     this.doc = next;
     this.scheduleSync();
+    this.cache = this.build();
     if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
       this.emit();
       return;

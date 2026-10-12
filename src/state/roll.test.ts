@@ -185,6 +185,30 @@ describe('editing session', () => {
     rollSession.settle(rollSession.getDoc());
     expect(rollSession.getState().canUndo).toBe(false);
   });
+
+  it('throttles live notifications to animation frames and cancels on settle', async () => {
+    let emissions = 0;
+    const unsub = rollSession.subscribe(() => {
+      emissions++;
+    });
+    const from = rollSession.getDoc();
+    rollSession.live({ ...from, notes: [{ ...from.notes[0], start: 0.1 }] });
+    rollSession.live({ ...from, notes: [{ ...from.notes[0], start: 0.2 }] });
+    rollSession.live({ ...from, notes: [{ ...from.notes[0], start: 0.3 }] });
+    // In the same frame, no listener emission yet (queued via rAF)
+    expect(emissions).toBe(0);
+    expect(rollSession.getState().doc.notes[0].start).toBe(0.3);
+
+    // Settle cancels the queued rAF and emits immediately once
+    rollSession.settle(from);
+    expect(emissions).toBe(1);
+
+    // Wait for the next tick to ensure no duplicate/stale emission fires
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    expect(emissions).toBe(1);
+
+    unsub();
+  });
 });
 
 /**
