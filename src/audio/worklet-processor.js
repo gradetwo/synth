@@ -396,7 +396,8 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     this.costAvg = 0;
     this.lastDowngrade = -Infinity;
     this.lastUpgrade = 0;
-    this.lastParamValues = new Float32Array(PARAMS.length).fill(NaN);
+    // ROI-2: dirty-checking for WASM param pushes. NaN forces first push.
+    this._lastParamValues = new Float32Array(PARAMS.length).fill(NaN);
     this.port.onmessage = (event) => this.handleMessage(event.data);
     /** Instance B's parameter values, so a restart can restore them. */
     /**
@@ -962,14 +963,16 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     }
 
     // 1. Push the browser-interpolated AudioParam values into the engine.
+    // ROI-2: dirty-check to avoid ~225 JS->WASM calls per block when idle.
+    // k-rate (values.length > 1, block has automation) always pushes.
     for (let i = 0; i < PARAMS.length; i++) {
       const name = PARAMS[i][0];
       const values = parameters[name];
       if (values !== undefined) {
-        const val = values[0];
-        if (val !== this.lastParamValues[i]) {
-          this.lastParamValues[i] = val;
-          this.wasm.gs_set_param(PARAMS[i][1], val);
+        const v = values[0];
+        if (values.length > 1 || v !== this._lastParamValues[i]) {
+          this.wasm.gs_set_param(PARAMS[i][1], v);
+          this._lastParamValues[i] = v;
         }
       }
     }

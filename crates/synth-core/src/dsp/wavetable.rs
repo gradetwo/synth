@@ -235,6 +235,26 @@ impl Table {
         let b = table[(index + 1) % len];
         a + (b - a) * frac
     }
+
+    /// Fast path of [`Self::sample`] for callers that guarantee `phase` is
+    /// already in `[0.0, 1.0)`.
+    ///
+    /// Skips the `rem_euclid` (fmod) and replaces the `% len` wraps with a
+    /// bit mask (`len` is always [`BASE_LEN`], a power of two). Bit-identical
+    /// to [`Self::sample`] for in-range phases.
+    #[inline]
+    pub fn sample_fast(&self, level: usize, phase: f32) -> f32 {
+        debug_assert!((0.0..1.0).contains(&phase), "sample_fast requires phase in [0,1)");
+        let table = &self.levels[level.min(self.levels.len() - 1)];
+        // All levels are BASE_LEN samples; BASE_LEN is a power of two.
+        let mask = table.len() - 1;
+        let position = phase * table.len() as f32;
+        let index = position as usize;
+        let frac = position - index as f32;
+        let a = table[index & mask];
+        let b = table[(index + 1) & mask];
+        a + (b - a) * frac
+    }
 }
 
 /// One mip level: the recipe's harmonics up to `top`, as a sine sum over the
@@ -367,6 +387,27 @@ mod tests {
         let b = table.sample(0, 0.1005);
         let mid = table.sample(0, 0.10025);
         assert!(mid <= a.max(b) + 1e-6 && mid >= a.min(b) - 1e-6);
+    }
+
+    #[test]
+    fn sample_fast_matches_sample_for_in_range_phases() {
+        let table = Table::from_recipe(ORGAN);
+        for level in 0..table.levels.len() {
+            // Dense sweep across [0, 1), including near-boundary values.
+            for i in 0..4096 {
+                let phase = i as f32 / 4096.0;
+                let a = table.sample(level, phase);
+                let b = table.sample_fast(level, phase);
+                assert!(
+                    (a - b).abs() < 1e-6,
+                    "mismatch at level {level} phase {phase}: {a} vs {b}"
+                );
+            }
+            // Edge: phase extremely close to 1.0 (but still < 1.0).
+            let edge = table.sample_fast(level, 0.9999999);
+            let expect = table.sample(level, 0.9999999);
+            assert!((edge - expect).abs() < 1e-6, "edge mismatch at level {level}");
+        }
     }
 
     // ------------------------------------------------- imported single cycles

@@ -4180,11 +4180,14 @@ fn render_wave(
                     // The offset is added to the read phase only: the oscillator
                     // keeps running at its own frequency, so a deep index cannot
                     // pull it out of tune or out of the table.
+                    // Both arms yield `read` in [0, 1): the PM arm wraps with
+                    // `rem_euclid`, and `phase` itself is kept in range below,
+                    // so the fast table lookup (no fmod, bit-mask wrap) applies.
                     let read = match pm {
                         Some((modulator, cycles)) => (phase + modulator[i] * cycles).rem_euclid(1.0),
                         None => phase,
                     };
-                    *sample = table.sample(level, read);
+                    *sample = table.sample_fast(level, read);
                     phase += step;
                     if phase >= 1.0 {
                         phase -= 1.0;
