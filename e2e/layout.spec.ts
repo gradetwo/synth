@@ -93,8 +93,10 @@ test.describe('touch velocity', () => {
     };
 
     await page.touchscreen.tap(x, box!.y + 5);
+    await expect.poll(readVel).toBeLessThan(127);
     const soft = await readVel();
     await page.touchscreen.tap(x, box!.y + box!.height - 5);
+    await expect.poll(readVel).toBeGreaterThan(soft);
     const hard = await readVel();
 
     expect(soft).toBeGreaterThan(0);
