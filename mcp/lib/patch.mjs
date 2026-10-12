@@ -60,6 +60,9 @@ export function presetShareCode(data, presetId) {
   return { preset, code };
 }
 
+const presetCache = new Map();
+let defaultPatchCache = null;
+
 /**
  * Resolve whatever the caller passed as `patch` into a normalised payload:
  * `{ params, params2, instanceMode, splitNote, routes, source, presetId?, shareCode }`.
@@ -72,10 +75,15 @@ export function presetShareCode(data, presetId) {
  */
 export async function resolvePatch(data, spec, session = null) {
   if (spec?.presetId !== undefined) {
-    const { preset, code } = presetShareCode(data, spec.presetId);
-    const decoded = await data.decodePatchAsync(code);
-    if (!decoded) throw fail(ERRORS.PATCH, `preset "${spec.presetId}" encoded to a code that will not decode`);
-    return { ...decoded, source: 'preset', presetId: preset.id, shareCode: code };
+    let cached = presetCache.get(spec.presetId);
+    if (!cached) {
+      const { preset, code } = presetShareCode(data, spec.presetId);
+      const decoded = await data.decodePatchAsync(code);
+      if (!decoded) throw fail(ERRORS.PATCH, `preset "${spec.presetId}" encoded to a code that will not decode`);
+      cached = { ...decoded, source: 'preset', presetId: preset.id, shareCode: code };
+      presetCache.set(spec.presetId, cached);
+    }
+    return { ...cached };
   }
 
   const patch = spec?.patch;
@@ -83,15 +91,18 @@ export async function resolvePatch(data, spec, session = null) {
     if (session?.patch) return { ...session.patch, source: 'session' };
     // No patch at all: the app's default patch, so a render is still a real,
     // reproducible sound rather than silence.
-    const code = encodePayload(data, {
-      params: data.DEFAULT_PARAMS,
-      params2: null,
-      routes: data.DEFAULT_ROUTES,
-      instanceMode: 'single',
-      splitNote: 60,
-    });
-    const decoded = await data.decodePatchAsync(code);
-    return { ...decoded, source: 'default', shareCode: code };
+    if (!defaultPatchCache) {
+      const code = encodePayload(data, {
+        params: data.DEFAULT_PARAMS,
+        params2: null,
+        routes: data.DEFAULT_ROUTES,
+        instanceMode: 'single',
+        splitNote: 60,
+      });
+      const decoded = await data.decodePatchAsync(code);
+      defaultPatchCache = { ...decoded, source: 'default', shareCode: code };
+    }
+    return { ...defaultPatchCache };
   }
 
   if (typeof patch === 'string') {

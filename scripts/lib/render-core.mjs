@@ -42,13 +42,20 @@ const DEFAULT_WASM = resolve(root, 'src/generated/synth_core.wasm');
  */
 export let ex = null;
 
+const moduleCache = new Map();
+
 /** Instantiate the wasm core. The missing-wasm message is the gate's own. */
 export function initCore(wasmPath = DEFAULT_WASM) {
   if (!existsSync(wasmPath)) {
     console.error('[audio] src/generated/synth_core.wasm missing — run "npm run build:wasm"');
     process.exit(1);
   }
-  ex = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(wasmPath)), {}).exports;
+  let module = moduleCache.get(wasmPath);
+  if (!module) {
+    module = new WebAssembly.Module(readFileSync(wasmPath));
+    moduleCache.set(wasmPath, module);
+  }
+  ex = new WebAssembly.Instance(module, {}).exports;
   return ex;
 }
 

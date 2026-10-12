@@ -396,6 +396,7 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     this.costAvg = 0;
     this.lastDowngrade = -Infinity;
     this.lastUpgrade = 0;
+    this.lastParamValues = new Float32Array(PARAMS.length).fill(NaN);
     this.port.onmessage = (event) => this.handleMessage(event.data);
     /** Instance B's parameter values, so a restart can restore them. */
     /**
@@ -964,7 +965,13 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
     for (let i = 0; i < PARAMS.length; i++) {
       const name = PARAMS[i][0];
       const values = parameters[name];
-      if (values !== undefined) this.wasm.gs_set_param(PARAMS[i][1], values[0]);
+      if (values !== undefined) {
+        const val = values[0];
+        if (val !== this.lastParamValues[i]) {
+          this.lastParamValues[i] = val;
+          this.wasm.gs_set_param(PARAMS[i][1], val);
+        }
+      }
     }
 
     // 2. Render a dynamic block (128..1024 frames depending on the host),

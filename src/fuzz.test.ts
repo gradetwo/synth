@@ -252,7 +252,7 @@ function finishTiming(ctx: TestContext): void {
     // summary — which is the point: `passed` would hide that the budget was
     // never judged. If this ever stops working, fall back to the warning above
     // plus skipping only this assertion (never a red).
-    ctx.skip();
+    (ctx as any).skip?.();
   }
   for (const t of collected) {
     expect(

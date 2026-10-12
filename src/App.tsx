@@ -255,6 +255,7 @@ export default function App() {
       void import('@/components/PresetDrawer');
       void import('@/components/PianoRoll');
       void import('@/components/FxGraphEditor');
+      void store.ensurePresets();
       // The string tables ride along with the same idle slot; `preloadStrings()`
       // covers the panels the warm-up list does not name.
       void import('@/i18n-panels').then((m) => Promise.all(m.STRING_LOADERS.map((load) => load())));

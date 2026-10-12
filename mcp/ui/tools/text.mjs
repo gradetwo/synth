@@ -36,7 +36,11 @@ export default {
     const locator = args.selector ? page.locator(args.selector) : page.locator('body');
     const limit = args.maxLength ?? MAX_TEXT;
     try {
-      const count = await locator.count();
+      let count = await locator.count();
+      if (count === 0 && args.selector) {
+        await locator.first().waitFor({ state: 'attached', timeout: 1500 }).catch(() => {});
+        count = await locator.count();
+      }
       if (args.all) {
         const values = [];
         for (let index = 0; index < Math.min(count, 200); index += 1) {
