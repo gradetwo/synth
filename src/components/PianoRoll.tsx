@@ -259,8 +259,18 @@ export function PianoRoll({ open, onClose }: { open: boolean; onClose: () => voi
     multiRef.current = multi;
   }, [multi]);
 
-  useEffect(() => midiPlayer.subscribe(setPlayer), []);
-  useEffect(() => midi.subscribe(() => setMidiState(midi.snapshot())), []);
+  useEffect(() => {
+    if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPlayer(midiPlayer.getState());
+    return midiPlayer.subscribe(setPlayer);
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMidiState(midi.snapshot());
+    return midi.subscribe(() => setMidiState(midi.snapshot()));
+  }, [open]);
 
   const [low, high] = useMemo(() => pitchRange(doc), [doc]);
   const gridH = (high - low + 1) * ROW_H;

@@ -533,13 +533,33 @@ function formatParam(id: number, value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+/** Isolated transport wrapper so playback time ticks do not re-render the heavy SignalFlow graph. */
+function SignalFlowTransport({
+  rec,
+  onRecord,
+}: {
+  rec: RecorderState;
+  onRecord: () => void;
+}) {
+  const [player, setPlayer] = useState<PlayerState>(() => midiPlayer.getState());
+  useEffect(() => {
+    let last = midiPlayer.getState();
+    return midiPlayer.subscribe((p) => {
+      if (p.playing !== last.playing || p.loop !== last.loop || p.metronome !== last.metronome) {
+        last = p;
+        setPlayer(p);
+      }
+    });
+  }, []);
+  return <Transport player={player} rec={rec} onRecord={onRecord} compact />;
+}
+
 /** Signal-flow canvas: draggable nodes, live mini-visuals and a performance bar. */
 export function SignalFlow() {
   useSynth(); // re-render readouts when parameters change
   const positions = useFlowPos();
   const hidden = useFlowHidden();
   const [selected, setSelected] = useState<FlowNodeDef | null>(null);
-  const [player, setPlayer] = useState<PlayerState>(midiPlayer.getState());
   const [rec, setRec] = useState<RecorderState>(recorder.getState());
   const [tracksVersion, setTracksVersion] = useState(0);
   const viewport = useViewport();
@@ -616,7 +636,6 @@ export function SignalFlow() {
       ?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
   }, [selected]);
 
-  useEffect(() => midiPlayer.subscribe(setPlayer), []);
   useEffect(() => recorder.subscribe(setRec), []);
   useEffect(() => midiLibrary.subscribe(() => setTracksVersion((v) => v + 1)), []);
   // The performance bar's track picker lists the built-in playlist, which is a
@@ -810,7 +829,7 @@ export function SignalFlow() {
             </option>
           ))}
         </select>
-        <Transport player={player} rec={rec} onRecord={toggleRecord} compact />
+        <SignalFlowTransport rec={rec} onRecord={toggleRecord} />
         {removed.length > 0 ? (
           <div className="flow-palette" role="group" aria-label={t('flow.removed')}>
             <span className="flow-palette-label">{t('flow.removed')}</span>

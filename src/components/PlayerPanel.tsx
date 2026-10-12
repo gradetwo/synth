@@ -206,7 +206,13 @@ export function PlayerPanel({
       live = false;
     };
   }, [open, playlist]);
-  useEffect(() => midiPlayer.subscribe(setPlayer), []);
+
+  useEffect(() => {
+    if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPlayer(midiPlayer.getState());
+    return midiPlayer.subscribe(setPlayer);
+  }, [open]);
   useEffect(() => recorder.subscribe(setRec), []);
   // Clip templates live in the workspace layout, so saving or deleting one has
   // to redraw the strip; nothing else about the store is read here.

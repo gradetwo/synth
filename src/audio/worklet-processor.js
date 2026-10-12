@@ -271,7 +271,7 @@ const PARAMS = [
 ];
 
 const SPECTRUM_BINS = 36;
-const ANALYSIS_INTERVAL = 6; // blocks between analysis messages (~16 ms @ 48k/128)
+const ANALYSIS_INTERVAL = 10; // blocks between analysis messages (~26.7 ms @ 48k/128, ~37.5 Hz)
 
 /**
  * AudioWorkletGlobalScope is only guaranteed `currentFrame`, `currentTime`,

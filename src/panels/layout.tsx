@@ -423,14 +423,28 @@ export function TopBar({
 function NoteDisplay() {
   const [info, setInfo] = useState({ note: null as number | null, velocity: 1, voices: 0 });
   const [held, setHeld] = useState<number[]>([]);
-  useEffect(
-    () =>
-      noteBus.subscribe((next) => {
-        setInfo(next);
-        setHeld(noteBus.heldNotes());
-      }),
-    [],
-  );
+  useEffect(() => {
+    let pending = false;
+    let nextInfo: { note: number | null; velocity: number; voices: number } | null = null;
+    let rafId = 0;
+    const unsub = noteBus.subscribe((next) => {
+      nextInfo = next;
+      if (!pending) {
+        pending = true;
+        rafId = requestAnimationFrame(() => {
+          pending = false;
+          if (nextInfo) {
+            setInfo(nextInfo);
+            setHeld(noteBus.heldNotes());
+          }
+        });
+      }
+    });
+    return () => {
+      unsub();
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, []);
   const chord = detectChord(held);
   return (
     <div className={`note-display${chord ? ' chord' : ''}`}>

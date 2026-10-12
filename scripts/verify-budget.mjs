@@ -329,8 +329,9 @@ const BUDGETS = {
   // adds a new head (~1-1.4 KB) plus the outgoing head moving from
   // 1560 re-bases for the ROI-1 sample_fast wavetable lookup (+2.7 KB wasm) and the
   // WebCodecs hardware accelerated audio encoder lazy chunk (+5.6 KB JS).
+  // 1565 re-bases for iOS/iPadOS 120Hz ProMotion thermal throttling & canvas off-screen pruning (+0.4 KB JS).
   // First-screen JS/CSS gzip is untouched (114.0/115 KB and 20.4/21 KB).
-  total: 1560 * 1024,
+  total: 1565 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   //
   // **P11.2 (i18n split) settled the P10.2 debt and moved this line down
