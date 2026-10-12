@@ -199,3 +199,20 @@ npm run test:e2e:webkit:wayland                 # WebKit，headless Weston
 ⚠️ **worktree 里没有 `.pw-browsers/`**：不要手动把 `PLAYWRIGHT_BROWSERS_PATH` 指到那里——那会把
 「浏览器没装」报成上百条用例失败。`scripts/nightly-e2e.mjs` 现在只在目录真的存在时才钉住它，
 缺浏览器会在启动前具名报错（这条是第三次全面回归用一整轮 Firefox 换来的，见 `docs/NEXT-PLAN-2.md` §一.39③）。
+
+---
+
+## 8. GitHub 自动 Tag、部署与发布（Release & Deploy）
+
+工作流文件：`.github/workflows/release.yml`
+
+支持以下自动化触发与发布路径：
+1. **推送 Tag 自动发布**：执行 `git push origin v<x.y.z>` 推送标签时，自动触发：
+   - 生产构建（WASM、SW、Vite 打包）；
+   - 执行打包脚本 `npm run package` 生成发布压缩包与校验和；
+   - 部署到 Cloudflare Worker（若配置了 `CLOUDFLARE_API_TOKEN` secret）；
+   - 自动解析 `src/changelog-head.ts` / `src/changelog.ts` 对应版本的更新日志；
+   - 自动创建 GitHub Release 并附加 `gs1-synth-*.zip`、`gs1-synth-*-dist.zip`、`gs1-synth-*.tar.gz` 和 `SHA256SUMS` 4 个发布产物。
+2. **Main 分支版本更新自动打 Tag**：当 `main` 分支合入新版本提交且对应 tag 尚不存在时，工作流自动创建 annotated tag 并推送触发发布。
+3. **手动一键发布**：在 GitHub Actions 页面选择 `Release & Deploy` 工作流，点击 `Run workflow` 即可指定 tag 或版本号一键触发发布与部署。
+

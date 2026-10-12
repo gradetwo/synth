@@ -1,0 +1,156 @@
+name: Release & Deploy
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v2.1.10, leave empty to use package.json version)'
+        required: false
+        type: string
+      deploy:
+        description: 'Deploy to Cloudflare'
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, Deploy & Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install clang (vendored C/C++ -> wasm)
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Determine version & tag
+        id: meta
+        run: |
+          PKG_VER=$(node -p "require('./package.json').version")
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
+            TAG="${{ inputs.tag }}"
+            VERSION="${TAG#v}"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG="${{ github.ref_name }}"
+            VERSION="${TAG#v}"
+          else
+            TAG="v$PKG_VER"
+            VERSION="$PKG_VER"
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" != "tag" ]]; then
+            if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+              echo "Tag $TAG already exists on remote. Skipping auto-tag release for standard main push."
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              echo "need_tag=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "New version $VERSION on main has no tag. Will auto-tag and release."
+              echo "should_run=true" >> "$GITHUB_OUTPUT"
+              echo "need_tag=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "need_tag=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        if: steps.meta.outputs.should_run == 'true' && steps.meta.outputs.need_tag == 'true'
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "GROOVE SYNTH GS-1 $TAG"
+          git push origin "$TAG"
+
+      - name: Release preflight verification
+        if: steps.meta.outputs.should_run == 'true'
+        run: npm run verify:release -- --check
+
+      - name: Build & package release artifacts
+        if: steps.meta.outputs.should_run == 'true'
+        run: npm run package
+
+      - name: Verify payload gates
+        if: steps.meta.outputs.should_run == 'true'
+        run: |
+          npm run verify:ci
+          npm run verify:dist
+          npm run verify:budget
+
+      - name: Deploy to Cloudflare
+        if: steps.meta.outputs.should_run == 'true' && (github.event_name != 'workflow_dispatch' || inputs.deploy == true)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::warning ::CLOUDFLARE_API_TOKEN secret is not configured in repository secrets; skipping Cloudflare deployment."
+          else
+            echo "Deploying to Cloudflare Worker via wrangler..."
+            npx wrangler deploy
+          fi
+
+      - name: Generate release notes
+        if: steps.meta.outputs.should_run == 'true'
+        run: |
+          node scripts/extract-release-notes.mjs "${{ steps.meta.outputs.version }}" > release-notes.md
+          cat release-notes.md
+
+      - name: Publish GitHub Release
+        if: steps.meta.outputs.should_run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, updating assets and notes..."
+            gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md
+            gh release upload "$TAG" \
+              release/gs1-synth-${VERSION}.zip \
+              release/gs1-synth-${VERSION}-dist.zip \
+              release/gs1-synth-${VERSION}.tar.gz \
+              release/SHA256SUMS \
+              --clobber
+          else
+            echo "Creating new GitHub release for $TAG..."
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file release-notes.md \
+              release/gs1-synth-${VERSION}.zip \
+              release/gs1-synth-${VERSION}-dist.zip \
+              release/gs1-synth-${VERSION}.tar.gz \
+              release/SHA256SUMS
+          fi

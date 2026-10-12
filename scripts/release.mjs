@@ -73,6 +73,7 @@ const flags = {
   skipDeploy: flag('skip-deploy'),
   skipGitCheck: flag('skip-git-check'),
   quiet: flag('quiet'),
+  pushTag: flag('push-tag'),
 };
 
 const log = (...parts) => {
@@ -474,6 +475,12 @@ async function main() {
       log(`[release]   ${tag} already exists — leaving it alone`);
     } else {
       run('git', ['tag', '-a', tag, '-m', `GROOVE SYNTH GS-1 ${tag}`], { mutates: true });
+    }
+    if (flags.pushTag) {
+      step(`push tag ${tag}`);
+      run('git', ['push', 'origin', tag], { mutates: true });
+    } else {
+      log(`[release]   push tag to trigger GitHub Actions release & deploy: git push origin ${tag}`);
     }
   }
 
