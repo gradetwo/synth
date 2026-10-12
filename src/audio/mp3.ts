@@ -14,7 +14,11 @@ function toInt16(samples: Float32Array): Int16Array {
   return out;
 }
 
-export async function encodeMp3(buffer: AudioBuffer, kbps = 192): Promise<Blob> {
+export async function encodeMp3(
+  buffer: AudioBuffer,
+  kbps = 192,
+  onProgress?: (fraction: number) => void,
+): Promise<Blob> {
   const { Mp3Encoder } = await import('@breezystack/lamejs');
   const channels = Math.max(1, Math.min(2, buffer.numberOfChannels));
   const encoder = new Mp3Encoder(channels, buffer.sampleRate, kbps);
@@ -23,11 +27,18 @@ export async function encodeMp3(buffer: AudioBuffer, kbps = 192): Promise<Blob> 
 
   const parts: ArrayBuffer[] = [];
   const block = 1152;
+  let lastYield = performance.now();
   for (let i = 0; i < left.length; i += block) {
     const l = left.subarray(i, i + block);
     const r = right ? right.subarray(i, i + block) : undefined;
     const chunk = encoder.encodeBuffer(l, r);
     if (chunk.length > 0) parts.push(chunk.buffer as ArrayBuffer);
+    onProgress?.(Math.min(1, (i + block) / left.length));
+    // Yield to the event loop every 16ms (one frame) to keep UI responsive and prevent tab freeze.
+    if (performance.now() - lastYield > 16) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      lastYield = performance.now();
+    }
   }
   const tail = encoder.flush();
   if (tail.length > 0) parts.push(tail.buffer as ArrayBuffer);

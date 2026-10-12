@@ -219,6 +219,7 @@ export async function encodeAac(
   const totalFrames = leftChannel.length;
   const FRAME_CHUNK = 1024;
 
+  let lastYield = performance.now();
   for (let offset = 0; offset < totalFrames; offset += FRAME_CHUNK) {
     const chunkFrames = Math.min(FRAME_CHUNK, totalFrames - offset);
     const planarBuffer = new Float32Array(chunkFrames * channels);
@@ -239,6 +240,11 @@ export async function encodeAac(
     encoder.encode(audioData);
     audioData.close();
     options.onProgress?.(Math.min(1, (offset + chunkFrames) / totalFrames));
+
+    if (performance.now() - lastYield > 16) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      lastYield = performance.now();
+    }
   }
 
   await encoder.flush();
@@ -292,6 +298,7 @@ export async function encodeOpus(
   const totalFrames = left.length;
   const FRAME_CHUNK = 960; // 20ms at 48kHz
 
+  let lastYield = performance.now();
   for (let offset = 0; offset < totalFrames; offset += FRAME_CHUNK) {
     const chunkFrames = Math.min(FRAME_CHUNK, totalFrames - offset);
     const planarBuffer = new Float32Array(chunkFrames * channels);
@@ -312,6 +319,11 @@ export async function encodeOpus(
     encoder.encode(audioData);
     audioData.close();
     options.onProgress?.(Math.min(1, (offset + chunkFrames) / totalFrames));
+
+    if (performance.now() - lastYield > 16) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      lastYield = performance.now();
+    }
   }
 
   await encoder.flush();
@@ -382,6 +394,6 @@ export async function encodeCompressedAudio(
   }
 
   // 3. Fallback to LAME MP3
-  const blob = await encodeMp3(buffer, options.bitrateKbps ?? 320);
+  const blob = await encodeMp3(buffer, options.bitrateKbps ?? 320, options.onProgress);
   return { blob, codec: 'mp3', ext: 'mp3', bitrateKbps: options.bitrateKbps ?? 320 };
 }
