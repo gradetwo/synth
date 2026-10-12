@@ -44,7 +44,7 @@ import {
   selectTake,
 } from '@/state/recording';
 import { store } from '@/state/store';
-import { exportSongMidi, exportSongMp3, exportSongWav } from '@/midi/export';
+import { exportSongCompressed, exportSongMidi, exportSongWav } from '@/midi/export';
 import { QUANTISE_GRIDS, quantiseLabel } from '@/midi/quantise';
 import { TransportIcon } from './TransportIcon';
 
@@ -608,8 +608,8 @@ export function PlayerPanel({
               if (!current) return;
               setBusy(true);
               try {
-                await withPlaybackPaused(() => exportSongMp3(current.song, trackTitle(current)));
-                toast(t('player.mp3Saved', { name: trackTitle(current) }));
+                const res = await withPlaybackPaused(() => exportSongCompressed(current.song, trackTitle(current)));
+                toast(t('player.mp3Saved', { name: `${trackTitle(current)}.${res.ext}` }));
               } catch (err) {
                 toast(t('player.mp3Failed', { msg: err instanceof Error ? err.message : String(err) }));
               } finally {

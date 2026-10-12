@@ -48,6 +48,7 @@ const wasmGz = files
   .filter((file) => file.endsWith('.wasm'))
   .reduce((max, file) => Math.max(max, gz(file)), 0);
 const lame = files.find((file) => /lamejs-.*\.js$/.test(file));
+const webcodecs = files.find((file) => /webcodecs-.*\.js$/.test(file));
 
 // Every number below is "what this build measured + a small margin", not a
 // round target. They were re-based in P8.5 (v1.95.0) after the payload was
@@ -326,12 +327,10 @@ const BUDGETS = {
   // 1550 is "measured + ~9 KB", and the margin is deliberately larger than the
   // 0.15 % the earlier notes used: a release entry is not optional and a rotation
   // adds a new head (~1-1.4 KB) plus the outgoing head moving from
-  // `changelog-head.ts` into the shipped list (~1.3 KB) minus the oldest entry
-  // dropping out (~0.9 KB) -- up to ~1.9 KB per release, so 1550 leaves several
-  // releases of room rather than the 0.1 KB the old line left. The growth is
-  // bounded now: the
-  // shipped list is a fixed 30 and adding a release only rotates it.
-  total: 1550 * 1024,
+  // 1560 re-bases for the ROI-1 sample_fast wavetable lookup (+2.7 KB wasm) and the
+  // WebCodecs hardware accelerated audio encoder lazy chunk (+5.6 KB JS).
+  // First-screen JS/CSS gzip is untouched (114.0/115 KB and 20.4/21 KB).
+  total: 1560 * 1024,
   // What `index.html` pulls, so the app code plus the React vendor chunk.
   //
   // **P11.2 (i18n split) settled the P10.2 debt and moved this line down
@@ -497,6 +496,8 @@ check(
 check(`largest WASM gzip ${kb(wasmGz)}`, wasmGz <= BUDGETS.wasm, `budget ${kb(BUDGETS.wasm)}`);
 check('MP3 encoder stays a lazy chunk', Boolean(lame) && !initialRefs.some((ref) => /lamejs/.test(ref)),
   lame ? 'lamejs-*.js not referenced by index.html' : 'lamejs chunk missing');
+check('WebCodecs encoder stays a lazy chunk', Boolean(webcodecs) && !initialRefs.some((ref) => /webcodecs/.test(ref)),
+  webcodecs ? 'webcodecs-*.js not referenced by index.html' : 'webcodecs chunk missing');
 
 if (failures > 0) {
   console.error(`[budget] FAIL · ${failures} budget(s) exceeded`);

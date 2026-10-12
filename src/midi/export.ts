@@ -71,3 +71,26 @@ export async function exportSongMp3(song: MidiSong, name: string): Promise<void>
   const blob = await encodeMp3(buffer, EXPORT_KBPS);
   downloadBlob(`${safeName(name)}.mp3`, blob);
 }
+
+/**
+ * Fast, hardware-accelerated compressed export via WebCodecs (Opus/AAC) with transparent
+ * fallback to pure-JS LAME MP3.
+ */
+export async function exportSongCompressed(
+  song: MidiSong,
+  name: string,
+): Promise<{ codec: 'opus' | 'aac' | 'mp3'; ext: string }> {
+  const notes = mixedNotes(song, midiPlayer.getLayers());
+  const buffer = await renderPatchToBuffer(store.getSnapshot().state, {
+    notes,
+    seconds: song.duration + 1.6,
+  });
+  const channels = [];
+  for (let c = 0; c < buffer.numberOfChannels; c++) channels.push(buffer.getChannelData(c));
+  normalizePeak(channels, EXPORT_CEILING);
+
+  const { encodeCompressedAudio } = await import('@/audio/webcodecs');
+  const result = await encodeCompressedAudio(buffer, { bitrateKbps: EXPORT_KBPS });
+  downloadBlob(`${safeName(name)}.${result.ext}`, result.blob);
+  return { codec: result.codec, ext: result.ext };
+}
