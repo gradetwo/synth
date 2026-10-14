@@ -146,7 +146,7 @@ describe('json-rpc protocol', () => {
     const response = await call('gs1.presets.list', {});
     expect(response.result.content[0].type).toBe('text');
     expect(JSON.parse(response.result.content[0].text)).toEqual(response.result.structuredContent);
-    expect(response.result.structuredContent.count).toBe(91);
+    expect(response.result.structuredContent.count).toBe(120);
   });
 
   it('does not answer notifications', async () => {
@@ -692,12 +692,12 @@ describe('tool outputs', () => {
     expect(result.arena.freeBytes).toBeGreaterThan(0);
     expect(result.sampler.maxBaseSamples).toBe(192000);
     expect(result.enums.waves).toContain('saw');
-    expect(result.presets.count).toBe(91);
+    expect(result.presets.count).toBe(120);
   });
 
   it('lists presets with stable tags', async () => {
     const result = await ok('gs1.presets.list', {});
-    expect(result.count).toBe(91);
+    expect(result.count).toBe(120);
     expect(result.presets[0]).toMatchObject({ id: 'pluck', cat: 'PLUCK' });
     expect(result.presets[0].tags).toContain('FUTURE BASS');
   });
