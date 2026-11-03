@@ -24,7 +24,8 @@
  * - The TS->Rust modulation-route code mapping tables cover exactly the
  *   TS MOD_SOURCES / MOD_DESTS keys (the two orders differ; see the README).
  */
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm, unlink } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -613,7 +614,24 @@ for (const r of rows) {
 out.push('];');
 out.push('');
 
-const text = out.join('\n');
+let text = out.join('\n');
+// The committed file must be rustfmt-clean (the generator's own one-item-per
+// line layout is not what rustfmt emits for these tables), so format the
+// fresh output with rustfmt before comparing or writing. rustfmt ships with
+// the Rust toolchain; if it is missing this fails loudly rather than
+// emitting a file --check would reject.
+{
+  const tmpPath = `${outPath}.tmp.rs`;
+  await writeFile(tmpPath, text);
+  try {
+    execFileSync('rustfmt', ['--edition', '2021', tmpPath], { stdio: 'pipe' });
+  } catch (e) {
+    await unlink(tmpPath);
+    fail(`rustfmt failed (is rustfmt on PATH?): ${e.message}`);
+  }
+  text = await readFile(tmpPath, 'utf8');
+  await unlink(tmpPath);
+}
 if (checkOnly) {
   let current = null;
   try {
