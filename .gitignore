@@ -13,6 +13,7 @@ release/retained/
 
 # rust
 crates/synth-core/target/
+crates/synth-vst3/target/
 **/*.rs.bk
 
 # generated wasm (produced by `npm run build:wasm`)
