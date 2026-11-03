@@ -112,7 +112,7 @@ for (const [, name, value] of paramsRs.matchAll(
 // One naming family differs: TS enumerates graph nodes per node
 // (FX_NODE1_IN1 .. FX_NODE6_OUT_GAIN) while Rust keeps a base constant per
 // field (FX_NODE_IN1 = 101, …) plus a node offset. Map those explicitly.
-const rustIdFor = (name, id) => {
+const rustIdFor = (name) => {
   if (rustIds.has(name)) return rustIds.get(name);
   const m = /^FX_NODE([1-6])_(IN1_GAIN|IN2_GAIN|TO_OUT|OUT_GAIN|IN1|IN2)$/.exec(name);
   if (m) {
@@ -122,7 +122,7 @@ const rustIdFor = (name, id) => {
   return undefined;
 };
 for (const [name, id] of Object.entries(tsParams)) {
-  const rust = rustIdFor(name, id);
+  const rust = rustIdFor(name);
   if (rust === undefined) fail(`TS Param ${name} has no Rust id constant`);
   if (rust !== id) {
     fail(`TS Param ${name} = ${id} but Rust id constant = ${rust}`);
