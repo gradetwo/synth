@@ -136,7 +136,7 @@ VST3 wrapper 会为此加绑定参数，属框架实现细节）。
 | NoteOn | `note_on(note, velocity)` |
 | NoteOff | `note_off(note)` |
 | Choke | `note_off(note)`（实为 release，不是瞬时 choke；引擎无 choke 入口） |
-| MidiPitchBend | `pitch_bend((value - 0.5) * 2 * PITCH_BEND_RANGE)`（范围读当前参数 38，默认 2） |
+| MidiPitchBend | `pitch_bend((value - 0.5) * 2)`（归一化轮值；引擎在渲染时再乘 `PITCH_BEND_RANGE`，范围只应用一次。注意：引擎 setter 与 ABI 的 `semitones` 参数名是误导，网页端自己就是因此 double 应用（先乘范围再进字段，渲染时又乘一次）；插件不复制该行为） |
 | MidiCC 1 | `mod_wheel(value)` |
 | MidiCC 123 | `all_notes_off()` |
 | MidiChannelPressure | `aftertouch(value)` |
@@ -155,19 +155,25 @@ GS1.vst3/
       GS1.so            # 由 cargo 产出的 libsynth_vst3.so 复制改名
     Resources/
       LICENSE-MIT
-      LICENSE-ISC       # nih-plug
+      LICENSE-ISC-nih-plug
       LICENSE-GPLv3     # vst3-sys（VST3 导出链入）
-      THIRD_PARTY_NOTICES.md  # DaisySP / Soundpipe 署名（与仓库同款内容）
+      ATTRIBUTION.md    # DaisySP / Soundpipe 署名（见仓库 THIRD_PARTY_NOTICES.md）
 ```
 
-打包脚本：`scripts/package-vst3.sh`。用 `nm -D` 验 `GetPluginFactory` 导出。
-`moduleinfo.json` 一期不做。
+打包脚本：`scripts/package-vst3.sh [out-dir]`（默认 `dist/`），构建 release
+cdylib、组装上布局、复制 `crates/synth-vst3/licenses/`、用 `nm -D` 验
+`GetPluginFactory` 导出（缺失即失败），最后打印包内文件、字节数与
+`GS1.so` 的 sha256。构建用 `CLANG`/`AR` 环境变量（无系统 clang 的机器
+上须指向能同时编 C 与 C++ 的编译器驱动）。
+`moduleinfo.json` 一期不做。macOS/Windows 包布局只写后续路径，不在本期做；
+Windows 侧另有第三方乐器在夜半宿主上测试，与本插件无关，不得算作本插件
+的 Windows 验证。
 
 ## 测试
 
 - `tests/params.rs`（纯表，不碰引擎）：参数 224 条、id 全覆盖、预设 120 条、
   预设 id 唯一、首预设 `pluck`、每 overlay 值在范围内、路由表等于上表。
-- `tests/fingerprint.rs`（碰引擎，测试内 `Mutex` 串行化引擎访问）：
+- `tests/fingerprint.rs`（碰引擎，每预设一个全新子进程渲染）：
   严格复现 `verify-presets.mjs` 的渲染条件（48 kHz、复音 16、128 帧块、
   1.8 秒、乐句 `[60,64,67]@0` 持 0.7 秒 + `55@0.8` 持 0.9 秒、速度 0.9、
   左声道 Goertzel 24 条三分频），与 `tests/preset-fingerprint.json`（1x）与
@@ -176,6 +182,14 @@ GS1.vst3/
   `severity = delta / tolerance`，`> 1` 即失败。
   基线渲染条件含字符串路由→0 的实际行为，测试复现该条件（见“路由码”一节）；
   插件本体仍用正确 Rust 路由码，两者由不同的测试覆盖，不得混淆。
+  子进程是必需的：基线是每预设全新 wasm 实例，而进程级 C++ 状态在
+  全新 `Engine` + `init()` 后仍残留（实测：`reesegrowl` 单个就能脏掉下一个
+  预设的渲染）；子进程复现基线条件，插件本体在宿主内从不重初始化，
+  预设切换由 `tests/program.rs` 覆盖。
+  唯一容差例外：`crushbass` 在 1x 下频带容差 2.0 dB（其余仍 0.5 dB）。
+  原因是跨平台 libm 末位差异经 6-bit 量化边界放大，只动 ≤ -97 dB 的
+  7 条残留带（实测最差 1.54 dB），rms/peak/stereo 精确、2x 全绿、
+  原生渲染逐位确定，属平台浮点差、非逻辑问题（见测试内注释）。
 - `tests/midi.rs`：note on/off 输出非静音；力度缩放（大力度 RMS 高于小力度）；
   弯音方向（sine 类预设，Goertzel 在 440 Hz 与 493.88 Hz（+2 半音）处验频移方向）；
   mod wheel（显式启用一条 modwheel 路由后再验输出变化，因默认路由中

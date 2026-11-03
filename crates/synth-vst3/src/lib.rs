@@ -16,8 +16,8 @@
 
 mod generated;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use nih_plug::prelude::*;
 use synth_core::engine::Engine;
@@ -47,14 +47,26 @@ static ENGINE_TAKEN: AtomicBool = AtomicBool::new(false);
 /// event lists without a host context.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MidiEvent {
-    NoteOn { note: u8, velocity: f32 },
-    NoteOff { note: u8 },
+    NoteOn {
+        note: u8,
+        velocity: f32,
+    },
+    NoteOff {
+        note: u8,
+    },
     /// Normalized pitch bend in `[0, 1]`; `0.5` means no bend.
-    PitchBend { value: f32 },
+    PitchBend {
+        value: f32,
+    },
     /// Normalized CC value in `[0, 1]`.
-    ControlChange { cc: u8, value: f32 },
+    ControlChange {
+        cc: u8,
+        value: f32,
+    },
     /// Normalized channel pressure in `[0, 1]`.
-    ChannelPressure { pressure: f32 },
+    ChannelPressure {
+        pressure: f32,
+    },
 }
 
 /// Per-render mutable state.
@@ -128,16 +140,22 @@ pub fn apply_preset_to_engine(engine: &mut Engine, index: usize) {
     apply_routes(engine);
 }
 
-/// Apply one MIDI event. `bend_range` is the current PITCH_BEND_RANGE value
-/// in semitones (default 2).
-pub fn apply_midi_event(engine: &mut Engine, event: &MidiEvent, bend_range: f32) {
+/// Apply one MIDI event.
+///
+/// Pitch bend: the engine's `pitch_bend` field is a NORMALIZED wheel value,
+/// not semitones — the render path multiplies it by PITCH_BEND_RANGE
+/// (engine.rs render: `pitch_mod = self.pitch_bend * params.pitch_bend_range`).
+/// The setter's `semitones` parameter name and the ABI's are misleading, and
+/// the web app's own path double-applies the range because of it (it sends
+/// normalized * range into the same field). The plugin maps the normalized
+/// nih-plug value to the normalized wheel, so the engine applies the range
+/// exactly once: full wheel = +/- PITCH_BEND_RANGE semitones.
+pub fn apply_midi_event(engine: &mut Engine, event: &MidiEvent) {
     match *event {
         MidiEvent::NoteOn { note, velocity } => engine.note_on(note, velocity),
         MidiEvent::NoteOff { note } => engine.note_off(note),
         // The engine has no choke input; release is the closest semantic.
-        MidiEvent::PitchBend { value } => {
-            engine.pitch_bend((value - 0.5) * 2.0 * bend_range)
-        }
+        MidiEvent::PitchBend { value } => engine.pitch_bend((value - 0.5) * 2.0),
         MidiEvent::ControlChange { cc, value } => match cc {
             CC_MOD_WHEEL => engine.mod_wheel(value),
             CC_ALL_NOTES_OFF => engine.all_notes_off(),
@@ -149,12 +167,7 @@ pub fn apply_midi_event(engine: &mut Engine, event: &MidiEvent, bend_range: f32)
 
 /// Render `frames` samples into `out_l`/`out_r`, chunked to the engine's
 /// `MAX_BLOCK_SIZE`.
-pub fn render_segment(
-    engine: &mut Engine,
-    frames: usize,
-    out_l: &mut [f32],
-    out_r: &mut [f32],
-) {
+pub fn render_segment(engine: &mut Engine, frames: usize, out_l: &mut [f32], out_r: &mut [f32]) {
     let mut done = 0;
     while done < frames {
         let chunk = (frames - done).min(MAX_BLOCK_SIZE);
@@ -170,10 +183,15 @@ pub fn render_segment(
 /// an event at offset `t` is applied before the samples starting at `t`.
 /// Events at or past the buffer end are applied after rendering (they affect
 /// state for the next call, e.g. a trailing all-notes-off).
+///
+/// `preset` is passed explicitly (the plugin's `process()` reads it from the
+/// preset selector parameter) so tests can drive any preset without a host:
+/// nih-plug parameters are host-owned and have no plugin-side setter.
 pub fn render_with_events(
     params: &Gs1Params,
     engine: &mut Engine,
     state: &mut RenderState,
+    preset: i32,
     events: &[(usize, MidiEvent)],
     out_l: &mut [f32],
     out_r: &mut [f32],
@@ -187,7 +205,6 @@ pub fn render_with_events(
         host[acc.id as usize] = (acc.get)(params);
     }
 
-    let preset = params.preset.unmodulated_plain_value();
     if state.first_block {
         // Fresh instance (or first block after a host state restore, where
         // the selector restored correctly but the other parameters may be
@@ -213,9 +230,6 @@ pub fn render_with_events(
         }
         state.last_host = host;
     }
-    // The engine's own current value: after a preset switch this is the
-    // preset's bend range, not the host's stale pre-switch value.
-    let bend_range = engine.params.pitch_bend_range;
 
     let mut ordered: Vec<(usize, MidiEvent)> = events.to_vec();
     ordered.sort_by_key(|(t, _)| *t);
@@ -231,10 +245,15 @@ pub fn render_with_events(
             );
             cursor = t;
         }
-        apply_midi_event(engine, event, bend_range);
+        apply_midi_event(engine, event);
     }
     if cursor < total {
-        render_segment(engine, total - cursor, &mut out_l[cursor..], &mut out_r[cursor..]);
+        render_segment(
+            engine,
+            total - cursor,
+            &mut out_l[cursor..],
+            &mut out_r[cursor..],
+        );
     }
 }
 
@@ -293,7 +312,10 @@ impl Plugin for Gs1 {
         engine.init(buffer_config.sample_rate, POLYPHONY);
         // Sound like the current preset right away; the first process call
         // re-applies it if the host changed the selector meanwhile.
-        apply_preset_to_engine(engine, self.params.preset.unmodulated_plain_value() as usize);
+        apply_preset_to_engine(
+            engine,
+            self.params.preset.unmodulated_plain_value() as usize,
+        );
         true
     }
 
@@ -340,26 +362,15 @@ impl Plugin for Gs1 {
                 NoteEvent::Choke { timing, note, .. } => {
                     Some((timing as usize, MidiEvent::NoteOff { note }))
                 }
-                NoteEvent::MidiPitchBend {
-                    timing, value, ..
-                } => Some((timing as usize, MidiEvent::PitchBend { value })),
+                NoteEvent::MidiPitchBend { timing, value, .. } => {
+                    Some((timing as usize, MidiEvent::PitchBend { value }))
+                }
                 NoteEvent::MidiCC {
-                    timing,
-                    cc,
-                    value,
-                    ..
-                } => Some((
-                    timing as usize,
-                    MidiEvent::ControlChange { cc, value },
-                )),
+                    timing, cc, value, ..
+                } => Some((timing as usize, MidiEvent::ControlChange { cc, value })),
                 NoteEvent::MidiChannelPressure {
-                    timing,
-                    pressure,
-                    ..
-                } => Some((
-                    timing as usize,
-                    MidiEvent::ChannelPressure { pressure },
-                )),
+                    timing, pressure, ..
+                } => Some((timing as usize, MidiEvent::ChannelPressure { pressure })),
                 _ => None,
             };
             if let Some(translated) = translated {
@@ -371,10 +382,12 @@ impl Plugin for Gs1 {
         let (out_l, rest) = channels.split_at_mut(1);
         let out_l = &mut out_l[0][..total];
         let out_r = &mut rest[0][..total];
+        let preset = self.params.preset.unmodulated_plain_value();
         render_with_events(
             &self.params,
             synth_core::engine::engine(),
             &mut self.state,
+            preset,
             &events,
             out_l,
             out_r,
