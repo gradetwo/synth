@@ -11,7 +11,7 @@ permissions:
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, 'feat/**']
   pull_request:
   schedule:
     # Nightly at 19:00 UTC (03:00 Beijing): the engines that are not worth a run
