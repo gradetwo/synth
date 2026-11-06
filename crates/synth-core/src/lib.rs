@@ -14,6 +14,7 @@
 
 pub mod abi;
 pub mod alloc_arena;
+pub mod bridge_slots;
 pub mod dsp;
 pub mod engine;
 pub mod fft;
