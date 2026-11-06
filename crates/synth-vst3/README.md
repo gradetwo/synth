@@ -28,16 +28,37 @@ Soundpipe，Paul Batchelor 2020，版本 1.8.1）。
 `AR` 指向 `ar`。不得把 wrapper 当成 clang 替代品写进正式文档：
 它只是本机构建变通，CI 仍用仓库同款 clang/llvm 流程。
 
-## 单例与独占守卫
+## 多实例（真多实例，二期 ④）
 
-`synth-core` 的引擎是进程单例（`static ENGINE`），且 C++ 声部状态是全局的
-（`gs_voice_*` 只按声部槽索引，没有引擎句柄）。两个 Rust `Engine` 实例会
-共享 C++ 声部槽而串声。因此：
+`synth-core` 的 Rust 侧 `Engine` 本来就是每实例的（参数、包络、混响、延迟、
+卷积都是字段），只有 C++ 桥是全局的：32 个声部槽（`g_voice`）与每种效果
+6 个槽（`g_chorus`/`g_flanger`/`g_phaser`/`g_overdrive`）。二期把桥的共享
+状态分区，两个实例不再串声：
 
-- 插件用进程单例 `synth_core::engine::engine()`，不用每实例 `Engine::new()`。
-- 一期加进程级独占守卫（`AtomicBool`）：第二个实例 `initialize()` 干净失败，
-  不静默串声。守卫在 `deactivate()` 时释放（只约束同一时刻激活的实例）。
-- 真正多实例的后续路径是 C++ 桥的声部槽分区（见“二期”）。
+- 分配器 `crates/synth-core/src/bridge_slots.rs`（进程级 `Mutex`）：每个
+  `Engine::init()` 按请求复音认领一段连续声部槽（插件 16 槽，离线渲染
+  32 槽）与一个效果实例 id（上限 4 个）；认领不到或采样率与现存实例
+  冲突时 `init()` 返回 `false`，不静默串声。`Engine` 析构时释放。
+  上限取 4 而不是插件所需的 2：进程单例（`static`，永不释放）占
+  1 个，测试与未来小引擎留有余量；声部池 32 槽仍是硬上限，
+  三个 16 复音引擎放不下，闲置引擎须显式 `drop`，不要靠遮蔽
+  （shadowing）留着——遮蔽的旧引擎活到作用域结束，第三个
+  `init()` 会失败（`new_engine` 遇此直接断言）。
+- C++ 侧：`gs_daisy_init(rate, first_slot, count)` 只初始化自己的声部槽；
+  效果数组多一维实例（`g_chorus[GS_MAX_INSTANCES][GS_FX_SLOTS][2]`），
+  全部 `gs_fx_*` 首参为 `inst`。默认效果链占满 6 个节点，静态 3+3
+  分割会砍掉默认链，不可用——每个实例保留完整 6 节点容量。
+- 插件每实例自有 `Box<Engine>`（`Gs1::engine`），`initialize()` 认领、
+  `deactivate()` 释放；第三个实例 `initialize()` 干净失败。进程单例
+  `synth_core::engine::engine()` 只留给网页 worklet 路径。
+- 采样率是进程级 pin：第一个实例定下后，后来的实例必须同率；仅当
+  本实例是唯一存活实例时才允许重调。`init()` 失败的引擎 `process()`
+  是空操作（`initialised == false`）。
+- 测试 `tests/multi_instance.rs`：双实例交错渲染与各自单渲逐采样
+  bit-identical（任何共享态串扰都会改采样）；第三实例 init 失败、
+  释放后可再认领；两实例各持各的预设参数值；采样率冲突拒绝。
+  注意：声部槽是按认领的复音数分配的，`set_max_polyphony` 的上调
+  不得超过认领数（`apply_polyphony_cap` 截断到 `voice_count`）。
 
 初始化：`init(sample_rate, 16)`，与网页引擎默认复音一致。
 `reset()` 只做 `all_notes_off()`，不重 `init`（`init` 会分配，不可在音频线程做）。
@@ -199,8 +220,10 @@ Windows 侧另有第三方乐器在夜半宿主上测试，与本插件无关，
 
 ## 二期（明确不做）
 
-自定义编辑器；CLAP 导出；macOS/Windows 包；真正多实例（C++ 声部槽分区）；
-`moduleinfo.json`；CI 任务（本期不改工作流）；采样/波表/IR 导入
+自定义编辑器；CLAP 导出；macOS/Windows 包；
+`moduleinfo.json`；采样/波表/IR 导入
 （`WT_USER`/`SMP_*` 参数一期存在但无导入数据时不生效）；sustain 与 poly pressure；
 参数显示格式打磨（单位、值转字符串）；自定义状态块（`PluginState`），
 用以在宿主存取状态时保住预设切换后的参数拧动（见“参数同步与预设切换”）。
+
+（真正多实例已在二期 ④ 落地，见“多实例”；CI 任务已随 ④ 补上，见下。）

@@ -17,6 +17,14 @@ extern "C" {
 
 #define GS_MAX_VOICES 32
 
+/* How many engine instances may live at once (phase 2, true multi-instance).
+ * Voice slots are partitioned by range (see gs_daisy_init) and effect state
+ * is dimensioned by instance (see gs_fx_*). Two is what the plugin needs;
+ * four leaves headroom for the never-released process singleton plus test
+ * engines. Keep in sync with `MAX_BRIDGE_INSTANCES` in
+ * crates/synth-core/src/bridge_slots.rs. */
+#define GS_MAX_INSTANCES 4
+
 /* Oscillator waveform ids — mirror daisysp::Oscillator::WAVE_* */
 enum {
     GS_WAVE_SIN = 0,
@@ -63,8 +71,13 @@ enum {
     GS_SVF_PEAK = 4,
 };
 
-/* Initialise every voice slot for a given sample rate. */
-void gs_daisy_init(float sample_rate);
+/* Initialise voice slots [first_slot, first_slot + count) for a given
+ * sample rate, and build the shared BLEP kernels once. The caller owns
+ * that range (see bridge_slots.rs); other instances' slots are untouched,
+ * so a second engine can init without resetting the first. `sample_rate`
+ * must match the rate the first instance set (the C++ `g_sample_rate` is
+ * global); the Rust allocator enforces that. */
+void gs_daisy_init(float sample_rate, int first_slot, int count);
 
 /* Clear the DSP state of one voice slot (called when a slot is reallocated). */
 void gs_voice_reset(int v);
@@ -151,17 +164,19 @@ void gs_voice_formant_block(int v, int side, const float *in, float *out, uint32
 /* --- global modulation effects (DaisySP) ---------------------------------- */
 #define GS_FX_SLOTS 6
 
-void gs_fx_init(float sample_rate);
+/* Initialise one instance's effect state. `inst` indexes the per-instance
+ * arrays (see gs_fx_*): instances never share effect state. */
+void gs_fx_init(float sample_rate, int inst);
 /** How many effect nodes have their own state (`FX_SLOTS` on the Rust side). */
 int gs_fx_slots(void);
-void gs_fx_chorus_set(int slot, float depth, float freq, float delay_ms, float feedback);
-void gs_fx_chorus_block(int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
-void gs_fx_flanger_set(int slot, float depth, float freq, float delay_ms, float feedback);
-void gs_fx_flanger_block(int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
-void gs_fx_phaser_set(int slot, float depth, float freq, float feedback, int poles);
-void gs_fx_phaser_block(int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
-void gs_fx_overdrive_set(int slot, float drive);
-void gs_fx_overdrive_block(int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
+void gs_fx_chorus_set(int inst, int slot, float depth, float freq, float delay_ms, float feedback);
+void gs_fx_chorus_block(int inst, int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
+void gs_fx_flanger_set(int inst, int slot, float depth, float freq, float delay_ms, float feedback);
+void gs_fx_flanger_block(int inst, int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
+void gs_fx_phaser_set(int inst, int slot, float depth, float freq, float feedback, int poles);
+void gs_fx_phaser_block(int inst, int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
+void gs_fx_overdrive_set(int inst, int slot, float drive);
+void gs_fx_overdrive_block(int inst, int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames);
 
 /* Diagnostics: number of voices currently allocated in the static pool. */
 int gs_daisy_voice_slots(void);

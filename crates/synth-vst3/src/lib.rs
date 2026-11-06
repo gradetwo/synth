@@ -7,7 +7,7 @@
 //!
 //! A nih-plug wrapper around `synth-core`. See the crate README for the
 //! framework choice, the licensing consequences (the distributed plugin
-//! binary is GPLv3 through `vst3-sys`), the single-instance guard, the
+//! binary is GPLv3 through `vst3-sys`), the per-instance bridge slice, the
 //! parameter mapping, and the preset-selector-instead-of-program-list design.
 //!
 //! The render core ([`render_with_events`] and friends) is decoupled from
@@ -16,7 +16,6 @@
 
 mod generated;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use nih_plug::prelude::*;
@@ -35,13 +34,6 @@ pub const POLYPHONY: usize = 16;
 pub const CC_MOD_WHEEL: u8 = 1;
 /// MIDI CC number for all-notes-off.
 pub const CC_ALL_NOTES_OFF: u8 = 123;
-
-/// Whether the process singleton engine is currently owned by a live plugin
-/// instance. The C++ voice state behind `synth-core` is process-global, so a
-/// second live instance would share voice slots with the first and the two
-/// would bleed into each other. The guard makes the second `initialize()`
-/// fail cleanly instead.
-static ENGINE_TAKEN: AtomicBool = AtomicBool::new(false);
 
 /// A MIDI event in plugin terms, decoupled from nih-plug so tests can build
 /// event lists without a host context.
@@ -260,7 +252,13 @@ pub fn render_with_events(
 pub struct Gs1 {
     params: Arc<Gs1Params>,
     state: RenderState,
-    engine_owned: bool,
+    /// This instance's own engine (phase 2, true multi-instance). The
+    /// engine owns a bridge slice (voice range + effect instance) claimed
+    /// at `initialize()` and released when the engine is dropped; two live
+    /// `Gs1` instances render through disjoint C++ slots and cannot bleed
+    /// into each other. The process-singleton `engine()` in synth-core is
+    /// only for the web worklet path now, not for the plugin.
+    engine: Box<Engine>,
 }
 
 impl Default for Gs1 {
@@ -268,7 +266,7 @@ impl Default for Gs1 {
         Self {
             params: Arc::new(Gs1Params::default()),
             state: RenderState::new(),
-            engine_owned: false,
+            engine: Box::new(Engine::new()),
         }
     }
 }
@@ -301,19 +299,16 @@ impl Plugin for Gs1 {
         buffer_config: &BufferConfig,
         _context: &mut impl InitContext<Self>,
     ) -> bool {
-        if !self.engine_owned {
-            if ENGINE_TAKEN.swap(true, Ordering::SeqCst) {
-                // Another live instance owns the process singleton engine.
-                return false;
-            }
-            self.engine_owned = true;
+        if !self.engine.init(buffer_config.sample_rate, POLYPHONY) {
+            // No bridge slice free (a third live instance) or the rate
+            // conflicts with a live instance: fail cleanly, do not render
+            // through another instance's slots.
+            return false;
         }
-        let engine = synth_core::engine::engine();
-        engine.init(buffer_config.sample_rate, POLYPHONY);
         // Sound like the current preset right away; the first process call
         // re-applies it if the host changed the selector meanwhile.
         apply_preset_to_engine(
-            engine,
+            &mut self.engine,
             self.params.preset.unmodulated_plain_value() as usize,
         );
         true
@@ -322,14 +317,15 @@ impl Plugin for Gs1 {
     fn reset(&mut self) {
         // init() allocates, so it must not run on the audio thread; silence
         // the voices and let the next process call re-sync parameters.
-        synth_core::engine::engine().all_notes_off();
+        self.engine.all_notes_off();
     }
 
     fn deactivate(&mut self) {
-        if self.engine_owned {
-            ENGINE_TAKEN.store(false, Ordering::SeqCst);
-            self.engine_owned = false;
-        }
+        // Replacing the engine in place drops the old one, which releases
+        // its bridge slice, so another instance may claim the voice range
+        // and effect instance. (Assigning into the Box reuses the
+        // allocation; `Box::new` here would trip clippy::replace_box.)
+        *self.engine = Engine::new();
     }
 
     fn process(
@@ -385,7 +381,7 @@ impl Plugin for Gs1 {
         let preset = self.params.preset.unmodulated_plain_value();
         render_with_events(
             &self.params,
-            synth_core::engine::engine(),
+            &mut self.engine,
             &mut self.state,
             preset,
             &events,

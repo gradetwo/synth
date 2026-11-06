@@ -6,6 +6,7 @@
 //! FFI overhead over 128..1024 frames, exactly as prd.md §2.2 prescribes.
 
 use crate::alloc_arena;
+use crate::bridge_slots::{self, BridgeReservation};
 use crate::dsp::adsr::Adsr;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::simd;
@@ -33,7 +34,7 @@ use crate::voice::{NoteOnResult, VoiceManager};
 // ---------------------------------------------------------------- C ABI glue
 
 extern "C" {
-    fn gs_daisy_init(sample_rate: f32);
+    fn gs_daisy_init(sample_rate: f32, first_slot: i32, count: i32);
     fn gs_voice_reset(v: i32);
     fn gs_voice_phase(v: i32, p0: f32, p1: f32);
     fn gs_voice_osc_set(v: i32, which: i32, sub: i32, wave: u32, freq: f32, amp: f32, pw: f32);
@@ -114,17 +115,17 @@ extern "C" {
         out: *mut f32,
         frames: u32,
     );
-    fn gs_fx_init(sample_rate: f32);
+    fn gs_fx_init(sample_rate: f32, inst: i32);
     /// How many effect slots the C bridge has state for.
     fn gs_fx_slots() -> i32;
-    fn gs_fx_chorus_set(slot: i32, depth: f32, freq: f32, delay_ms: f32, feedback: f32);
-    fn gs_fx_chorus_block(slot: i32, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
-    fn gs_fx_flanger_set(slot: i32, depth: f32, freq: f32, delay_ms: f32, feedback: f32);
-    fn gs_fx_flanger_block(slot: i32, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
-    fn gs_fx_phaser_set(slot: i32, depth: f32, freq: f32, feedback: f32, poles: i32);
-    fn gs_fx_phaser_block(slot: i32, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
-    fn gs_fx_overdrive_set(slot: i32, drive: f32);
-    fn gs_fx_overdrive_block(slot: i32, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
+    fn gs_fx_chorus_set(inst: i32, slot: i32, depth: f32, freq: f32, delay_ms: f32, feedback: f32);
+    fn gs_fx_chorus_block(inst: i32, slot: i32, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
+    fn gs_fx_flanger_set(inst: i32, slot: i32, depth: f32, freq: f32, delay_ms: f32, feedback: f32);
+    fn gs_fx_flanger_block(inst: i32, slot: i32, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
+    fn gs_fx_phaser_set(inst: i32, slot: i32, depth: f32, freq: f32, feedback: f32, poles: i32);
+    fn gs_fx_phaser_block(inst: i32, slot: i32, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
+    fn gs_fx_overdrive_set(inst: i32, slot: i32, drive: f32);
+    fn gs_fx_overdrive_block(inst: i32, slot: i32, in_l: *const f32, in_r: *const f32, out_l: *mut f32, out_r: *mut f32, frames: u32);
 }
 
 /// Short release applied to a stolen voice (seconds).
@@ -592,7 +593,22 @@ pub struct Engine {
     /// bit for bit what it was before this existed.
     graph_gain: [f32; GRAPH_GAINS],
     graph_gain_ready: bool,
+    /// Whether `init()` has run (see [`Engine::init`]).
     initialised: bool,
+    /// First C++ voice slot this engine owns (phase 2, true multi-instance).
+    /// Rust voice slot `i` renders through C++ slot `voice_base + i`; see
+    /// [`Engine::c_voice`]. Set by `init()` from the bridge reservation.
+    voice_base: usize,
+    /// How many consecutive C++ voice slots this engine owns. `init()` claims
+    /// this many (the requested polyphony); an un-initialised engine keeps
+    /// the full pool, which is exactly the old behaviour.
+    voice_count: usize,
+    /// Index into the C++ effect-state arrays (`g_chorus[fx_instance]`, ...).
+    /// Set by `init()` from the bridge reservation.
+    fx_instance: i32,
+    /// The bridge slice this engine owns, if it claimed one. Dropping the
+    /// engine releases it, so a later engine may reuse the slots.
+    bridge: Option<BridgeReservation>,
 }
 
 impl Engine {
@@ -723,22 +739,59 @@ impl Engine {
             graph_gain: [0.0; GRAPH_GAINS],
             graph_gain_ready: false,
             initialised: false,
+            voice_base: 0,
+            voice_count: MAX_VOICES,
+            fx_instance: 0,
+            bridge: None,
         }
     }
 
-    pub fn init(&mut self, sample_rate: f32, max_polyphony: usize) {
-        self.sample_rate = if (8000.0..=192000.0).contains(&sample_rate) {
+    /// Initialise the engine for `sample_rate` and `max_polyphony` voices.
+    ///
+    /// Claims a slice of the C++ bridge (see `bridge_slots`): a contiguous
+    /// voice range plus one effect instance. Returns false — and leaves the
+    /// engine un-initialised — when no slice is free (a third live instance)
+    /// or when the rate conflicts with a live instance. A re-init keeps the
+    /// reservation it already holds; a re-init at another rate is only
+    /// allowed while this engine is the sole live instance.
+    pub fn init(&mut self, sample_rate: f32, max_polyphony: usize) -> bool {
+        let sample_rate = if (8000.0..=192000.0).contains(&sample_rate) {
             sample_rate
         } else {
             48000.0
         };
+        let poly_request = max_polyphony.clamp(2, MAX_VOICES);
+        if self.bridge.is_none() {
+            match bridge_slots::claim(sample_rate, poly_request) {
+                Some(reservation) => {
+                    self.voice_base = reservation.voice_base;
+                    self.voice_count = reservation.voice_count;
+                    self.fx_instance = reservation.fx_instance as i32;
+                    self.bridge = Some(reservation);
+                }
+                None => return false,
+            }
+        } else if sample_rate != self.sample_rate {
+            // A rate change retunes the shared C++ state; only the sole live
+            // instance may do it.
+            if !bridge_slots::retune(sample_rate) {
+                self.initialised = false;
+                return false;
+            }
+        }
+        self.sample_rate = sample_rate;
+        self.poly_request = poly_request;
         self.tables = crate::dsp::wavetable::RECIPES
             .iter()
             .map(|(_, recipe)| crate::dsp::wavetable::Table::from_recipe(recipe))
             .collect();
         unsafe {
-            gs_daisy_init(self.sample_rate);
-            gs_fx_init(self.sample_rate);
+            gs_daisy_init(
+                self.sample_rate,
+                self.voice_base as i32,
+                self.voice_count as i32,
+            );
+            gs_fx_init(self.sample_rate, self.fx_instance);
         }
         for comb in self.combs.iter_mut() {
             comb.prepare(self.sample_rate);
@@ -894,7 +947,6 @@ impl Engine {
             env.reset();
         }
         self.vm.reset();
-        self.poly_request = max_polyphony.clamp(2, MAX_VOICES);
         self.apply_polyphony_cap();
         self.pitch_bend = 0.0;
         self.mod_wheel = 0.0;
@@ -916,6 +968,7 @@ impl Engine {
         // them at their instances before the first block runs.
         self.sync_fx_pools();
         self.initialised = true;
+        true
     }
 
     /// The parameter set a voice plays with.
@@ -1405,12 +1458,21 @@ impl Engine {
         self.vm.all_notes_off();
     }
 
+    /// The C++ voice slot a Rust voice slot renders through (phase 2, true
+    /// multi-instance). Rust slots are `0..voice_count`; the C++ bridge
+    /// holds this engine's range at `voice_base..voice_base + voice_count`.
+    #[inline]
+    fn c_voice(&self, slot: usize) -> i32 {
+        debug_assert!(slot < self.voice_count, "voice slot outside the claim");
+        (self.voice_base + slot) as i32
+    }
+
     /// Unison multiplies the oscillator count, so the voice cap shrinks with it:
     /// the requested polyphony is divided by the stack size (a seven-voice stack
     /// on a sixteen-voice patch plays two notes, never seven times the work).
     fn apply_polyphony_cap(&mut self) {
         let unison = self.params.osc[0].unison.max(self.params.osc[1].unison).max(1) as usize;
-        let cap = (self.poly_request / unison).max(2);
+        let cap = (self.poly_request / unison).max(2).min(self.voice_count);
         self.vm.set_max_polyphony(cap);
     }
 
@@ -1465,9 +1527,9 @@ impl Engine {
             self.noise[slot][1].reset();
             self.wt_phase[slot] = [0.0; 2];
             self.smp_state[slot] = [ReadState::new(); 2];
-            unsafe { gs_voice_reset(slot as i32) };
+            unsafe { gs_voice_reset(self.c_voice(slot)) };
             let (p0, p1) = self.next_phases();
-            unsafe { gs_voice_phase(slot as i32, p0, p1) };
+            unsafe { gs_voice_phase(self.c_voice(slot), p0, p1) };
             let random = self.next_random();
             self.vm.voices[slot].random = random;
             self.voice_lfos[slot].retrigger();
@@ -1514,7 +1576,7 @@ impl Engine {
     }
 
     fn retrigger(&mut self, slot: usize) {
-        unsafe { gs_voice_reset(slot as i32) };
+        unsafe { gs_voice_reset(self.c_voice(slot)) };
         // The second stage's state was just cleared with the rest of the voice,
         // so there is nothing to crossfade from: start it settled on whatever
         // routing the patch is set to.
@@ -1524,7 +1586,7 @@ impl Engine {
         // deterministic (golden-ratio low-discrepancy) so renders and the DSP
         // baseline stay reproducible.
         let (p0, p1) = self.next_phases();
-        unsafe { gs_voice_phase(slot as i32, p0, p1) };
+        unsafe { gs_voice_phase(self.c_voice(slot), p0, p1) };
         let random = self.next_random();
         self.vm.voices[slot].random = random;
         self.voice_lfos[slot].retrigger();
@@ -1908,9 +1970,9 @@ impl Engine {
             self.noise[slot][1].reset();
             self.wt_phase[slot] = [0.0; 2];
             self.smp_state[slot] = [ReadState::new(); 2];
-            unsafe { gs_voice_reset(slot as i32) };
+            unsafe { gs_voice_reset(self.c_voice(slot)) };
             let (p0, p1) = self.next_phases();
-            unsafe { gs_voice_phase(slot as i32, p0, p1) };
+            unsafe { gs_voice_phase(self.c_voice(slot), p0, p1) };
             let random = self.next_random();
             self.vm.voices[slot].random = random;
             self.voice_lfos[slot].retrigger();
@@ -2110,7 +2172,7 @@ impl Engine {
                 {
                     unsafe {
                         gs_voice_osc_set(
-                            slot as i32,
+                            self.c_voice(slot),
                             0,
                             sub as i32,
                             slave_wave,
@@ -2119,7 +2181,7 @@ impl Engine {
                             slave_pw,
                         );
                         gs_voice_osc_set(
-                            slot as i32,
+                            self.c_voice(slot),
                             1,
                             sub as i32,
                             master_wave,
@@ -2137,7 +2199,7 @@ impl Engine {
                             None => (core::ptr::null(), 0.0),
                         };
                         gs_voice_osc_sync_block(
-                            slot as i32,
+                            self.c_voice(slot),
                             sub as i32,
                             mod_ptr,
                             depth,
@@ -2182,6 +2244,10 @@ impl Engine {
             let o = params.osc[which];
             let level = if o.on { o.level } else { 0.0 };
             osc_level[which] = level;
+            // The C++ slot is resolved before `out` borrows the oscillator
+            // buffer mutably; resolving it inside the call below would borrow
+            // `self` while `out` holds a mutable borrow.
+            let c_slot = self.c_voice(slot);
             let out: &mut [f32] = if which == 0 {
                 &mut self.osc_a[..frames]
             } else {
@@ -2207,7 +2273,7 @@ impl Engine {
                 None
             };
             render_oscillator(
-                slot,
+                c_slot,
                 which,
                 o,
                 freq,
@@ -2438,32 +2504,32 @@ impl Engine {
             // whole knob instead of cramming every vowel into the top octave.
             let vowel = ((cutoff / 80.0).log2() / (4000.0f32 / 80.0).log2()).clamp(0.0, 1.0);
             unsafe {
-                gs_voice_formant_set(slot as i32, 0, vowel, resonance);
+                gs_voice_formant_set(self.c_voice(slot), 0, vowel, resonance);
                 gs_voice_formant_block(
-                    slot as i32,
+                    self.c_voice(slot),
                     0,
                     self.voice_buf.as_ptr(),
                     self.osc_a.as_mut_ptr(),
                     frames as u32,
                 );
                 gs_voice_dc_block(
-                    slot as i32,
+                    self.c_voice(slot),
                     0,
                     self.osc_a.as_ptr(),
                     self.voice_buf.as_mut_ptr(),
                     frames as u32,
                 );
                 if stereo {
-                    gs_voice_formant_set(slot as i32, 1, vowel, resonance);
+                    gs_voice_formant_set(self.c_voice(slot), 1, vowel, resonance);
                     gs_voice_formant_block(
-                        slot as i32,
+                        self.c_voice(slot),
                         1,
                         self.voice_buf_r.as_ptr(),
                         self.osc_b.as_mut_ptr(),
                         frames as u32,
                     );
                     gs_voice_dc_block(
-                        slot as i32,
+                        self.c_voice(slot),
                         1,
                         self.osc_b.as_ptr(),
                         self.voice_buf_r.as_mut_ptr(),
@@ -2482,7 +2548,7 @@ impl Engine {
             self.combs[slot] = comb;
             unsafe {
                 gs_voice_dc_block(
-                    slot as i32,
+                    self.c_voice(slot),
                     0,
                     self.osc_a.as_ptr(),
                     self.voice_buf.as_mut_ptr(),
@@ -2503,7 +2569,7 @@ impl Engine {
             self.ladders[slot][0] = side0;
             unsafe {
                 gs_voice_dc_block(
-                    slot as i32,
+                    self.c_voice(slot),
                     0,
                     self.voice_buf.as_ptr(),
                     self.osc_a.as_mut_ptr(),
@@ -2520,7 +2586,7 @@ impl Engine {
                 self.ladders[slot][1] = side1;
                 unsafe {
                     gs_voice_dc_block(
-                        slot as i32,
+                        self.c_voice(slot),
                         1,
                         self.voice_buf_r.as_ptr(),
                         self.osc_b.as_mut_ptr(),
@@ -2532,7 +2598,7 @@ impl Engine {
         } else {
         unsafe {
             gs_voice_filter_set(
-                slot as i32,
+                self.c_voice(slot),
                 0,
                 kind.bridge_id(),
                 cutoff * os_freq,
@@ -2540,7 +2606,7 @@ impl Engine {
                 params.filter.drive,
             );
             gs_voice_filter_block(
-                slot as i32,
+                self.c_voice(slot),
                 0,
                 kind.bridge_id(),
                 params.filter.morph,
@@ -2549,7 +2615,7 @@ impl Engine {
                 nf as u32,
             );
             gs_voice_dc_block(
-                slot as i32,
+                self.c_voice(slot),
                 0,
                 self.osc_a.as_ptr(),
                 self.voice_buf.as_mut_ptr(),
@@ -2558,7 +2624,7 @@ impl Engine {
 
             if stereo {
                 gs_voice_filter_set(
-                    slot as i32,
+                    self.c_voice(slot),
                     1,
                     kind.bridge_id(),
                     cutoff * os_freq,
@@ -2566,7 +2632,7 @@ impl Engine {
                     params.filter.drive,
                 );
                 gs_voice_filter_block(
-                    slot as i32,
+                    self.c_voice(slot),
                     1,
                     kind.bridge_id(),
                     params.filter.morph,
@@ -2575,7 +2641,7 @@ impl Engine {
                     nf as u32,
                 );
                 gs_voice_dc_block(
-                    slot as i32,
+                    self.c_voice(slot),
                     1,
                     self.osc_b.as_ptr(),
                     self.voice_buf_r.as_mut_ptr(),
@@ -2616,7 +2682,7 @@ impl Engine {
             let blend = params.filter.blend;
             unsafe {
                 gs_voice_filter2_set(
-                    slot as i32,
+                    self.c_voice(slot),
                     0,
                     kind2,
                     params.filter.cutoff2 * os_freq,
@@ -2625,7 +2691,7 @@ impl Engine {
                 );
                 if stereo {
                     gs_voice_filter2_set(
-                        slot as i32,
+                        self.c_voice(slot),
                         1,
                         kind2,
                         params.filter.cutoff2 * os_freq,
@@ -2635,7 +2701,7 @@ impl Engine {
                 }
                 if serial {
                     gs_voice_filter2_block(
-                        slot as i32,
+                        self.c_voice(slot),
                         0,
                         kind2,
                         params.filter.morph,
@@ -2645,7 +2711,7 @@ impl Engine {
                     );
                     if stereo {
                         gs_voice_filter2_block(
-                            slot as i32,
+                            self.c_voice(slot),
                             1,
                             kind2,
                             params.filter.morph,
@@ -2661,7 +2727,7 @@ impl Engine {
                         *sample *= makeup2;
                     }
                     gs_voice_filter2_block(
-                        slot as i32,
+                        self.c_voice(slot),
                         0,
                         kind2,
                         params.filter.morph,
@@ -2674,7 +2740,7 @@ impl Engine {
                             *sample *= makeup2;
                         }
                         gs_voice_filter2_block(
-                            slot as i32,
+                            self.c_voice(slot),
                             1,
                             kind2,
                             params.filter.morph,
@@ -2896,8 +2962,8 @@ impl Engine {
                 }
                 FxKind::Chorus if fx.chorus_on && ovr[2] > 0.0 => {
                     unsafe {
-                        gs_fx_chorus_set(slot as i32, ovr[0], ovr[1], 20.0, 0.25);
-                        gs_fx_chorus_block(
+                        gs_fx_chorus_set(self.fx_instance, slot as i32, ovr[0], ovr[1], 20.0, 0.25);
+                        gs_fx_chorus_block(self.fx_instance, 
                             slot as i32,
                             self.fx_l.as_ptr(),
                             self.fx_r.as_ptr(),
@@ -2910,8 +2976,8 @@ impl Engine {
                 }
                 FxKind::Flanger if fx.flanger_on && ovr[2] > 0.0 => {
                     unsafe {
-                        gs_fx_flanger_set(slot as i32, 0.5, ovr[1], 2.0, ovr[0]);
-                        gs_fx_flanger_block(
+                        gs_fx_flanger_set(self.fx_instance, slot as i32, 0.5, ovr[1], 2.0, ovr[0]);
+                        gs_fx_flanger_block(self.fx_instance, 
                             slot as i32,
                             self.fx_l.as_ptr(),
                             self.fx_r.as_ptr(),
@@ -2924,8 +2990,8 @@ impl Engine {
                 }
                 FxKind::Phaser if fx.phaser_on && ovr[2] > 0.0 => {
                     unsafe {
-                        gs_fx_phaser_set(slot as i32, 0.8, ovr[1], ovr[0], 4);
-                        gs_fx_phaser_block(
+                        gs_fx_phaser_set(self.fx_instance, slot as i32, 0.8, ovr[1], ovr[0], 4);
+                        gs_fx_phaser_block(self.fx_instance, 
                             slot as i32,
                             self.fx_l.as_ptr(),
                             self.fx_r.as_ptr(),
@@ -2945,8 +3011,8 @@ impl Engine {
                         self.drive_oversampled_amt(slot, frames, ovr[0]);
                     } else {
                         unsafe {
-                            gs_fx_overdrive_set(slot as i32, ovr[0]);
-                            gs_fx_overdrive_block(
+                            gs_fx_overdrive_set(self.fx_instance, slot as i32, ovr[0]);
+                            gs_fx_overdrive_block(self.fx_instance, 
                                 slot as i32,
                                 self.fx_l.as_ptr(),
                                 self.fx_r.as_ptr(),
@@ -3439,8 +3505,8 @@ impl Engine {
             }
             FxKind::Chorus if fx.chorus_on && ovr[2] > 0.0 => {
                 unsafe {
-                    gs_fx_chorus_set(slot as i32, ovr[0], ovr[1], 20.0, 0.25);
-                    gs_fx_chorus_block(
+                    gs_fx_chorus_set(self.fx_instance, slot as i32, ovr[0], ovr[1], 20.0, 0.25);
+                    gs_fx_chorus_block(self.fx_instance, 
                         slot as i32,
                         self.graph_node_l[base..].as_ptr(),
                         self.graph_node_r[base..].as_ptr(),
@@ -3453,8 +3519,8 @@ impl Engine {
             }
             FxKind::Flanger if fx.flanger_on && ovr[2] > 0.0 => {
                 unsafe {
-                    gs_fx_flanger_set(slot as i32, 0.5, ovr[1], 2.0, ovr[0]);
-                    gs_fx_flanger_block(
+                    gs_fx_flanger_set(self.fx_instance, slot as i32, 0.5, ovr[1], 2.0, ovr[0]);
+                    gs_fx_flanger_block(self.fx_instance, 
                         slot as i32,
                         self.graph_node_l[base..].as_ptr(),
                         self.graph_node_r[base..].as_ptr(),
@@ -3467,8 +3533,8 @@ impl Engine {
             }
             FxKind::Phaser if fx.phaser_on && ovr[2] > 0.0 => {
                 unsafe {
-                    gs_fx_phaser_set(slot as i32, 0.8, ovr[1], ovr[0], 4);
-                    gs_fx_phaser_block(
+                    gs_fx_phaser_set(self.fx_instance, slot as i32, 0.8, ovr[1], ovr[0], 4);
+                    gs_fx_phaser_block(self.fx_instance, 
                         slot as i32,
                         self.graph_node_l[base..].as_ptr(),
                         self.graph_node_r[base..].as_ptr(),
@@ -3486,8 +3552,8 @@ impl Engine {
                     self.drive_oversampled_node(slot, frames, ovr[0], parallel);
                 } else {
                     unsafe {
-                        gs_fx_overdrive_set(slot as i32, ovr[0]);
-                        gs_fx_overdrive_block(
+                        gs_fx_overdrive_set(self.fx_instance, slot as i32, ovr[0]);
+                        gs_fx_overdrive_block(self.fx_instance, 
                             slot as i32,
                             self.graph_node_l[base..].as_ptr(),
                             self.graph_node_r[base..].as_ptr(),
@@ -3667,8 +3733,8 @@ impl Engine {
         unsafe {
             let l = self.osc_a.as_mut_ptr();
             let r = self.osc_b.as_mut_ptr();
-            gs_fx_overdrive_set(slot as i32, amount);
-            gs_fx_overdrive_block(slot as i32, l, r, l, r, nf as u32);
+            gs_fx_overdrive_set(self.fx_instance, slot as i32, amount);
+            gs_fx_overdrive_block(self.fx_instance, slot as i32, l, r, l, r, nf as u32);
         }
         self.os_fx_l[slot].downsample(
             &self.osc_a[..nf],
@@ -3873,8 +3939,8 @@ impl Engine {
         unsafe {
             let l = self.osc_a.as_mut_ptr();
             let r = self.osc_b.as_mut_ptr();
-            gs_fx_overdrive_set(slot as i32, amount);
-            gs_fx_overdrive_block(slot as i32, l, r, l, r, nf as u32);
+            gs_fx_overdrive_set(self.fx_instance, slot as i32, amount);
+            gs_fx_overdrive_block(self.fx_instance, slot as i32, l, r, l, r, nf as u32);
         }
         self.os_fx_l[slot].downsample(
             &self.osc_a[..nf],
@@ -3964,7 +4030,9 @@ fn transient_params(fx: FxParams) -> TransientParams {
 /// after this, on the two finished blocks, so it applies to every wave.
 #[allow(clippy::too_many_arguments)]
 fn render_oscillator(
-    slot: usize,
+    // Absolute C++ voice slot (the caller's `c_voice(slot)`): this is a free
+    // function with no `Engine` to map through.
+    c_slot: i32,
     which: usize,
     params: OscParams,
     freq: f32,
@@ -3985,7 +4053,7 @@ fn render_oscillator(
     sample_rate: f32,
     scratch: &mut [f32],
 ) {
-    render_wave(slot, which, params, freq, pw, frames, out, pm, rng, noise, tables, user_table,
+    render_wave(c_slot, which, params, freq, pw, frames, out, pm, rng, noise, tables, user_table,
         use_user_table, wt_phase, sample, sample_state, sampler, sample_rate, scratch);
     // The sub oscillator (P6.2) is one sine at the nominal pitch — not one per
     // unison voice: detuning a sub just muddies the bottom, and a single low
@@ -4020,7 +4088,9 @@ fn add_sub(out: &mut [f32], freq: f32, sample_rate: f32, octaves: u32, level: f3
 
 #[allow(clippy::too_many_arguments)]
 fn render_wave(
-    slot: usize,
+    // Absolute C++ voice slot (the caller's `c_voice(slot)`): `render_wave`
+    // is a free function with no `Engine` to map through.
+    c_slot: i32,
     which: usize,
     params: OscParams,
     freq: f32,
@@ -4050,10 +4120,10 @@ fn render_wave(
             // below has anything to do.
             let bandlimited = is_bandlimited_wave(params.wave);
             if unison == 1 {
-                gs_voice_osc_set(slot as i32, which as i32, 0, daisy_wave, freq, 1.0, pw);
+                gs_voice_osc_set(c_slot, which as i32, 0, daisy_wave, freq, 1.0, pw);
                 match pm {
                     Some((modulator, cycles)) if bandlimited => gs_voice_osc_bandlimit_block(
-                        slot as i32,
+                        c_slot,
                         which as i32,
                         0,
                         modulator.as_ptr(),
@@ -4062,7 +4132,7 @@ fn render_wave(
                         frames as u32,
                     ),
                     Some((modulator, cycles)) => gs_voice_osc_pm_block(
-                        slot as i32,
+                        c_slot,
                         which as i32,
                         0,
                         modulator.as_ptr(),
@@ -4071,7 +4141,7 @@ fn render_wave(
                         frames as u32,
                     ),
                     None if bandlimited => gs_voice_osc_bandlimit_block(
-                        slot as i32,
+                        c_slot,
                         which as i32,
                         0,
                         core::ptr::null(),
@@ -4080,13 +4150,13 @@ fn render_wave(
                         frames as u32,
                     ),
                     None => {
-                        gs_voice_osc_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32)
+                        gs_voice_osc_block(c_slot, which as i32, 0, out.as_mut_ptr(), frames as u32)
                     }
                 }
                 // Every path but the band-limited one is 23.5 samples early now.
                 if !bandlimited {
                     gs_voice_osc_delay_block(
-                        slot as i32,
+                        c_slot,
                         which as i32,
                         0,
                         out.as_mut_ptr(),
@@ -4111,7 +4181,7 @@ fn render_wave(
                 let detune = semitone_ratio(t * max_cents / 100.0);
                 let sub_freq = (freq * detune).clamp(0.25, 24_000.0);
                 gs_voice_osc_set(
-                    slot as i32,
+                    c_slot,
                     which as i32,
                     sub as i32,
                     daisy_wave,
@@ -4121,7 +4191,7 @@ fn render_wave(
                 );
                 match pm {
                     Some((modulator, cycles)) if bandlimited => gs_voice_osc_bandlimit_block(
-                        slot as i32,
+                        c_slot,
                         which as i32,
                         sub as i32,
                         modulator.as_ptr(),
@@ -4130,7 +4200,7 @@ fn render_wave(
                         frames as u32,
                     ),
                     Some((modulator, cycles)) => gs_voice_osc_pm_block(
-                        slot as i32,
+                        c_slot,
                         which as i32,
                         sub as i32,
                         modulator.as_ptr(),
@@ -4139,7 +4209,7 @@ fn render_wave(
                         frames as u32,
                     ),
                     None if bandlimited => gs_voice_osc_bandlimit_block(
-                        slot as i32,
+                        c_slot,
                         which as i32,
                         sub as i32,
                         core::ptr::null(),
@@ -4148,7 +4218,7 @@ fn render_wave(
                         frames as u32,
                     ),
                     None => gs_voice_osc_block(
-                        slot as i32,
+                        c_slot,
                         which as i32,
                         sub as i32,
                         scratch.as_mut_ptr(),
@@ -4162,7 +4232,7 @@ fn render_wave(
             // The stack is a sum, so delaying it once is the same as delaying
             // every sub-voice: the compensation is one call, not one per voice.
             if !bandlimited {
-                gs_voice_osc_delay_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32);
+                gs_voice_osc_delay_block(c_slot, which as i32, 0, out.as_mut_ptr(), frames as u32);
             }
         },
         None => {
@@ -4205,7 +4275,7 @@ fn render_wave(
                 // A wavetable can be OSC 2 against a band-limited OSC 1, so it
                 // takes the same latency compensation as the sine does.
                 unsafe {
-                    gs_voice_osc_delay_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32)
+                    gs_voice_osc_delay_block(c_slot, which as i32, 0, out.as_mut_ptr(), frames as u32)
                 };
                 return;
             }
@@ -4229,7 +4299,7 @@ fn render_wave(
                     / (1usize << crate::dsp::sampler::level_shift(level)) as f64;
                 sample.render(level, out, step, &sampler, sample_state);
                 unsafe {
-                    gs_voice_osc_delay_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32)
+                    gs_voice_osc_delay_block(c_slot, which as i32, 0, out.as_mut_ptr(), frames as u32)
                 };
                 return;
             }
@@ -4247,7 +4317,7 @@ fn render_wave(
             // it is delayed only so that an FM/ring pairing with a band-limited
             // oscillator stays sample-aligned with the old engine.
             unsafe {
-                gs_voice_osc_delay_block(slot as i32, which as i32, 0, out.as_mut_ptr(), frames as u32)
+                gs_voice_osc_delay_block(c_slot, which as i32, 0, out.as_mut_ptr(), frames as u32)
             };
         }
     }
@@ -4276,6 +4346,15 @@ pub fn bandlimit_latency() -> f32 {
 impl Default for Engine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for Engine {
+    /// Dropping releases the bridge slice (`BridgeReservation` drops with
+    /// it), so a later engine may reuse the voice range and the effect
+    /// instance. The process-singleton `ENGINE` is never dropped.
+    fn drop(&mut self) {
+        self.bridge = None;
     }
 }
 
@@ -4323,7 +4402,7 @@ mod tests {
 
     fn new_engine(poly: usize) -> Box<Engine> {
         let mut e = Box::new(Engine::new());
-        e.init(48000.0, poly);
+        assert!(e.init(48000.0, poly), "new_engine: bridge claim failed");
         e
     }
 
@@ -6649,6 +6728,9 @@ mod tests {
         assert!(pressed > quiet * 1.05, "aftertouch did nothing: {quiet} -> {pressed}");
 
         // KEYTRACK -> cutoff: a high note must be brighter than a low one.
+        // The bridge holds 32 voice slots: drop the idle engine before
+        // claiming the next one, or the third claim fails.
+        drop(e);
         let mut e = new_engine(16);
         base(&mut e);
         e.set_route(0, ModSrc::KeyTrack as u32, ModDst::Cutoff as u32, 1.0, true);
@@ -6663,6 +6745,9 @@ mod tests {
         assert!(high > low * 1.2, "key tracking did nothing: {low} -> {high}");
 
         // RANDOM -> pan: a steady value per note, different between notes.
+        // The bridge holds 32 voice slots: drop the idle engine before
+        // claiming the next one, or the third claim fails.
+        drop(e);
         let mut e = new_engine(16);
         base(&mut e);
         e.set_route(0, ModSrc::Random as u32, ModDst::Pan as u32, 1.0, true);
@@ -6932,33 +7017,33 @@ mod tests {
             ("+drive", 0.0, 0.0, 1.0),
             ("everything", 1.0, 1.0, 1.0),
         ];
+        // One config at a time, best-of-four rounds: the bridge holds 32
+        // voice slots, so five 16-voice engines cannot live at once (the
+        // old shape built all five first and interleaved the rounds). The
+        // min over four rounds still filters a transient load spike; the
+        // engine is dropped before the next config claims its slice.
         let notes = [52u8, 55, 59, 64, 67, 71, 76, 79, 83, 88, 91, 95];
-        let mut engines: Vec<(String, Box<Engine>)> = configs
-            .iter()
-            .map(|(label, rev, cho, drv)| {
-                let mut e = build(*rev, *cho, *drv);
-                for note in notes {
-                    e.note_on(note, 0.9);
-                }
-                for _ in 0..80 {
-                    e.process(128);
-                }
-                ((*label).to_string(), e)
-            })
-            .collect();
-        let mut best = vec![f64::MAX; engines.len()];
-        for _round in 0..4 {
-            for (i, (_, engine)) in engines.iter_mut().enumerate() {
+        let mut best = vec![f64::MAX; configs.len()];
+        for (i, (label, rev, cho, drv)) in configs.iter().enumerate() {
+            let mut e = build(*rev, *cho, *drv);
+            for note in notes {
+                e.note_on(note, 0.9);
+            }
+            for _ in 0..80 {
+                e.process(128);
+            }
+            for _round in 0..4 {
                 let blocks = 200;
                 let start = std::time::Instant::now();
                 for _ in 0..blocks {
-                    engine.process(128);
+                    e.process(128);
                 }
                 let us = start.elapsed().as_secs_f64() * 1e6 / blocks as f64;
                 best[i] = best[i].min(us);
             }
+            drop(e);
         }
-        for (i, (label, _)) in engines.iter().enumerate() {
+        for (i, (label, _, _, _)) in configs.iter().enumerate() {
             println!(
                 "COST {label}: {:.0}us ({:.0}% of 2667us)",
                 best[i],
@@ -7939,11 +8024,17 @@ mod tests {
         let mut e = new_engine(16);
         let plain = render_wavetable_note(&mut e, 1.0);
 
+        // The bridge holds 32 voice slots: drop the idle engine before
+        // claiming the next one, or the third claim fails.
+        drop(e);
         let mut e = new_engine(16);
         assert_eq!(import_cycle(&mut e, &cycle), 0, "clean cycle should import");
         e.set_param(id::WT_USER, 0.0);
         let factory = render_wavetable_note(&mut e, 1.0);
 
+        // The bridge holds 32 voice slots: drop the idle engine before
+        // claiming the next one, or the third claim fails.
+        drop(e);
         let mut e = new_engine(16);
         assert_eq!(import_cycle(&mut e, &cycle), 0, "clean cycle should import");
         e.set_param(id::WT_USER, 1.0);
