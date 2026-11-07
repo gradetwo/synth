@@ -14,12 +14,14 @@
 //! nih-plug's `Buffer`/`ProcessContext` types so the headless tests can drive
 //! the plugin's own render path directly.
 
+mod editor;
 mod generated;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use nih_plug::prelude::*;
+use serde::{Deserialize, Serialize};
 use synth_core::engine::Engine;
 use synth_core::params::MAX_BLOCK_SIZE;
 
@@ -69,6 +71,28 @@ pub enum MidiEvent {
     },
 }
 
+/// Engine-effective parameter values, persisted with the plugin state.
+///
+/// The host only saves its own parameter values, which go stale when a
+/// preset switch leaves pre-switch values behind. The engine is the source
+/// of truth, so every process block mirrors the effective values here (see
+/// [`render_with_events`]); on the first block after a host state restore
+/// the blob is applied to the engine instead of the bare preset, so
+/// post-switch host tweaks survive the round trip. `None` in
+/// `Gs1Params::engine_state` means no block has run yet (a fresh instance,
+/// or a state saved by the v1 plugin): the old preset-wins behaviour
+/// applies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EngineState {
+    /// Preset selector value the effective values belong to.
+    pub preset: i32,
+    /// Effective value per TS parameter id (0..223), in id order. A `Vec`
+    /// because serde only implements array (de)serialization up to length
+    /// 32; a blob whose length is not `PARAM_COUNT` is treated as absent
+    /// on restore.
+    pub values: Vec<f32>,
+}
+
 /// Per-render mutable state.
 ///
 /// nih-plug parameters are host-owned: plugin code can read them but cannot
@@ -83,14 +107,18 @@ pub enum MidiEvent {
 /// - The preset selector itself IS a host parameter, so it always restores
 ///   correctly across a host state save/reload.
 ///
-/// Known v1 limitation: host-side tweaks made after a preset switch live in
-/// the engine only and do not survive a host state save/reload (the host
-/// saves the stale parameter values). The preset itself always restores.
-/// Closing this needs a custom state blob (see the crate README).
+/// The v1 state loss (host tweaks made after a preset switch lived in the
+/// engine only and did not survive a host state save/reload) is closed by
+/// the `engine_state` persist blob: every block mirrors the engine-effective
+/// values into it, and the first block after a restore applies the blob
+/// instead of the bare preset (see [`render_with_events`]).
 pub struct RenderState {
     pub last_host: [f32; PARAM_COUNT],
     pub last_preset: i32,
     pub first_block: bool,
+    /// Mirror of what the engine currently holds, per TS parameter id.
+    /// This is what the `engine_state` persist blob is written from.
+    pub effective: [f32; PARAM_COUNT],
 }
 
 impl RenderState {
@@ -101,7 +129,22 @@ impl RenderState {
             last_host: [f32::NAN; PARAM_COUNT],
             last_preset: -1,
             first_block: true,
+            effective: PARAM_DEFAULTS,
         }
+    }
+}
+
+/// Mirror the engine-effective values into the `engine_state` persist blob
+/// so the host's next state save carries the tweaks, not just the preset.
+/// The blob lives in `Gs1Params` (shared with the editor), so this only
+/// takes a shared reference; a poisoned lock is impossible in practice
+/// (no code path panics while holding it) and is skipped, never fatal.
+fn sync_engine_state_blob(params: &Gs1Params, state: &RenderState) {
+    if let Ok(mut slot) = params.engine_state.write() {
+        *slot = Some(EngineState {
+            preset: state.last_preset,
+            values: state.effective.to_vec(),
+        });
     }
 }
 
@@ -206,17 +249,43 @@ pub fn render_with_events(
     }
 
     if state.first_block {
-        // Fresh instance (or first block after a host state restore, where
-        // the selector restored correctly but the other parameters may be
-        // stale pre-switch values): the preset wins, host values become the
-        // baseline for later change tracking.
-        apply_preset_to_engine(engine, preset as usize);
-        state.last_preset = preset;
+        // Fresh instance, or first block after a host state restore. A
+        // restored engine-state blob carries the true effective values
+        // (preset + post-switch host tweaks): apply those instead of the
+        // bare preset, so the tweaks survive the round trip. A blob whose
+        // preset no longer matches the selector is stale (the host switched
+        // presets after the restore); the selector wins then, as on a
+        // fresh instance.
+        let restored = match params.engine_state.read() {
+            Ok(slot) => (*slot)
+                .clone()
+                .filter(|blob| blob.preset == preset && blob.values.len() == PARAM_COUNT),
+            Err(_) => None,
+        };
+        match restored {
+            Some(blob) => {
+                for acc in PARAM_ACCESSORS {
+                    engine.set_param(acc.id, blob.values[acc.id as usize]);
+                }
+                apply_routes(engine);
+                state.effective.copy_from_slice(&blob.values);
+                state.last_preset = preset;
+            }
+            None => {
+                // No blob (fresh instance, or a state saved by the v1
+                // plugin): the preset wins, host values become the baseline
+                // for later change tracking.
+                apply_preset_to_engine(engine, preset as usize);
+                state.effective = merged_preset(preset as usize);
+                state.last_preset = preset;
+            }
+        }
         state.last_host = host;
         state.first_block = false;
     } else {
         if preset != state.last_preset {
             apply_preset_to_engine(engine, preset as usize);
+            state.effective = merged_preset(preset as usize);
             state.last_preset = preset;
         }
         // Only genuine host changes since the previous block reach the
@@ -226,10 +295,14 @@ pub fn render_with_events(
             let value = host[acc.id as usize];
             if value != state.last_host[acc.id as usize] {
                 engine.set_param(acc.id, value);
+                state.effective[acc.id as usize] = value;
             }
         }
         state.last_host = host;
     }
+    // Mirror the effective values into the persist blob so the host's next
+    // state save carries the tweaks, not just the preset.
+    sync_engine_state_blob(params, state);
 
     let mut ordered: Vec<(usize, MidiEvent)> = events.to_vec();
     ordered.sort_by_key(|(t, _)| *t);
@@ -295,6 +368,10 @@ impl Plugin for Gs1 {
         self.params.clone()
     }
 
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        editor::create_editor(self.params.clone())
+    }
+
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
@@ -316,6 +393,11 @@ impl Plugin for Gs1 {
             engine,
             self.params.preset.unmodulated_plain_value() as usize,
         );
+        // A re-initialize (e.g. a sample-rate change) just wiped the engine
+        // back to the preset, so the next process block must re-sync from
+        // the persist blob (or the preset, if there is no blob) instead of
+        // trusting the pre-reinit tracking state.
+        self.state.first_block = true;
         true
     }
 
