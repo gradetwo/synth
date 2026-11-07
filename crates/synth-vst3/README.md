@@ -146,31 +146,69 @@ VST3 wrapper 会为此加绑定参数，属框架实现细节）。
 `MAX_BLOCK_SIZE`（1024）分块调 `engine.process`，拷 `left()`/`right()` 到
 立体声输出。无音频输入。`process()` 返回 `KeepAlive`（混响/延迟尾巴不定长）。
 
-## 包布局（Linux x86_64 一期）
+## 包布局（三平台，二期 ③）
 
-```
+```text
 GS1.vst3/
+  moduleinfo.json               # 见下；另有一份相同字节在 Contents/Resources/
   Contents/
-    x86_64-linux/
-      GS1.so            # 由 cargo 产出的 libsynth_vst3.so 复制改名
+    x86_64-linux/GS1.so         # Linux：cargo 产出的 libsynth_vst3.so 复制改名
+    MacOS/GS1                   # macOS：通用二进制（arm64 + x86_64），Mach-O
+                                #   dylib 改名，无扩展名
+    x86_64-win/GS1.vst3.dll    # Windows：cargo 产出的 synth_vst3.dll 复制改名
     Resources/
       LICENSE-MIT
       LICENSE-ISC-nih-plug
-      LICENSE-GPLv3     # vst3-sys（VST3 导出链入）
-      ATTRIBUTION.md    # DaisySP / Soundpipe 署名（见仓库 THIRD_PARTY_NOTICES.md）
+      LICENSE-GPLv3             # vst3-sys（VST3 导出链入），三平台同附
+      ATTRIBUTION.md            # DaisySP / Soundpipe 署名（见仓库 THIRD_PARTY_NOTICES.md）
+      moduleinfo.json           # 与包根同一份文件，字节相同
 ```
 
-打包脚本：`scripts/package-vst3.sh [out-dir]`（默认 `dist/`），构建 release
-cdylib、组装上布局、复制 `crates/synth-vst3/licenses/`、用 `nm -D` 验
-`GetPluginFactory` 导出（缺失即失败），最后打印包内文件、字节数与
-`GS1.so` 的 sha256。构建用 `CLANG`/`AR` 环境变量（无系统 clang 的机器
-上须指向能同时编 C 与 C++ 的编译器驱动）。
-`moduleinfo.json` 一期不做。macOS/Windows 包布局只写后续路径，不在本期做；
-Windows 侧另有第三方乐器在夜半宿主上测试，与本插件无关，不得算作本插件
-的 Windows 验证。
+打包入口只有一个：`scripts/package-vst3-all.sh [out-dir]`（默认
+`dist/`，另有 npm 脚本 `package:vst3`）。它按宿主 OS 分发：Linux
+直接调一期的 `scripts/package-vst3.sh`（行为逐位不变，同一个
+`GS1.so`）；macOS 分别编 `aarch64-apple-darwin` 与
+`x86_64-apple-darwin` 再 `lipo` 成通用二进制；Windows（Git Bash
+下）编 MSVC 目标的 DLL。`package-vst3.sh` 本身不动——一期已验证的
+Linux 路径不值得为加两个平台冒回归风险，分发脚本里写明了这个取舍。
+每包组装完都校验入口导出（Linux `nm -D`、macOS `nm -gU`、
+Windows `llvm-nm`，缺 `GetPluginFactory` 即失败），最后打印包内文件、
+字节数与二进制的 sha256。
+
+`moduleinfo.json`：生成器 `scripts/gen-moduleinfo.mjs`，唯一事实源是
+`crates/synth-vst3/src/lib.rs` 里的插件元数据（名、厂商、URL、版本、
+`VST3_CLASS_ID`、子类别）；框架字段取自 nih-plug 本身
+（`SDKVersion` 是 nih-plug 的 `VST3_SDK_VERSION`，`ClassFlags` 2 =
+`kSimpleModeSupported`，工厂 `Flags` 16 = `kUnicode`）。字段名与必填
+项按 Steinberg `moduleinfoparser.cpp`。CID 与平台有关：nih-plug 在
+Windows 上把 `VST3_CLASS_ID` 前 8 字节按 GUID 式 4/2/2 重排，macOS/Linux
+用原字节；因此仓库里有两份文件（`moduleinfo.json` 与
+`moduleinfo.windows.json`，除 CID 外完全相同），Windows 包用后者改名装入。
+`npm run verify:moduleinfo`（`gen-moduleinfo.mjs --check`）在生成器与已
+提交文件不一致时失败；`tests/moduleinfo.rs` 另从插件常量本身断言两份文件。
+文件在包内放两处（包根与 `Contents/Resources/`，字节相同）：宿主对读哪
+一处意见不一，SDK 工具链写包根，Cubase 的迁移扫描曾被观察到读
+`Resources/`，两处都给就不赌某一家读法。
+
+工具链（只走原生 runner，不走 Linux 交叉编译 C++ 桥）：macOS 用 Apple
+clang，x86_64 切片须先装 `x86_64-apple-darwin` 目标（`build.rs` 对非宿主
+目标给 clang 显式传 `--target`）；Windows 用 LLVM clang（GNU 驱动的
+`clang`，不是 `clang-cl`，因 `build.rs` 传 GCC 风格旗标）+ `llvm-ar`
+（windows-latest 自带 LLVM，CI 把它的 bin 目录显式加进 PATH 并在日志里
+打印版本作证据）；`build.rs` 在 Windows 目标上不链 `libm`（Windows 无
+独立 libm），归档文件叫 `gsdsp.lib`（MSVC 的 rustc 只认 `.lib` 名）。
+CI（`.github/workflows/ci.yml` 的 `vst3-packages` 矩阵任务，
+ubuntu/macos/windows-latest）在每台 runner 上跑 15 项插件测试 +
+moduleinfo 核对 + clippy + 打包 + 入口导出校验，并上传各平台的包。
+
+macOS 签名/公证超出范围：交付的包未签名，宿主首次加载时系统会拦截，
+须由用户放行或在分发前签名。本机无 macOS/Windows 宿主与签名证书，
+真机加载与签名/公证均未验（见下）。
 
 ## 测试
 
+- `tests/moduleinfo.rs`：两份 moduleinfo 文件与插件常量一致（CID 按平台、
+  其余字段逐项、两文件除 CID 外相同）。
 - `tests/params.rs`（纯表，不碰引擎）：参数 224 条、id 全覆盖、预设 120 条、
   预设 id 唯一、首预设 `pluck`、每 overlay 值在范围内、路由表等于上表。
 - `tests/fingerprint.rs`（碰引擎，每预设一个全新子进程渲染）：
@@ -199,8 +237,16 @@ Windows 侧另有第三方乐器在夜半宿主上测试，与本插件无关，
 
 ## 二期（明确不做）
 
-自定义编辑器；CLAP 导出；macOS/Windows 包；真正多实例（C++ 声部槽分区）；
-`moduleinfo.json`；CI 任务（本期不改工作流）；采样/波表/IR 导入
+自定义编辑器；CLAP 导出；真正多实例（C++ 声部槽分区）；
+CI 任务（本期不改工作流）；采样/波表/IR 导入
 （`WT_USER`/`SMP_*` 参数一期存在但无导入数据时不生效）；sustain 与 poly pressure；
 参数显示格式打磨（单位、值转字符串）；自定义状态块（`PluginState`），
 用以在宿主存取状态时保住预设切换后的参数拧动（见“参数同步与预设切换”）。
+
+macOS/Windows 包与 `moduleinfo.json` 已在二期第 ③ 项做完（分支
+`feat/vst3-phase2-packages`，基底 v1）：见“包布局（三平台）”一节。
+未验（诚实记）：macOS/Windows 包只在 GitHub Actions 原生 runner 上构建、
+打包与入口导出校验——本机无 macOS/Windows 机器与宿主，真机加载未验；
+macOS 包未签名、未公证；Windows 指纹测试在 MSVC libm 下的容差未经实测，
+由 CI 结果定夺（见计划 §③）。Windows 侧另有第三方乐器在夜半宿主上测试，
+与本插件无关，不得算作本插件的 Windows 验证。

@@ -157,6 +157,103 @@ jobs:
           path: dist
           retention-days: 7
 
+  # Phase 2 (macOS/Windows packages): the VST3 plugin is built, tested and
+  # packaged natively on all three OSes — never cross-compiled from Linux,
+  # because the vendored C++ bridge is compiled by build.rs with the host
+  # compiler. One matrix job instead of three copies: the steps are the
+  # same on every runner, only the OS-specific setup differs. It runs on
+  # push/PR (the gate for a branch); the schedule already has the nightly
+  # job and does not need a second packaging pass.
+  vst3-packages:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # ubuntu-latest has no clang: the vendored C/C++ bridge needs it, and
+      # so does the `llvm-ar` the bridge archives with.
+      - name: Install clang + llvm (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      # The macOS bundle is a universal binary (arm64 + x86_64); the runner
+      # is arm64, so the x86_64 target has to be added. The bridge's
+      # build.rs passes --target to clang for the non-host slice.
+      - name: Add x86_64 macOS target (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: rustup target add x86_64-apple-darwin
+
+      # windows-latest ships LLVM, but its bin dir is not guaranteed to be
+      # on PATH for every shell; make it explicit before the version step
+      # below tries to run clang.
+      - name: Put LLVM on PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if [ -d "/c/Program Files/LLVM/bin" ]; then
+            echo 'C:\Program Files\LLVM\bin' >> "$GITHUB_PATH"
+          else
+            echo 'LLVM bin dir not found at C:\Program Files\LLVM\bin' >&2
+            exit 1
+          fi
+
+      # Toolchain evidence, before anything that can fail: which compiler
+      # judged this commit is a fact in the log, not a guess afterwards
+      # (§一.39, same reason the verify job prints its versions first).
+      # The Windows lines are the answer to "what toolchain is actually on
+      # windows-latest": LLVM clang + llvm-ar are expected there, and the
+      # log proves or disproves it on every run.
+      - name: Toolchain versions (rustc / cargo / clang / llvm-ar)
+        shell: bash
+        run: |
+          rustc --version
+          cargo --version
+          clang --version
+          llvm-ar --version
+
+      # The committed moduleinfo files must still match src/lib.rs.
+      - name: moduleinfo matches lib.rs
+        shell: bash
+        run: npm run verify:moduleinfo
+
+      # Release: the fingerprint tests need release speed, and the package
+      # script builds release too. --test-threads=1: the engine is a
+      # process singleton with global C++ voice state.
+      - name: VST3 plugin tests (release)
+        shell: bash
+        run: npm run test:vst3
+
+      - name: VST3 plugin clippy
+        shell: bash
+        run: npm run verify:clippy-vst3
+
+      # One entry point per OS: the script builds the native binary for its
+      # runner, assembles that OS's bundle layout, copies the licences and
+      # the matching moduleinfo.json, and fails if GetPluginFactory is not
+      # exported (nm -D / nm -gU / llvm-nm per OS).
+      - name: Build + package VST3 bundle
+        shell: bash
+        run: bash scripts/package-vst3-all.sh dist
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: GS1.vst3-${{ matrix.os }}
+          path: dist/GS1.vst3
+          retention-days: 7
+
   # P0.5 used to live here: an `e2e-engines` job that ran the whole suite on
   # WebKit and Firefox on every push. It is gone on purpose.
   #
