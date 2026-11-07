@@ -1,0 +1,27 @@
+{
+  "Classes": [
+    {
+      "CID": "533153476E79687456535433506C7567",
+      "Cardinality": "Many",
+      "Category": "Audio Module Class",
+      "ClassFlags": 2,
+      "Name": "GS1",
+      "Subcategories": [
+        "Instrument",
+        "Synth"
+      ],
+      "Vendor": "gradetwo",
+      "Version": "0.1.0",
+      "SDKVersion": "VST 3.6.14",
+      "Description": "GROOVE SYNTH GS-1 VST3 instrument plugin"
+    }
+  ],
+  "Factory Info": {
+    "Flags": 16,
+    "Vendor": "gradetwo",
+    "URL": "https://github.com/gradetwo/synth",
+    "E-Mail": ""
+  },
+  "Name": "GS1",
+  "Version": "0.1.0"
+}
