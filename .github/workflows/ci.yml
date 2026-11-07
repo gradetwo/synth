@@ -215,11 +215,25 @@ jobs:
       # dir on PATH, mirroring the Windows LLVM step above. The dir also
       # holds the same Xcode clang the runner already resolves, so the
       # toolchain the versions step prints does not change.
+      #
+      # xcrun cannot find llvm-ar (run 42338663909: `xcrun: error: unable
+      # to find utility "llvm-ar"`, exit 72), so resolve it by path
+      # instead: <developer-dir>/Toolchains/XcodeDefault.xctoolchain/
+      # usr/bin/llvm-ar, with the developer dir from `xcode-select -p`
+      # (e.g. /Applications/Xcode_26.6.app/Contents/Developer on
+      # macos-latest, per that run's xcrun error line). A missing
+      # llvm-ar is a hard failure, not a silent skip.
       - name: Put Xcode toolchain on PATH (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          llvm_ar="$(xcrun -f llvm-ar)"
+          llvm_ar="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/bin/llvm-ar"
+          if [ ! -x "$llvm_ar" ]; then
+            echo "llvm-ar not found at $llvm_ar" >&2
+            ls "$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/bin" >&2 || true
+            exit 1
+          fi
+          "$llvm_ar" --version
           echo "$(dirname "$llvm_ar")" >> "$GITHUB_PATH"
 
       # Toolchain evidence, before anything that can fail: which compiler
@@ -255,7 +269,7 @@ jobs:
       # One entry point per OS: the script builds the native binary for its
       # runner, assembles that OS's bundle layout, copies the licences and
       # the matching moduleinfo.json, and fails if GetPluginFactory is not
-      # exported (nm -D / nm -gU / llvm-nm per OS).
+      # exported (nm -D / nm -gU / llvm-readobj --coff-exports per OS).
       - name: Build + package VST3 bundle
         shell: bash
         run: bash scripts/package-vst3-all.sh dist
