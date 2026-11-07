@@ -73,6 +73,17 @@ jobs:
       - name: Rust DSP tests
         run: npm run test:rust
 
+      # Phase 2 closed the CI gap the phase-1 branch carried: the VST3
+      # integration tests had never run in CI, so a green branch did not
+      # mean the plugin was tested. These steps run the plugin crate's
+      # tests (release: the fingerprint tests need release speed) and its
+      # clippy gate with the same flags as verify:clippy.
+      - name: VST3 plugin tests (release)
+        run: npm run test:vst3
+
+      - name: VST3 plugin clippy
+        run: npm run verify:clippy-vst3
+
       # The build comes *before* the tests on purpose: `src/generated/*.wasm`
       # is a build artefact and is gitignored, so on a fresh runner the unit
       # tests cannot resolve `@/generated/synth_core.wasm?url` until the cores
