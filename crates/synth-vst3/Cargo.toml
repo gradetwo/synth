@@ -12,7 +12,22 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 synth-core = { path = "../synth-core" }
 # Pinned git rev: nih-plug is not on crates.io, it only ships via git.
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683" }
+# default-features is off so a CLAP-only build never enables nih-plug's
+# `vst3` feature and never links `vst3-sys` (GPLv3). The `vst3` feature
+# below re-enables it for the VST3 build. There is no nih-plug `clap`
+# feature to enable: `clap-sys` is a non-optional nih-plug dependency and
+# the CLAP wrapper is always compiled in.
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683", default-features = false }
+
+[features]
+# The default build is the VST3 plugin, as before.
+default = ["vst3"]
+# VST3 export (`nih_export_vst3!`, `GetPluginFactory`). Links `vst3-sys`,
+# so a binary built with this feature is GPLv3-bound when distributed.
+vst3 = ["nih_plug/vst3"]
+# CLAP export (`nih_export_clap!`, `clap_entry`). Links no `vst3-sys`,
+# so a binary built with only this feature is NOT GPLv3-bound; see README.
+clap = []
 
 [dev-dependencies]
 serde_json = "1"
