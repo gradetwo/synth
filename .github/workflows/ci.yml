@@ -208,19 +208,21 @@ jobs:
       # premise, "llvm-ar is inside the toolchain dir, just not on PATH",
       # was wrong; it is not a PATH problem, the file does not exist).
       # build.rs defaults AR to llvm-ar and archives with `crs`, and the
-      # "Toolchain versions" step prints `llvm-ar --version`, so both need
-      # the name to resolve. The toolchain's own `ar` accepts the same
-      # `crs` flags and writes the same archive format, so the step shims
-      # llvm-ar -> ar in a temp bin dir on PATH. If a future Xcode ships
-      # a real llvm-ar, the fast path below uses it instead. A missing
-      # `ar` is a hard failure, not a silent skip. The dir also holds the
-      # same Xcode clang the runner already resolves, so the toolchain the
-      # versions step prints does not change.
+      # "Toolchain versions" step prints `llvm-ar --version` where the tool
+      # supports it (the BSD ar shim below does not), so both need the name
+      # to resolve. The toolchain's own `ar` accepts the same `crs` flags
+      # and writes the same archive format, so the step shims llvm-ar -> ar
+      # in a temp bin dir on PATH. If a future Xcode ships a real llvm-ar,
+      # the fast path below uses it instead. A missing `ar` is a hard
+      # failure, not a silent skip. The dir also holds the same Xcode clang
+      # the runner already resolves, so the toolchain the versions step
+      # prints does not change.
       - name: Put Xcode toolchain on PATH (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
           bin_dir="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+          shimmed=0
           if [ -x "$bin_dir/llvm-ar" ]; then
             llvm_ar="$bin_dir/llvm-ar"
           elif [ -x "$bin_dir/ar" ]; then
@@ -231,12 +233,28 @@ jobs:
             ln -sf "$bin_dir/ar" "$shim_dir/llvm-ar"
             echo "llvm-ar not shipped by Xcode 26.6; shimming llvm-ar -> $bin_dir/ar"
             llvm_ar="$shim_dir/llvm-ar"
+            shimmed=1
           else
             echo "neither llvm-ar nor ar found in $bin_dir" >&2
             ls "$bin_dir" >&2 || true
             exit 1
           fi
-          "$llvm_ar" --version
+          # Version evidence: a real llvm-ar prints --version, but the shim
+          # points at BSD ar, which has no --version flag (run 42350688123:
+          # `ar --version` prints usage and exits 1, killing this step
+          # under bash -e). Prove the shim functionally instead: run the
+          # exact operation build.rs needs (`crs` archive + member) and
+          # check the archive is non-empty and lists its member.
+          if [ "$shimmed" -eq 0 ]; then
+            "$llvm_ar" --version
+          else
+            probe_dir="$RUNNER_TEMP/xcode-llvm-ar-probe"
+            mkdir -p "$probe_dir"
+            printf 'probe' > "$probe_dir/probe.txt"
+            "$llvm_ar" crs "$probe_dir/libprobe.a" "$probe_dir/probe.txt"
+            test -s "$probe_dir/libprobe.a"
+            "$llvm_ar" t "$probe_dir/libprobe.a"
+          fi
           echo "$bin_dir" >> "$GITHUB_PATH"
           echo "$(dirname "$llvm_ar")" >> "$GITHUB_PATH"
 
@@ -252,7 +270,21 @@ jobs:
           rustc --version
           cargo --version
           clang --version
-          llvm-ar --version
+          # llvm-ar prints --version only where the tool supports it. On
+          # macOS it resolves to the BSD ar shim (Xcode 26.6 ships no
+          # llvm-ar), and BSD ar has no --version flag (run 42350688123:
+          # usage + exit 1). Print the shim note instead of failing the
+          # step; the functional `crs` probe in the PATH step above is the
+          # real evidence on that leg. A missing llvm-ar is still a hard
+          # failure, not a silent skip.
+          if llvm-ar --version 2>/dev/null; then
+            :
+          elif command -v llvm-ar >/dev/null 2>&1; then
+            echo "llvm-ar: $(command -v llvm-ar) is the BSD ar shim (no --version; crs probe passed in PATH step)"
+          else
+            echo "llvm-ar not found on PATH" >&2
+            exit 1
+          fi
 
       # The committed moduleinfo files must still match src/lib.rs.
       - name: moduleinfo matches lib.rs
