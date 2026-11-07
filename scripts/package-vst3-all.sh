@@ -151,11 +151,16 @@ case "$OS" in
     copy_moduleinfo crates/synth-vst3/moduleinfo.windows.json
     BINARY="$BUNDLE/Contents/x86_64-win/GS1.vst3.dll"
     echo "  exports:"
-    if command -v llvm-nm >/dev/null 2>&1; then
-      # llvm-nm reads the DLL export table; GetPluginFactory must be there.
-      llvm-nm --defined-only --extern-only "$BINARY" || true
-      if ! llvm-nm --defined-only --extern-only "$BINARY" | grep -q ' T GetPluginFactory$'; then
-        echo "package-vst3-all: GetPluginFactory is not exported from GS1.vst3.dll (llvm-nm)" >&2
+    if command -v llvm-readobj >/dev/null 2>&1; then
+      # llvm-readobj reads the PE export directory, which is the source of
+      # truth for a DLL. llvm-nm does NOT work here: it reads the COFF
+      # symbol table, which a release MSVC-linked DLL does not carry, so it
+      # reports "no symbols" even when the export is present (CI run
+      # 42338663909 failed exactly this way). GetPluginFactory must be in
+      # the export directory.
+      llvm-readobj --coff-exports "$BINARY" || true
+      if ! llvm-readobj --coff-exports "$BINARY" | grep -q 'GetPluginFactory'; then
+        echo "package-vst3-all: GetPluginFactory is not exported from GS1.vst3.dll (llvm-readobj)" >&2
         exit 1
       fi
     elif command -v dumpbin >/dev/null 2>&1; then
@@ -165,7 +170,7 @@ case "$OS" in
         exit 1
       fi
     else
-      echo "package-vst3-all: no llvm-nm or dumpbin to verify the DLL exports" >&2
+      echo "package-vst3-all: no llvm-readobj or dumpbin to verify the DLL exports" >&2
       exit 1
     fi
     list_bundle

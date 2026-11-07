@@ -172,7 +172,7 @@ GS1.vst3/
 下）编 MSVC 目标的 DLL。`package-vst3.sh` 本身不动——一期已验证的
 Linux 路径不值得为加两个平台冒回归风险，分发脚本里写明了这个取舍。
 每包组装完都校验入口导出（Linux `nm -D`、macOS `nm -gU`、
-Windows `llvm-nm`，缺 `GetPluginFactory` 即失败），最后打印包内文件、
+Windows `llvm-readobj --coff-exports`，缺 `GetPluginFactory` 即失败），最后打印包内文件、
 字节数与二进制的 sha256。
 
 `moduleinfo.json`：生成器 `scripts/gen-moduleinfo.mjs`，唯一事实源是
