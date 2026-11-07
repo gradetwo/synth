@@ -127,6 +127,13 @@ for (const [path, doc] of files) {
     } catch {
       // Missing file is a diff.
     }
+    // Line endings are not content: a Windows checkout with
+    // core.autocrlf=true turns the committed LF files into CRLF, and
+    // that alone must not fail the check. Only \r\n is folded, so a
+    // drifted CID or any other field change still differs and still
+    // fails. (The .gitattributes pin is the primary fix; this is the
+    // second line of defence for checkouts that ignore attributes.)
+    if (current !== null) current = current.replace(/\r\n/g, '\n');
     if (current !== text) {
       console.error(`gen-moduleinfo: ${path} differs from lib.rs; run node scripts/gen-moduleinfo.mjs`);
       dirty = true;
