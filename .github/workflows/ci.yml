@@ -201,6 +201,19 @@ jobs:
             exit 1
           fi
 
+      # macOS runners ship llvm-ar only inside the Xcode toolchain dir,
+      # not on PATH (the "Toolchain versions" step below and the bridge's
+      # build.rs, which defaults AR to llvm-ar, both need it). Put that
+      # dir on PATH, mirroring the Windows LLVM step above. The dir also
+      # holds the same Xcode clang the runner already resolves, so the
+      # toolchain the versions step prints does not change.
+      - name: Put Xcode toolchain on PATH (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          llvm_ar="$(xcrun -f llvm-ar)"
+          echo "$(dirname "$llvm_ar")" >> "$GITHUB_PATH"
+
       # Toolchain evidence, before anything that can fail: which compiler
       # judged this commit is a fact in the log, not a guess afterwards
       # (§一.39, same reason the verify job prints its versions first).

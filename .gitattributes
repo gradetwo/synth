@@ -1,0 +1,7 @@
+# VST3 moduleinfo files are byte-compared by `scripts/gen-moduleinfo.mjs
+# --check` (exact string match against a generator that always emits LF).
+# Windows runners check out with core.autocrlf=true, which would turn
+# these files CRLF and fail the check even though the content is
+# identical. Pin them to LF; no other file's line-ending policy changes.
+crates/synth-vst3/moduleinfo.json text eol=lf
+crates/synth-vst3/moduleinfo.windows.json text eol=lf
