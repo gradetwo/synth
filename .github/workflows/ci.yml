@@ -70,6 +70,16 @@ jobs:
       # mean the plugin was tested. These steps run the plugin crate's
       # tests (release: the fingerprint tests need release speed) and its
       # clippy gate with the same flags as verify:clippy.
+      # The custom editor (phase 2 item 1) pulls nih_plug_egui/baseview,
+      # whose Linux build needs X11/GL dev files: the `x11` crate's build
+      # script probes pkg-config for `gl` / `x11` / `x11-xcb` (features
+      # glx/xlib/xlib_xcb) and fails the build without them. The stock
+      # ubuntu runner has the runtime libs but not the .pc files, so the
+      # VST3 steps cannot run before this install. Same five packages as
+      # the local dev setup (see crates/synth-vst3/README.md).
+      - name: Install X11/GL dev libs (VST3 editor)
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-xcb-dev libxcursor-dev libxrandr-dev libxi-dev
+
       - name: VST3 plugin tests (release)
         run: npm run test:vst3
 
