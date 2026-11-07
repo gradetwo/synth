@@ -201,31 +201,43 @@ jobs:
             exit 1
           fi
 
-      # macOS runners ship llvm-ar only inside the Xcode toolchain dir,
-      # not on PATH (the "Toolchain versions" step below and the bridge's
-      # build.rs, which defaults AR to llvm-ar, both need it). Put that
-      # dir on PATH, mirroring the Windows LLVM step above. The dir also
-      # holds the same Xcode clang the runner already resolves, so the
-      # toolchain the versions step prints does not change.
-      #
-      # xcrun cannot find llvm-ar (run 42338663909: `xcrun: error: unable
-      # to find utility "llvm-ar"`, exit 72), so resolve it by path
-      # instead: <developer-dir>/Toolchains/XcodeDefault.xctoolchain/
-      # usr/bin/llvm-ar, with the developer dir from `xcode-select -p`
-      # (e.g. /Applications/Xcode_26.6.app/Contents/Developer on
-      # macos-latest, per that run's xcrun error line). A missing
-      # llvm-ar is a hard failure, not a silent skip.
+      # macOS runners do NOT ship llvm-ar anywhere in Xcode 26.6: run
+      # 42349152642's failing step listed
+      # <developer-dir>/Toolchains/XcodeDefault.xctoolchain/usr/bin/ and
+      # it holds `ar`, `clang`, `llvm-nm` — but no `llvm-ar` (the round-2
+      # premise, "llvm-ar is inside the toolchain dir, just not on PATH",
+      # was wrong; it is not a PATH problem, the file does not exist).
+      # build.rs defaults AR to llvm-ar and archives with `crs`, and the
+      # "Toolchain versions" step prints `llvm-ar --version`, so both need
+      # the name to resolve. The toolchain's own `ar` accepts the same
+      # `crs` flags and writes the same archive format, so the step shims
+      # llvm-ar -> ar in a temp bin dir on PATH. If a future Xcode ships
+      # a real llvm-ar, the fast path below uses it instead. A missing
+      # `ar` is a hard failure, not a silent skip. The dir also holds the
+      # same Xcode clang the runner already resolves, so the toolchain the
+      # versions step prints does not change.
       - name: Put Xcode toolchain on PATH (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          llvm_ar="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/bin/llvm-ar"
-          if [ ! -x "$llvm_ar" ]; then
-            echo "llvm-ar not found at $llvm_ar" >&2
-            ls "$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/bin" >&2 || true
+          bin_dir="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+          if [ -x "$bin_dir/llvm-ar" ]; then
+            llvm_ar="$bin_dir/llvm-ar"
+          elif [ -x "$bin_dir/ar" ]; then
+            # Xcode 26.6 ships no llvm-ar (run 42349152642 proves it with
+            # the ls listing); shim it to the toolchain's own `ar`.
+            shim_dir="$RUNNER_TEMP/xcode-llvm-ar-shim"
+            mkdir -p "$shim_dir"
+            ln -sf "$bin_dir/ar" "$shim_dir/llvm-ar"
+            echo "llvm-ar not shipped by Xcode 26.6; shimming llvm-ar -> $bin_dir/ar"
+            llvm_ar="$shim_dir/llvm-ar"
+          else
+            echo "neither llvm-ar nor ar found in $bin_dir" >&2
+            ls "$bin_dir" >&2 || true
             exit 1
           fi
           "$llvm_ar" --version
+          echo "$bin_dir" >> "$GITHUB_PATH"
           echo "$(dirname "$llvm_ar")" >> "$GITHUB_PATH"
 
       # Toolchain evidence, before anything that can fail: which compiler
