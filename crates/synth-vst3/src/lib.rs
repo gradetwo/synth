@@ -3,16 +3,22 @@
 // inherent to the macro, not to this crate.
 #![allow(semicolon_in_expressions_from_non_local_macros)]
 
-//! GS1 VST3 instrument plugin.
+//! GS1 instrument plugin (VST3 and CLAP exports of the same plugin).
 //!
 //! A nih-plug wrapper around `synth-core`. See the crate README for the
-//! framework choice, the licensing consequences (the distributed plugin
-//! binary is GPLv3 through `vst3-sys`), the single-instance guard, the
-//! parameter mapping, and the preset-selector-instead-of-program-list design.
+//! framework choice, the licensing consequences (the VST3 binary is GPLv3
+//! through `vst3-sys`; the CLAP-only binary links no `vst3-sys` and is not
+//! GPLv3-bound), the single-instance guard, the parameter mapping, and the
+//! preset-selector-instead-of-program-list design.
 //!
-//! The render core ([`render_with_events`] and friends) is decoupled from
-//! nih-plug's `Buffer`/`ProcessContext` types so the headless tests can drive
-//! the plugin's own render path directly.
+//! Both exports share one `Plugin` implementation and one render core
+//! ([`render_with_events`] and friends), decoupled from nih-plug's
+//! `Buffer`/`ProcessContext` types so the headless tests can drive the
+//! plugin's own render path directly. Which entry point a built binary
+//! exposes is a Cargo feature decision: `vst3` (default) exports
+//! `GetPluginFactory`, `clap` exports `clap_entry`, both together export
+//! both. The render path is identical either way, so the fingerprint tests
+//! (which drive `render_with_events` directly) cover both exports.
 
 mod generated;
 
@@ -150,6 +156,16 @@ pub fn apply_preset_to_engine(engine: &mut Engine, index: usize) {
 /// normalized * range into the same field). The plugin maps the normalized
 /// nih-plug value to the normalized wheel, so the engine applies the range
 /// exactly once: full wheel = +/- PITCH_BEND_RANGE semitones.
+///
+/// CLAP bend path (decided for this nih-plug rev, `de42101`): the CLAP
+/// wrapper does NOT translate `CLAP_NOTE_EXPRESSION_PITCH_BEND` — its
+/// note-expression match has no pitch-bend arm, so a host-sent bend
+/// expression is dropped. Bend therefore arrives as a CLAP MIDI event
+/// (`CLAP_EVENT_MIDI`, status `0xE0`), which the wrapper parses into the
+/// same `NoteEvent::MidiPitchBend` (normalized `[0, 1]`, `0.5` = center)
+/// the VST3 path produces, and the translation below applies unchanged.
+/// No plugin-side change is needed for CLAP bend; per-note expression
+/// bend stays unsupported until nih-plug gains that arm.
 pub fn apply_midi_event(engine: &mut Engine, event: &MidiEvent) {
     match *event {
         MidiEvent::NoteOn { note, velocity } => engine.note_on(note, velocity),
@@ -396,10 +412,28 @@ impl Plugin for Gs1 {
     }
 }
 
+#[cfg(feature = "vst3")]
 impl Vst3Plugin for Gs1 {
     const VST3_CLASS_ID: [u8; 16] = *b"GS1SynthVST3Plug";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
         &[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
 }
 
+#[cfg(feature = "vst3")]
 nih_export_vst3!(Gs1);
+
+/// CLAP export: same plugin, same parameters, same state, same preset
+/// selector as the VST3 export. The CLAP ID is stable across releases;
+/// do not change it once hosts have seen it.
+#[cfg(feature = "clap")]
+impl ClapPlugin for Gs1 {
+    const CLAP_ID: &'static str = "dev.gradetwo.gs1";
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("GROOVE SYNTH GS-1 instrument");
+    const CLAP_MANUAL_URL: Option<&'static str> = Some("https://github.com/gradetwo/synth");
+    const CLAP_SUPPORT_URL: Option<&'static str> = Some("https://github.com/gradetwo/synth");
+    const CLAP_FEATURES: &'static [ClapFeature] =
+        &[ClapFeature::Instrument, ClapFeature::Synthesizer];
+}
+
+#[cfg(feature = "clap")]
+nih_export_clap!(Gs1);
