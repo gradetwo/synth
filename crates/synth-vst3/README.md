@@ -218,6 +218,8 @@ Windows 侧另有第三方乐器在夜半宿主上测试，与本插件无关，
 全部控件经 `ParamSetter` 走宿主写回参数，自动化、撤销、宿主存取状态
 都照常工作。编辑器只在 GUI 线程跑，不碰音频线程与引擎单例。
 构建要多链 X11/GL（Linux 上须 `libgl1-mesa-dev libx11-xcb-dev
-libxcursor-dev libxrandr-dev libxi-dev`；CI ubuntu runner 有）。
+libxcursor-dev libxrandr-dev libxi-dev`；CI 里 workflow 在 vst3 步前
+apt 装这五包——stock ubuntu runner 只有运行时库、没有 .pc 文件，
+x11 crate 的 build.rs 探不到 `gl.pc` 会直接编失败）。
 本机无桌面宿主：编辑器开窗验证待补（构造测试 + CI 编译已过，
 `create_editor` 返回 `Some` 有单元测试断言）。
