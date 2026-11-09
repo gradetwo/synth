@@ -2018,7 +2018,7 @@ input,textarea,[contenteditable='true']{
   /* The selection bar's batch buttons are the phone's whole editing path, so
      they get a real 36 px target rather than the desktop's 30 px. */
   .roll-btn{min-height:38px;padding:0 12px}
-  .roll-select .roll-btn{min-height:36px}
+  .roll-select .roll-btn{min-height:36px;min-width:36px}
   .roll-select .rs-count{font-size:11px}
   .roll-note{min-height:14px}
   .rn-handle{width:20px;right:-8px;padding-right:8px}
