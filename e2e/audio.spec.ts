@@ -36,7 +36,7 @@ test.describe('audio settings', () => {
     await expect(panel).not.toBeVisible();
   });
 
-  test('preloads the DSP core before the start gesture', async ({ page }) => {
+  test('preloads the DSP core before the start gesture', async ({ page, browserName }) => {
     const wasmRequests: string[] = [];
     page.on('request', (request) => {
       if (/synth_core.*\.wasm/.test(request.url())) wasmRequests.push(request.url());
@@ -63,13 +63,27 @@ test.describe('audio settings', () => {
     const served = await page.request.get(wasmRequests[0]);
     expect(served.status()).toBe(200);
     expect(served.headers()['content-type']).toContain('application/wasm');
-    // And the engine reports that it took the streaming path: the audio
-    // settings panel shows the core as `simd · streamed`. This is the end-to-end
-    // half — a wrong `Content-Type` makes `instantiateStreaming` reject, and the
-    // panel then says so instead.
+    // And the engine reports whether it took the streaming path: the audio
+    // settings panel shows the core as `simd · streamed` when it did, plain
+    // `simd` when it did not. This is the end-to-end half — a wrong
+    // `Content-Type` makes `instantiateStreaming` reject, and the panel then
+    // says so instead.
+    //
+    // Per engine (Wang 2026-11-09): WebKit's main-thread
+    // `WebAssembly.compileStreaming` never returns (measured past 120 s), so
+    // the fetch races it out after 5 s and takes the buffered path —
+    // `streamed: false` is the engine's real state on WebKit, not a defect,
+    // and the panel honestly reports it. Chromium (and Firefox) stream, so
+    // they still assert the streamed form.
     await page.locator('[data-act="settings"]').click();
     await page.getByRole('button', { name: '打开音频设置' }).click();
-    await expect(page.locator('.audio-settings.open')).toContainText('流式编译');
+    const panel = page.locator('.audio-settings.open');
+    const coreRow = panel.locator('.audio-row', { hasText: 'DSP 内核' });
+    if (browserName === 'webkit') {
+      await expect(coreRow.locator('.audio-value')).toHaveText('simd');
+    } else {
+      await expect(coreRow.locator('.audio-value')).toHaveText('simd · 流式编译');
+    }
   });
 });
 
