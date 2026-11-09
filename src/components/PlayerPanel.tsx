@@ -408,6 +408,11 @@ export function PlayerPanel({
     }
     haptic();
     selectTake(take);
+    // A switch reloads the transport; if it had already run to the end
+    // (on a slow engine the comparison outlasts the short take), the switch
+    // alone leaves it stopped and the stop effect would end the comparison.
+    // Keep it playing so A and B are still heard from the same point.
+    if (!midiPlayer.getState().playing) midiPlayer.play();
   };
 
   const startAb = () => {
@@ -446,9 +451,25 @@ export function PlayerPanel({
   abArmed.current = ab ? abArmed.current : false;
 
   useEffect(() => {
-    if (ab && player.playing) abArmed.current = true;
-    else if (ab && abArmed.current && !player.playing) abApi.current.stopAb();
-  }, [ab, player.playing]);
+    if (ab && player.playing) {
+      abArmed.current = true;
+      return;
+    }
+    if (!ab || !abArmed.current || player.playing) return;
+    // The song ran to its end mid-comparison: the transport stopped because
+    // there is nothing left to play, not because the user ended it. Keep the
+    // comparison alive so A/B can still switch takes (audition restarts
+    // playback from the same point); only a real stop or pause ends it.
+    if (player.duration > 0 && player.time >= player.duration - 0.05) return;
+    // The transport stopped mid-comparison. A take switch reloads the player
+    // (load() stops, then play() resumes), so a stop that lasts only a moment
+    // is the switch, not the user ending the comparison. Wait a beat before
+    // ending it; if playback resumes, the comparison stands.
+    const id = window.setTimeout(() => {
+      if (abApi.current.ab) abApi.current.stopAb();
+    }, 500);
+    return () => window.clearTimeout(id);
+  }, [ab, player.playing, player.time, player.duration]);
 
   /** Width of the resize handle in bar-percent units, from the pixel width. */
   const edgePercent = (width: number): number => Math.min(12, (EDGE_PX / Math.max(1, width)) * 100);
@@ -614,19 +635,15 @@ export function PlayerPanel({
               if (!current) return;
               setBusy(true);
               try {
-                // Chromium's WebCodecs Opus encoder wins here on speed, but it
-                // produces an `.opus` container that the download pipeline
-                // sniffs and renames (breaking the "导出 MP3" promise) and whose
-                // output for quiet synth renders can fall far below what users
-                // expect of a 256 kbps MP3. Force the LAME path on Chromium;
-                // Safari/Firefox have no MP3 encoder at all, so they keep the
-                // fast native Opus/AAC route.
-                const isChromium =
-                  typeof navigator !== 'undefined' &&
-                  /\bChrome\/\d/.test(navigator.userAgent) &&
-                  !/Edg\/|OPR\/|OPiOS\//.test(navigator.userAgent);
+                // The "导出 MP3" button promises an MP3 file, so it always uses
+                // the pure-JS LAME encoder: it runs in any browser and always
+                // produces a real `.mp3`. The WebCodecs path (Opus/AAC) is
+                // faster, but on WebKit it yields an `.opus` container that
+                // the download pipeline sniffs and renames, breaking the MP3
+                // promise; on Chromium its Opus output for this content
+                // measured ~50 KB for a render that is ~1 MB as MP3.
                 const res = await withPlaybackPaused(() =>
-                  exportSongCompressed(current.song, trackTitle(current), { preferMp3: isChromium }),
+                  exportSongCompressed(current.song, trackTitle(current), { preferMp3: true }),
                 );
                 toast(t('player.mp3Saved', { name: `${trackTitle(current)}.${res.ext}` }));
               } catch (err) {

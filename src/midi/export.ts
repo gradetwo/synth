@@ -77,12 +77,11 @@ export async function exportSongMp3(song: MidiSong, name: string): Promise<void>
  * fallback to pure-JS LAME MP3.
  *
  * `preferMp3` skips the WebCodecs probe and always runs the LAME path. The
- * "导出 MP3" button uses it: Chromium's Media Foundation Opus encoder is a
- * software encoder whose output for this content measured ~50 KB for a render
- * that is ~1 MB as MP3 — so small that the e2e byte floor failed — and the
- * browser then renames a `.mp3`-named download to `.opus` from the sniffed
- * container type. Safari/Firefox have no MP3 encoder at all, so those builds
- * leave the flag off and keep the fast native Opus/AAC path.
+ * "导出 MP3" button uses it: the LAME encoder is pure JavaScript, so it runs
+ * in every browser and always yields a real `.mp3`. The WebCodecs path is
+ * faster, but its Opus container gets sniffed and renamed to `.opus` by the
+ * download pipeline (breaking the MP3 promise), and on Chromium its Opus
+ * output for this content measured ~50 KB for a render that is ~1 MB as MP3.
  */
 export async function exportSongCompressed(
   song: MidiSong,

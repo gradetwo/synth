@@ -73,6 +73,10 @@ test.describe('piano roll on desktop', () => {
     await boot(page);
     await openRollFromBar(page);
     const notes = page.locator('.roll-note');
+    // The built-in playlist arrives as a lazy chunk: until it lands the roll
+    // is empty and `before` reads 0, so the count below would compare against
+    // a roll that gains 243 notes mid-test. Wait for it to populate first.
+    await expect(notes.first()).toBeVisible();
     const before = await notes.count();
     await page.locator('.roll-kbd .wkey').first().click();
     await expect(notes).toHaveCount(before + 1);
@@ -215,6 +219,10 @@ test.describe('piano roll editing rules', () => {
     await boot(page);
     await openRollFromBar(page);
     const notes = page.locator('.roll-note');
+    // The built-in playlist arrives as a lazy chunk: until it lands the roll
+    // is empty and `before` reads 0, so the count below would compare against
+    // a roll that gains 243 notes mid-test. Wait for it to populate first.
+    await expect(notes.first()).toBeVisible();
     const before = await notes.count();
 
     // Draw just past a note's right edge on the same pitch row: the old note

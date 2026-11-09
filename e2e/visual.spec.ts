@@ -352,8 +352,18 @@ async function captureSurfaces(page: Page, device: Device, theme: 'dark' | 'ligh
   // still in the DOM for a frame or two and already `disabled`, and clicking it
   // then waits out the whole test timeout (observed, light desktop surfaces).
   // `toBeEnabled` waits that frame out; the click after it always lands.
-  const start = page.locator('.start-btn');
-  if ((await start.count()) && (await start.isEnabled())) await startEngine(page, phone);
+  //
+  // Read the gate state once, synchronously: `count()` then `isEnabled()` is a
+  // race — if the button is present-but-disabled when `isEnabled()` runs, it
+  // waits for a button React is about to remove (the gate goes away once the
+  // engine starts), and the wait runs out the whole test timeout (observed,
+  // P11.3 dark on WebKit). A single DOM read cannot straddle the removal.
+  const gate = await page.evaluate(() => {
+    const btn = document.querySelector('.start-btn') as HTMLButtonElement | null;
+    if (!btn) return 'gone';
+    return btn.disabled ? 'busy' : 'ready';
+  });
+  if (gate === 'ready') await startEngine(page, phone);
   else {
     await expect(page.locator('.start-overlay')).toHaveCount(0);
     await expect(page.locator('.kbd-dock.open')).toBeVisible();

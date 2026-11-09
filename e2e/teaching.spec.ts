@@ -104,26 +104,45 @@ test.describe('teaching', () => {
     const offScale = ['w', 'e', 't', 'y', 'u', 'o', 'w', 'e'];
     const BPM = 90;
 
-    /** Play `keys` on the beat, starting the moment the panel starts recording. */
+    /** Play `keys` on the beat, starting the moment the panel starts recording.
+     * Anchored to the count-in, not to the `recording` state: on WebKit the
+     * panel's React commit of `recording` lands ~1.1 s after the recording
+     * clock (`startedAt`) starts, so a key fired when the DOM shows
+     * `recording` is ~1.1 s late and every note falls outside the 300 ms hit
+     * window (measured: take onsets 1.258…5.805 s against targets
+     * 0…4.667 s, all pitches correct). The count-in timer is scheduled by the
+     * panel's effect right after the `countin` commit, so keys scheduled
+     * from the `countin` commit plus the 4-beat count-in land on the beat.
+     * The 200 ms offset is a safety margin: it makes the first key land after
+     * the count-in timer fires (recording has started) even if the effect
+     * runs a turn late, and it stays inside the 300 ms hit window. */
     const playOnTheBeat = (keys: string[]) =>
       page.evaluate(
         ({ keys: list, beat }) =>
           new Promise<void>((resolve) => {
             const panelEl = document.querySelector('[data-role="teach-panel"]');
-            const fire = () => {
+            const COUNT_IN_BEATS = 4; // Teaching.tsx COUNT_IN_BEATS.
+            const START_OFFSET_MS = 200;
+            const start = () => {
+              const countInMs = COUNT_IN_BEATS * beat;
               list.forEach((key, index) => {
-                const at = index * beat;
-                window.setTimeout(() => window.dispatchEvent(new KeyboardEvent('keydown', { key })), at);
-                window.setTimeout(() => window.dispatchEvent(new KeyboardEvent('keyup', { key })), at + 70);
+                const at = countInMs + START_OFFSET_MS + index * beat;
+                window.setTimeout(() => window.dispatchEvent(new KeyboardEvent('keydown', { key })), Math.max(0, at));
+                window.setTimeout(() => window.dispatchEvent(new KeyboardEvent('keyup', { key })), Math.max(0, at) + 70);
               });
-              window.setTimeout(resolve, (list.length - 1) * beat + 180);
+              window.setTimeout(resolve, countInMs + START_OFFSET_MS + (list.length - 1) * beat + 180);
             };
-            const watch = window.setInterval(() => {
-              if (panelEl?.getAttribute('data-state') === 'recording') {
-                window.clearInterval(watch);
-                fire();
+            if (panelEl?.getAttribute('data-state') === 'countin') {
+              start();
+              return;
+            }
+            const observer = new MutationObserver(() => {
+              if (panelEl?.getAttribute('data-state') === 'countin') {
+                observer.disconnect();
+                start();
               }
-            }, 2);
+            });
+            if (panelEl) observer.observe(panelEl, { attributes: true, attributeFilter: ['data-state'] });
           }),
         { keys, beat: 60000 / BPM },
       );

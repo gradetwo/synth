@@ -82,6 +82,19 @@ export async function renderPatchToBuffer(
    * `docs/notes/compat.md` §5.
    */
   const canSuspend = typeof ctx.suspend === 'function';
+  // Safari/WebKit: the pre-render 'ready' wait silences the offline render
+  // (measured: waiting for 'ready' before `startRendering` yields a silent
+  // buffer, while the same schedule without the wait renders), and a note at
+  // 0.0s posted through `suspend(0)` can land before the worklet is ready
+  // and be dropped. So on Safari the notes travel frame-addressed (the
+  // Firefox fallback) and the 'ready' wait moves inside a `suspend(0)` that
+  // pauses the render until the worklet is ready. Chromium keeps the shipped
+  // suspend schedule bit-for-bit.
+  const isSafari =
+    typeof navigator !== 'undefined' &&
+    /Safari\//.test(navigator.userAgent) &&
+    !/\bChrome\/\d/.test(navigator.userAgent);
+  const useFrameNotes = !canSuspend || isSafari;
 
   let bytes = await fetchBytes(detectSimd());
   if (!WebAssembly.validate(bytes)) bytes = await fetchBytes(false);
@@ -101,10 +114,10 @@ export async function renderPatchToBuffer(
       routes: state.routes.map((r) => ({ src: r.src, dst: r.dst, amount: r.amount, enabled: r.enabled })),
       // The fallback path only. Notes are absolute frames, and a layer's pan
       // rides along exactly as it does live (`noteOnPan` only above the
-      // audibility threshold, centred `noteOn` otherwise).
-      ...(canSuspend
-        ? {}
-        : {
+      // audibility threshold, centred `noteOn` otherwise). Safari joins the
+      // fallback: its suspend schedule is silent (see `isSafari` above).
+      ...(useFrameNotes
+        ? {
             notes: notes.map(([note, start, noteLength, velocity, pan]) => ({
               note,
               onFrame: Math.round(start * sampleRate),
@@ -112,13 +125,21 @@ export async function renderPatchToBuffer(
               velocity: velocity ?? 0.9,
               ...(pan !== undefined && Math.abs(pan) > 0.005 ? { pan } : {}),
             })),
-          }),
+          }
+        : {}),
     },
   });
   node.connect(ctx.destination);
 
-  // Wait for the worklet to finish instantiating the WASM core.
-  await new Promise<void>((resolve) => {
+  // Wait for the worklet to finish instantiating the WASM core. The listener
+  // is attached now, so the 'ready' message is caught whenever the worklet
+  // posts it. On Safari the wait runs inside a `suspend(0)` after rendering
+  // starts: waiting before `startRendering` silences the render, and the
+  // pause gives the worklet wall-clock time to instantiate so the
+  // frame-addressed notes (including ones at 0.0s, applied as soon as
+  // possible once ready) actually sound. Everywhere else the wait stays
+  // pre-render, as shipped.
+  const readyPromise = new Promise<void>((resolve) => {
     const timer = setTimeout(resolve, 3000);
     node.port.onmessage = (event) => {
       if (event.data?.type === 'ready') {
@@ -127,54 +148,77 @@ export async function renderPatchToBuffer(
       }
     };
   });
+  // On Safari the ready wait moves into the `suspend(0)` below (with the
+  // content handshake); everywhere else it stays pre-render, as shipped.
+  if (!isSafari) {
+    await readyPromise;
+  }
 
   // The imported cycle is instrument state, not part of the patch, so an export
   // has to hand it over as well or it would render a factory bank instead.
-  const sample = getUserSample();
-  if (sample) {
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, 3000);
-      node.port.onmessage = (event) => {
-        if (event.data?.type === 'sample') {
-          clearTimeout(timer);
-          resolve();
-        }
-      };
-      node.port.postMessage({
-        type: 'sample',
-        request: 3,
-        samples: sample.samples,
-        sampleRate: sample.sampleRate,
+  // These posts need the worklet ready (`handleMessage` drops them before
+  // `ready`), so on Safari they run inside the `suspend(0)` pause, after the
+  // ready wait; everywhere else they run pre-render, as shipped.
+  const handshakeUserContent = async () => {
+    const sample = getUserSample();
+    if (sample) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 3000);
+        node.port.onmessage = (event) => {
+          if (event.data?.type === 'sample') {
+            clearTimeout(timer);
+            resolve();
+          }
+        };
+        node.port.postMessage({
+          type: 'sample',
+          request: 3,
+          samples: sample.samples,
+          sampleRate: sample.sampleRate,
+        });
       });
-    });
-  }
+    }
 
-  const ir = getUserIr()?.samples;
-  if (ir) {
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, 3000);
-      node.port.onmessage = (event) => {
-        if (event.data?.type === 'ir') {
-          clearTimeout(timer);
-          resolve();
-        }
-      };
-      node.port.postMessage({ type: 'ir', request: 2, samples: ir });
-    });
-  }
+    const ir = getUserIr()?.samples;
+    if (ir) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 3000);
+        node.port.onmessage = (event) => {
+          if (event.data?.type === 'ir') {
+            clearTimeout(timer);
+            resolve();
+          }
+        };
+        node.port.postMessage({ type: 'ir', request: 2, samples: ir });
+      });
+    }
 
-  const cycle = getUserWave()?.cycle;
-  if (cycle) {
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, 3000);
-      node.port.onmessage = (event) => {
-        if (event.data?.type === 'wavetable') {
-          clearTimeout(timer);
-          resolve();
-        }
-      };
-      node.port.postMessage({ type: 'wavetable', request: 1, samples: cycle });
+    const cycle = getUserWave()?.cycle;
+    if (cycle) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 3000);
+        node.port.onmessage = (event) => {
+          if (event.data?.type === 'wavetable') {
+            clearTimeout(timer);
+            resolve();
+          }
+        };
+        node.port.postMessage({ type: 'wavetable', request: 1, samples: cycle });
+      });
+    }
+  };
+  if (isSafari) {
+    // Single `suspend(0)`: pause the render at time 0, wait for the worklet
+    // to be ready, hand over any user content, then resume. The pause gives
+    // the worklet wall-clock time to instantiate, so the frame-addressed
+    // notes sound (see `isSafari` above).
+    ctx.suspend(0).then(async () => {
+      await readyPromise;
+      await handshakeUserContent();
+      ctx.resume();
     });
+  } else {
+    await handshakeUserContent();
   }
 
   for (const [id, value] of Object.entries(state.params)) {
@@ -184,8 +228,9 @@ export async function renderPatchToBuffer(
 
   // Only an engine that can suspend uses this schedule; everywhere else the notes
   // already reached the worklet through `processorOptions.notes` above and the
-  // engine applies each one on its exact frame as it renders.
-  if (canSuspend) {
+  // engine applies each one on its exact frame as it renders. Safari joins
+  // the frame path (see `isSafari` above) even though it has `suspend`.
+  if (canSuspend && !isSafari) {
     for (const [note, start, noteLength, velocity, pan] of notes) {
       ctx.suspend(start).then(() => {
         // A song layer's pan travels with the note, exactly as it does live.
