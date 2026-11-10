@@ -515,6 +515,8 @@ pub struct Engine {
     ir: IrSpectra,
     /// One comb resonator per voice, used by the COMB filter type.
     combs: [CombFilter; MAX_VOICES],
+    /// Global wheel, NORMALIZED -1..1 (see [`Engine::pitch_bend`]).
+    /// The render path applies `pitch_bend_range` once; this is not semitones.
     pitch_bend: f32,
     mod_wheel: f32,
     /// Channel pressure (0..1) from the controller.
@@ -1325,8 +1327,14 @@ impl Engine {
         forced
     }
 
-    pub fn pitch_bend(&mut self, semitones: f32) {
-        self.pitch_bend = semitones.clamp(-24.0, 24.0);
+    /// Global wheel, NORMALIZED -1..1 — not semitones. The render path
+    /// applies `pitch_bend_range` exactly once (render: `pitch_mod =
+    /// self.pitch_bend * params.pitch_bend_range`), so callers pass the
+    /// raw wheel value. The old `semitones` parameter name misled the web
+    /// app into pre-scaling, which bent range^2 semitones at full wheel;
+    /// the clamp enforces the normalized contract.
+    pub fn pitch_bend(&mut self, value: f32) {
+        self.pitch_bend = value.clamp(-1.0, 1.0);
     }
 
     pub fn mod_wheel(&mut self, value: f32) {
@@ -7698,6 +7706,76 @@ mod tests {
         assert!(
             (low_after / low - 1.0).abs() < 0.005,
             "bending another note moved this one: {low:.1} -> {low_after:.1}"
+        );
+    }
+
+    /// The global wheel is a NORMALIZED -1..1 value: the render path applies
+    /// PITCH_BEND_RANGE exactly once. Full wheel at range 2 must move the
+    /// pitch by exactly two semitones — not four, which is what the web app
+    /// used to produce by sending normalized * range into this field.
+    /// Measured from the audio, like the per-note test above.
+    #[test]
+    fn global_wheel_is_normalized_range_applied_once() {
+        let _guard = lock_engine();
+        let mut e = new_engine(16);
+        e.set_param(id::OSC1_ON, 1.0);
+        e.set_param(id::OSC1_WAVE, crate::params::Wave::Sine as u32 as f32);
+        e.set_param(id::OSC1_LEVEL, 0.8);
+        e.set_param(id::OSC2_ON, 0.0);
+        e.set_param(id::OSC2_LEVEL, 0.0);
+        e.set_param(id::FILTER_CUTOFF, 18000.0);
+        e.set_param(id::FILTER_DRIVE, 0.0);
+        e.set_param(id::ENV_ATTACK, 0.001);
+        e.set_param(id::ENV_SUSTAIN, 1.0);
+        e.set_param(id::LFO_ON, 0.0);
+        e.set_param(id::MASTER_VOLUME, 1.0);
+        e.set_param(id::PITCH_BEND_RANGE, 2.0);
+        for index in 0..crate::params::MOD_ROUTES {
+            e.set_route(index, 0, 0, 0.0, false);
+        }
+
+        /// Frequency from upward zero crossings — good to a fraction of a Hz
+        /// over a second of a clean sine, which is all this test needs.
+        fn measured_hz(e: &mut Engine) -> f32 {
+            let frames = 24_000;
+            let mut buffer = vec![0.0f32; frames];
+            for chunk in buffer.chunks_mut(128) {
+                e.process(128);
+                chunk.copy_from_slice(&e.out_l[..chunk.len()]);
+            }
+            let mut crossings = 0;
+            let mut first = None;
+            let mut last = 0;
+            for i in 1..frames {
+                if buffer[i - 1] < 0.0 && buffer[i] >= 0.0 {
+                    crossings += 1;
+                    if first.is_none() {
+                        first = Some(i);
+                    }
+                    last = i;
+                }
+            }
+            let span = (last - first.unwrap_or(0)) as f32;
+            if crossings < 2 || span <= 0.0 {
+                return 0.0;
+            }
+            (crossings - 1) as f32 * 48_000.0 / span
+        }
+
+        // One note, full wheel: the pitch must rise by exactly two semitones.
+        e.note_on(67, 1.0);
+        let plain = measured_hz(&mut e);
+        e.pitch_bend(1.0);
+        let bent = measured_hz(&mut e);
+        assert!(
+            (bent / plain - 2.0f32.powf(2.0 / 12.0)).abs() < 0.01,
+            "full wheel at range 2 was not two semitones: {plain:.1} Hz -> {bent:.1} Hz"
+        );
+        e.pitch_bend(0.0);
+        let restored = measured_hz(&mut e);
+        assert!(
+            (restored / plain - 1.0).abs() < 0.01,
+            "clearing the wheel did not restore the note: {plain:.1} -> {restored:.1}"
         );
     }
 

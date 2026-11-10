@@ -702,8 +702,14 @@ export class AudioEngine {
     this.node?.port.postMessage(buf.buffer, [buf.buffer]);
   }
 
-  pitchBend(semitones: number) {
-    this.node?.port.postMessage({ type: 'pitchBend', value: semitones });
+  /**
+   * Global wheel, NORMALIZED -1..1 — not semitones. The core applies
+   * PITCH_BEND_RANGE once at render, so callers pass the raw wheel value.
+   * (The old `semitones` name misled callers into pre-scaling, which bent
+   * range^2 semitones at full wheel.)
+   */
+  pitchBend(value: number) {
+    this.node?.port.postMessage({ type: 'pitchBend', value });
   }
 
   /** Channel pressure, 0..1 (feeds the AFTERTOUCH modulation source). */

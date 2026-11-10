@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { noteBus, noteName } from '@/audio/noteBus';
 import { engine } from '@/audio/engine';
 import { store } from '@/state/store';
-import { Param } from '@/audio/params';
 import { shapeVelocity, velocityFromY } from '@/audio/velocity';
 import { useVelocityMode, useHaptics } from '@/hooks/useSynth';
 import { t } from '@/i18n';
@@ -267,7 +266,9 @@ export function Wheels() {
     pitch.current = Math.max(-1, Math.min(1, bend));
     const notch = pitchRef.current?.querySelector('.wheel-notch') as HTMLElement | null;
     if (notch) notch.style.top = `calc(50% - 2px + ${pitch.current * 14}px)`;
-    engine.pitchBend(pitch.current * store.getParam(Param.PITCH_BEND_RANGE));
+    // Normalized wheel value (-1..1): the core applies PITCH_BEND_RANGE
+    // once at render, so do not scale here (scaling bent range^2).
+    engine.pitchBend(pitch.current);
   };
 
   const endPitch = () => {

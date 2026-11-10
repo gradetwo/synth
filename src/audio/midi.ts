@@ -6,7 +6,7 @@
  */
 
 import { store } from '@/state/store';
-import { Param, type ParamId } from './params';
+import { type ParamId } from './params';
 import { ccToParamValue, paramForCc } from './ccmap';
 import { shapeVelocity } from './velocity';
 import { midiOut } from '@/midi/output';
@@ -246,13 +246,23 @@ class MidiManager {
         break;
       }
       case 'pitchBend': {
-        const events = this.mpe.handle(action);
-        if (events.length === 0) {
-          // No MPE: the wheel bends the whole synth.
-          engine.pitchBend(action.value * store.getParam(Param.PITCH_BEND_RANGE));
+        if (!this.mpe.isEnabled()) {
+          // No MPE: the wheel bends the whole synth. The engine's
+          // pitch_bend field is a NORMALIZED wheel value (-1..1); the core
+          // applies PITCH_BEND_RANGE once at render, so the raw value goes
+          // through unscaled — multiplying by the range here applied it
+          // twice (full wheel bent range^2 semitones).
+          engine.pitchBend(action.value);
           break;
         }
-        for (const event of events) engine.noteBend(event.note, event.semitones);
+        // MPE on: the router bends the note on this channel, or remembers
+        // the bend for the next note that lands here. It never falls
+        // through to the global wheel: a bend on an empty channel belongs
+        // to no sounding note, and bending the whole synth for it would
+        // move every other voice instead.
+        for (const event of this.mpe.handle(action)) {
+          if (event.type === 'bend') engine.noteBend(event.note, event.semitones);
+        }
         break;
       }
       case 'aftertouch': {

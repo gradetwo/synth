@@ -25,6 +25,28 @@ describe('MPE routing', () => {
     expect(router.handle({ type: 'pitchBend', channel: 9, value: 1 })).toEqual([]);
   });
 
+  it('remembers a bend that arrives before the note, and the note inherits it', () => {
+    const router = new MpeRouter(true);
+    router.setBendRange(48);
+    // No note on the channel yet: nothing to bend, but the bend is kept.
+    expect(router.handle({ type: 'pitchBend', channel: 2, value: 0.5 })).toEqual([]);
+    const on = router.handle({ type: 'noteOn', note: 60, channel: 2 });
+    expect(on).toEqual([
+      { type: 'noteOn', note: 60, semitones: 0, pressure: 0 },
+      { type: 'bend', note: 60, semitones: 24, pressure: 0 },
+    ]);
+  });
+
+  it('forgets the stored bend when the note ends', () => {
+    const router = new MpeRouter(true);
+    router.setBendRange(48);
+    router.handle({ type: 'pitchBend', channel: 2, value: 0.5 });
+    router.handle({ type: 'noteOn', note: 60, channel: 2 });
+    router.handle({ type: 'noteOff', channel: 2 });
+    const next = router.handle({ type: 'noteOn', note: 62, channel: 2 });
+    expect(next).toEqual([{ type: 'noteOn', note: 62, semitones: 0, pressure: 0 }]);
+  });
+
   it('routes channel pressure to the note on that channel', () => {
     const router = new MpeRouter(true);
     router.handle({ type: 'noteOn', note: 64, channel: 5 });

@@ -21,6 +21,12 @@ export class MpeRouter {
   private channelNote = new Map<number, number>();
   /** Pressure per channel, so a note-on inherits the channel's current value. */
   private channelPressure = new Map<number, number>();
+  /**
+   * Last bend (normalized -1..1) per channel, so a note that lands after a
+   * bend inherits it — the same promise the pressure path already keeps.
+   * A bend that arrives before its note used to be dropped entirely.
+   */
+  private channelBend = new Map<number, number>();
   private bendRange = 48;
 
   constructor(private enabled = false) {}
@@ -36,6 +42,7 @@ export class MpeRouter {
     const stranded = [...this.channelNote.values()];
     this.channelNote.clear();
     this.channelPressure.clear();
+    this.channelBend.clear();
     return stranded.map((note) => ({ type: 'bend', note, semitones: 0, pressure: 0 }));
   }
 
@@ -67,11 +74,17 @@ export class MpeRouter {
         const note = action.note ?? 0;
         this.channelNote.set(channel, note);
         this.events.push({ type: 'noteOn', note, semitones: 0, pressure: this.channelPressure.get(channel) ?? 0 });
+        // A bend that arrived before the note belongs to this note now.
+        const bend = this.channelBend.get(channel);
+        if (bend != null) {
+          this.events.push({ type: 'bend', note, semitones: bend * this.bendRange, pressure: 0 });
+        }
         break;
       }
       case 'noteOff': {
         const note = this.channelNote.get(channel) ?? action.note ?? 0;
         this.channelNote.delete(channel);
+        this.channelBend.delete(channel);
         // Release the bend before the note ends, so a stolen voice cannot come
         // back bent by the next note that lands on this channel.
         this.events.push({ type: 'bend', note, semitones: 0, pressure: 0 });
@@ -79,6 +92,12 @@ export class MpeRouter {
         break;
       }
       case 'pitchBend': {
+        // Remember the bend even when no note is on the channel yet: the
+        // next note that lands here inherits it (see 'noteOn' above).
+        // Returning no event here is correct — there is nothing to bend
+        // right now — but the caller must not fall back to the global
+        // wheel for it either.
+        this.channelBend.set(channel, action.value ?? 0);
         const note = this.channelNote.get(channel);
         if (note == null) break;
         this.events.push({
@@ -110,5 +129,6 @@ export class MpeRouter {
   reset() {
     this.channelNote.clear();
     this.channelPressure.clear();
+    this.channelBend.clear();
   }
 }
