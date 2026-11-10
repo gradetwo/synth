@@ -34,7 +34,22 @@ export async function bufferResponse(
   try {
     // `compileStreaming` consumes the body; keep a clone for the worklet.
     const clone = response.clone();
-    await compile(clone);
+    // Race the streaming compile against a timeout. On engines where the
+    // compile never settles (WebKit: `compileStreaming` hangs indefinitely
+    // on the app page, measured to 120 s), a hang is not a rejection, so the
+    // `catch` below never fires and the bytes would never become available.
+    // On timeout abandon the compile and take the buffered path; the bytes
+    // are what the worklet needs, and the compile was only a warm-up.
+    const compiled = await Promise.race([
+      compile(clone).then(
+        () => true,
+        () => false,
+      ),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 5000)),
+    ]);
+    if (!compiled) {
+      return { bytes: await response.arrayBuffer(), streamed: false };
+    }
     return { bytes: await response.arrayBuffer(), streamed: true };
   } catch {
     // Wrong MIME type, a truncated body, or a browser that refuses to stream:

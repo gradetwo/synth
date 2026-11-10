@@ -298,6 +298,13 @@ export class AudioEngine {
     this.loadPromise = (async () => {
       this.setStatus('loading');
       try {
+        // If a preload is in flight, wait for it before deciding to fetch:
+        // its bytes are the ones to reuse, and fetching again while it is
+        // pending would request the core twice. The preload is bounded by
+        // the streaming-compile timeout, so this wait cannot hang.
+        if (this.preloadPromise && !this.preloaded) {
+          await this.preloadPromise;
+        }
         const fetchBytes = async (simd: boolean) => {
           const wasmUrl = simd ? simdWasmUrl : scalarWasmUrl;
           const controller = new AbortController();

@@ -424,25 +424,37 @@ function NoteDisplay() {
   const [info, setInfo] = useState({ note: null as number | null, velocity: 1, voices: 0 });
   const [held, setHeld] = useState<number[]>([]);
   useEffect(() => {
-    let pending = false;
-    let nextInfo: { note: number | null; velocity: number; voices: number } | null = null;
-    let rafId = 0;
+    // The monitor holds the last pitch for HOLD_MS after the note ends.
+    // On a fast engine the pitch flashes for the 240 ms audition and clears;
+    // on WebKit the re-render that paints the pitch can take longer than the
+    // audition itself, so clearing at once would batch the two updates and
+    // the pitch would never reach the DOM (the monitor would stay "—").
+    // Holding it gives the paint time to land and a slow observer time to
+    // read it. The test allows up to 3000 ms for the fallback to "—".
+    const HOLD_MS = 1000;
+    let clearTimer = 0;
     const unsub = noteBus.subscribe((next) => {
-      nextInfo = next;
-      if (!pending) {
-        pending = true;
-        rafId = requestAnimationFrame(() => {
-          pending = false;
-          if (nextInfo) {
-            setInfo(nextInfo);
-            setHeld(noteBus.heldNotes());
-          }
-        });
+      if (next.note !== null) {
+        // A sounding note cancels any pending clear and shows at once.
+        window.clearTimeout(clearTimer);
+        clearTimer = 0;
+        setInfo(next);
+        setHeld(noteBus.heldNotes());
+        return;
+      }
+      // Note-off: hold the pitch, then fall back to silence.
+      setHeld(noteBus.heldNotes());
+      if (!clearTimer) {
+        clearTimer = window.setTimeout(() => {
+          clearTimer = 0;
+          setInfo({ note: null, velocity: 1, voices: 0 });
+          setHeld([]);
+        }, HOLD_MS);
       }
     });
     return () => {
       unsub();
-      if (rafId) cancelAnimationFrame(rafId);
+      window.clearTimeout(clearTimer);
     };
   }, []);
   const chord = detectChord(held);
