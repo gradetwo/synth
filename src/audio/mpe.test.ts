@@ -79,4 +79,33 @@ describe('MPE routing', () => {
     // Already off: nothing to release a second time.
     expect(router.setEnabled(false)).toEqual([]);
   });
+
+  it('carries the bend frame through to the emitted bend event', () => {
+    const router = new MpeRouter(true);
+    router.setBendRange(48);
+    router.handle({ type: 'noteOn', note: 60, channel: 2 });
+    const bent = router.handle({ type: 'pitchBend', channel: 2, value: 0.5, atFrame: 1234 });
+    expect(bent).toEqual([{ type: 'bend', note: 60, semitones: 24, pressure: 0, atFrame: 1234 }]);
+  });
+
+  it('an inherited bend carries the note frame, not the bend frame', () => {
+    const router = new MpeRouter(true);
+    router.setBendRange(48);
+    // The bend arrives first (frame 100) and is only remembered; the note
+    // lands later (frame 200), and the bend it inherits rides on the note.
+    router.handle({ type: 'pitchBend', channel: 2, value: 0.5, atFrame: 100 });
+    const on = router.handle({ type: 'noteOn', note: 60, channel: 2, atFrame: 200 });
+    expect(on).toEqual([
+      { type: 'noteOn', note: 60, semitones: 0, pressure: 0 },
+      { type: 'bend', note: 60, semitones: 24, pressure: 0, atFrame: 200 },
+    ]);
+  });
+
+  it('a release bend carries the note-off frame', () => {
+    const router = new MpeRouter(true);
+    router.handle({ type: 'noteOn', note: 60, channel: 2 });
+    router.handle({ type: 'pitchBend', channel: 2, value: 1 });
+    const off = router.handle({ type: 'noteOff', channel: 2, atFrame: 300 });
+    expect(off[0]).toEqual({ type: 'bend', note: 60, semitones: 0, pressure: 0, atFrame: 300 });
+  });
 });

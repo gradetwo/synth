@@ -36,6 +36,7 @@ interface Registered {
 type QueueInternals = {
   port: { onmessage: (e: { data: unknown }) => void };
   scheduledNotes: { off: boolean; note: number; frame: number }[];
+  scheduledBends: { kind: string; frame: number; value: number; note?: number }[];
 };
 
 const messages: unknown[] = [];
@@ -731,6 +732,289 @@ describe.skipIf(!hasWasm)('AudioWorklet processor', () => {
         w.port.onmessage({ data: { type: 'noteAt', note: 60, velocity: 0.5, atFrame: 1_000_000 + i } });
       }
       expect(internals.scheduledNotes.length).toBeLessThanOrEqual(1024);
+    });
+  });
+
+  /**
+   * Frame-addressed bend events (`pitchBend` / `noteBend` with `atFrame`).
+   *
+   * A bend used to be applied when its message arrived — at the next 128-frame boundary, up to a
+   * whole block after the wheel actually moved, and after any note that shared its MIDI packet.
+   * Logic Pro delivers bend with the MIDI stream, sample-accurate in the same block, so a bend
+   * names its frame like a note does and the processor applies it between render chunks at that
+   * frame. These tests pin the three properties that matter: the bend lands on the frame it
+   * names (not the boundary), a bend without a frame keeps the old immediate path, and a
+   * malformed frame drops the bend instead of inventing a time for it.
+   */
+  describe('frame-addressed bend events', () => {
+    /** A sine at a fixed level, with the wheel opened to a full octave. */
+    const bendParams = () => {
+      const params: Record<string, Float32Array> = {};
+      for (const d of descriptors()) params[d.name] = new Float32Array([d.defaultValue]);
+      params.osc1Wave = new Float32Array([0]);
+      params.osc1Level = new Float32Array([0.8]);
+      params.osc1Detune = new Float32Array([0]);
+      params.osc2On = new Float32Array([0]);
+      params.osc2Level = new Float32Array([0]);
+      params.filterCutoff = new Float32Array([12000]);
+      params.filterEnvAmt = new Float32Array([0]);
+      params.filterDrive = new Float32Array([0]);
+      params.envAttack = new Float32Array([0.002]);
+      params.envDecay = new Float32Array([0.05]);
+      params.envSustain = new Float32Array([1]);
+      params.lfoOn = new Float32Array([0]);
+      params.fxReverbOn = new Float32Array([0]);
+      params.fxDelayOn = new Float32Array([0]);
+      params.masterTune = new Float32Array([0]);
+      // Full wheel (+1) bends one octave: 440 Hz becomes 880 Hz, which a
+      // single-bin magnitude reads without ambiguity.
+      params.pitchBendRange = new Float32Array([12]);
+      return params;
+    };
+
+    /** Render one block and return the loudest sample in it. */
+    const renderBlock = (processor: ReturnType<typeof instantiate>) => {
+      const outputs = [[new Float32Array(128), new Float32Array(128)]];
+      processor.process([], outputs, bendParams());
+      let peak = 0;
+      for (const channel of outputs[0]) {
+        for (const sample of channel) peak = Math.max(peak, Math.abs(sample));
+      }
+      return peak;
+    };
+
+    /**
+     * Record the wasm calls the processor makes, in order.
+     *
+     * The exports object itself is frozen, so the calls cannot be wrapped by
+     * assignment on it; instead the whole `wasm` handle on the processor is
+     * swapped for a delegate that forwards everything and records the three
+     * calls that matter. The recorded order is what pins the bend frame:
+     * `process(100), bend(0.5), process(28)` is a bend applied at frame 100,
+     * `process(128)` alone is a bend snapped to the block boundary.
+     */
+    const recordWasmCalls = (processor: ReturnType<typeof instantiate>) => {
+      const wasm = (
+        processor as unknown as {
+          wasm: {
+            gs_process: (n: number) => void;
+            gs_pitch_bend: (v: number) => void;
+            gs_note_bend?: (note: number, semitones: number) => void;
+          };
+        }
+      ).wasm;
+      const calls: string[] = [];
+      const wrapped = {
+        ...wasm,
+        gs_process: (n: number) => {
+          calls.push(`process(${n})`);
+          wasm.gs_process(n);
+        },
+        gs_pitch_bend: (v: number) => {
+          calls.push(`bend(${v})`);
+          wasm.gs_pitch_bend(v);
+        },
+        gs_note_bend: (note: number, semitones: number) => {
+          calls.push(`noteBend(${note},${semitones})`);
+          wasm.gs_note_bend?.(note, semitones);
+        },
+      };
+      (processor as unknown as { wasm: unknown }).wasm = wrapped;
+      return calls;
+    };
+
+    /** A ready processor that has already received `data`. */
+    const processorFor = async (data: unknown) => {
+      messages.length = 0;
+      const processor = instantiate();
+      await waitReady(processor);
+      (processor as unknown as { port: { onmessage: (e: { data: unknown }) => void } }).port.onmessage({
+        data,
+      });
+      return processor;
+    };
+
+    it('queues a pitchBend with exactly its frame and value', async () => {
+      const processor = await processorFor({ type: 'pitchBend', value: 0.5, atFrame: 300.7 });
+      const internals = processor as unknown as QueueInternals;
+      expect(internals.scheduledBends).toEqual([{ frame: 301, kind: 'bend', value: 0.5 }]);
+    });
+
+    it('queues a noteBend with its note, semitones and frame', async () => {
+      const processor = await processorFor({
+        type: 'noteBend',
+        note: 60,
+        semitones: 24,
+        atFrame: 300.7,
+      });
+      const internals = processor as unknown as QueueInternals;
+      expect(internals.scheduledBends).toEqual([
+        { frame: 301, kind: 'noteBend', note: 60, value: 24 },
+      ]);
+    });
+
+    it('splits the block at the bend frame instead of the next boundary', async () => {
+      messages.length = 0;
+      const processor = instantiate();
+      await waitReady(processor);
+      const calls = recordWasmCalls(processor);
+      const w = processor as unknown as { port: { onmessage: (e: { data: unknown }) => void } };
+      w.port.onmessage({ data: { type: 'pitchBend', value: 0.5, atFrame: 100 } });
+      // Queued, not applied: the message must not have bent anything yet.
+      expect(calls, 'a scheduled bend must not apply at message time').toEqual([]);
+      renderBlock(processor);
+      expect(calls).toEqual(['process(100)', 'bend(0.5)', 'process(28)']);
+    });
+
+    it('splits the block at a noteBend frame', async () => {
+      messages.length = 0;
+      const processor = instantiate();
+      await waitReady(processor);
+      const calls = recordWasmCalls(processor);
+      const w = processor as unknown as { port: { onmessage: (e: { data: unknown }) => void } };
+      w.port.onmessage({ data: { type: 'noteBend', note: 60, semitones: 24, atFrame: 64 } });
+      expect(calls, 'a scheduled noteBend must not apply at message time').toEqual([]);
+      renderBlock(processor);
+      expect(calls).toEqual(['process(64)', 'noteBend(60,24)', 'process(64)']);
+    });
+
+    it('moves the pitch at the bend frame, not the block boundary', async () => {
+      // Two bends, not one: on at frame 3904, off again at 5952. A processor
+      // that applies a bend when its message arrives applies *both* before
+      // the next block renders, so they cancel and the note never bends —
+      // that is exactly the red this test shows before the fix. A processor
+      // that honours the frames bends only the frames between them.
+      messages.length = 0;
+      const processor = instantiate();
+      await waitReady(processor);
+      const w = processor as unknown as { port: { onmessage: (e: { data: unknown }) => void } };
+      const params = bendParams();
+      // A4, sounding and settled in sustain.
+      w.port.onmessage({ data: new Uint8Array([0x90, 69, 127]).buffer });
+      const frames: number[] = [];
+      const samples: number[] = [];
+      const runBlock = () => {
+        const outputs = [[new Float32Array(128), new Float32Array(128)]];
+        processor.process([], outputs, params);
+        const start =
+          (processor as unknown as { renderedFrames: number }).renderedFrames - 128;
+        for (let i = 0; i < 128; i++) {
+          frames.push(start + i);
+          samples.push(outputs[0][0][i]);
+        }
+      };
+      for (let i = 0; i < 30; i++) runBlock();
+      // Next block covers [3840, 3968); bend on at 3904, mid-block, and off
+      // at 5952 — the window under test sits strictly between the two.
+      w.port.onmessage({ data: { type: 'pitchBend', value: 1, atFrame: 3904 } });
+      w.port.onmessage({ data: { type: 'pitchBend', value: 0, atFrame: 5952 } });
+      for (let i = 0; i < 40; i++) runBlock();
+      const window = (from: number, to: number) => {
+        const out: number[] = [];
+        for (let i = 0; i < samples.length; i++) {
+          if (frames[i] >= from && frames[i] < to) out.push(samples[i]);
+        }
+        return Float32Array.from(out);
+      };
+      // A sine: before the bend the 880 bin is (near) empty; between the two
+      // bends 880 is the fundamental and 440 is gone.
+      const before = window(2816, 3840);
+      const after = window(4096, 5120);
+      expect(magnitude(before, 440)).toBeGreaterThan(0.01);
+      expect(magnitude(before, 880)).toBeLessThan(magnitude(before, 440) * 0.2);
+      expect(magnitude(after, 880)).toBeGreaterThan(0.01);
+      expect(magnitude(after, 880)).toBeGreaterThan(magnitude(after, 440) * 3);
+    });
+
+    it('applies a bend without atFrame immediately (the old path)', async () => {
+      messages.length = 0;
+      const processor = instantiate();
+      await waitReady(processor);
+      const calls = recordWasmCalls(processor);
+      const w = processor as unknown as { port: { onmessage: (e: { data: unknown }) => void } };
+      w.port.onmessage({ data: { type: 'pitchBend', value: 0.5 } });
+      expect(calls, 'a bend with no frame applies at message time').toEqual(['bend(0.5)']);
+      const internals = processor as unknown as QueueInternals;
+      expect(internals.scheduledBends).toEqual([]);
+    });
+
+    it('drops a bend whose atFrame is present but not a frame', async () => {
+      // "Omitted" and "given, but garbage" are different, exactly as for
+      // notes: only the former takes the immediate path. A host that asked
+      // for a scheduled bend and named a frame that is not one gets silence
+      // for that bend, not a bend applied now that it never asked for.
+      for (const bad of ['soon', null, NaN, Infinity, false]) {
+        messages.length = 0;
+        const processor = instantiate();
+        await waitReady(processor);
+        const calls = recordWasmCalls(processor);
+        const w = processor as unknown as { port: { onmessage: (e: { data: unknown }) => void } };
+        w.port.onmessage({ data: { type: 'pitchBend', value: 0.5, atFrame: bad } });
+        const internals = processor as unknown as QueueInternals;
+        expect(internals.scheduledBends, `atFrame ${String(bad)} must not queue`).toEqual([]);
+        renderBlock(processor);
+        // The block itself renders (`process(128)`); the bend must not appear.
+        expect(calls, `atFrame ${String(bad)} must not apply, now or later`).toEqual([
+          'process(128)',
+        ]);
+      }
+    });
+
+    it('drops a bend whose value is not finite, even with a valid frame', async () => {
+      // A NaN wheel value would reach the core as NaN and poison pitch_mod;
+      // the note path already refuses non-finite payloads for the same reason.
+      for (const bad of [NaN, Infinity, '0.5', null]) {
+        const processor = await processorFor({ type: 'pitchBend', value: bad, atFrame: 100 });
+        const internals = processor as unknown as QueueInternals;
+        expect(internals.scheduledBends, `value ${String(bad)} must not queue`).toEqual([]);
+      }
+    });
+
+    it('applies a late bend immediately instead of dropping it', async () => {
+      messages.length = 0;
+      const processor = instantiate();
+      await waitReady(processor);
+      const calls = recordWasmCalls(processor);
+      const w = processor as unknown as { port: { onmessage: (e: { data: unknown }) => void } };
+      renderBlock(processor); // one block of real time passes
+      w.port.onmessage({ data: { type: 'pitchBend', value: 0.5, atFrame: 0 } });
+      expect(calls, 'a past-dated bend must not apply before the next block').toEqual([
+        'process(128)',
+      ]);
+      renderBlock(processor);
+      expect(calls).toEqual(['process(128)', 'bend(0.5)', 'process(128)']);
+    });
+
+    it('drops pending bends on panic', async () => {
+      messages.length = 0;
+      const processor = instantiate();
+      await waitReady(processor);
+      const calls = recordWasmCalls(processor);
+      const w = processor as unknown as { port: { onmessage: (e: { data: unknown }) => void } };
+      w.port.onmessage({ data: { type: 'pitchBend', value: 0.5, atFrame: 256 } });
+      w.port.onmessage({ data: { type: 'panic' } });
+      const internals = processor as unknown as QueueInternals;
+      expect(internals.scheduledBends).toEqual([]);
+      for (let i = 0; i < 5; i++) renderBlock(processor);
+      expect(calls, 'a bend cancelled by panic must never apply').toEqual([
+        'process(128)',
+        'process(128)',
+        'process(128)',
+        'process(128)',
+        'process(128)',
+      ]);
+    });
+
+    it('bounds the bend queue so a leaking host cannot grow it without limit', async () => {
+      messages.length = 0;
+      const processor = instantiate();
+      await waitReady(processor);
+      const w = processor as unknown as { port: { onmessage: (e: { data: unknown }) => void } };
+      const internals = processor as unknown as QueueInternals;
+      for (let i = 0; i < 2000; i++) {
+        w.port.onmessage({ data: { type: 'pitchBend', value: 0.5, atFrame: 1_000_000 + i } });
+      }
+      expect(internals.scheduledBends.length).toBeLessThanOrEqual(1024);
     });
   });
 

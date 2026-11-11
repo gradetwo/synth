@@ -262,13 +262,16 @@ export function Wheels() {
   const drag = useRef<'pitch' | 'mod' | null>(null);
   const lastY = useRef(0);
 
-  const applyPitch = (bend: number) => {
+  const applyPitch = (bend: number, atFrame?: number) => {
     pitch.current = Math.max(-1, Math.min(1, bend));
     const notch = pitchRef.current?.querySelector('.wheel-notch') as HTMLElement | null;
     if (notch) notch.style.top = `calc(50% - 2px + ${pitch.current * 14}px)`;
     // Normalized wheel value (-1..1): the core applies PITCH_BEND_RANGE
     // once at render, so do not scale here (scaling bent range^2).
-    engine.pitchBend(pitch.current);
+    // `atFrame` names the frame the bend applies at; omitted, it applies
+    // when its message arrives. A drag names the pointer frame; the
+    // spring-back names none, so it applies immediately.
+    engine.pitchBend(pitch.current, atFrame);
   };
 
   const endPitch = () => {
@@ -307,7 +310,10 @@ export function Wheels() {
           }}
           onPointerMove={(e) => {
             if (drag.current !== 'pitch') return;
-            applyPitch(pitch.current - (e.clientY - lastY.current) * 0.02);
+            applyPitch(
+              pitch.current - (e.clientY - lastY.current) * 0.02,
+              engine.frameForTimestamp(e.timeStamp),
+            );
             lastY.current = e.clientY;
           }}
           onPointerUp={endPitch}

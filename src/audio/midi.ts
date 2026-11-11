@@ -194,13 +194,26 @@ class MidiManager {
     if (!event.data) return;
     const action = decodeMidi(event.data);
     if (!action) return;
+    /**
+     * Absolute frame the event happened at, on the same clock as a note's `atFrame`. A bend is
+     * performance data, delivered with the MIDI stream and sample-accurate in the same block
+     * (Logic Pro delivers it that way), so the bend is scheduled at the frame it arrived at
+     * instead of at the next block boundary. `undefined` when the event names no timestamp —
+     * the bend then applies when its message arrives, as before.
+     *
+     * `receivedTime` is in the Web MIDI spec and present at runtime, but this repo's TS lib
+     * does not declare it on `MIDIMessageEvent` — hence the cast, not a lie about the shape.
+     */
+    const atFrame = engine.frameForTimestamp(
+      (event as MIDIMessageEvent & { receivedTime?: number }).receivedTime,
+    );
     switch (action.type) {
       case 'noteOn': {
         this.sustained.delete(action.note);
         // MPE first: a note that lands on a channel inherits that channel's
         // current bend, so a controller that bends before pressing still works.
-        for (const event of this.mpe.handle(action)) {
-          if (event.type === 'bend') engine.noteBend(event.note, event.semitones);
+        for (const event of this.mpe.handle({ ...action, atFrame })) {
+          if (event.type === 'bend') engine.noteBend(event.note, event.semitones, event.atFrame);
         }
         noteBus.noteOn(
           action.note,
@@ -215,8 +228,8 @@ class MidiManager {
         }
         // Release the per-note bend before the note ends, so the slot is clean
         // for whatever note lands on that channel next.
-        for (const event of this.mpe.handle(action)) {
-          if (event.type === 'bend') engine.noteBend(event.note, event.semitones);
+        for (const event of this.mpe.handle({ ...action, atFrame })) {
+          if (event.type === 'bend') engine.noteBend(event.note, event.semitones, event.atFrame);
         }
         noteBus.noteOff(action.note);
         break;
@@ -252,7 +265,7 @@ class MidiManager {
           // applies PITCH_BEND_RANGE once at render, so the raw value goes
           // through unscaled — multiplying by the range here applied it
           // twice (full wheel bent range^2 semitones).
-          engine.pitchBend(action.value);
+          engine.pitchBend(action.value, atFrame);
           break;
         }
         // MPE on: the router bends the note on this channel, or remembers
@@ -260,8 +273,8 @@ class MidiManager {
         // through to the global wheel: a bend on an empty channel belongs
         // to no sounding note, and bending the whole synth for it would
         // move every other voice instead.
-        for (const event of this.mpe.handle(action)) {
-          if (event.type === 'bend') engine.noteBend(event.note, event.semitones);
+        for (const event of this.mpe.handle({ ...action, atFrame })) {
+          if (event.type === 'bend') engine.noteBend(event.note, event.semitones, event.atFrame);
         }
         break;
       }

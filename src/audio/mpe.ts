@@ -14,6 +14,14 @@ export interface MpeEvent {
   note: number;
   semitones: number;
   pressure: number;
+  /**
+   * Absolute frame the bend applies at, on the same clock as a note's `atFrame` — carried
+   * through from the MIDI event that produced it, so a bend that shares a packet with a note
+   * lands with the note. An inherited bend carries the note's frame, not the bend's: the bend
+   * belongs to the note, and the note is what names the time. Omitted when the source event
+   * named no frame, and the bend then applies when its message arrives.
+   */
+  atFrame?: number;
 }
 
 export class MpeRouter {
@@ -64,6 +72,7 @@ export class MpeRouter {
     note?: number;
     channel?: number;
     value?: number;
+    atFrame?: number;
   }): MpeEvent[] {
     this.events = [];
     if (!this.enabled) return this.events;
@@ -77,7 +86,13 @@ export class MpeRouter {
         // A bend that arrived before the note belongs to this note now.
         const bend = this.channelBend.get(channel);
         if (bend != null) {
-          this.events.push({ type: 'bend', note, semitones: bend * this.bendRange, pressure: 0 });
+          this.events.push({
+            type: 'bend',
+            note,
+            semitones: bend * this.bendRange,
+            pressure: 0,
+            atFrame: action.atFrame,
+          });
         }
         break;
       }
@@ -87,7 +102,7 @@ export class MpeRouter {
         this.channelBend.delete(channel);
         // Release the bend before the note ends, so a stolen voice cannot come
         // back bent by the next note that lands on this channel.
-        this.events.push({ type: 'bend', note, semitones: 0, pressure: 0 });
+        this.events.push({ type: 'bend', note, semitones: 0, pressure: 0, atFrame: action.atFrame });
         this.events.push({ type: 'noteOff', note, semitones: 0, pressure: 0 });
         break;
       }
@@ -105,6 +120,7 @@ export class MpeRouter {
           note,
           semitones: (action.value ?? 0) * this.bendRange,
           pressure: 0,
+          atFrame: action.atFrame,
         });
         break;
       }
