@@ -368,6 +368,41 @@ function timedEventFrom(payload) {
   return { frame: Math.round(payload.atFrame), off: isOff, note: payload.note, velocity, pan, cents };
 }
 
+/**
+ * Validate a frame-addressed bend (`pitchBend` / `noteBend` with `atFrame`), mirroring
+ * `timedEventFrom`'s strictness — and its "omitted vs given-but-garbage" rule.
+ *
+ * A bend used to be applied when its message arrived, at the next 128-frame boundary. That is
+ * up to a whole block after the wheel actually moved, and after any note that shared its MIDI
+ * packet — a bend is performance data, delivered with the MIDI stream and sample-accurate in the
+ * same block (Logic Pro delivers it that way), so a bend names its frame like a note does and
+ * the processor applies it between render chunks at that frame.
+ *
+ * The validation follows the note path exactly, because the failure modes are the same:
+ * - `atFrame` absent (`undefined`): the caller takes the immediate path, not this validator —
+ *   the host never asked for a scheduled bend, so the bend applies now, as it always did.
+ * - `atFrame` present but not a finite number: the bend is dropped, not applied now — a host
+ *   that asked for a scheduled bend and named a frame that is not one asked for nothing to
+ *   happen at a time it never named.
+ * - `value` (or `semitones`) present but not finite: dropped. A NaN wheel value would reach
+ *   the core as NaN and poison `pitch_mod`; the note path refuses non-finite payloads for the
+ *   same reason.
+ * - `noteBend` without a finite note: dropped, like a note event without a note.
+ *
+ * A `noteBend` has no velocity or pan: it bends a note that is already sounding.
+ */
+function timedBendFrom(payload) {
+  if (typeof payload.atFrame !== 'number' || !Number.isFinite(payload.atFrame)) return null;
+  if (typeof payload.value !== 'number' || !Number.isFinite(payload.value)) return null;
+  const entry = { frame: Math.round(payload.atFrame), kind: 'bend', value: payload.value };
+  if (payload.type === 'noteBend') {
+    if (typeof payload.note !== 'number' || !Number.isFinite(payload.note)) return null;
+    entry.kind = 'noteBend';
+    entry.note = payload.note;
+  }
+  return entry;
+}
+
 class SynthWorkletProcessor extends AudioWorkletProcessor {
   static get parameterDescriptors() {
     return PARAMS.map(([name, , defaultValue, minValue, maxValue]) => ({
@@ -409,6 +444,14 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
      * at scheduling time) or jittery (post from a timer at the last moment).
      */
     this.scheduledNotes = [];
+    /**
+     * Frame-addressed bend events, sorted by `atFrame` (see `pitchBend` / `noteBend`).
+     *
+     * The same queue, for the same reason, as `scheduledNotes`: a bend is performance data, and
+     * the wheel moves between blocks as often as a note does. A bend without `atFrame` never
+     * reaches this queue — it applies when its message arrives, as it always did.
+     */
+    this.scheduledBends = [];
     /**
      * Diagnostic event capture (Groove's `captureEvents`).
      *
@@ -546,11 +589,30 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
       case 'panic':
         // A panic must mean *silence now*: pending future events are the opposite of that.
         this.scheduledNotes.length = 0;
+        this.scheduledBends.length = 0;
         this.wasm.gs_all_notes_off();
         break;
       case 'pitchBend':
-        this.wasm.gs_pitch_bend(data.value);
+      case 'noteBend': {
+        // A bend with `atFrame` is queued for that frame, exactly like a note with one; a bend
+        // without it applies when its message arrives, as it always did. A bend whose `atFrame`
+        // is present but not a frame is dropped by `timedBendFrom`, not applied now — see there.
+        if (data.atFrame === undefined) {
+          if (data.type === 'pitchBend') this.wasm.gs_pitch_bend(data.value);
+          else if (this.wasm.gs_note_bend) {
+            this.wasm.gs_note_bend(Number(data.note) | 0, Number(data.semitones) || 0);
+          }
+        } else {
+          const bend = timedBendFrom({
+            type: data.type,
+            atFrame: data.atFrame,
+            note: data.note,
+            value: data.type === 'pitchBend' ? data.value : data.semitones,
+          });
+          if (bend) this.scheduleTimedBend(bend);
+        }
         break;
+      }
       case 'aftertouch':
         this.wasm.gs_aftertouch(data.value);
         break;
@@ -559,11 +621,6 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
         break;
       case 'modRoute':
         this.wasm.gs_set_mod_route(data.index, data.src, data.dst, data.amount, data.enabled ? 1 : 0);
-        break;
-      case 'noteBend':
-        if (this.wasm.gs_note_bend) {
-          this.wasm.gs_note_bend(Number(data.note) | 0, Number(data.semitones) || 0);
-        }
         break;
       case 'tuning':
         // Microtuning: one key's cent offset. Sent as a burst when the
@@ -815,6 +872,39 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
   }
 
   /**
+   * Queue one frame-addressed bend, keeping the queue sorted and bounded.
+   *
+   * The same shape as `scheduleTimedNote` — a linear scan from the end, the same
+   * `MAX_SCHEDULED_EVENTS` bound, the oldest dropped when a leaking host keeps posting — but
+   * no supersede logic: a bend does not cancel another bend the way a note-on cancels a queued
+   * note-off. Two bends on the same frame apply in arrival order, and the later one is the one
+   * that is still in force, exactly as if both had arrived as separate messages.
+   */
+  scheduleTimedBend(event) {
+    const queue = this.scheduledBends;
+    if (queue.length >= MAX_SCHEDULED_EVENTS) queue.shift();
+    let i = queue.length;
+    while (i > 0 && queue[i - 1].frame > event.frame) i -= 1;
+    queue.splice(i, 0, event);
+  }
+
+  /** Apply every queued bend due at or before `frame`. Returns how many were applied. */
+  applyScheduledBendsUpTo(frame) {
+    const queue = this.scheduledBends;
+    let applied = 0;
+    while (queue.length > 0 && queue[0].frame <= frame) {
+      const bend = queue.shift();
+      if (bend.kind === 'noteBend') {
+        if (this.wasm.gs_note_bend) this.wasm.gs_note_bend(bend.note, bend.value);
+      } else {
+        this.wasm.gs_pitch_bend(bend.value);
+      }
+      applied += 1;
+    }
+    return applied;
+  }
+
+  /**
    * Post the core's own samples around an event, for the discontinuity investigation.
    *
    * **The "before" samples come from the previous chunk's tail, not from a view of the output buffer.** `gs_process(n)`
@@ -993,7 +1083,7 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
      */
     const blockStart = typeof currentFrame === "number" ? currentFrame : this.renderedFrames;
     const t0 = nowMs();
-    if (this.scheduledNotes.length === 0) {
+    if (this.scheduledNotes.length === 0 && this.scheduledBends.length === 0) {
       // The overwhelmingly common case: no timed events, so render the block in one call and
       // keep the historical cost profile (a split render would show up as extra per-chunk
       // overhead in the load monitor).
@@ -1016,8 +1106,14 @@ class SynthWorkletProcessor extends AudioWorkletProcessor {
         if (this.captureEvents) {
           this.leftViewAtEnd = new Float32Array(this.memory.buffer, this.leftPtr, this.maxBlock);
         }
+        // Bends before notes: a bend and a note that share a frame belong to the same MIDI
+        // packet, and the bend is the note's own tuning — it must be in force when the note
+        // starts, not applied to the chunk after it.
+        this.applyScheduledBendsUpTo(blockStart + offset);
         this.applyScheduledNotesUpTo(blockStart + offset);
-        const next = this.scheduledNotes.length > 0 ? this.scheduledNotes[0].frame : Infinity;
+        const nextNote = this.scheduledNotes.length > 0 ? this.scheduledNotes[0].frame : Infinity;
+        const nextBend = this.scheduledBends.length > 0 ? this.scheduledBends[0].frame : Infinity;
+        const next = Math.min(nextNote, nextBend);
         const untilNext = next === Infinity ? block - offset : Math.max(1, next - (blockStart + offset));
         const chunk = Math.min(block - offset, untilNext);
         this.wasm.gs_process(chunk);

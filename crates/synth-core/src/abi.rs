@@ -316,9 +316,12 @@ pub extern "C" fn gs_all_notes_off() {
     engine().all_notes_off();
 }
 
+/// Global wheel, NORMALIZED -1..1 — not semitones. The core applies
+/// PITCH_BEND_RANGE once at render; the old `semitones` name misled the
+/// web app into pre-scaling, bending range^2 semitones at full wheel.
 #[no_mangle]
-pub extern "C" fn gs_pitch_bend(semitones: f32) {
-    engine().pitch_bend(semitones);
+pub extern "C" fn gs_pitch_bend(value: f32) {
+    engine().pitch_bend(value);
 }
 
 /// Bend **one** note, in semitones (MPE).

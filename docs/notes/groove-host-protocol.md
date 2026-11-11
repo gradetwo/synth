@@ -134,6 +134,8 @@ node.port.postMessage({ type: 'noteOffAt', atFrame: atFrame + 24000 }); // 0.5 s
 | `host→worklet` | `noteAt` | `{ atFrame, note, velocity, pan, cents? }` | 在绝对帧 `atFrame` 起音（输入校验见第三节） |
 | `host→worklet` | `noteOnAt` | `{ atFrame, note, velocity, pan, cents? }` | `noteAt` 的别名（含同一套输入校验） |
 | `host→worklet` | `noteOffAt` | `{ atFrame, note }` | 在绝对帧 `atFrame` 止音（`velocity` 强制 0） |
+| `host→worklet` | `pitchBend` | `{ value, atFrame? }` | 全局弯音（归一化 -1..1）；`atFrame` 省略 ⇒ 到达即应用，`atFrame` 给出 ⇒ 在该绝对帧应用 |
+| `host→worklet` | `noteBend` | `{ note, semitones, atFrame? }` | 单音弯音（MPE，每音半音数）；`atFrame` 语义同 `pitchBend` |
 | `host→worklet` | `allNotesOff` | `{}` | 清队列 + 全部止音 |
 | `host→worklet` | `panic` | `{}` | `allNotesOff` 的别名（同样清队列） |
 | `worklet→host` | `ready` | `{ abi, scheduledNoteLatencyFrames }` | 握手；此前所有消息被丢弃 |
@@ -183,3 +185,11 @@ node.port.postMessage({ type: 'noteOffAt', atFrame: atFrame + 24000 }); // 0.5 s
 7. **上界淘汰是「丢最旧」，不是「拒绝新的」**：队列按帧排序，所以长期漏事件的宿主会**静默丢掉
    时间上最早**的音符（而不是丢掉刚发来的那条）。1024 条对「合法 lookahead 主机只持有几百条」
    有充裕余量；这是**事件条数**上界，和时间跨度无关。
+9. **弯音带 `atFrame` 时按帧调度，不带时到达即应用**。弯音是演奏数据，随 MIDI 流同块采样点精确送达
+   （Logic Pro 的做法）：`pitchBend` / `noteBend` 给出 `atFrame` 时进入弯音队列，处理器在该帧所在的
+   切块边界前应用；`atFrame` 省略时到达即应用，与旧行为一致；`atFrame` 给出但不是有限数时整条忽略，
+   不回落到立即应用（与音符的「省略 vs 给出坏值」同一条规则）。`value` / `semitones` 给出但非有限时
+   同样整条忽略。已迟到的弯音在下一个块开始时立即应用，不丢弃。`panic` / `allNotesOff` 清弯音队列，
+   与清音符队列同一条路径；静音不清空。弯音队列与音符队列共用 `MAX_SCHEDULED_EVENTS` 上界（满了丢最旧）。
+   同一帧的弯音先于音符应用：弯音与音符同属一个 MIDI 包时，弯音须在音符起音前生效。测试：
+   `src/audio/worklet-processor.test.ts › frame-addressed bend events`。

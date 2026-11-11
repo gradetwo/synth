@@ -87,6 +87,36 @@ export function detectSimd(): boolean {
   }
 }
 
+/**
+ * Absolute frame for a wall-clock timestamp, on the context's clock.
+ *
+ * A MIDI event's `receivedTime` (and a pointer event's `timeStamp`) lives on the `performance.now()`
+ * clock, while the audio worklet counts frames on the context clock. This bridges the two: the
+ * frame at which the event happened, so a bend can be scheduled at the same frame a note would
+ * land on. Pure, so tests can pin the arithmetic without a context.
+ *
+ * `undefined` when any input is not a finite number — an event with no timestamp, or a context
+ * that has not started, names no frame, and the caller then takes the immediate path instead of
+ * scheduling a bend at a frame it invented.
+ */
+export function frameAtTimestamp(
+  timestampMs: number | undefined,
+  currentTimeSec: number,
+  sampleRate: number,
+  nowMs: number,
+): number | undefined {
+  if (timestampMs === undefined) return undefined;
+  if (
+    !Number.isFinite(timestampMs) ||
+    !Number.isFinite(currentTimeSec) ||
+    !Number.isFinite(sampleRate) ||
+    !Number.isFinite(nowMs)
+  ) {
+    return undefined;
+  }
+  return Math.round((currentTimeSec + (timestampMs - nowMs) / 1000) * sampleRate);
+}
+
 export type EngineStatus = 'idle' | 'loading' | 'running' | 'suspended' | 'error';
 
 export interface EngineDiagnostics {
@@ -702,8 +732,32 @@ export class AudioEngine {
     this.node?.port.postMessage(buf.buffer, [buf.buffer]);
   }
 
-  pitchBend(semitones: number) {
-    this.node?.port.postMessage({ type: 'pitchBend', value: semitones });
+  /**
+   * Global wheel, NORMALIZED -1..1 — not semitones. The core applies
+   * PITCH_BEND_RANGE once at render, so callers pass the raw wheel value.
+   * (The old `semitones` name misled callers into pre-scaling, which bent
+   * range^2 semitones at full wheel.)
+   *
+   * `atFrame` names the frame the bend applies at, on the same clock as a note's `atFrame`:
+   * the worklet applies it between render chunks at that frame, so a bend that shares a MIDI
+   * packet with a note lands with the note instead of a block later. Omitted, the bend applies
+   * when its message arrives, as before.
+   */
+  pitchBend(value: number, atFrame?: number) {
+    const message: { type: string; value: number; atFrame?: number } = { type: 'pitchBend', value };
+    if (atFrame !== undefined) message.atFrame = atFrame;
+    this.node?.port.postMessage(message);
+  }
+
+  /**
+   * Absolute frame for a wall-clock timestamp (a MIDI event's `receivedTime`, a pointer event's
+   * `timeStamp`). `undefined` when the context has not started, or the timestamp is not a
+   * finite number — the caller then takes the immediate path.
+   */
+  frameForTimestamp(timestampMs: number | undefined): number | undefined {
+    const ctx = this.ctx;
+    if (!ctx) return undefined;
+    return frameAtTimestamp(timestampMs, ctx.currentTime, ctx.sampleRate, performance.now());
   }
 
   /** Channel pressure, 0..1 (feeds the AFTERTOUCH modulation source). */
@@ -731,9 +785,19 @@ export class AudioEngine {
     return true;
   }
 
-  /** Bend one note by `semitones` (MPE: bends are per note, not per synth). */
-  noteBend(note: number, semitones: number) {
-    this.node?.port.postMessage({ type: 'noteBend', note, semitones });
+  /**
+   * Bend one note by `semitones` (MPE: bends are per note, not per synth).
+   * `atFrame` names the frame the bend applies at, on the same clock as a note's `atFrame`;
+   * omitted, the bend applies when its message arrives, as before.
+   */
+  noteBend(note: number, semitones: number, atFrame?: number) {
+    const message: { type: string; note: number; semitones: number; atFrame?: number } = {
+      type: 'noteBend',
+      note,
+      semitones,
+    };
+    if (atFrame !== undefined) message.atFrame = atFrame;
+    this.node?.port.postMessage(message);
   }
 
   /** Push a 128-entry cent table to the core (microtuning). */
