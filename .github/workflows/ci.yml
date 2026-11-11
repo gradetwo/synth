@@ -24,6 +24,14 @@ on:
   # "Run workflow" button; the `visual` job uploads its diff images either way.
   workflow_dispatch:
 
+concurrency:
+  # 同一 ref 的新推送取消在飞 run, 只跑最新头的 CI —— Wang 2026-11-12 定(避免 CI 等待):
+  # 合入 main 后才跑完整 CI; 完整 CI 未跑完又有新合入, 取消在跑的, 新合入后重跑。
+  # 被取消的 run 不是判决, 只有跑完的 run 才算数。分组带事件名: 定时 run 只取消定时 run,
+  # 不与合入的 run 互相掐(夜半同规则已落地, 其 CI 无定时触发, 故不带事件名)。
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'schedule'
