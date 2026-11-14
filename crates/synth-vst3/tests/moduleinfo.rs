@@ -1,5 +1,13 @@
+#![cfg(feature = "vst3")]
 //! moduleinfo.json: the committed files must agree with the plugin the
 //! binary actually reports through `IPluginFactory`.
+//!
+//! VST3-only: the constants this file pins (`VST3_CLASS_ID`,
+//! `PLATFORM_VST3_CLASS_ID`, `VST3_SUBCATEGORIES`) only exist when the
+//! `vst3` feature is on, so a CLAP-only build skips this file entirely —
+//! same pattern as `tests/clap.rs` with `feature = "clap"`. The default
+//! (VST3) test run covers it.
+
 //!
 //! The class ID is platform-dependent: nih-plug reports the raw
 //! `VST3_CLASS_ID` bytes on macOS/Linux but byte-swaps the first eight
