@@ -84,6 +84,14 @@ jobs:
       - name: VST3 plugin clippy
         run: npm run verify:clippy-vst3
 
+      # Phase 2 ② CLAP: build the CLAP-only plugin (no vst3 feature, so no
+      # `vst3-sys`) and verify `clap_entry` is exported and
+      # `GetPluginFactory` is not. The script does the build plus both
+      # checks. No X11/GL dev libs are needed: this branch has no editor
+      # (no egui), so the CLAP build has no GUI dependency chain.
+      - name: CLAP plugin build (release)
+        run: scripts/package-clap.sh
+
       # The build comes *before* the tests on purpose: `src/generated/*.wasm`
       # is a build artefact and is gitignored, so on a fresh runner the unit
       # tests cannot resolve `@/generated/synth_core.wasm?url` until the cores

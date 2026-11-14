@@ -1,6 +1,8 @@
-# GS1 VST3 乐器插件（一期）
+# GS1 乐器插件（VST3 + CLAP）
 
-把 GROOVE SYNTH GS-1（`crates/synth-core`）包成 VST3 乐器插件。
+把 GROOVE SYNTH GS-1（`crates/synth-core`）包成乐器插件：VST3 导出（一期）
+与 CLAP 导出（二期 ②）是同一插件的两种入口，参数、状态、预设选择器与
+渲染核心共用同一套。
 网页应用本体不动；插件里不含 MCP 服务。
 
 ## 框架选择：nih-plug
@@ -11,11 +13,15 @@
 - 依赖钉住 git rev（见 `Cargo.toml`），不跟浮动分支。
 - 许可后果（分发时必读）：
   - nih-plug 本体是 ISC。
-  - `vst3-sys` 是 GPLv3，且 VST3 导出会链入它：**分发的插件二进制受
+  - `vst3-sys` 是 GPLv3，且 VST3 导出会链入它：**分发的 VST3 插件二进制受
     GPLv3 约束**。包内必须附 GPLv3、ISC、MIT 三份声明（`scripts/package-vst3.sh`
     把它们拷进 `Resources/`）。
+  - **CLAP 单独构建不受 GPLv3 约束**：`cargo build --no-default-features
+    --features clap` 不启用 nih-plug 的 `vst3` feature，不链 `vst3-sys`
+   （`scripts/package-clap.sh` 以 `nm -D` 验 `GetPluginFactory` 未导出作证）。
+    CLAP 产物只附 MIT 与 ISC 两份声明。两产物分开打包、分开声明，不得混装。
   - 仓库其余代码不受影响：网页版不链 `vst3-sys`，插件 crate 是独立二进制。
-  - 源码本身仍可用 MIT；GPLv3 约束的是分发的插件二进制，不是仓库。
+  - 源码本身仍可用 MIT；GPLv3 约束的是分发的 VST3 插件二进制，不是仓库。
 
 ## 引擎：不是纯 Rust，C++ 桥必须进插件
 
@@ -167,6 +173,52 @@ VST3 wrapper 会为此加绑定参数，属框架实现细节）。
 `MAX_BLOCK_SIZE`（1024）分块调 `engine.process`，拷 `left()`/`right()` 到
 立体声输出。无音频输入。`process()` 返回 `KeepAlive`（混响/延迟尾巴不定长）。
 
+## CLAP 导出（二期 ②）
+
+同一插件的第二种入口，`nih_export_clap!`（同 rev `de42101` 的
+`src/wrapper/clap.rs` 已支持；`clap-sys` 钉 rev `25d7f53`，见
+`Cargo.lock`）。CLAP ID `dev.gradetwo.gs1`，特性
+`instrument` + `synthesizer`。参数（224 TS 参数）、状态、预设选择器与
+VST3 同一套；与 VST3 共用同一 Engine 核心，不另起一引擎。渲染路径与
+VST3 完全相同，指纹测试（直接驱动 `render_with_events`）对两种导出
+同时覆盖。
+
+Feature 开关（`crates/synth-vst3/Cargo.toml`）：默认 `vst3`（与一期相同）；
+`clap` 只加 CLAP 导出；两者可同开。CLAP 单独构建：
+`cargo build --release --locked --no-default-features --features clap`，
+不链 `vst3-sys`（见“许可后果”）。
+
+包布局（Linux x86_64）：
+
+```
+dist/
+  GS1.clap             # 单文件 CLAP 插件（cdylib 改名），scripts/package-clap.sh 产出
+  GS1.clap-licenses/
+    LICENSE-MIT
+    LICENSE-ISC-nih-plug
+    ATTRIBUTION.md    # DaisySP / Soundpipe 署名（无 LICENSE-GPLv3，CLAP 构建不链 vst3-sys）
+```
+
+打包脚本 `scripts/package-clap.sh [out-dir]`（默认 `dist/`）构建 CLAP-only
+release cdylib、复制上布局、用 `nm -D` 验 `clap_entry` 已导出且
+`GetPluginFactory` 未导出（后者缺失即许可分拆的证据；任一失败即退出非 0），
+最后打印文件、字节数与 `GS1.clap` 的 sha256。CI 在 `verify` 任务里跑该脚本
+（“CLAP plugin build (release)”一步；CLAP 构建无编辑器依赖，不需 X11/GL
+开发包）。
+
+弯音走法（实现时按 CLAP 规范与 nih-plug 支持定）：**走 CLAP MIDI 事件，不走
+note expression**。该 rev 的 CLAP wrapper 的 note-expression 匹配没有
+`CLAP_NOTE_EXPRESSION_PITCH_BEND` 臂，宿主发的弯音 expression 会被丢弃；
+而 `CLAP_EVENT_MIDI`（状态 `0xE0`）经 `NoteEvent::from_midi` 解析为同一
+`NoteEvent::MidiPitchBend`（归一化 `[0, 1]`，`0.5` 为中心），与 VST3 路径
+共用 `process()` 里的翻译（`pitch_bend((value - 0.5) * 2)`，范围只应用一次）。
+逐音弯音 expression 须等 nih-plug 补该臂，本项不支持，不谎称支持。
+
+验证诚实口径：本机无 CLAP 宿主；`clap-validator` 须另行获取（不在仓库内）。
+本项验证做到构建 + `clap_entry` 导出 + `cargo tree` 验无 `vst3-sys` +
+15 项一期测试全绿（指纹绿即渲染路径未变）+ 2 项 CLAP 描述符测试；
+validator / 真实宿主加载的实际结果见实施报告，不称“宿主验证通过”。
+
 ## 包布局（Linux x86_64 一期）
 
 ```
@@ -217,13 +269,16 @@ Windows 侧另有第三方乐器在夜半宿主上测试，与本插件无关，
   modwheel→cutoff 是禁用的）。
 - `tests/program.rs`：切预设后输出变化，且参数值等于目标预设的合并值；
   路由回读等于上表。
+- `tests/clap.rs`（只在 `clap` feature 下编译）：CLAP 描述符（ID
+  `dev.gradetwo.gs1`、特性 instrument + synthesizer）与“CLAP 与 VST3
+  共用 224 参数 / 120 预设”两项断言。渲染由指纹等套件覆盖（两导出共用
+  同一渲染路径）。
 
 ## 二期（明确不做）
 
-自定义编辑器；CLAP 导出；macOS/Windows 包；
+自定义编辑器；macOS/Windows 包；
 `moduleinfo.json`；采样/波表/IR 导入
 （`WT_USER`/`SMP_*` 参数一期存在但无导入数据时不生效）；sustain 与 poly pressure；
 参数显示格式打磨（单位、值转字符串）；自定义状态块（`PluginState`），
 用以在宿主存取状态时保住预设切换后的参数拧动（见“参数同步与预设切换”）。
-
-（真正多实例已在二期 ④ 落地，见“多实例”；CI 任务已随 ④ 补上，见下。）
+（真正多实例已在二期 ④ 落地，见“多实例”；CLAP 导出已在二期 ② 落地，见上节；CI 任务已随 ④ 补上，见下。）
