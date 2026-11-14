@@ -393,10 +393,10 @@ float g_sample_rate = 48000.0f;
 // the same effect in two places (two choruses in parallel, for instance), and
 // sharing one state would make them cross-talk. `GS_FX_SLOTS` matches the
 // engine's `FX_SLOTS` (a Rust test asserts it).
-daisysp::Chorus g_chorus[GS_FX_SLOTS][2];
-daisysp::Flanger g_flanger[GS_FX_SLOTS][2];
-daisysp::Phaser g_phaser[GS_FX_SLOTS][2];
-daisysp::Overdrive g_overdrive[GS_FX_SLOTS][2];
+daisysp::Chorus g_chorus[GS_MAX_INSTANCES][GS_FX_SLOTS][2];
+daisysp::Flanger g_flanger[GS_MAX_INSTANCES][GS_FX_SLOTS][2];
+daisysp::Phaser g_phaser[GS_MAX_INSTANCES][GS_FX_SLOTS][2];
+daisysp::Overdrive g_overdrive[GS_MAX_INSTANCES][GS_FX_SLOTS][2];
 unsigned g_init_calls = 0;
 unsigned g_slot_init_calls = 0;
 
@@ -479,12 +479,15 @@ extern "C" {
 
 
 
-void gs_daisy_init(float sample_rate) {
+void gs_daisy_init(float sample_rate, int first_slot, int count) {
     g_init_calls++;
     if (sample_rate < 1000.0f) sample_rate = 48000.0f;
     g_sample_rate = sample_rate;
     build_blep_kernels();
-    for (int i = 0; i < GS_MAX_VOICES; ++i) init_slot(i, sample_rate);
+    if (first_slot < 0) first_slot = 0;
+    if (count < 0) count = 0;
+    if (first_slot + count > GS_MAX_VOICES) count = GS_MAX_VOICES - first_slot;
+    for (int i = first_slot; i < first_slot + count; ++i) init_slot(i, sample_rate);
 }
 
 void gs_voice_reset(int v) {
@@ -1087,14 +1090,20 @@ int gs_daisy_voice_slots(void) { return GS_MAX_VOICES; }
 
 int gs_fx_slots(void) { return GS_FX_SLOTS; }
 
-void gs_fx_init(float sample_rate) {
+/** An instance outside the array reads as instance 0, mirroring slot_of. */
+static int inst_of(int inst) {
+    return (inst >= 0 && inst < GS_MAX_INSTANCES) ? inst : 0;
+}
+
+void gs_fx_init(float sample_rate, int inst) {
     if (sample_rate < 1000.0f) sample_rate = 48000.0f;
+    const int in = inst_of(inst);
     for (int slot = 0; slot < GS_FX_SLOTS; ++slot) {
         for (int ch = 0; ch < 2; ++ch) {
-            g_chorus[slot][ch].Init(sample_rate);
-            g_flanger[slot][ch].Init(sample_rate);
-            g_phaser[slot][ch].Init(sample_rate);
-            g_overdrive[slot][ch].Init();
+            g_chorus[in][slot][ch].Init(sample_rate);
+            g_flanger[in][slot][ch].Init(sample_rate);
+            g_phaser[in][slot][ch].Init(sample_rate);
+            g_overdrive[in][slot][ch].Init();
         }
     }
 }
@@ -1105,70 +1114,78 @@ static int slot_of(int slot) {
     return (slot >= 0 && slot < GS_FX_SLOTS) ? slot : 0;
 }
 
-void gs_fx_chorus_set(int slot, float depth, float freq, float delay_ms, float feedback) {
+void gs_fx_chorus_set(int inst, int slot, float depth, float freq, float delay_ms, float feedback) {
     const int s = slot_of(slot);
+    const int in = inst_of(inst);
     for (int ch = 0; ch < 2; ++ch) {
-        g_chorus[s][ch].SetLfoDepth(depth);
-        g_chorus[s][ch].SetLfoFreq(freq);
-        g_chorus[s][ch].SetDelayMs(delay_ms);
-        g_chorus[s][ch].SetFeedback(feedback);
+        g_chorus[in][s][ch].SetLfoDepth(depth);
+        g_chorus[in][s][ch].SetLfoFreq(freq);
+        g_chorus[in][s][ch].SetDelayMs(delay_ms);
+        g_chorus[in][s][ch].SetFeedback(feedback);
     }
 }
 
-void gs_fx_chorus_block(int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames) {
+void gs_fx_chorus_block(int inst, int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames) {
     const int s = slot_of(slot);
+    const int in = inst_of(inst);
     for (uint32_t i = 0; i < frames; ++i) {
-        out_l[i] = g_chorus[s][0].Process(in_l[i]);
-        out_r[i] = g_chorus[s][1].Process(in_r[i]);
+        out_l[i] = g_chorus[in][s][0].Process(in_l[i]);
+        out_r[i] = g_chorus[in][s][1].Process(in_r[i]);
     }
 }
 
-void gs_fx_flanger_set(int slot, float depth, float freq, float delay_ms, float feedback) {
+void gs_fx_flanger_set(int inst, int slot, float depth, float freq, float delay_ms, float feedback) {
     const int s = slot_of(slot);
+    const int in = inst_of(inst);
     for (int ch = 0; ch < 2; ++ch) {
-        g_flanger[s][ch].SetLfoDepth(depth);
-        g_flanger[s][ch].SetLfoFreq(freq);
-        g_flanger[s][ch].SetDelayMs(delay_ms);
-        g_flanger[s][ch].SetFeedback(feedback);
+        g_flanger[in][s][ch].SetLfoDepth(depth);
+        g_flanger[in][s][ch].SetLfoFreq(freq);
+        g_flanger[in][s][ch].SetDelayMs(delay_ms);
+        g_flanger[in][s][ch].SetFeedback(feedback);
     }
 }
 
-void gs_fx_flanger_block(int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames) {
+void gs_fx_flanger_block(int inst, int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames) {
     const int s = slot_of(slot);
+    const int in = inst_of(inst);
     for (uint32_t i = 0; i < frames; ++i) {
-        out_l[i] = g_flanger[s][0].Process(in_l[i]);
-        out_r[i] = g_flanger[s][1].Process(in_r[i]);
+        out_l[i] = g_flanger[in][s][0].Process(in_l[i]);
+        out_r[i] = g_flanger[in][s][1].Process(in_r[i]);
     }
 }
 
-void gs_fx_phaser_set(int slot, float depth, float freq, float feedback, int poles) {
+void gs_fx_phaser_set(int inst, int slot, float depth, float freq, float feedback, int poles) {
     const int s = slot_of(slot);
+    const int in = inst_of(inst);
     for (int ch = 0; ch < 2; ++ch) {
-        g_phaser[s][ch].SetLfoDepth(depth);
-        g_phaser[s][ch].SetLfoFreq(freq);
-        g_phaser[s][ch].SetFeedback(feedback);
-        g_phaser[s][ch].SetPoles(poles);
+        g_phaser[in][s][ch].SetLfoDepth(depth);
+        g_phaser[in][s][ch].SetLfoFreq(freq);
+        g_phaser[in][s][ch].SetFeedback(feedback);
+        g_phaser[in][s][ch].SetPoles(poles);
     }
 }
 
-void gs_fx_phaser_block(int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames) {
+void gs_fx_phaser_block(int inst, int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames) {
     const int s = slot_of(slot);
+    const int in = inst_of(inst);
     for (uint32_t i = 0; i < frames; ++i) {
-        out_l[i] = g_phaser[s][0].Process(in_l[i]);
-        out_r[i] = g_phaser[s][1].Process(in_r[i]);
+        out_l[i] = g_phaser[in][s][0].Process(in_l[i]);
+        out_r[i] = g_phaser[in][s][1].Process(in_r[i]);
     }
 }
 
-void gs_fx_overdrive_set(int slot, float drive) {
+void gs_fx_overdrive_set(int inst, int slot, float drive) {
     const int s = slot_of(slot);
-    for (int ch = 0; ch < 2; ++ch) g_overdrive[s][ch].SetDrive(drive);
+    const int in = inst_of(inst);
+    for (int ch = 0; ch < 2; ++ch) g_overdrive[in][s][ch].SetDrive(drive);
 }
 
-void gs_fx_overdrive_block(int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames) {
+void gs_fx_overdrive_block(int inst, int slot, const float *in_l, const float *in_r, float *out_l, float *out_r, uint32_t frames) {
     const int s = slot_of(slot);
+    const int in = inst_of(inst);
     for (uint32_t i = 0; i < frames; ++i) {
-        out_l[i] = g_overdrive[s][0].Process(in_l[i]);
-        out_r[i] = g_overdrive[s][1].Process(in_r[i]);
+        out_l[i] = g_overdrive[in][s][0].Process(in_l[i]);
+        out_r[i] = g_overdrive[in][s][1].Process(in_r[i]);
     }
 }
 

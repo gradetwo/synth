@@ -19,11 +19,11 @@ use crate::params::{MAX_BLOCK_SIZE, MAX_VOICES, SPECTRUM_BINS};
 /// version, and a number that was published once cannot be handed to a different surface later.
 pub const ABI_VERSION: u32 = 9;
 
-/// Initialise the engine. Returns 1 on success.
+/// Initialise the engine. Returns 1 on success, 0 when no bridge slice is
+/// free or the rate conflicts with a live instance (see `Engine::init`).
 #[no_mangle]
 pub extern "C" fn gs_init(sample_rate: f32, max_polyphony: u32) -> u32 {
-    engine().init(sample_rate, max_polyphony as usize);
-    1
+    engine().init(sample_rate, max_polyphony as usize) as u32
 }
 
 /// Reset voices, LFO and FX without recreating the module.
