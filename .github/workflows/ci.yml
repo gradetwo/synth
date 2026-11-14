@@ -215,9 +215,12 @@ jobs:
       # so does the `llvm-ar` the bridge archives with.
       # libgl1-mesa-dev: the plugin GUI (winit/x11) needs `gl.pc`; without
       # it the ubuntu leg fails in `x11`'s build script (run 43600608147).
+      # libx11-xcb-dev: `x11`'s build script also needs `x11-xcb.pc`
+      # (libxcb1-dev alone does not ship it); without it the same leg
+      # fails one step later (run 43612133320).
       - name: Install clang + llvm (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang llvm libgl1-mesa-dev
+        run: sudo apt-get update && sudo apt-get install -y clang llvm libgl1-mesa-dev libx11-xcb-dev
 
       # The macOS bundle is a universal binary (arm64 + x86_64); the runner
       # is arm64, so the x86_64 target has to be added. The bridge's
