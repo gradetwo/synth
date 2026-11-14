@@ -213,9 +213,11 @@ jobs:
 
       # ubuntu-latest has no clang: the vendored C/C++ bridge needs it, and
       # so does the `llvm-ar` the bridge archives with.
+      # libgl1-mesa-dev: the plugin GUI (winit/x11) needs `gl.pc`; without
+      # it the ubuntu leg fails in `x11`'s build script (run 43600608147).
       - name: Install clang + llvm (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang llvm
+        run: sudo apt-get update && sudo apt-get install -y clang llvm libgl1-mesa-dev
 
       # The macOS bundle is a universal binary (arm64 + x86_64); the runner
       # is arm64, so the x86_64 target has to be added. The bridge's
