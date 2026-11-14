@@ -49,6 +49,18 @@ fn main() {
     let simd = env::var("GS_SIMD").map(|v| v != "0").unwrap_or(true);
 
     let clang = env::var("CLANG").unwrap_or_else(|_| "clang".to_string());
+    let host = env::var("HOST").unwrap_or_default();
+    // Cross-compiling the C/C++ bridge needs the target triple passed to
+    // clang explicitly: cargo only tells rustc the target, and build.rs
+    // invokes $CLANG itself. Without this, a macOS arm64 host building the
+    // x86_64-apple-darwin slice of a universal binary would compile arm64
+    // objects and fail the link. Same-target builds pass nothing, so the
+    // Linux/Windows host builds keep their exact previous command lines.
+    // (wasm keeps its own --target below.)
+    let mut target_args: Vec<String> = vec![];
+    if !is_wasm && !host.is_empty() && target != host {
+        target_args.push(format!("--target={target}"));
+    }
     let mut common: Vec<String> = vec![
         "-O3".into(),
         "-DNDEBUG".into(),
@@ -110,13 +122,21 @@ fn main() {
     for (idx, src) in c_sources.iter().chain(cxx_sources.iter()).enumerate() {
         let stem = src.file_stem().unwrap().to_string_lossy().to_string();
         let obj = obj_dir.join(format!("{idx:02}-{stem}.o"));
-        compile(&clang, &common, src, &obj);
+        compile(&clang, &common, &target_args, src, &obj);
         objects.push(obj);
         println!("cargo:rerun-if-changed={}", src.display());
     }
 
     // -------------------------------------------------------------- archive
-    let archive = out_dir.join("libgsdsp.a");
+    let archive = if target.contains("windows") {
+        // rustc on the MSVC target only looks for `<name>.lib` when resolving
+        // `cargo:rustc-link-lib=static=gsdsp`; a `.a` file would not be found
+        // even though its contents are the same ar archive. llvm-ar writes
+        // either name, so only the file name changes, not the tool.
+        out_dir.join("gsdsp.lib")
+    } else {
+        out_dir.join("libgsdsp.a")
+    };
     let _ = fs::remove_file(&archive);
     let ar = env::var("AR").unwrap_or_else(|_| "llvm-ar".to_string());
     let mut cmd = Command::new(&ar);
@@ -128,7 +148,9 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", out_dir.display());
     println!("cargo:rustc-link-lib=static=gsdsp");
-    if !is_wasm {
+    if !is_wasm && !target.contains("windows") {
+        // There is no libm on Windows (the C runtime ships it inside
+        // msvcrt/ucrt); linking `m` there fails the build.
         println!("cargo:rustc-link-lib=dylib=m");
     }
 
@@ -164,9 +186,10 @@ fn clang_resource_include(clang: &str) -> PathBuf {
     PathBuf::from(dir).join("include")
 }
 
-fn compile(clang: &str, common: &[String], src: &Path, obj: &Path) {
+fn compile(clang: &str, common: &[String], target_args: &[String], src: &Path, obj: &Path) {
     let mut cmd = Command::new(clang);
     cmd.args(common);
+    cmd.args(target_args);
     if src.extension().and_then(|e| e.to_str()) == Some("c") {
         cmd.arg("-std=c11");
     } else {

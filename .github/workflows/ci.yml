@@ -187,6 +187,174 @@ jobs:
           path: dist
           retention-days: 7
 
+  # Phase 2 (macOS/Windows packages): the VST3 plugin is built, tested and
+  # packaged natively on all three OSes — never cross-compiled from Linux,
+  # because the vendored C++ bridge is compiled by build.rs with the host
+  # compiler. One matrix job instead of three copies: the steps are the
+  # same on every runner, only the OS-specific setup differs. It runs on
+  # push/PR (the gate for a branch); the schedule already has the nightly
+  # job and does not need a second packaging pass.
+  vst3-packages:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # ubuntu-latest has no clang: the vendored C/C++ bridge needs it, and
+      # so does the `llvm-ar` the bridge archives with.
+      - name: Install clang + llvm (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      # The macOS bundle is a universal binary (arm64 + x86_64); the runner
+      # is arm64, so the x86_64 target has to be added. The bridge's
+      # build.rs passes --target to clang for the non-host slice.
+      - name: Add x86_64 macOS target (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: rustup target add x86_64-apple-darwin
+
+      # windows-latest ships LLVM, but its bin dir is not guaranteed to be
+      # on PATH for every shell; make it explicit before the version step
+      # below tries to run clang.
+      - name: Put LLVM on PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if [ -d "/c/Program Files/LLVM/bin" ]; then
+            echo 'C:\Program Files\LLVM\bin' >> "$GITHUB_PATH"
+          else
+            echo 'LLVM bin dir not found at C:\Program Files\LLVM\bin' >&2
+            exit 1
+          fi
+
+      # macOS runners do NOT ship llvm-ar anywhere in Xcode 26.6: run
+      # 42349152642's failing step listed
+      # <developer-dir>/Toolchains/XcodeDefault.xctoolchain/usr/bin/ and
+      # it holds `ar`, `clang`, `llvm-nm` — but no `llvm-ar` (the round-2
+      # premise, "llvm-ar is inside the toolchain dir, just not on PATH",
+      # was wrong; it is not a PATH problem, the file does not exist).
+      # build.rs defaults AR to llvm-ar and archives with `crs`, and the
+      # "Toolchain versions" step prints `llvm-ar --version` where the tool
+      # supports it (the BSD ar shim below does not), so both need the name
+      # to resolve. The toolchain's own `ar` accepts the same `crs` flags
+      # and writes the same archive format, so the step shims llvm-ar -> ar
+      # in a temp bin dir on PATH. If a future Xcode ships a real llvm-ar,
+      # the fast path below uses it instead. A missing `ar` is a hard
+      # failure, not a silent skip. The dir also holds the same Xcode clang
+      # the runner already resolves, so the toolchain the versions step
+      # prints does not change.
+      - name: Put Xcode toolchain on PATH (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bin_dir="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+          shimmed=0
+          if [ -x "$bin_dir/llvm-ar" ]; then
+            llvm_ar="$bin_dir/llvm-ar"
+          elif [ -x "$bin_dir/ar" ]; then
+            # Xcode 26.6 ships no llvm-ar (run 42349152642 proves it with
+            # the ls listing); shim it to the toolchain's own `ar`.
+            shim_dir="$RUNNER_TEMP/xcode-llvm-ar-shim"
+            mkdir -p "$shim_dir"
+            ln -sf "$bin_dir/ar" "$shim_dir/llvm-ar"
+            echo "llvm-ar not shipped by Xcode 26.6; shimming llvm-ar -> $bin_dir/ar"
+            llvm_ar="$shim_dir/llvm-ar"
+            shimmed=1
+          else
+            echo "neither llvm-ar nor ar found in $bin_dir" >&2
+            ls "$bin_dir" >&2 || true
+            exit 1
+          fi
+          # Version evidence: a real llvm-ar prints --version, but the shim
+          # points at BSD ar, which has no --version flag (run 42350688123:
+          # `ar --version` prints usage and exits 1, killing this step
+          # under bash -e). Prove the shim functionally instead: run the
+          # exact operation build.rs needs (`crs` archive + member) and
+          # check the archive is non-empty and lists its member.
+          if [ "$shimmed" -eq 0 ]; then
+            "$llvm_ar" --version
+          else
+            probe_dir="$RUNNER_TEMP/xcode-llvm-ar-probe"
+            mkdir -p "$probe_dir"
+            printf 'probe' > "$probe_dir/probe.txt"
+            "$llvm_ar" crs "$probe_dir/libprobe.a" "$probe_dir/probe.txt"
+            test -s "$probe_dir/libprobe.a"
+            "$llvm_ar" t "$probe_dir/libprobe.a"
+          fi
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          echo "$(dirname "$llvm_ar")" >> "$GITHUB_PATH"
+
+      # Toolchain evidence, before anything that can fail: which compiler
+      # judged this commit is a fact in the log, not a guess afterwards
+      # (§一.39, same reason the verify job prints its versions first).
+      # The Windows lines are the answer to "what toolchain is actually on
+      # windows-latest": LLVM clang + llvm-ar are expected there, and the
+      # log proves or disproves it on every run.
+      - name: Toolchain versions (rustc / cargo / clang / llvm-ar)
+        shell: bash
+        run: |
+          rustc --version
+          cargo --version
+          clang --version
+          # llvm-ar prints --version only where the tool supports it. On
+          # macOS it resolves to the BSD ar shim (Xcode 26.6 ships no
+          # llvm-ar), and BSD ar has no --version flag (run 42350688123:
+          # usage + exit 1). Print the shim note instead of failing the
+          # step; the functional `crs` probe in the PATH step above is the
+          # real evidence on that leg. A missing llvm-ar is still a hard
+          # failure, not a silent skip.
+          if llvm-ar --version 2>/dev/null; then
+            :
+          elif command -v llvm-ar >/dev/null 2>&1; then
+            echo "llvm-ar: $(command -v llvm-ar) is the BSD ar shim (no --version; crs probe passed in PATH step)"
+          else
+            echo "llvm-ar not found on PATH" >&2
+            exit 1
+          fi
+
+      # The committed moduleinfo files must still match src/lib.rs.
+      - name: moduleinfo matches lib.rs
+        shell: bash
+        run: npm run verify:moduleinfo
+
+      # Release: the fingerprint tests need release speed, and the package
+      # script builds release too. --test-threads=1: the engine is a
+      # process singleton with global C++ voice state.
+      - name: VST3 plugin tests (release)
+        shell: bash
+        run: npm run test:vst3
+
+      - name: VST3 plugin clippy
+        shell: bash
+        run: npm run verify:clippy-vst3
+
+      # One entry point per OS: the script builds the native binary for its
+      # runner, assembles that OS's bundle layout, copies the licences and
+      # the matching moduleinfo.json, and fails if GetPluginFactory is not
+      # exported (nm -D / nm -gU / llvm-readobj --coff-exports per OS).
+      - name: Build + package VST3 bundle
+        shell: bash
+        run: bash scripts/package-vst3-all.sh dist
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: GS1.vst3-${{ matrix.os }}
+          path: dist/GS1.vst3
+          retention-days: 7
+
   # P0.5 used to live here: an `e2e-engines` job that ran the whole suite on
   # WebKit and Firefox on every push. It is gone on purpose.
   #
