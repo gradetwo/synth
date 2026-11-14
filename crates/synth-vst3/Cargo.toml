@@ -18,6 +18,13 @@ synth-core = { path = "../synth-core" }
 # feature to enable: `clap-sys` is a non-optional nih-plug dependency and
 # the CLAP wrapper is always compiled in.
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683", default-features = false }
+# Same rev as nih_plug: the egui editor adapter. Its `opengl` default
+# feature links X11/GL on Linux (CI ubuntu runners and this dev machine
+# have libx11-dev / libxkbcommon-dev); the editor is only constructed when
+# a host opens it, never on the audio thread.
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683" }
+# The engine-state persist blob (see lib.rs EngineState) is serde JSON.
+serde = { version = "1", features = ["derive"] }
 
 [features]
 # The default build is the VST3 plugin, as before.

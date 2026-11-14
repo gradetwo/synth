@@ -4,6 +4,10 @@
 
 use nih_plug::params::Param;
 use nih_plug::prelude::*;
+use nih_plug_egui::EguiState;
+use std::sync::{Arc, RwLock};
+
+use crate::EngineState;
 
 /// Number of TS parameters (Param 0..223).
 pub const PARAM_COUNT: usize = 224;
@@ -3851,12 +3855,22 @@ pub const PRESETS: &[PresetDef] = &[
 /// parameter): the preset selector, 0..=119, default 0 = pluck.
 /// nih-plug has no native VST3 program list, so the selector is a
 /// plain integer parameter instead (see the crate README).
+/// `editor_state` and `engine_state` are NOT parameters: they are
+/// #[persist] fields, saved with the plugin state. The editor
+/// state holds the window size; the engine state holds the
+/// engine-effective parameter values (preset + post-switch host
+/// tweaks) so a host save/reload restores the tweaks instead of
+/// losing them to the first-block preset re-apply (see lib.rs).
 #[derive(Params)]
 // Field names mirror the TS camelCase parameter names on purpose.
 #[allow(non_snake_case)]
 pub struct Gs1Params {
     #[id = "preset"]
     pub preset: IntParam,
+    #[persist = "editor-state"]
+    pub editor_state: Arc<EguiState>,
+    #[persist = "engine-state"]
+    pub engine_state: Arc<RwLock<Option<EngineState>>>,
     #[id = "masterVolume"]
     pub masterVolume: FloatParam,
     #[id = "osc1On"]
@@ -4311,6 +4325,8 @@ impl Default for Gs1Params {
     fn default() -> Self {
         Self {
             preset: IntParam::new("Preset", 0, IntRange::Linear { min: 0, max: 119 }),
+            editor_state: EguiState::from_size(880, 660),
+            engine_state: Arc::new(RwLock::new(None)),
             masterVolume: FloatParam::new(
                 "VOLUME",
                 0.75,

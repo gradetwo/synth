@@ -485,6 +485,10 @@ out.push('// Source: src/audio/params.ts + src/state/presets.ts (+ src/state/pre
 out.push('');
 out.push('use nih_plug::params::Param;');
 out.push('use nih_plug::prelude::*;');
+out.push('use nih_plug_egui::EguiState;');
+out.push('use std::sync::{Arc, RwLock};');
+out.push('');
+out.push('use crate::EngineState;');
 out.push('');
 out.push('/// Number of TS parameters (Param 0..223).');
 out.push('pub const PARAM_COUNT: usize = 224;');
@@ -537,12 +541,22 @@ out.push('/// nih-plug parameter block. `preset` is plugin-local (not a TS');
 out.push('/// parameter): the preset selector, 0..=119, default 0 = pluck.');
 out.push('/// nih-plug has no native VST3 program list, so the selector is a');
 out.push('/// plain integer parameter instead (see the crate README).');
+out.push('/// `editor_state` and `engine_state` are NOT parameters: they are');
+out.push('/// #[persist] fields, saved with the plugin state. The editor');
+out.push('/// state holds the window size; the engine state holds the');
+out.push('/// engine-effective parameter values (preset + post-switch host');
+out.push('/// tweaks) so a host save/reload restores the tweaks instead of');
+out.push('/// losing them to the first-block preset re-apply (see lib.rs).');
 out.push('#[derive(Params)]');
 out.push('// Field names mirror the TS camelCase parameter names on purpose.');
 out.push('#[allow(non_snake_case)]');
 out.push('pub struct Gs1Params {');
 out.push('    #[id = "preset"]');
 out.push('    pub preset: IntParam,');
+out.push('    #[persist = "editor-state"]');
+out.push('    pub editor_state: Arc<EguiState>,');
+out.push('    #[persist = "engine-state"]');
+out.push('    pub engine_state: Arc<RwLock<Option<EngineState>>>,');
 for (const r of rows) {
   out.push(`    #[id = ${rsStr(r.name)}]`);
   if (r.kind === 'Bool') {
@@ -561,6 +575,8 @@ out.push('        Self {');
 out.push(
   `            preset: IntParam::new("Preset", 0, IntRange::Linear { min: 0, max: ${presetRows.length - 1} }),`,
 );
+out.push('            editor_state: EguiState::from_size(880, 660),');
+out.push('            engine_state: Arc::new(RwLock::new(None)),');
 for (const r of rows) {
   if (r.kind === 'Bool') {
     out.push(
