@@ -16,10 +16,10 @@ import { expect, test, type Page } from '@playwright/test';
  *     (`Keyboard.tsx` -> `noteBus` -> the panel's recorder), so the score is the
  *     score a player would get, not a value poked into the component.
  *
- * The take is anchored to the panel's own `data-state="recording"`: a page-side
- * interval watches for it and fires the first key within a couple of
- * milliseconds, so the result does not depend on how long a Playwright round
- * trip took on a busy host.
+ * The take is played on the recording's own clock: the panel publishes its
+ * take anchor as `data-started-at` the moment the clock starts, and the
+ * player below schedules every key against that anchor, so the result does
+ * not depend on how long a Playwright round trip took on a busy host.
  */
 
 const CHUNK = /Teaching-[\w-]+\.js$/;
@@ -104,45 +104,92 @@ test.describe('teaching', () => {
     const offScale = ['w', 'e', 't', 'y', 'u', 'o', 'w', 'e'];
     const BPM = 90;
 
-    /** Play `keys` on the beat, starting the moment the panel starts recording.
-     * Anchored to the count-in, not to the `recording` state: on WebKit the
-     * panel's React commit of `recording` lands ~1.1 s after the recording
-     * clock (`startedAt`) starts, so a key fired when the DOM shows
-     * `recording` is ~1.1 s late and every note falls outside the 300 ms hit
-     * window (measured: take onsets 1.258…5.805 s against targets
-     * 0…4.667 s, all pitches correct). The count-in timer is scheduled by the
-     * panel's effect right after the `countin` commit, so keys scheduled
-     * from the `countin` commit plus the 4-beat count-in land on the beat.
-     * The 200 ms offset is a safety margin: it makes the first key land after
-     * the count-in timer fires (recording has started) even if the effect
-     * runs a turn late, and it stays inside the 300 ms hit window. */
+    /** Play `keys` on the beat, on the recording's own clock.
+     *
+     * The panel publishes `data-started-at` — the `performance.now()` anchor
+     * of the take — synchronously when its count-in timer fires and the take
+     * clock starts. This player waits for that attribute and schedules key i
+     * at `anchor + i * beat` on the same `performance.now()` clock, so a key
+     * lands on its grid point whatever the host's timer jitter is.
+     *
+     * The previous player *predicted* the anchor: it observed the `countin`
+     * commit, added the nominal count-in and a 200 ms safety offset, and
+     * fired from its own timer chain. The prediction error between the two
+     * chains is run-varying (measured mean deviations of 109…234 ms on
+     * WebKit, against 200.6 on Chromium, where the chains agree and the mean
+     * is the offset itself); stacked on the offset it pushed notes past the
+     * scorer's 300 ms window — the scheduled CI's WebKit leg failed with
+     * hitRate 0.75/0.875 while every pitch was right. Anchoring to
+     * `data-state="recording"` instead is not an option either: on WebKit
+     * that React commit lands ~1.1 s after the clock starts (measured: take
+     * onsets 1.258…5.805 s against targets 0…4.667 s).
+     *
+     * A value already present when this is called belongs to the previous
+     * take (the panel clears it on start, but the read here races that
+     * click), so only a *change* counts as the new take's anchor.
+     *
+     * Waiting for each key is a coarse timer plus a spin on the same clock
+     * for the last stretch, because a page timer alone cannot place a key
+     * inside the window on WebKit: the app's own main-thread load starves
+     * timers once the engine runs (measured in this environment: a blank
+     * page's timers are exact, the booted app's average ~140 ms late, up to
+     * ~290 ms, and the recorded deviation matches the timer lateness to
+     * ~1 ms — the recorder itself adds nothing). The coarse timer carries
+     * 400 ms of headroom, more than the worst lateness measured, and the
+     * spin covers the rest exactly; the events still travel the real path
+     * (window keydown -> Keyboard.tsx -> noteBus -> the panel's recorder). */
     const playOnTheBeat = (keys: string[]) =>
       page.evaluate(
         ({ keys: list, beat }) =>
           new Promise<void>((resolve) => {
             const panelEl = document.querySelector('[data-role="teach-panel"]');
-            const COUNT_IN_BEATS = 4; // Teaching.tsx COUNT_IN_BEATS.
-            const START_OFFSET_MS = 200;
-            const start = () => {
-              const countInMs = COUNT_IN_BEATS * beat;
-              list.forEach((key, index) => {
-                const at = countInMs + START_OFFSET_MS + index * beat;
-                window.setTimeout(() => window.dispatchEvent(new KeyboardEvent('keydown', { key })), Math.max(0, at));
-                window.setTimeout(() => window.dispatchEvent(new KeyboardEvent('keyup', { key })), Math.max(0, at) + 70);
-              });
-              window.setTimeout(resolve, countInMs + START_OFFSET_MS + (list.length - 1) * beat + 180);
+            const stale = panelEl?.getAttribute('data-started-at') ?? null;
+            const SPIN_MS = 400;
+            const spinUntil = (at: number) => {
+              while (performance.now() < at) {
+                // Deliberate busy-wait on the recording clock: the last
+                // stretch before a key, where a timer callback would land
+                // whenever the main thread happens to free up.
+              }
             };
-            if (panelEl?.getAttribute('data-state') === 'countin') {
-              start();
+            const waitUntil = (at: number) =>
+              new Promise<void>((done) => {
+                const remaining = at - performance.now();
+                if (remaining <= SPIN_MS) {
+                  spinUntil(at);
+                  done();
+                  return;
+                }
+                window.setTimeout(() => {
+                  spinUntil(at);
+                  done();
+                }, remaining - SPIN_MS);
+              });
+            const schedule = (anchor: number) => {
+              void (async () => {
+                for (const [index, key] of list.entries()) {
+                  await waitUntil(anchor + index * beat);
+                  window.dispatchEvent(new KeyboardEvent('keydown', { key }));
+                  window.setTimeout(() => window.dispatchEvent(new KeyboardEvent('keyup', { key })), 70);
+                }
+                await waitUntil(anchor + (list.length - 1) * beat + 180);
+                resolve();
+              })();
+            };
+            const read = () => panelEl?.getAttribute('data-started-at') ?? null;
+            const current = read();
+            if (current !== null && current !== stale) {
+              schedule(Number(current));
               return;
             }
             const observer = new MutationObserver(() => {
-              if (panelEl?.getAttribute('data-state') === 'countin') {
+              const value = read();
+              if (value !== null && value !== stale) {
                 observer.disconnect();
-                start();
+                schedule(Number(value));
               }
             });
-            if (panelEl) observer.observe(panelEl, { attributes: true, attributeFilter: ['data-state'] });
+            if (panelEl) observer.observe(panelEl, { attributes: true, attributeFilter: ['data-started-at'] });
           }),
         { keys, beat: 60000 / BPM },
       );

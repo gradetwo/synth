@@ -73,6 +73,7 @@ function TeachingPanel({ onClose }: { onClose: () => void }) {
   const take = useRef<PlayedNote[]>([]);
   const held = useRef(new Map<number, number>());
   const startedAt = useRef(0);
+  const panelRef = useRef<HTMLElement>(null);
   // The event callback runs outside React's render, so the phase it reads has
   // to be a ref rather than the state value captured when it subscribed.
   const phaseRef = useRef<Phase>('idle');
@@ -101,6 +102,7 @@ function TeachingPanel({ onClose }: { onClose: () => void }) {
   const invalidate = useCallback(() => {
     setResult(null);
     clearTake();
+    panelRef.current?.removeAttribute('data-started-at');
     movePhase('idle');
   }, [clearTake, movePhase]);
 
@@ -123,10 +125,21 @@ function TeachingPanel({ onClose }: { onClose: () => void }) {
 
   // Count-in, then start the clock. Timers are cleaned up on unmount and when
   // the exercise changes, so a closed panel cannot start a take.
+  //
+  // The moment the clock starts, its anchor is published on the panel element
+  // as `data-started-at` — a direct DOM write in the timer callback, not a
+  // React prop. The state commit that flips `data-state` to `recording` can
+  // land well after the clock starts on a slow engine (measured ~1.1 s on
+  // WebKit), so the attribute is the only signal that is synchronous with the
+  // clock itself; anything that has to play along with the take (the e2e
+  // player does) anchors to it instead of predicting when the count-in ends.
+  // `start` and `invalidate` remove it, so a value that is present always
+  // belongs to the take currently recording.
   useEffect(() => {
     if (phase !== 'countin') return;
     const timer = window.setTimeout(() => {
       startedAt.current = performance.now();
+      panelRef.current?.setAttribute('data-started-at', String(startedAt.current));
       clearTake();
       movePhase('recording');
     }, (COUNT_IN_BEATS * 60000) / bpm);
@@ -184,6 +197,7 @@ function TeachingPanel({ onClose }: { onClose: () => void }) {
     haptic();
     setResult(null);
     clearTake();
+    panelRef.current?.removeAttribute('data-started-at');
     movePhase('countin');
   };
 
@@ -216,6 +230,7 @@ function TeachingPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <aside
+      ref={panelRef}
       className="teach-panel"
       aria-label={t('teach.title')}
       data-role="teach-panel"
